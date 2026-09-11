@@ -40,7 +40,7 @@ public static class ReminderScheduler
         // A due occurrence that is currently quiet remains the active occurrence
         // until the quiet window ends; it must not be advanced past that boundary.
         var deferredDueUtc = ApplyQuietHours(reminder, nextDueUtc, timeZone);
-        if (deferredDueUtc >= nowUtc)
+        if (deferredDueUtc > nowUtc)
         {
             return deferredDueUtc;
         }
@@ -120,6 +120,15 @@ public static class ReminderScheduler
         var nextDueUtc = reminder.NextDueUtc.ToUniversalTime();
         var snoozedUntilUtc = reminder.SnoozedUntilUtc?.ToUniversalTime();
         DateTimeOffset? latest = null;
+
+        // NextDueUtc may itself be a persisted quiet-hour deferral rather than
+        // a recurrence boundary. It is still the pending occurrence to deliver.
+        if (snoozedUntilUtc is null
+            && nextDueUtc >= fromUtc
+            && nextDueUtc <= throughUtc)
+        {
+            latest = nextDueUtc;
+        }
 
         if (snoozedUntilUtc is { } snooze
             && snooze >= fromUtc

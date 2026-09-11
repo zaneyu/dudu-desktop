@@ -87,12 +87,11 @@ public static class QuietHoursPolicy
 
         if (timeZone.IsAmbiguousTime(localBoundary))
         {
-            var offsets = timeZone.GetAmbiguousTimeOffsets(localBoundary);
-            var latestUtc = offsets
+            var earliestUtc = timeZone.GetAmbiguousTimeOffsets(localBoundary)
                 .Select(offset => new DateTimeOffset(localBoundary, offset).ToUniversalTime())
-                .Max();
+                .Min();
 
-            return latestUtc;
+            return earliestUtc;
         }
 
         var offsetAtBoundary = timeZone.GetUtcOffset(localBoundary);

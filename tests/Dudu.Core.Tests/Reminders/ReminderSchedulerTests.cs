@@ -83,6 +83,80 @@ public sealed class ReminderSchedulerTests
         Assert.Null(fixture.NextOccurrence());
     }
 
+    [Fact]
+    public void Daily_occurrence_at_exact_now_advances_to_the_next_day()
+    {
+        var now = DateTimeOffset.Parse("2026-09-11T09:00:00Z");
+        var reminder = ReminderBuilder.AtLocalTime(9, 0).Build();
+
+        var next = ReminderScheduler.NextOccurrence(reminder, now, TimeZoneInfo.Utc);
+
+        Assert.Equal(DateTimeOffset.Parse("2026-09-12T09:00:00Z"), next);
+    }
+
+    [Fact]
+    public void Interval_occurrence_at_exact_now_advances_by_one_period()
+    {
+        var now = DateTimeOffset.Parse("2026-09-11T08:00:00Z");
+        var reminder = ReminderBuilder.Every(TimeSpan.FromHours(2)).Build();
+
+        var next = ReminderScheduler.NextOccurrence(reminder, now, TimeZoneInfo.Utc);
+
+        Assert.Equal(DateTimeOffset.Parse("2026-09-11T10:00:00Z"), next);
+    }
+
+    [Fact]
+    public void Deferred_occurrence_is_delivered_at_quiet_hours_end_and_then_recurrence_advances()
+    {
+        var reminder = ReminderBuilder.AtLocalTime(23, 0)
+            .WithQuietHours(new QuietHours(true, new TimeOnly(22, 0), new TimeOnly(7, 0)))
+            .Build();
+        var quietTime = DateTimeOffset.Parse("2026-09-11T23:00:00Z");
+        var quietResult = ReminderScheduler.Reconcile(
+            reminder,
+            quietTime,
+            quietTime,
+            TimeZoneInfo.Utc);
+
+        Assert.Empty(quietResult.DueNow);
+        Assert.Equal(DateTimeOffset.Parse("2026-09-12T07:00:00Z"), quietResult.NextUtc);
+
+        var deferredReminder = reminder with { NextDueUtc = quietResult.NextUtc!.Value };
+        var allowedTime = quietResult.NextUtc.Value;
+        var allowedResult = ReminderScheduler.Reconcile(
+            deferredReminder,
+            allowedTime,
+            allowedTime,
+            TimeZoneInfo.Utc);
+
+        Assert.Single(allowedResult.DueNow);
+        Assert.Equal(allowedTime, allowedResult.DueNow[0].DueUtc);
+        Assert.Equal(DateTimeOffset.Parse("2026-09-13T07:00:00Z"), allowedResult.NextUtc);
+    }
+
+    [Fact]
+    public void Quiet_hours_fall_back_boundary_uses_the_earlier_UTC_instant()
+    {
+        var result = QuietHoursPolicy.NextAllowedUtc(
+            DateTimeOffset.Parse("2026-11-01T07:30:00Z"),
+            new QuietHours(true, new TimeOnly(23, 0), new TimeOnly(1, 0)),
+            FindPacificTimeZone());
+
+        Assert.Equal(DateTimeOffset.Parse("2026-11-01T08:00:00Z"), result);
+    }
+
+    private static TimeZoneInfo FindPacificTimeZone()
+    {
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById("Pacific Standard Time");
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById("America/Los_Angeles");
+        }
+    }
+
     private sealed class ReminderBuilder
     {
         private RecurrenceRule _rule;

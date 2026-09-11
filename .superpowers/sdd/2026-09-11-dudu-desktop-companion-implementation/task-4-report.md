@@ -110,3 +110,73 @@ Modified:
 ## Commit
 
 Commit: `feat: schedule recurring and missed reminders` (the Task 4 implementation commit containing this report)
+
+## Fix round 1 evidence
+
+### RED
+
+Added focused regressions for exact-boundary daily and interval recurrence, two-step quiet-hour deferral recovery, ambiguous fall-back quiet-hour resolution, repository/sink ordering and failure behavior, and cancellation-token propagation.
+
+Command:
+
+```text
+/Users/zaneyu/Documents/Codex/2026-09-11/https-www-tiktok-com-andi-o/work/dotnet-sdk/dotnet test --project tests/Dudu.Core.Tests/Dudu.Core.Tests.csproj --filter FullyQualifiedName~Reminder
+```
+
+Exact failing summary:
+
+```text
+failed ...ReminderSchedulerTests.Daily_occurrence_at_exact_now_advances_to_the_next_day
+  Expected: 2026-09-12T09:00:00.0000000+00:00
+  Actual:   2026-09-11T09:00:00.0000000+00:00
+failed ...ReminderSchedulerTests.Interval_occurrence_at_exact_now_advances_by_one_period
+  Expected: 2026-09-11T10:00:00.0000000+00:00
+  Actual:   2026-09-11T08:00:00.0000000+00:00
+failed ...ReminderSchedulerTests.Deferred_occurrence_is_delivered_at_quiet_hours_end_and_then_recurrence_advances
+  Assert.Single() Failure: The collection was empty
+failed ...ReminderSchedulerTests.Quiet_hours_fall_back_boundary_uses_the_earlier_UTC_instant
+  Expected: 2026-11-01T08:00:00.0000000+00:00
+  Actual:   2026-11-01T09:00:00.0000000+00:00
+... failed with 4 error(s)
+exit_code=2
+```
+
+The engine regression tests were already passing in this RED run, establishing the missing coverage before the implementation changes.
+
+### GREEN
+
+Focused command/output:
+
+```text
+/Users/zaneyu/Documents/Codex/2026-09-11/https-www-tiktok-com-andi-o/work/dotnet-sdk/dotnet test --project tests/Dudu.Core.Tests/Dudu.Core.Tests.csproj --filter FullyQualifiedName~Reminder
+
+Test run summary: Passed!
+  total: 19
+  failed: 0
+  succeeded: 19
+  skipped: 0
+exit_code=0
+```
+
+Full Core Release command/output:
+
+```text
+/Users/zaneyu/Documents/Codex/2026-09-11/https-www-tiktok-com-andi-o/work/dotnet-sdk/dotnet test --project tests/Dudu.Core.Tests/Dudu.Core.Tests.csproj -c Release
+
+Test run summary: Passed!
+  total: 30
+  failed: 0
+  succeeded: 30
+  skipped: 0
+exit_code=0
+```
+
+### Fixes and review
+
+- Equal `deferredDueUtc == nowUtc` is no longer retained; recurrence advances at exact boundaries.
+- Reconciliation recognizes persisted `NextDueUtc` as the pending occurrence, including a quiet-hour-deferred timestamp, before calculating the next recurrence.
+- `ReminderEngineTests` verify record-before-notify ordering, zero notifications after repository failure, repository cancellation propagation, and sink cancellation propagation.
+- `QuietHoursPolicy` now resolves ambiguous local boundaries to the earlier UTC instant, matching Task 4 recurrence resolution.
+- `git diff --check` passed.
+- No controller/host integration was added; that remains Task 8 scope.
+- Test restore generated `src/Dudu.Core/packages.lock.json` and `tests/Dudu.Core.Tests/packages.lock.json`; neither was staged or committed because the project does not intentionally require them.
