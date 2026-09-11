@@ -44,7 +44,7 @@ public static class QuietHoursPolicy
         }
 
         var local = TimeZoneInfo.ConvertTime(utc, timeZone);
-        var localDate = local.Date;
+        var localDate = DateOnly.FromDateTime(local.DateTime);
         var localTime = TimeOnly.FromDateTime(local.DateTime);
 
         if (quietHours.Start != quietHours.End && !IsQuiet(local, quietHours))
