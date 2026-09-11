@@ -15,9 +15,11 @@ public interface ILocalNoteRepository
         int count,
         CancellationToken cancellationToken);
 
-    Task RecordShownAsync(
+    Task<bool> TryRecordShownAsync(
         string noteId,
         DateTimeOffset shownUtc,
+        DateOnly localDate,
+        int dailyLimit,
         bool unsolicited,
         CancellationToken cancellationToken);
 }

@@ -132,6 +132,64 @@ public sealed class CompanionFeatureTests
         Assert.Equal(TimeSpan.FromDays(2), display.Remaining);
     }
 
+    [Fact]
+    public void Countdown_uses_configured_local_date_when_utc_date_differs()
+    {
+        var localTimeZone = TimeZoneInfo.CreateCustomTimeZone(
+            "local",
+            TimeSpan.FromHours(-8),
+            "local",
+            "local");
+        var countdown = new Countdown(
+            "birthday",
+            "Birthday",
+            new DateOnly(2026, 9, 12),
+            localTimeZone);
+
+        var display = CountdownService.GetDisplay(
+            countdown,
+            DateTimeOffset.Parse("2026-09-12T01:00:00Z"));
+
+        Assert.Equal(1, display.CalendarDays);
+        Assert.Equal(TimeSpan.FromDays(1), display.Remaining);
+    }
+
+    [Fact]
+    public async Task Automatic_cap_is_scoped_to_the_supplied_local_date()
+    {
+        var fixture = NoteFixture.WithNotesAndLimit(1, "one", "two", "three");
+        fixture.Clock.LocalTimeZone = TimeZoneInfo.CreateCustomTimeZone(
+            "local",
+            TimeSpan.FromHours(-7),
+            "local",
+            "local");
+        await fixture.RecordShownAsync(
+            "one",
+            count: 1,
+            localDate: new DateOnly(2026, 9, 10));
+
+        var result = await fixture.Selector.SelectAsync(
+            manualRequest: false,
+            fixture.CancellationToken);
+
+        Assert.NotNull(result);
+    }
+
+    [Fact]
+    public async Task Concurrent_unsolicited_requests_cannot_exceed_daily_cap()
+    {
+        var fixture = NoteFixture.WithNotesAndLimit(1, "one", "two", "three");
+        var cancellationToken = fixture.CancellationToken;
+
+        var results = await Task.WhenAll(
+            Task.Run(() => fixture.Selector.SelectAsync(false, cancellationToken)),
+            Task.Run(() => fixture.Selector.SelectAsync(false, cancellationToken)));
+
+        Assert.Single(results, result => result is not null);
+        Assert.Single(fixture.Repository.Shown);
+        Assert.True(fixture.Repository.Shown[0].IsUnsolicited);
+    }
+
     private sealed class NoteFixture
     {
         private NoteFixture(
@@ -150,6 +208,9 @@ public sealed class CompanionFeatureTests
         public CancellationToken CancellationToken => TestContext.Current.CancellationToken;
 
         public static NoteFixture WithNotes(params string[] ids)
+            => WithNotesAndLimit(3, ids);
+
+        public static NoteFixture WithNotesAndLimit(int dailyLimit, params string[] ids)
         {
             var clock = new FakeClock("2026-09-11T10:00:00Z");
             var repository = new InMemoryLocalNoteRepository(
@@ -158,7 +219,7 @@ public sealed class CompanionFeatureTests
                 AppTheme.System,
                 new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
                 false,
-                3,
+                dailyLimit,
                 false,
                 false,
                 false,
@@ -171,13 +232,18 @@ public sealed class CompanionFeatureTests
             return new NoteFixture(repository, selector, clock);
         }
 
-        public async Task RecordShownAsync(string id, int count)
+        public async Task RecordShownAsync(
+            string id,
+            int count,
+            DateOnly? localDate = null)
         {
             for (var index = 0; index < count; index++)
             {
-                await Repository.RecordShownAsync(
+                await Repository.TryRecordShownAsync(
                     id,
                     Clock.UtcNow,
+                    localDate ?? DateOnly.FromDateTime(Clock.UtcNow.DateTime),
+                    dailyLimit: 3,
                     unsolicited: true,
                     CancellationToken);
             }
@@ -196,19 +262,24 @@ public sealed class CompanionFeatureTests
                 fixture.CancellationToken);
 
             Assert.NotNull(result);
+            Assert.False(fixture.Repository.Shown[^1].IsUnsolicited);
         }
 
         public static async Task RecentIdsAreExcludedAsync(int count)
         {
             var fixture = NoteFixture.WithNotes("one", "two", "three");
-            await fixture.Repository.RecordShownAsync(
+            await fixture.Repository.TryRecordShownAsync(
                 "one",
                 fixture.Clock.UtcNow,
+                DateOnly.FromDateTime(fixture.Clock.UtcNow.DateTime),
+                dailyLimit: 3,
                 unsolicited: false,
                 fixture.CancellationToken);
-            await fixture.Repository.RecordShownAsync(
+            await fixture.Repository.TryRecordShownAsync(
                 "two",
                 fixture.Clock.UtcNow.AddMinutes(1),
+                DateOnly.FromDateTime(fixture.Clock.UtcNow.DateTime),
+                dailyLimit: 3,
                 unsolicited: false,
                 fixture.CancellationToken);
 
@@ -233,7 +304,7 @@ public sealed class CompanionFeatureTests
     {
         public DateTimeOffset UtcNow { get; } = DateTimeOffset.Parse(initialUtc).ToUniversalTime();
 
-        public TimeZoneInfo LocalTimeZone { get; init; } = TimeZoneInfo.Utc;
+        public TimeZoneInfo LocalTimeZone { get; set; } = TimeZoneInfo.Utc;
     }
 
     private sealed class FixedRandomSource : IRandomSource
@@ -260,7 +331,11 @@ public sealed class CompanionFeatureTests
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            return Task.FromResult(_shown.Count(item => item.IsUnsolicited));
+            lock (_shown)
+            {
+                return Task.FromResult(_shown.Count(item =>
+                    item.IsUnsolicited && item.LocalDate == localDate));
+            }
         }
 
         public Task<IReadOnlyList<string>> GetMostRecentShownIdsAsync(
@@ -268,22 +343,37 @@ public sealed class CompanionFeatureTests
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            return Task.FromResult<IReadOnlyList<string>>(_shown
-                .OrderByDescending(item => item.ShownUtc)
-                .Take(count)
-                .Select(item => item.NoteId)
-                .ToArray());
+            lock (_shown)
+            {
+                return Task.FromResult<IReadOnlyList<string>>(_shown
+                    .OrderByDescending(item => item.ShownUtc)
+                    .Take(count)
+                    .Select(item => item.NoteId)
+                    .ToArray());
+            }
         }
 
-        public Task RecordShownAsync(
+        public Task<bool> TryRecordShownAsync(
             string noteId,
             DateTimeOffset shownUtc,
+            DateOnly localDate,
+            int dailyLimit,
             bool unsolicited,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            _shown.Add(new ShownNote(noteId, shownUtc, unsolicited));
-            return Task.CompletedTask;
+            lock (_shown)
+            {
+                if (unsolicited
+                    && _shown.Count(item =>
+                        item.IsUnsolicited && item.LocalDate == localDate) >= dailyLimit)
+                {
+                    return Task.FromResult(false);
+                }
+
+                _shown.Add(new ShownNote(noteId, shownUtc, localDate, unsolicited));
+                return Task.FromResult(true);
+            }
         }
 
         public Task<int> RecentIdsCountAsync(int count) =>
@@ -314,5 +404,9 @@ public sealed class CompanionFeatureTests
         }
     }
 
-    private sealed record ShownNote(string NoteId, DateTimeOffset ShownUtc, bool IsUnsolicited);
+    private sealed record ShownNote(
+        string NoteId,
+        DateTimeOffset ShownUtc,
+        DateOnly LocalDate,
+        bool IsUnsolicited);
 }

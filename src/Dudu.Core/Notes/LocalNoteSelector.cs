@@ -37,7 +37,8 @@ public sealed class LocalNoteSelector
         bool manualRequest,
         CancellationToken cancellationToken = default)
     {
-        var localDate = LocalDate(_clock.UtcNow);
+        var shownUtc = _clock.UtcNow.ToUniversalTime();
+        var localDate = LocalDate(shownUtc);
         if (!manualRequest)
         {
             var unsolicitedCount = await _repository.CountUnsolicitedShownAsync(
@@ -69,12 +70,14 @@ public sealed class LocalNoteSelector
         }
 
         var selected = eligible[NextIndex(eligible.Length)];
-        await _repository.RecordShownAsync(
+        var recorded = await _repository.TryRecordShownAsync(
             selected.Id,
-            _clock.UtcNow.ToUniversalTime(),
+            shownUtc,
+            localDate,
+            _dailyLimit,
             unsolicited: !manualRequest,
             cancellationToken);
-        return selected;
+        return recorded ? selected : null;
     }
 
     private int NextIndex(int exclusiveMax)

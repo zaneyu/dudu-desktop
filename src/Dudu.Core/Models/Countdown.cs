@@ -7,13 +7,15 @@ public sealed record Countdown
         string title,
         DateTimeOffset? targetUtc,
         DateOnly? targetDate,
-        bool isAllDay = false)
+        bool isAllDay = false,
+        TimeZoneInfo? localTimeZone = null)
     {
         Id = id;
         Title = title;
         TargetUtc = targetUtc?.ToUniversalTime();
         TargetDate = targetDate;
         IsAllDay = isAllDay || targetDate is not null;
+        LocalTimeZone = localTimeZone ?? TimeZoneInfo.Local;
     }
 
     public Countdown(string id, string title)
@@ -21,18 +23,33 @@ public sealed record Countdown
     {
     }
 
-    public Countdown(string id, string title, DateTimeOffset? targetUtc, bool isAllDay)
-        : this(id, title, targetUtc, null, isAllDay)
+    public Countdown(
+        string id,
+        string title,
+        DateTimeOffset? targetUtc,
+        bool isAllDay,
+        TimeZoneInfo? localTimeZone = null)
+        : this(id, title, targetUtc, null, isAllDay, localTimeZone)
     {
     }
 
-    public Countdown(string id, string title, DateOnly? targetDate, bool isAllDay)
-        : this(id, title, null, targetDate, isAllDay)
+    public Countdown(
+        string id,
+        string title,
+        DateOnly? targetDate,
+        bool isAllDay,
+        TimeZoneInfo? localTimeZone = null)
+        : this(id, title, null, targetDate, isAllDay, localTimeZone)
     {
     }
 
     public Countdown(string id, string title, DateOnly targetDate)
         : this(id, title, null, targetDate, true)
+    {
+    }
+
+    public Countdown(string id, string title, DateOnly targetDate, TimeZoneInfo localTimeZone)
+        : this(id, title, null, targetDate, true, localTimeZone)
     {
     }
 
@@ -46,8 +63,9 @@ public sealed record Countdown
         string title,
         DateOnly? targetDate,
         DateTimeOffset? targetUtc,
-        bool isAllDay = false)
-        : this(id, title, targetUtc, targetDate, isAllDay)
+        bool isAllDay = false,
+        TimeZoneInfo? localTimeZone = null)
+        : this(id, title, targetUtc, targetDate, isAllDay, localTimeZone)
     {
     }
 
@@ -60,6 +78,8 @@ public sealed record Countdown
     public DateOnly? TargetDate { get; }
 
     public bool IsAllDay { get; }
+
+    public TimeZoneInfo LocalTimeZone { get; }
 }
 
 public sealed record CountdownDisplay(TimeSpan Remaining, int CalendarDays)
