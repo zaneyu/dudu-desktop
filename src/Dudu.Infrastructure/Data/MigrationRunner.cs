@@ -1,0 +1,153 @@
+using System.Reflection;
+using Microsoft.Data.Sqlite;
+
+namespace Dudu.Infrastructure.Data;
+
+public sealed record MigrationDefinition(int Version, string Sql);
+
+public sealed class MigrationRunner
+{
+    private readonly DatabaseOptions _options;
+    private readonly DatabaseBackupService _backups;
+    private readonly List<MigrationDefinition> _migrations = [];
+
+    public MigrationRunner(
+        DatabaseOptions options,
+        DatabaseBackupService? backups = null,
+        IEnumerable<MigrationDefinition>? migrations = null)
+    {
+        _options = options ?? throw new ArgumentNullException(nameof(options));
+        _backups = backups ?? new DatabaseBackupService(options);
+        _migrations.AddRange(migrations ?? LoadEmbeddedMigrations());
+    }
+
+    public IReadOnlyList<MigrationDefinition> Migrations => _migrations;
+
+    public void AddMigration(int version, string sql)
+    {
+        if (version <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(version));
+        }
+
+        ArgumentException.ThrowIfNullOrWhiteSpace(sql);
+        _migrations.RemoveAll(migration => migration.Version == version);
+        _migrations.Add(new MigrationDefinition(version, sql));
+        _migrations.Sort((left, right) => left.Version.CompareTo(right.Version));
+    }
+
+    public async Task RunAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        Database.ConfigureConnection(connection);
+
+        var currentVersion = await ReadVersionAsync(connection, cancellationToken);
+        foreach (var migration in _migrations.OrderBy(migration => migration.Version))
+        {
+            if (migration.Version <= currentVersion)
+            {
+                continue;
+            }
+
+            if (File.Exists(_options.DatabasePath))
+            {
+                await _backups.CreatePreMigrationBackupAsync(connection, cancellationToken);
+            }
+
+            await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+            try
+            {
+                await using (var command = connection.CreateCommand())
+                {
+                    command.Transaction = transaction;
+                    command.CommandText = migration.Sql;
+                    await command.ExecuteNonQueryAsync(cancellationToken);
+                }
+
+                await using (var versionCommand = connection.CreateCommand())
+                {
+                    versionCommand.Transaction = transaction;
+                    versionCommand.CommandText = """
+                        INSERT INTO schema_version (id, version)
+                        VALUES (1, $version)
+                        ON CONFLICT(id) DO UPDATE SET version = excluded.version;
+                        """;
+                    versionCommand.Parameters.AddWithValue("$version", migration.Version);
+                    await versionCommand.ExecuteNonQueryAsync(cancellationToken);
+                }
+
+                await transaction.CommitAsync(cancellationToken);
+                currentVersion = migration.Version;
+            }
+            catch
+            {
+                await transaction.RollbackAsync(CancellationToken.None);
+                throw;
+            }
+        }
+    }
+
+    public Task RunMigrationsAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken = default) =>
+        RunAsync(connection, cancellationToken);
+
+    public async Task RunAsync(CancellationToken cancellationToken = default)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(_options.DatabasePath)
+            ?? throw new InvalidOperationException("The database path has no directory."));
+        await using var connection = new SqliteConnection(Database.ConnectionString(_options));
+        await connection.OpenAsync(cancellationToken);
+        Database.ConfigureConnection(connection);
+        await using (var journalMode = connection.CreateCommand())
+        {
+            journalMode.CommandText = "PRAGMA journal_mode=WAL;";
+            await journalMode.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await RunAsync(connection, cancellationToken);
+    }
+
+    public Task RunMigrationsAsync(CancellationToken cancellationToken = default) =>
+        RunAsync(cancellationToken);
+
+    private static async Task<int> ReadVersionAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var exists = connection.CreateCommand();
+        exists.CommandText = """
+            SELECT COUNT(*) FROM sqlite_master
+            WHERE type = 'table' AND name = 'schema_version';
+            """;
+        var tableExists = Convert.ToInt32(await exists.ExecuteScalarAsync(cancellationToken)) > 0;
+        if (!tableExists)
+        {
+            return 0;
+        }
+
+        await using var version = connection.CreateCommand();
+        version.CommandText = "SELECT COALESCE(MAX(version), 0) FROM schema_version;";
+        return Convert.ToInt32(await version.ExecuteScalarAsync(cancellationToken));
+    }
+
+    private static IReadOnlyList<MigrationDefinition> LoadEmbeddedMigrations()
+    {
+        var assembly = typeof(MigrationRunner).Assembly;
+        return assembly.GetManifestResourceNames()
+            .Where(name => name.Contains(".Data.Migrations.", StringComparison.Ordinal)
+                && name.EndsWith(".sql", StringComparison.OrdinalIgnoreCase))
+            .Select(name =>
+            {
+                var migrationName = name[(name.IndexOf(".Migrations.", StringComparison.Ordinal) + ".Migrations.".Length)..];
+                var versionText = migrationName[..migrationName.IndexOf('_')];
+                using var stream = assembly.GetManifestResourceStream(name)
+                    ?? throw new InvalidOperationException($"Embedded migration '{name}' was not found.");
+                using var reader = new StreamReader(stream);
+                return new MigrationDefinition(int.Parse(versionText), reader.ReadToEnd());
+            })
+            .OrderBy(migration => migration.Version)
+            .ToArray();
+    }
+}

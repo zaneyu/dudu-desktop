@@ -3,4 +3,5 @@
   <Project Path="src/Dudu.Infrastructure/Dudu.Infrastructure.csproj" />
   <Project Path="src/Dudu.App/Dudu.App.csproj" />
   <Project Path="tests/Dudu.Core.Tests/Dudu.Core.Tests.csproj" />
+  <Project Path="tests/Dudu.Infrastructure.Tests/Dudu.Infrastructure.Tests.csproj" />
 </Solution>
