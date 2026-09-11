@@ -179,11 +179,12 @@ public sealed class CompanionFeatureTests
     public async Task Concurrent_unsolicited_requests_cannot_exceed_daily_cap()
     {
         var fixture = NoteFixture.WithNotesAndLimit(1, "one", "two", "three");
+        fixture.Repository.EnableTwoParticipantRecordBarrier();
         var cancellationToken = fixture.CancellationToken;
 
-        var results = await Task.WhenAll(
-            Task.Run(() => fixture.Selector.SelectAsync(false, cancellationToken)),
-            Task.Run(() => fixture.Selector.SelectAsync(false, cancellationToken)));
+        var first = fixture.Selector.SelectAsync(false, cancellationToken);
+        var second = fixture.Selector.SelectAsync(false, cancellationToken);
+        var results = await Task.WhenAll(first, second);
 
         Assert.Single(results, result => result is not null);
         Assert.Single(fixture.Repository.Shown);
@@ -316,8 +317,17 @@ public sealed class CompanionFeatureTests
         IReadOnlyList<LocalLoveNote> notes) : ILocalNoteRepository
     {
         private readonly List<ShownNote> _shown = [];
+        private TaskCompletionSource<bool>? _recordGate;
+        private int _recordParticipants;
 
         public IReadOnlyList<ShownNote> Shown => _shown;
+
+        public void EnableTwoParticipantRecordBarrier()
+        {
+            _recordGate = new TaskCompletionSource<bool>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            _recordParticipants = 0;
+        }
 
         public Task<IReadOnlyList<LocalLoveNote>> ListEnabledAsync(CancellationToken cancellationToken)
         {
@@ -354,6 +364,68 @@ public sealed class CompanionFeatureTests
         }
 
         public Task<bool> TryRecordShownAsync(
+            string noteId,
+            DateTimeOffset shownUtc,
+            DateOnly localDate,
+            int dailyLimit,
+            bool unsolicited,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var recordGate = _recordGate;
+            if (unsolicited && recordGate is not null)
+            {
+                var participant = Interlocked.Increment(ref _recordParticipants);
+                if (participant > 2)
+                {
+                    throw new InvalidOperationException(
+                        "The two-participant record barrier received an unexpected call.");
+                }
+
+                if (participant == 2)
+                {
+                    recordGate.TrySetResult(true);
+                }
+
+                return RecordAfterBarrierAsync(
+                    recordGate,
+                    noteId,
+                    shownUtc,
+                    localDate,
+                    dailyLimit,
+                    unsolicited,
+                    cancellationToken);
+            }
+
+            return RecordCore(
+                noteId,
+                shownUtc,
+                localDate,
+                dailyLimit,
+                unsolicited,
+                cancellationToken);
+        }
+
+        private async Task<bool> RecordAfterBarrierAsync(
+            TaskCompletionSource<bool> recordGate,
+            string noteId,
+            DateTimeOffset shownUtc,
+            DateOnly localDate,
+            int dailyLimit,
+            bool unsolicited,
+            CancellationToken cancellationToken)
+        {
+            await recordGate.Task.WaitAsync(cancellationToken);
+            return await RecordCore(
+                noteId,
+                shownUtc,
+                localDate,
+                dailyLimit,
+                unsolicited,
+                cancellationToken);
+        }
+
+        private Task<bool> RecordCore(
             string noteId,
             DateTimeOffset shownUtc,
             DateOnly localDate,
