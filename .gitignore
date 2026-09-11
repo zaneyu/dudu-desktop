@@ -1,0 +1,26 @@
+# .NET and build output
+bin/
+obj/
+TestResults/
+artifacts/
+*.nupkg
+*.snupkg
+
+# Visual Studio and Rider
+.vs/
+.idea/
+*.user
+*.suo
+
+# Node, Cloudflare, and local web output
+node_modules/
+.wrangler/
+relay/public/dist/
+
+# Private asset staging
+assets/raw/*
+!assets/raw/.gitkeep
+
+# Operating-system files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="src/Dudu.Core/Dudu.Core.csproj" />
+  <Project Path="src/Dudu.Infrastructure/Dudu.Infrastructure.csproj" />
+  <Project Path="src/Dudu.App/Dudu.App.csproj" />
+  <Project Path="tests/Dudu.Core.Tests/Dudu.Core.Tests.csproj" />
+</Solution>
