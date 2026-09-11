@@ -51,7 +51,8 @@ public sealed class PetStateMachine
                 break;
 
             case PetEvent.FocusEnded focus:
-                if (_focusId is null || string.Equals(_focusId, focus.FocusId, StringComparison.Ordinal))
+                if (_focusId is not null
+                    && string.Equals(_focusId, focus.FocusId, StringComparison.Ordinal))
                 {
                     _focusId = null;
                     _focusTransition = "focus-end";
@@ -87,7 +88,11 @@ public sealed class PetStateMachine
                 break;
 
             case PetEvent.PresentationAcknowledged:
-                _focusTransition = null;
+                if (_current.State == PetState.FocusTransition)
+                {
+                    _focusTransition = null;
+                }
+
                 break;
 
             default:
@@ -140,35 +145,44 @@ public sealed class PetStateMachine
 
     private void Dismiss(string itemId)
     {
+        if (_remoteMessageIds.Remove(itemId))
+        {
+            return;
+        }
+
+        if (_dueReminderIds.Remove(itemId))
+        {
+            return;
+        }
+
         if (string.Equals(itemId, "comfort", StringComparison.Ordinal)
             || string.Equals(itemId, "comfort-hug", StringComparison.Ordinal))
         {
             _comfortActive = false;
+
+            return;
         }
 
         if (string.Equals(itemId, "focus-end", StringComparison.Ordinal)
             || string.Equals(itemId, "focus-transition", StringComparison.Ordinal))
         {
             _focusTransition = null;
+
+            return;
         }
 
         if (string.Equals(itemId, "welcome-back", StringComparison.Ordinal)
             || string.Equals(itemId, "greeting", StringComparison.Ordinal))
         {
             _welcomeBackPending = false;
+
+            return;
         }
 
         if (string.Equals(itemId, _ambientAnimation, StringComparison.Ordinal))
         {
             _ambientAnimation = null;
         }
-
-        if (_remoteMessageIds.Remove(itemId))
-        {
-            return;
-        }
-
-        _dueReminderIds.Remove(itemId);
     }
 
     private bool IsFocusActive() => _focusId is not null;
