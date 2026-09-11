@@ -1,4 +1,5 @@
 using Dudu.Core;
+using Xunit;
 
 namespace Dudu.Core.Tests;
 
