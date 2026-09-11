@@ -60,13 +60,6 @@ public sealed class FocusService
             }
         }
 
-        var active = await _repository.GetActiveAsync(cancellationToken);
-        if (active is not null)
-        {
-            throw new InvalidOperationException(
-                "Cannot start a focus session while another focus session is active.");
-        }
-
         var now = UtcNow();
         var session = new FocusSession(
             Guid.NewGuid(),
@@ -77,7 +70,12 @@ public sealed class FocusService
             FocusStatus.Running,
             now);
 
-        await _repository.SaveAsync(session, cancellationToken);
+        if (!await _repository.TryCreateActiveAsync(session, cancellationToken))
+        {
+            throw new InvalidOperationException(
+                "Cannot start a focus session while another focus session is active.");
+        }
+
         return ToSnapshot(session, now);
     }
 
@@ -105,7 +103,11 @@ public sealed class FocusService
             Status = FocusStatus.Paused,
             UpdatedUtc = now,
         };
-        await _repository.SaveAsync(paused, cancellationToken);
+        if (!await _repository.TryCompareAndSetAsync(session, paused, cancellationToken))
+        {
+            throw TransitionConflict("pause");
+        }
+
         return ToSnapshot(paused, now);
     }
 
@@ -126,7 +128,11 @@ public sealed class FocusService
             Status = FocusStatus.Running,
             UpdatedUtc = now,
         };
-        await _repository.SaveAsync(resumed, cancellationToken);
+        if (!await _repository.TryCompareAndSetAsync(session, resumed, cancellationToken))
+        {
+            throw TransitionConflict("resume");
+        }
+
         return ToSnapshot(resumed, now);
     }
 
@@ -169,7 +175,11 @@ public sealed class FocusService
             throw InvalidTransition("extend", session.Status);
         }
 
-        await _repository.SaveAsync(extended, cancellationToken);
+        if (!await _repository.TryCompareAndSetAsync(session, extended, cancellationToken))
+        {
+            throw TransitionConflict("extend");
+        }
+
         return ToSnapshot(extended, now);
     }
 
@@ -192,8 +202,7 @@ public sealed class FocusService
             Status = FocusStatus.Completed,
             UpdatedUtc = now,
         };
-        await _repository.SaveAsync(completed, cancellationToken);
-        return true;
+        return await _repository.TryCompareAndSetAsync(session, completed, cancellationToken);
     }
 
     public async Task<bool> CompleteExpiredAsync(CancellationToken cancellationToken)
@@ -216,7 +225,11 @@ public sealed class FocusService
             Status = FocusStatus.EndedEarly,
             UpdatedUtc = now,
         };
-        await _repository.SaveAsync(ended, cancellationToken);
+        if (!await _repository.TryCompareAndSetAsync(session, ended, cancellationToken))
+        {
+            throw TransitionConflict("end");
+        }
+
         return ToSnapshot(ended, now);
     }
 
@@ -260,4 +273,7 @@ public sealed class FocusService
 
     private static InvalidOperationException InvalidTransition(string transition, FocusStatus status) =>
         new($"Cannot {transition} a focus session in {status} status.");
+
+    private static InvalidOperationException TransitionConflict(string transition) =>
+        new($"Cannot {transition} focus session because it changed before the transition was saved.");
 }

@@ -49,6 +49,35 @@ public sealed class FocusServiceTests
     }
 
     [Fact]
+    public async Task Concurrent_starts_allow_exactly_one_session()
+    {
+        var clock = new FakeClock("2026-09-11T10:00:00Z");
+        var repository = new InMemoryFocusRepository
+        {
+            CoordinateAtomicCreates = true,
+        };
+        var first = new FocusService(repository, clock);
+        var second = new FocusService(repository, clock);
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        var results = await Task.WhenAll(
+            Task.Run(() => CaptureAsync(() => first.StartAsync(
+                    null,
+                    TimeSpan.FromMinutes(25),
+                    cancellationToken))),
+            Task.Run(() => CaptureAsync(() => second.StartAsync(
+                    null,
+                    TimeSpan.FromMinutes(25),
+                    cancellationToken))));
+
+        Assert.Equal(1, results.Count(result => result.Succeeded));
+        Assert.Equal(1, results.Count(result =>
+            result.Exception is InvalidOperationException exception &&
+            exception.Message.Contains("another focus session is active", StringComparison.Ordinal)));
+        Assert.Single(repository.Sessions);
+    }
+
+    [Fact]
     public async Task Extension_moves_end_time_by_requested_duration()
     {
         var fixture = FocusFixture.Started(TimeSpan.FromMinutes(25));
@@ -81,6 +110,27 @@ public sealed class FocusServiceTests
 
         Assert.True(await fixture.Service.CompleteExpiredAsync(fixture.SessionId, fixture.CancellationToken));
         Assert.False(await fixture.Service.CompleteExpiredAsync(fixture.SessionId, fixture.CancellationToken));
+        Assert.Equal(FocusStatus.Completed, fixture.Repository.Sessions[fixture.SessionId].Status);
+    }
+
+    [Fact]
+    public async Task Concurrent_expiry_completions_return_true_exactly_once()
+    {
+        var fixture = FocusFixture.Started(TimeSpan.FromMinutes(25));
+        fixture.Repository.CoordinateReads = true;
+        fixture.Clock.Advance(TimeSpan.FromMinutes(25));
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        var results = await Task.WhenAll(
+            Task.Run(() => fixture.Service.CompleteExpiredAsync(
+                fixture.SessionId,
+                cancellationToken)),
+            Task.Run(() => fixture.Service.CompleteExpiredAsync(
+                fixture.SessionId,
+                cancellationToken)));
+
+        Assert.Equal(1, results.Count(result => result));
+        Assert.Equal(2, fixture.Repository.CompareAndSetAttempts);
         Assert.Equal(FocusStatus.Completed, fixture.Repository.Sessions[fixture.SessionId].Status);
     }
 
@@ -169,20 +219,136 @@ public sealed class FocusServiceTests
 
     private sealed class InMemoryFocusRepository : IFocusSessionRepository
     {
+        private readonly object _gate = new();
+        private readonly TaskCompletionSource<bool> _readGate =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<bool> _createGate =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public Dictionary<Guid, FocusSession> Sessions { get; } = [];
 
-        public Task<FocusSession?> GetAsync(Guid id, CancellationToken cancellationToken) =>
-            Task.FromResult(Sessions.GetValueOrDefault(id));
+        public bool CoordinateAtomicCreates { get; init; }
 
-        public Task<FocusSession?> GetActiveAsync(CancellationToken cancellationToken) =>
-            Task.FromResult(Sessions.Values.FirstOrDefault(session =>
-                session.Status is FocusStatus.Running or FocusStatus.Paused));
+        public bool CoordinateReads { get; set; }
+
+        public int CompareAndSetAttempts { get; private set; }
+
+        private int _readers;
+        private int _creators;
+
+        public async Task<FocusSession?> GetAsync(Guid id, CancellationToken cancellationToken)
+        {
+            FocusSession? session;
+            var waitForReaders = false;
+            lock (_gate)
+            {
+                session = Sessions.GetValueOrDefault(id);
+                if (CoordinateReads && _readers++ < 2)
+                {
+                    waitForReaders = true;
+                    if (_readers == 2)
+                    {
+                        _readGate.TrySetResult(true);
+                    }
+                }
+            }
+
+            if (waitForReaders)
+            {
+                await _readGate.Task;
+            }
+
+            return session;
+        }
+
+        public Task<FocusSession?> GetActiveAsync(CancellationToken cancellationToken)
+        {
+            lock (_gate)
+            {
+                return Task.FromResult(Sessions.Values.FirstOrDefault(session =>
+                    session.Status is FocusStatus.Running or FocusStatus.Paused));
+            }
+        }
+
+        public async Task<bool> TryCreateActiveAsync(
+            FocusSession session,
+            CancellationToken cancellationToken)
+        {
+            var waitForCreators = false;
+            lock (_gate)
+            {
+                if (CoordinateAtomicCreates && _creators++ < 2)
+                {
+                    waitForCreators = true;
+                    if (_creators == 2)
+                    {
+                        _createGate.TrySetResult(true);
+                    }
+                }
+            }
+
+            if (waitForCreators)
+            {
+                await _createGate.Task;
+            }
+
+            lock (_gate)
+            {
+                if (Sessions.Values.Any(existing =>
+                    existing.Status is FocusStatus.Running or FocusStatus.Paused))
+                {
+                    return false;
+                }
+
+                Sessions[session.Id] = session;
+                return true;
+            }
+        }
+
+        public Task<bool> TryCompareAndSetAsync(
+            FocusSession expected,
+            FocusSession replacement,
+            CancellationToken cancellationToken)
+        {
+            lock (_gate)
+            {
+                CompareAndSetAttempts++;
+                if (!Sessions.TryGetValue(expected.Id, out var current) || current != expected)
+                {
+                    return Task.FromResult(false);
+                }
+
+                Sessions[replacement.Id] = replacement;
+                return Task.FromResult(true);
+            }
+        }
 
         public Task SaveAsync(FocusSession session, CancellationToken cancellationToken)
         {
-            Sessions[session.Id] = session;
+            lock (_gate)
+            {
+                Sessions[session.Id] = session;
+            }
+
             return Task.CompletedTask;
         }
+    }
+
+    private static async Task<StartResult> CaptureAsync(Func<Task<FocusSnapshot>> operation)
+    {
+        try
+        {
+            return new StartResult(await operation(), null);
+        }
+        catch (Exception exception)
+        {
+            return new StartResult(null, exception);
+        }
+    }
+
+    private sealed record StartResult(FocusSnapshot? Snapshot, Exception? Exception)
+    {
+        public bool Succeeded => Snapshot is not null;
     }
 
     private sealed class InMemoryTaskRepository : ITaskRepository
