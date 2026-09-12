@@ -15,9 +15,10 @@ namespace Dudu.App.Overlay;
 /// <summary>
 /// Owns one no-activate popup window and its message thread.
 /// </summary>
-public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
+public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAsyncDisposable
 {
     private const uint HostCommandMessage = PInvoke.WM_APP + 1;
+    private const uint ShutdownCommandMessage = PInvoke.WM_APP + 2;
     private const uint WmNcHitTest = 0x0084;
     private const uint WmMouseActivate = 0x0021;
     private const uint WmDpiChanged = 0x02E0;
@@ -35,6 +36,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
     private const nint HTCLIENT = 1;
     private const nint HTTRANSPARENT = -1;
     private const int ErrorAccessDenied = 5;
+    private static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(5);
     private static readonly object ClassGate = new();
     private static readonly string ClassName = "Dudu.DesktopCompanion.PetOverlay.v1";
     private static readonly ConcurrentDictionary<nint, OverlayWindowHost> Hosts = new();
@@ -67,6 +69,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
     private PixelRect _dragStartBounds;
     private bool _disposeRequested;
     private bool _shutdownIssued;
+    private int _shutdownRequestPosted;
     private int _ownerThreadId;
     private int _currentDpi = 96;
 
@@ -130,6 +133,10 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
 
     public bool IsVisible { get; private set; }
 
+    public static uint ShutdownMessageId => ShutdownCommandMessage;
+
+    public static bool IsShutdownMessage(uint message) => message == ShutdownCommandMessage;
+
     internal Task<OverlayWindowHost> CreationTask => _created.Task;
 
     internal void CancelCreation() => CancelStartup();
@@ -180,6 +187,26 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
         StopAndJoin();
     }
 
+    public ValueTask DisposeAsync()
+    {
+        CancelStartup();
+        if (_ownerThreadId == Environment.CurrentManagedThreadId)
+        {
+            ShutdownOnOwnerThread();
+            return ValueTask.CompletedTask;
+        }
+
+        return OverlayWindowHostLifecycle.WaitForStopAsync(this);
+    }
+
+    internal bool OwnerThreadIsAlive => _ownerThread.IsAlive;
+
+    internal Task StoppedTask => _stopped.Task;
+
+    internal bool JoinOwnerThread(TimeSpan timeout) => _ownerThread.Join(timeout);
+
+    internal void ReportDisposalTimeout(Exception exception) => ReportDiagnostic(exception);
+
     private void CancelStartup()
     {
         lock (_stateGate)
@@ -216,7 +243,11 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
 
         if (_ownerThread.IsAlive)
         {
-            _ownerThread.Join();
+            if (!_ownerThread.Join(ShutdownTimeout))
+            {
+                ReportDiagnostic(new TimeoutException(
+                    "Overlay owner thread did not stop before disposal timed out."));
+            }
         }
     }
 
@@ -227,8 +258,14 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
             return;
         }
 
-        if (!PInvoke.PostMessage(_window, HostCommandMessage, 0, 0))
+        if (Interlocked.Exchange(ref _shutdownRequestPosted, 1) != 0)
         {
+            return;
+        }
+
+        if (!PInvoke.PostMessage(_window, ShutdownCommandMessage, 0, 0))
+        {
+            Volatile.Write(ref _shutdownRequestPosted, 0);
             ReportDiagnostic(LastWin32Error("PostMessage(shutdown)"));
         }
     }
@@ -479,7 +516,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
 
     private IReadOnlyList<MonitorInfo> EnumerateMonitors()
     {
-        var context = new MonitorEnumerationContext();
+        var context = new MonitorEnumerationContext(ReportDiagnostic);
         var handle = GCHandle.Alloc(context);
         try
         {
@@ -531,14 +568,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
         if (_window.IsNull || !PInvoke.PostMessage(_window, HostCommandMessage, 0, 0))
         {
             ReportDiagnostic(LastWin32Error("PostMessage"));
-            try
-            {
-                _startupCancellation.Cancel();
-            }
-            catch (ObjectDisposedException)
-            {
-                // The owner thread completed between the queue check and PostMessage.
-            }
+            CancelStartup();
         }
     }
 
@@ -570,6 +600,9 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
     {
         switch (message)
         {
+            case ShutdownCommandMessage:
+                ShutdownOnOwnerThread();
+                break;
             case HostCommandMessage:
                 DrainOwnerActions();
                 break;
@@ -623,11 +656,13 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
             return;
         }
 
-        var captured = PInvoke.SetCapture(_window);
-        if ((nint)captured.Value != (nint)_window.Value
-            || (nint)PInvoke.GetCapture().Value != (nint)_window.Value)
+        if (!TryConfirmPointerCapture(
+                (nint)_window.Value,
+                hwnd => (nint)PInvoke.SetCapture(new HWND((void*)hwnd)).Value,
+                () => (nint)PInvoke.GetCapture().Value,
+                () => _ = PInvoke.ReleaseCapture()))
         {
-            ReportDiagnostic(LastWin32Error("SetCapture"));
+            ReportDiagnostic(new InvalidOperationException("SetCapture did not establish capture."));
             return;
         }
 
@@ -749,6 +784,30 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
         _presenter is LayeredFramePresenter layered
         && layered.IsInteractiveAt(x, y, _bubbleHitRegions);
 
+    public static bool TryConfirmPointerCapture(
+        nint hwnd,
+        Func<nint, nint> setCapture,
+        Func<nint> getCapture,
+        Action releaseCapture)
+    {
+        ArgumentNullException.ThrowIfNull(setCapture);
+        ArgumentNullException.ThrowIfNull(getCapture);
+        ArgumentNullException.ThrowIfNull(releaseCapture);
+        if (hwnd == 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(hwnd));
+        }
+
+        _ = setCapture(hwnd);
+        if (getCapture() == hwnd)
+        {
+            return true;
+        }
+
+        releaseCapture();
+        return false;
+    }
+
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvStdcall)])]
     private static unsafe BOOL MonitorCallback(
         HMONITOR monitor,
@@ -770,11 +829,17 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
             var work = info.monitorInfo.rcWork;
             var dpiX = 96u;
             var dpiY = 96u;
-            _ = PInvoke.GetDpiForMonitor(
+            var dpiResult = PInvoke.GetDpiForMonitor(
                 monitor,
                 MONITOR_DPI_TYPE.MDT_EFFECTIVE_DPI,
                 out dpiX,
                 out dpiY);
+            if (dpiResult.Failed)
+            {
+                context.Report(new InvalidOperationException(
+                    $"GetDpiForMonitor failed for {GetDeviceName(info)} with HRESULT {dpiResult}. Using 96 DPI."));
+                dpiX = 96;
+            }
             context.Monitors.Add(new MonitorInfo(
                 GetDeviceName(info),
                 new PixelRect(work.left, work.top, work.right - work.left, work.bottom - work.top),
@@ -811,14 +876,40 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
 
     private sealed class MonitorEnumerationContext
     {
+        private readonly Action<Exception> _diagnostic;
+
+        public MonitorEnumerationContext(Action<Exception> diagnostic) => _diagnostic = diagnostic;
+
         public List<MonitorInfo> Monitors { get; } = [];
 
         public Exception? Error { get; set; }
+
+        public void Report(Exception exception) => _diagnostic(exception);
     }
 }
 
 file static class OverlayWindowHostLifecycle
 {
+    public static async ValueTask WaitForStopAsync(OverlayWindowHost host)
+    {
+        if (!host.OwnerThreadIsAlive)
+        {
+            return;
+        }
+
+        try
+        {
+            await host.StoppedTask.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+            _ = host.JoinOwnerThread(TimeSpan.Zero);
+        }
+        catch (TimeoutException exception)
+        {
+            host.ReportDisposalTimeout(new TimeoutException(
+                "Overlay owner thread did not stop before disposal timed out.",
+                exception));
+        }
+    }
+
     public static async Task<OverlayWindowHost> WaitForCreationAsync(
         OverlayWindowHost host,
         CancellationToken cancellationToken)

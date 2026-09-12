@@ -35,4 +35,16 @@ public sealed class LayeredFramePresenterTests
                 10,
                 10));
     }
+
+    [Theory]
+    [InlineData(0.25f)]
+    [InlineData(0.5f)]
+    [InlineData(1f)]
+    public void Blend_configuration_keeps_per_pixel_alpha_without_squaring_opacity(float opacity)
+    {
+        var blend = LayeredFramePresenter.CreateBlendConfiguration(opacity);
+
+        Assert.Equal(byte.MaxValue, blend.SourceConstantAlpha);
+        Assert.Equal(1, blend.AlphaFormat);
+    }
 }

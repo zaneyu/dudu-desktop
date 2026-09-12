@@ -18,6 +18,10 @@ public readonly record struct PlacementResolution(
 
 public static class MonitorPlacementService
 {
+    // PetPlacement.Scale is a user-facing logical size multiplier. Physical
+    // monitor DPI is tracked for diagnostics and WM_DPICHANGED, but is not
+    // multiplied into Resolve dimensions: the suggested RECT supplies the
+    // physical resize and applying DPI here too would double-scale the pet.
     public const double MinimumScale = 0.5;
     public const double MaximumScale = 2.0;
 

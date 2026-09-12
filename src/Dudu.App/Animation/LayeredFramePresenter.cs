@@ -254,14 +254,13 @@ public sealed class LayeredFramePresenter : IFramePresenter, IDisposable
             var size = new SIZE { cx = update.DestinationWidth, cy = update.DestinationHeight };
             var sourcePoint = new Point(0, 0);
             var destinationPoint = new Point(update.Bounds.X, update.Bounds.Y);
+            var blendConfiguration = CreateBlendConfiguration(frame.Opacity);
             var blend = new BLENDFUNCTION
             {
                 BlendOp = 0,
                 BlendFlags = 0,
-                SourceConstantAlpha = checked((byte)Math.Round(
-                    frame.Opacity * byte.MaxValue,
-                    MidpointRounding.AwayFromZero)),
-                AlphaFormat = AC_SRC_ALPHA,
+                SourceConstantAlpha = blendConfiguration.SourceConstantAlpha,
+                AlphaFormat = blendConfiguration.AlphaFormat,
             };
 
             if (!PInvoke.UpdateLayeredWindow(
@@ -303,6 +302,18 @@ public sealed class LayeredFramePresenter : IFramePresenter, IDisposable
         throw new InvalidOperationException(
             $"{operation} failed with Win32 error {Marshal.GetLastWin32Error()}.");
 
+    public static LayeredBlendConfiguration CreateBlendConfiguration(float opacity)
+    {
+        if (float.IsNaN(opacity) || float.IsInfinity(opacity) || opacity is < 0 or > 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(opacity));
+        }
+
+        // RenderedFrame pixels are already premultiplied by SkiaFrameComposer.
+        // Applying opacity here would multiply their alpha a second time.
+        return new LayeredBlendConfiguration(byte.MaxValue, AC_SRC_ALPHA);
+    }
+
     private void ThrowIfDisposed()
     {
         if (_disposed)
@@ -327,6 +338,10 @@ public readonly record struct LayeredFrameUpdate(
     int DestinationWidth,
     int DestinationHeight,
     double Scale);
+
+public readonly record struct LayeredBlendConfiguration(
+    byte SourceConstantAlpha,
+    byte AlphaFormat);
 
 public readonly record struct LayeredWindowState(PixelRect Bounds, double Scale)
 {
