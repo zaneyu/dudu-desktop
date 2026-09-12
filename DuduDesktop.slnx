@@ -5,6 +5,7 @@
   <Project Path="tests/Dudu.Core.Tests/Dudu.Core.Tests.csproj" />
   <Project Path="tests/Dudu.Infrastructure.Tests/Dudu.Infrastructure.Tests.csproj" />
   <Project Path="tests/Dudu.App.Tests/Dudu.App.Tests.csproj" />
+  <Project Path="tests/Dudu.UiTests/Dudu.UiTests.csproj" />
   <Project Path="tests/Dudu.WindowsHarness/Dudu.WindowsHarness.csproj" />
   <Project Path="tools/Dudu.AssetTool/Dudu.AssetTool.csproj" />
   <Project Path="tools/Dudu.AssetTool.Tests/Dudu.AssetTool.Tests.csproj" />

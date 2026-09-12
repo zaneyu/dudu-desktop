@@ -1,0 +1,84 @@
+<Page
+    x:Class="Dudu.App.Pages.OnboardingPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Background="{ThemeResource WindowSurfaceBrush}">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel x:Name="PageRoot" MaxWidth="720" Padding="32" Spacing="16">
+            <TextBlock Text="A calm start with Dudu" Style="{StaticResource PageTitleStyle}" />
+            <TextBlock x:Name="OnboardingProgress" AutomationProperties.AutomationId="OnboardingProgress" FontSize="14" Foreground="{ThemeResource TextSecondaryBrush}" />
+            <Border Background="{ThemeResource BlushSurfaceBrush}" BorderBrush="{ThemeResource LavenderBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="24">
+                <StackPanel Spacing="16">
+                    <StackPanel x:Name="RecipientStep" Spacing="12">
+                        <TextBlock Text="What should Dudu call you?" Style="{StaticResource SectionHeadingStyle}" />
+                        <TextBlock Text="Use a name that feels natural. You can change it later." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                        <TextBox x:Name="RecipientNameBox" Header="Your name" AutomationProperties.AutomationId="OnboardingRecipientName" PlaceholderText="For example, Mia" />
+                        <Button x:Name="RecommendedDefaultsButton" Content="Use recommended defaults" AutomationProperties.AutomationId="OnboardingRecommendedDefaults" Click="RecommendedDefaultsButton_Click" />
+                    </StackPanel>
+
+                    <StackPanel x:Name="AppearanceStep" Spacing="12" Visibility="Collapsed">
+                        <TextBlock Text="Choose a quiet look" Style="{StaticResource SectionHeadingStyle}" />
+                        <ComboBox x:Name="ThemeBox" Header="Appearance" AutomationProperties.AutomationId="OnboardingTheme" SelectedIndex="0">
+                            <ComboBoxItem Content="Use Windows setting" Tag="System" />
+                            <ComboBoxItem Content="Light" Tag="Light" />
+                            <ComboBoxItem Content="Dark" Tag="Dark" />
+                        </ComboBox>
+                        <CheckBox x:Name="ReducedMotionBox" Content="Use reduced motion" AutomationProperties.AutomationId="OnboardingReducedMotion" />
+                        <TextBlock Text="Reduced motion keeps Dudu expressive without extra movement." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                    </StackPanel>
+
+                    <StackPanel x:Name="QuietHoursStep" Spacing="12" Visibility="Collapsed">
+                        <TextBlock Text="Set a quiet window" Style="{StaticResource SectionHeadingStyle}" />
+                        <CheckBox x:Name="QuietHoursBox" Content="Quiet hours are on" AutomationProperties.AutomationId="OnboardingQuietHoursEnabled" IsChecked="True" />
+                        <Grid ColumnSpacing="16">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="QuietStartBox" Header="Starts" Text="22:00" AutomationProperties.AutomationId="OnboardingQuietHoursStart" Grid.Column="0" />
+                            <TextBox x:Name="QuietEndBox" Header="Ends" Text="07:00" AutomationProperties.AutomationId="OnboardingQuietHoursEnd" Grid.Column="1" />
+                        </Grid>
+                        <TextBlock Text="Dudu waits during this window before offering non-urgent prompts." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                    </StackPanel>
+
+                    <StackPanel x:Name="RemindersStep" Spacing="12" Visibility="Collapsed">
+                        <TextBlock Text="Keep reminders gentle" Style="{StaticResource SectionHeadingStyle}" />
+                        <CheckBox x:Name="HydrationBox" Content="Suggest water breaks" AutomationProperties.AutomationId="OnboardingHydrationReminders" IsChecked="True" />
+                        <CheckBox x:Name="BreakBox" Content="Suggest short breaks" AutomationProperties.AutomationId="OnboardingBreakReminders" IsChecked="True" />
+                        <NumberBox x:Name="NoteLimitBox" Header="Daily local note limit" AutomationProperties.AutomationId="OnboardingLocalNoteLimit" Minimum="0" Maximum="12" Value="3" SpinButtonPlacementMode="Compact" />
+                    </StackPanel>
+
+                    <StackPanel x:Name="PlacementStep" Spacing="12" Visibility="Collapsed">
+                        <TextBlock Text="Place Dudu" Style="{StaticResource SectionHeadingStyle}" />
+                        <TextBlock Text="The pet stays on your desktop and can be moved any time." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                        <Button x:Name="RecommendedPlacementButton" Content="Use recommended placement" AutomationProperties.AutomationId="OnboardingRecommendedPlacement" Click="RecommendedPlacementButton_Click" />
+                        <Slider x:Name="PlacementScaleSlider" Header="Pet size" AutomationProperties.AutomationId="OnboardingPetScale" Minimum="0.5" Maximum="2" StepFrequency="0.1" Value="1" />
+                        <CheckBox x:Name="HideFullscreenBox" Content="Hide Dudu during fullscreen work" AutomationProperties.AutomationId="OnboardingHideDuringFullscreen" IsChecked="True" />
+                        <CheckBox x:Name="LaunchAtSignInBox" Content="Launch Dudu when I sign in" AutomationProperties.AutomationId="OnboardingLaunchAtSignIn" IsChecked="True" />
+                    </StackPanel>
+
+                    <StackPanel x:Name="PairingStep" Spacing="12" Visibility="Collapsed">
+                        <TextBlock Text="Pair later, if you want" Style="{StaticResource SectionHeadingStyle}" />
+                        <TextBlock Text="Pairing lets someone send encrypted notes. It is optional and Dudu works offline." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                        <TextBlock x:Name="PairingStatus" AutomationProperties.AutomationId="OnboardingPairingStatus" Text="Pairing is optional." TextWrapping="Wrap" />
+                        <Button x:Name="PairingCheckButton" Content="Check pairing availability" AutomationProperties.AutomationId="OnboardingPairingCheck" Click="PairingCheckButton_Click" />
+                        <Button x:Name="SkipPairingButton" Content="Skip for now" AutomationProperties.AutomationId="OnboardingSkipPairing" Click="SkipPairingButton_Click" />
+                    </StackPanel>
+
+                    <TextBlock x:Name="OnboardingValidationMessage" AutomationProperties.AutomationId="OnboardingValidationMessage" Foreground="{ThemeResource ErrorBrush}" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <Grid ColumnSpacing="16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Button x:Name="BackButton" Content="Back" AutomationProperties.AutomationId="OnboardingBack" Click="BackButton_Click" Grid.Column="0" />
+                <Button x:Name="NextButton" Content="Next" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="OnboardingNext" Click="NextButton_Click" Grid.Column="2" />
+                <Button x:Name="CompleteButton" Content="Finish setup" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="OnboardingComplete" Click="CompleteButton_Click" Grid.Column="2" Visibility="Collapsed" />
+            </Grid>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

@@ -1,7 +1,7 @@
 using System.Diagnostics;
-using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Controls;
 using Dudu.App.Hosting;
+using Dudu.App.Windows;
+using Microsoft.UI.Xaml;
 
 namespace Dudu.App;
 
@@ -12,8 +12,9 @@ public sealed partial class App : Application
     private WindowsCompanionBootstrap? _bootstrap;
     private CompanionStartupRunner? _startupRunner;
     private Task? _startupTask;
-    private Window? _homeWindow;
     private Window? _settingsWindow;
+    private CompanionSettingsContext? _settingsContext;
+    private string _launchArguments = string.Empty;
 
     public App()
     {
@@ -39,12 +40,13 @@ public sealed partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        _launchArguments = args.Arguments ?? string.Empty;
         EnsureDefaultBootstrapFactory();
         _startupRunner = new CompanionStartupRunner(
             _bootstrapFactory!,
             ReportStartupFailure,
             ExitApplication);
-        _startupTask = _startupRunner.RunAsync(args.Arguments, CancellationToken.None);
+        _startupTask = _startupRunner.RunAsync(args.Arguments ?? string.Empty, CancellationToken.None);
         _ = ObserveStartupAsync(_startupTask);
     }
 
@@ -56,7 +58,8 @@ public sealed partial class App : Application
         _productionActions ??= new CompanionUiActions(
             OpenHome,
             OpenSettings,
-            ExitApplication);
+            ExitApplication,
+            ConfigureSettings);
         _bootstrapFactory = static (arguments, cancellationToken) =>
             Task.FromResult(
                 WindowsCompanionProductionComposition.CreateBootstrap(
@@ -70,6 +73,10 @@ public sealed partial class App : Application
         {
             await startupTask;
             _bootstrap = _startupRunner?.Bootstrap;
+            if (!CompanionLaunchOptions.Parse(_launchArguments).Background)
+            {
+                OpenHome();
+            }
         }
         catch (Exception exception)
         {
@@ -80,49 +87,41 @@ public sealed partial class App : Application
 
     private void OpenHome()
     {
-        _homeWindow ??= new Window
-        {
-            Title = "Dudu Desktop Companion",
-            Content = new TextBlock
-            {
-                Text = "Dudu is running.",
-                Margin = new Thickness(24),
-            },
-        };
-        _homeWindow.Activate();
+        OpenSettings(_settingsContext?.StartupSettings
+            ?? throw new InvalidOperationException("Settings context is not ready."));
+    }
+
+    private void ConfigureSettings(CompanionSettingsContext context)
+    {
+        _settingsContext = context ?? throw new ArgumentNullException(nameof(context));
     }
 
     private void OpenSettings(StartupSettingsService startup)
     {
-        var launchAtSignIn = new CheckBox
+        if (_settingsContext is null)
         {
-            Content = "Launch Dudu at sign-in",
-            IsChecked = startup.Current.LaunchAtSignIn,
-            Margin = new Thickness(24),
-        };
-        launchAtSignIn.Checked += (_, _) => _ = ApplyStartupSettingAsync(startup, true);
-        launchAtSignIn.Unchecked += (_, _) => _ = ApplyStartupSettingAsync(startup, false);
-        _settingsWindow ??= new Window
-        {
-            Title = "Dudu settings",
-            Content = launchAtSignIn,
-        };
-        _settingsWindow.Content = launchAtSignIn;
-        _settingsWindow.Activate();
-    }
+            throw new InvalidOperationException("Settings context is not ready.");
+        }
 
-    private static async Task ApplyStartupSettingAsync(
-        StartupSettingsService startup,
-        bool enabled)
-    {
-        try
+        if (_settingsWindow is null)
         {
-            await startup.SetLaunchAtSignInAsync(enabled);
+            var view = new SettingsWindow(_settingsContext);
+            _settingsWindow = new Window { Title = "Dudu settings", Content = view };
+            try
+            {
+                _settingsWindow.SystemBackdrop = new Microsoft.UI.Xaml.Media.MicaBackdrop();
+            }
+            catch (Exception exception)
+            {
+                Trace.TraceInformation("Dudu Mica backdrop unavailable: {0}", exception.Message);
+            }
+
+            _settingsWindow.ExtendsContentIntoTitleBar = true;
+            _settingsWindow.SetTitleBar(view.TitleBarElement);
+            _settingsWindow.Closed += (_, _) => _settingsWindow = null;
         }
-        catch (Exception exception)
-        {
-            Trace.TraceError("Dudu startup setting failed: {0}", exception);
-        }
+
+        _settingsWindow.Activate();
     }
 
     private static void ReportStartupFailure(Exception exception) =>

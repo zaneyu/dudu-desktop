@@ -20,11 +20,13 @@ public sealed class CompanionUiActions
     public CompanionUiActions(
         Action openHome,
         Action<StartupSettingsService> openSettings,
-        Action exit)
+        Action exit,
+        Action<CompanionSettingsContext>? configureSettings = null)
     {
         OpenHome = openHome ?? throw new ArgumentNullException(nameof(openHome));
         OpenSettings = openSettings ?? throw new ArgumentNullException(nameof(openSettings));
         Exit = exit ?? throw new ArgumentNullException(nameof(exit));
+        ConfigureSettings = configureSettings;
     }
 
     public Action OpenHome { get; }
@@ -32,7 +34,18 @@ public sealed class CompanionUiActions
     public Action<StartupSettingsService> OpenSettings { get; }
 
     public Action Exit { get; }
+
+    public Action<CompanionSettingsContext>? ConfigureSettings { get; }
 }
+
+public sealed record CompanionSettingsContext(
+    StartupSettingsService StartupSettings,
+    StartupRegistrationService StartupRegistration,
+    IPreferencesRepository Preferences,
+    IProfileRepository Profiles,
+    IPetPlacementRepository PetPlacements,
+    IAppUnitOfWork UnitOfWork,
+    IPairingService Pairing);
 
 public sealed record CompanionLaunchOptions(bool Background)
 {
@@ -107,6 +120,11 @@ public static class WindowsCompanionProductionComposition
             var preferencesRepository = services.GetRequiredService<IPreferencesRepository>();
             var preferences = await preferencesRepository.GetAsync(cancellationToken)
                 ?? services.GetRequiredService<Preferences>();
+            var savedPlacements = await services
+                .GetRequiredService<IPetPlacementRepository>()
+                .ListAsync(cancellationToken);
+            var initialPlacement = savedPlacements.FirstOrDefault()
+                ?? new PetPlacement("MISSING", 0.8, 0.8, 1);
             var pet = services.GetRequiredService<PetStateMachine>();
             var manifestPath = Path.Combine(
                 AppContext.BaseDirectory,
@@ -127,12 +145,20 @@ public static class WindowsCompanionProductionComposition
                 startup,
                 preferencesRepository,
                 preferences);
+            actions.ConfigureSettings?.Invoke(new CompanionSettingsContext(
+                startupSettings,
+                startup,
+                preferencesRepository,
+                services.GetRequiredService<IProfileRepository>(),
+                services.GetRequiredService<IPetPlacementRepository>(),
+                services.GetRequiredService<IAppUnitOfWork>(),
+                services.GetRequiredService<IPairingService>()));
             var pause = new PauseStateStore();
 
             var runtime = await WindowsCompanionRuntime.CreateAsync(
                 host,
                 presenter,
-                new PetPlacement("MISSING", 0.8, 0.8, 1),
+                initialPlacement,
                 animation.NominalSize,
                 pet,
                 preferences,

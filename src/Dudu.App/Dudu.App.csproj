@@ -13,6 +13,10 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(EnableDefaultPageItems)' == 'false'">
+    <DefineConstants>$(DefineConstants);DUDU_XAML_STUBS</DefineConstants>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Dudu.Infrastructure\Dudu.Infrastructure.csproj" />
   </ItemGroup>
