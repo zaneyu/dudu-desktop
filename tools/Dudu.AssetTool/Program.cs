@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Dudu.Core;
@@ -179,11 +180,7 @@ public static class Program
         var document = await ReadSourcesAsync(sourcesPath);
         var rawDirectory = Path.GetFullPath(inputPath);
         var packDirectory = Path.GetFullPath(outputPath);
-        Directory.CreateDirectory(packDirectory);
-        if (!IsReparseSafe(packDirectory, packDirectory))
-        {
-            throw new InvalidDataException($"Pack output directory contains a symlink, junction, or reparse point: {packDirectory}");
-        }
+        EnsureSafePackDirectory(packDirectory);
 
         var framesDirectory = Path.Combine(packDirectory, "frames");
         if (Directory.Exists(framesDirectory))
@@ -233,9 +230,7 @@ public static class Program
             foreach (var (frame, index) in normalized.Frames.Select((frame, index) => (frame, index)))
             {
                 var relativeFile = AssetNormalizer.DeterministicFileName(animationKey, index, frame.Sha256);
-                var fullOutputPath = SafePackPath(packDirectory, relativeFile);
-                Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath)!);
-                await File.WriteAllBytesAsync(fullOutputPath, frame.PngBytes);
+                await WritePackBytesAsync(packDirectory, relativeFile, frame.PngBytes);
                 transform.OutputFiles.Add(relativeFile);
                 transform.OutputSha256.Add(frame.Sha256);
                 transform.Normalizations.Add(new NormalizationDetails
@@ -284,9 +279,7 @@ public static class Program
             throw new AssetManifestException(string.Join(Environment.NewLine, errors));
         }
 
-        await File.WriteAllTextAsync(
-            Path.Combine(packDirectory, "manifest.json"),
-            JsonSerializer.Serialize(manifest, JsonOptions));
+        await WritePackTextAsync(packDirectory, "manifest.json", JsonSerializer.Serialize(manifest, JsonOptions));
 
         foreach (var source in document.Sources)
         {
@@ -353,10 +346,9 @@ public static class Program
     {
         var outputPath = args.Length == 0 ? "src/Dudu.App/Assets/Packs/fallback" : RequiredOption(args, "--output");
         var directory = Path.GetFullPath(outputPath);
-        Directory.CreateDirectory(directory);
-        var idlePath = Path.Combine(directory, "idle.png");
+        EnsureSafePackDirectory(directory);
         var bytes = AssetNormalizer.CreateNeutralBearPng();
-        await File.WriteAllBytesAsync(idlePath, bytes);
+        await WritePackBytesAsync(directory, "idle.png", bytes);
         var hash = Sha256(bytes);
         var animations = new Dictionary<string, AssetAnimation>(StringComparer.Ordinal);
         foreach (var key in AssetManifestContract.RequiredAnimationKeys)
@@ -388,7 +380,7 @@ public static class Program
                 ["base"] = new AssetOutfit { DisplayName = "Neutral bear", Animations = animations },
             },
         };
-        await File.WriteAllTextAsync(Path.Combine(directory, "manifest.json"), JsonSerializer.Serialize(manifest, JsonOptions));
+        await WritePackTextAsync(directory, "manifest.json", JsonSerializer.Serialize(manifest, JsonOptions));
         Console.WriteLine($"Generated original fallback pack at {directory} sha256={hash}.");
         return 0;
     }
@@ -466,6 +458,63 @@ public static class Program
         await File.WriteAllTextAsync(path, JsonSerializer.Serialize(document, JsonOptions));
     }
 
+    private static async Task WritePackTextAsync(string packDirectory, string relativePath, string contents)
+    {
+        await WritePackBytesAsync(packDirectory, relativePath, Encoding.UTF8.GetBytes(contents));
+    }
+
+    private static async Task WritePackBytesAsync(string packDirectory, string relativePath, byte[] bytes)
+    {
+        var destination = SafePackDestinationPath(packDirectory, relativePath);
+        var parent = Path.GetDirectoryName(destination)
+            ?? throw new InvalidDataException($"Pack destination has no parent directory: {relativePath}");
+        if (!IsReparseSafe(packDirectory, parent))
+        {
+            throw new InvalidDataException($"Pack destination parent contains a symlink, junction, or reparse point: {relativePath}");
+        }
+
+        Directory.CreateDirectory(parent);
+        destination = SafePackDestinationPath(packDirectory, relativePath);
+        var temporaryPath = destination + $".{Guid.NewGuid():N}.tmp";
+        if (!IsUnder(temporaryPath, packDirectory) || !IsReparseSafe(packDirectory, temporaryPath))
+        {
+            throw new InvalidDataException($"Pack temporary destination is unsafe: {relativePath}");
+        }
+
+        try
+        {
+            await using (var stream = new FileStream(
+                temporaryPath,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                bufferSize: 81920,
+                options: FileOptions.Asynchronous | FileOptions.WriteThrough))
+            {
+                await stream.WriteAsync(bytes);
+                await stream.FlushAsync();
+            }
+
+            if (!IsReparseSafe(packDirectory, temporaryPath))
+            {
+                throw new InvalidDataException($"Pack temporary destination became a symlink, junction, or reparse point: {relativePath}");
+            }
+
+            // File.Move replaces the destination atomically where the filesystem supports it. The
+            // checks immediately before creation/replacement prevent pre-existing redirects; a
+            // concurrent attacker can still race portable .NET path checks.
+            destination = SafePackDestinationPath(packDirectory, relativePath);
+            File.Move(temporaryPath, destination, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath))
+            {
+                File.Delete(temporaryPath);
+            }
+        }
+    }
+
     private static string EnsureRawDirectory(string outputPath)
     {
         var raw = Path.GetFullPath(outputPath);
@@ -511,6 +560,19 @@ public static class Program
             throw new InvalidDataException($"Unsafe normalized asset path: {relativePath}");
         }
 
+        return SafePackDestinationPath(packDirectory, relativePath);
+    }
+
+    private static string SafePackDestinationPath(string packDirectory, string relativePath)
+    {
+        var segments = relativePath.Split('/', '\\');
+        if (string.IsNullOrWhiteSpace(relativePath)
+            || Path.IsPathRooted(relativePath)
+            || segments.Any(segment => string.IsNullOrEmpty(segment) || segment == "." || segment == ".."))
+        {
+            throw new InvalidDataException($"Unsafe pack destination path: {relativePath}");
+        }
+
         var path = Path.GetFullPath(Path.Combine(packDirectory, relativePath));
         if (!IsUnder(path, packDirectory) || !IsReparseSafe(packDirectory, path))
         {
@@ -518,6 +580,21 @@ public static class Program
         }
 
         return path;
+    }
+
+    private static void EnsureSafePackDirectory(string packDirectory)
+    {
+        var fullPath = Path.GetFullPath(packDirectory);
+        if (!ExistingAncestorsAreSafe(fullPath))
+        {
+            throw new InvalidDataException($"Pack output directory or an ancestor contains a symlink, junction, or reparse point: {fullPath}");
+        }
+
+        Directory.CreateDirectory(fullPath);
+        if (!ExistingAncestorsAreSafe(fullPath) || !IsReparseSafe(fullPath, fullPath))
+        {
+            throw new InvalidDataException($"Pack output directory or an ancestor became a symlink, junction, or reparse point: {fullPath}");
+        }
     }
 
     private static bool IsUnder(string path, string root)
@@ -530,12 +607,13 @@ public static class Program
     private static bool IsReparseSafe(string root, string path)
     {
         var rootFull = Path.GetFullPath(root);
-        if (HasReparsePoint(rootFull))
+        var pathFull = Path.GetFullPath(path);
+        if (!IsUnder(pathFull, rootFull) || !ExistingAncestorsAreSafe(rootFull))
         {
             return false;
         }
 
-        var relative = Path.GetRelativePath(rootFull, Path.GetFullPath(path));
+        var relative = Path.GetRelativePath(rootFull, pathFull);
         var current = rootFull;
         foreach (var segment in relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
         {
@@ -552,6 +630,34 @@ public static class Program
         }
 
         return true;
+    }
+
+    private static bool ExistingAncestorsAreSafe(string path)
+    {
+        var current = Path.GetFullPath(path);
+        while (true)
+        {
+            if (HasReparsePoint(current) && !IsTrustedSystemAlias(current))
+            {
+                return false;
+            }
+
+            var parent = Directory.GetParent(current)?.FullName;
+            if (parent is null || string.Equals(parent, current, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            current = parent;
+        }
+    }
+
+    private static bool IsTrustedSystemAlias(string path)
+    {
+        // macOS exposes /var as an OS-owned alias for /private/var. It is present in
+        // normal temporary paths and does not represent a pack-relative redirect.
+        return OperatingSystem.IsMacOS()
+            && string.Equals(Path.GetFullPath(path), "/var", StringComparison.Ordinal);
     }
 
     private static bool HasReparsePoint(string path)
