@@ -53,6 +53,7 @@ public static class DependencyInjection
         services.AddSingleton<ReminderEngine>();
         services.AddSingleton<LocalNoteSelector>();
         services.AddSingleton<AmbientScheduler>();
+        services.AddSingleton(static _ => PetStateMachine.CreateIdle());
 
         services.AddSingleton<ISecretStore>(static provider =>
         {

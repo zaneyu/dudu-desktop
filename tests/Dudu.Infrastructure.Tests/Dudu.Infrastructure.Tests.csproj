@@ -16,4 +16,9 @@
     <ProjectReference Include="../../src/Dudu.Infrastructure/Dudu.Infrastructure.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="../../src/Dudu.App/Hosting/AppHost.cs" Link="Hosting/AppHost.cs" />
+    <Compile Include="../../src/Dudu.App/Hosting/AppPaths.cs" Link="Hosting/AppPaths.cs" />
+  </ItemGroup>
+
 </Project>

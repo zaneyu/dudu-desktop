@@ -1,7 +1,9 @@
 using Dudu.Core.Abstractions;
+using Dudu.Core.Models;
 using Dudu.Infrastructure;
 using Dudu.Infrastructure.Data;
 using Dudu.Infrastructure.Data.Repositories;
+using Dudu.Core.Pet;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
@@ -38,6 +40,12 @@ public sealed class DependencyInjectionTests
         Assert.Same(
             provider.GetRequiredService<ISecretStore>(),
             provider.GetRequiredService<ISecretStore>());
+        Assert.Same(
+            provider.GetRequiredService<PetStateMachine>(),
+            provider.GetRequiredService<PetStateMachine>());
+        Assert.Equal(
+            PetState.Idle,
+            provider.GetRequiredService<PetStateMachine>().Current.State);
         Assert.Equal(
             PairingAvailability.Offline,
             await provider.GetRequiredService<IPairingService>()

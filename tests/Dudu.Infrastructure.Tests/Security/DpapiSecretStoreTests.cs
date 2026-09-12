@@ -60,11 +60,11 @@ public sealed class DpapiSecretStoreTests
         var store = new DpapiSecretStore(directory.Path);
 
         await Assert.ThrowsAsync<ArgumentException>(
-            () => store.DeleteAsync("RelayToken"));
+            () => store.DeleteAsync("RelayToken", TestContext.Current.CancellationToken));
         await Assert.ThrowsAsync<ArgumentException>(
-            () => store.DeleteAsync("bad/key"));
+            () => store.DeleteAsync("bad/key", TestContext.Current.CancellationToken));
         await Assert.ThrowsAsync<ArgumentException>(
-            () => store.DeleteAsync(new string('a', 65)));
+            () => store.DeleteAsync(new string('a', 65), TestContext.Current.CancellationToken));
     }
 
     private static void RequireWindowsDpapi()
