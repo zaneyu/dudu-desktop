@@ -8,10 +8,15 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <PlatformTarget>x64</PlatformTarget>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Dudu.Infrastructure\Dudu.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AdditionalFiles Include="Overlay/NativeMethods.txt" />
   </ItemGroup>
 
   <ItemGroup>
