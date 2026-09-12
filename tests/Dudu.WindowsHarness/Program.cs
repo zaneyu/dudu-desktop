@@ -1,8 +1,14 @@
 using System.Diagnostics;
 using Dudu.App.Animation;
+using Dudu.App.Hosting;
 using Dudu.App.Overlay;
 using Dudu.Core.Assets;
 using Dudu.Core.Models;
+
+if (Array.IndexOf(args, "single-instance") >= 0)
+{
+    return await RunSingleInstanceScenarioAsync(args);
+}
 
 if (!args.Contains("--scenario", StringComparer.Ordinal)
     || Array.IndexOf(args, "layered-window") < 0)
@@ -112,6 +118,96 @@ if (notepad.StartedByHarness)
 }
 
 return string.Equals(verdict, "PASS", StringComparison.OrdinalIgnoreCase) ? 0 : 6;
+
+static async Task<int> RunSingleInstanceScenarioAsync(string[] args)
+{
+    if (!OperatingSystem.IsWindows())
+    {
+        Console.Error.WriteLine("The single-instance harness requires Windows x64 and is intentionally manual.");
+        return 3;
+    }
+
+    var marker = args
+        .SkipWhile(argument => !string.Equals(argument, "--marker", StringComparison.Ordinal))
+        .Skip(1)
+        .FirstOrDefault();
+    if (string.IsNullOrWhiteSpace(marker))
+    {
+        Console.Error.WriteLine("--marker is required for the single-instance harness.");
+        return 4;
+    }
+
+    if (args.Contains("--child", StringComparer.Ordinal))
+    {
+        await using var coordinator = new SingleInstanceCoordinator(
+            activationHandler: activation =>
+            {
+                if (activation == AppActivation.OpenHome)
+                {
+                    File.AppendAllText(marker, "OpenHome\n");
+                }
+
+                return Task.CompletedTask;
+            });
+        var isPrimary = await coordinator.TryAcquireAsync();
+        Console.WriteLine(isPrimary ? "primary" : "secondary");
+        if (isPrimary)
+        {
+            var manifestPath = Path.Combine(
+                Environment.CurrentDirectory,
+                "src",
+                "Dudu.App",
+                "Assets",
+                "Packs",
+                "fallback",
+                "manifest.json");
+            var pack = await AssetManifestLoader.LoadAsync(manifestPath, CancellationToken.None);
+            using var composer = new SkiaFrameComposer(pack);
+            using var presenter = new LayeredFramePresenter();
+            var animation = pack.Manifest.Outfits["base"].Animations["idle"];
+            using var host = await OverlayWindowHost.CreateAsync(
+                presenter,
+                new PetPlacement("MISSING", 0.8, 0.8, 1),
+                animation.NominalSize);
+            using var frame = composer.Compose(pack, animation, 0);
+            await presenter.PresentAsync(frame, CancellationToken.None);
+            host.Show();
+            File.AppendAllText(marker + ".overlay", $"{host.Handle}\n");
+            await Task.Delay(TimeSpan.FromSeconds(4));
+            host.Hide();
+        }
+
+        return 0;
+    }
+
+    if (File.Exists(marker)) File.Delete(marker);
+    var executable = Environment.ProcessPath
+        ?? throw new InvalidOperationException("Harness executable path is unavailable.");
+    using var primaryProcess = Process.Start(new ProcessStartInfo(executable)
+    {
+        UseShellExecute = false,
+        ArgumentList = { "--scenario", "single-instance", "--child", "--marker", marker },
+    });
+    if (primaryProcess is null) return 5;
+    await Task.Delay(300);
+    using var secondaryProcess = Process.Start(new ProcessStartInfo(executable)
+    {
+        UseShellExecute = false,
+        ArgumentList = { "--scenario", "single-instance", "--child", "--marker", marker },
+    });
+    if (secondaryProcess is null) return 6;
+    await secondaryProcess.WaitForExitAsync();
+    await primaryProcess.WaitForExitAsync();
+
+    var activations = File.Exists(marker)
+        ? File.ReadAllLines(marker).Count(line => line == "OpenHome")
+        : 0;
+    var overlays = File.Exists(marker + ".overlay")
+        ? File.ReadAllLines(marker + ".overlay").Count(line => line.Length > 0)
+        : 0;
+    Console.WriteLine($"primaryExit={primaryProcess.ExitCode}; secondaryExit={secondaryProcess.ExitCode}; OpenHome={activations}; overlays={overlays}");
+    return primaryProcess.ExitCode == 0 && secondaryProcess.ExitCode == 0 && activations == 1 && overlays == 1 ? 0 : 7;
+}
 
 static async Task<NotepadTarget?> FindOrLaunchNotepadAsync()
 {

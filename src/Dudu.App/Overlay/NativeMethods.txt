@@ -18,6 +18,11 @@ GetDpiForWindow
 SetProcessDpiAwarenessContext
 SetForegroundWindow
 GetForegroundWindow
+GetShellWindow
+GetDesktopWindow
+IsIconic
+DwmGetWindowAttribute
+DWMWINDOWATTRIBUTE
 GetFocus
 TrackMouseEvent
 SetCapture
@@ -49,6 +54,14 @@ WM_LBUTTONDBLCLK
 WM_RBUTTONUP
 WM_MOUSEMOVE
 WM_MOUSEWHEEL
+WM_HOTKEY
+RegisterHotKey
+UnregisterHotKey
+RegisterWindowMessage
+Shell_NotifyIcon
+NOTIFYICONDATAW
+NOTIFY_ICON_MESSAGE
+NOTIFY_ICON_DATA_FLAGS
 WINDOW_STYLE
 WINDOW_EX_STYLE
 UPDATE_LAYERED_WINDOW_FLAGS

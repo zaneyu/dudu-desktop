@@ -31,7 +31,7 @@ public interface IAppHostErrorReporter
     void Report(string operation, Exception exception);
 }
 
-public sealed class AppHost : IAsyncDisposable
+public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
 {
     private static readonly TimeSpan ReminderTickInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan DefaultStopTimeout = TimeSpan.FromSeconds(5);

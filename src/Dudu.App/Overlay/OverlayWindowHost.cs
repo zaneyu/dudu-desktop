@@ -42,8 +42,8 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private static readonly string ClassName = "Dudu.DesktopCompanion.PetOverlay.v1";
     private static readonly ConcurrentDictionary<nint, OverlayWindowHost> Hosts = new();
     private static readonly HWND TopmostWindow = new((void*)(-1));
-    private static readonly delegate* unmanaged[Stdcall]<HWND, uint, WPARAM, LPARAM, LRESULT> WindowProcedure = &WindowProc;
-    private static readonly delegate* unmanaged[Stdcall]<HMONITOR, HDC, RECT*, LPARAM, BOOL> MonitorProcedure = &MonitorCallback;
+    private static readonly WNDPROC WindowProcedure = WindowProc;
+    private static readonly MONITORENUMPROC MonitorProcedure = MonitorCallback;
 
     private readonly IFramePresenter _presenter;
     private readonly PixelSize _nominalSize;
@@ -151,6 +151,9 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
 
     public static nint GetFocusHandle() =>
         (nint)PInvoke.GetFocus().Value;
+
+    public static bool IsDuduWindowHandle(nint hwnd) =>
+        hwnd != 0 && Hosts.ContainsKey(hwnd);
 
     public static bool TrySetForegroundWindow(nint hwnd) =>
         hwnd != 0 && PInvoke.SetForegroundWindow(new HWND((void*)hwnd));
@@ -748,7 +751,6 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         return ((short)(value & 0xffff), (short)((value >> 16) & 0xffff));
     }
 
-    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvStdcall)])]
     private static unsafe LRESULT WindowProc(HWND hwnd, uint message, WPARAM wParam, LPARAM lParam)
     {
         if (Hosts.TryGetValue((nint)hwnd.Value, out var host))
@@ -810,7 +812,6 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         return false;
     }
 
-    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvStdcall)])]
     private static unsafe BOOL MonitorCallback(
         HMONITOR monitor,
         HDC _hdc,
@@ -873,7 +874,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         }
         catch
         {
-            System.Diagnostics.Debug.WriteLine($"Dudu overlay diagnostic callback failed: {exception}");
+            global::System.Diagnostics.Debug.WriteLine($"Dudu overlay diagnostic callback failed: {exception}");
         }
     }
 

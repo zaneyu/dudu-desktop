@@ -1,0 +1,183 @@
+using System.Runtime.InteropServices;
+using Dudu.App.Overlay;
+using Windows.Win32;
+using Windows.Win32.Foundation;
+using Windows.Win32.Graphics.Gdi;
+using Windows.Win32.Graphics.Dwm;
+using Windows.Win32.UI.WindowsAndMessaging;
+
+namespace Dudu.App.System;
+
+public sealed record FullscreenWindowSnapshot(
+    nint ForegroundWindow,
+    nint ShellWindow,
+    nint DesktopWindow,
+    PixelRect ExtendedFrameBounds,
+    PixelRect MonitorBounds,
+    PixelRect WorkArea,
+    bool IsCloaked = false,
+    bool IsMinimized = false,
+    bool IsDuduWindow = false);
+
+public interface IFullscreenNativeApi
+{
+    nint GetForegroundWindow();
+    nint GetShellWindow();
+    nint GetDesktopWindow();
+    bool IsIconic(nint hwnd);
+    bool IsDuduWindow(nint hwnd);
+    bool TryGetCloaked(nint hwnd, out bool cloaked);
+    bool TryGetExtendedFrameBounds(nint hwnd, out PixelRect bounds);
+    bool TryGetMonitorBounds(nint hwnd, out PixelRect monitorBounds, out PixelRect workArea);
+}
+
+public sealed class FullscreenDetector
+{
+    public const int EdgeTolerancePixels = 2;
+
+    private readonly IFullscreenNativeApi _native;
+
+    public FullscreenDetector(IFullscreenNativeApi? native = null)
+    {
+        _native = native ?? new WindowsFullscreenNativeApi();
+    }
+
+    public bool IsForegroundFullscreen()
+    {
+        try
+        {
+            var foreground = _native.GetForegroundWindow();
+            if (foreground == 0)
+            {
+                return false;
+            }
+
+            var shell = _native.GetShellWindow();
+            var desktop = _native.GetDesktopWindow();
+            var isCloaked = !_native.TryGetCloaked(foreground, out var cloaked) || cloaked;
+            var isMinimized = _native.IsIconic(foreground);
+            if (!_native.TryGetExtendedFrameBounds(foreground, out var frame)
+                || !_native.TryGetMonitorBounds(foreground, out var monitor, out var workArea))
+            {
+                return false;
+            }
+
+            return IsForegroundFullscreen(new FullscreenWindowSnapshot(
+                foreground,
+                shell,
+                desktop,
+                frame,
+                monitor,
+                workArea,
+                isCloaked,
+                isMinimized,
+                _native.IsDuduWindow(foreground)));
+        }
+        catch
+        {
+            // A failed native query must never suppress the user's desktop.
+            return false;
+        }
+    }
+
+    public static bool IsForegroundFullscreen(FullscreenWindowSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        if (snapshot.ForegroundWindow == 0
+            || snapshot.ForegroundWindow == snapshot.ShellWindow
+            || snapshot.ForegroundWindow == snapshot.DesktopWindow
+            || snapshot.IsCloaked
+            || snapshot.IsMinimized
+            || snapshot.IsDuduWindow
+            || !snapshot.ExtendedFrameBounds.IsValid
+            || !snapshot.MonitorBounds.IsValid)
+        {
+            return false;
+        }
+
+        return WithinTolerance(snapshot.ExtendedFrameBounds, snapshot.MonitorBounds);
+    }
+
+    private static bool WithinTolerance(PixelRect actual, PixelRect expected)
+    {
+        return Math.Abs(actual.X - expected.X) <= EdgeTolerancePixels
+            && Math.Abs(actual.Y - expected.Y) <= EdgeTolerancePixels
+            && Math.Abs(actual.Right - expected.Right) <= EdgeTolerancePixels
+            && Math.Abs(actual.Bottom - expected.Bottom) <= EdgeTolerancePixels;
+    }
+}
+
+internal sealed unsafe class WindowsFullscreenNativeApi : IFullscreenNativeApi
+{
+    public nint GetForegroundWindow() => (nint)PInvoke.GetForegroundWindow().Value;
+
+    public nint GetShellWindow() => (nint)PInvoke.GetShellWindow().Value;
+
+    public nint GetDesktopWindow() => (nint)PInvoke.GetDesktopWindow().Value;
+
+    public bool IsIconic(nint hwnd) => PInvoke.IsIconic(ToHwnd(hwnd));
+
+    public bool IsDuduWindow(nint hwnd) => OverlayWindowHost.IsDuduWindowHandle(hwnd);
+
+    public bool TryGetCloaked(nint hwnd, out bool cloaked)
+    {
+        cloaked = false;
+        var value = 0u;
+        var result = PInvoke.DwmGetWindowAttribute(
+            ToHwnd(hwnd),
+            DWMWINDOWATTRIBUTE.DWMWA_CLOAKED,
+            &value,
+            sizeof(uint));
+        if (result.Failed)
+        {
+            return false;
+        }
+
+        cloaked = value != 0;
+        return true;
+    }
+
+    public bool TryGetExtendedFrameBounds(nint hwnd, out PixelRect bounds)
+    {
+        bounds = default;
+        RECT rect = default;
+        var result = PInvoke.DwmGetWindowAttribute(
+            ToHwnd(hwnd),
+            DWMWINDOWATTRIBUTE.DWMWA_EXTENDED_FRAME_BOUNDS,
+            &rect,
+            (uint)sizeof(RECT));
+        if (result.Failed)
+        {
+            return false;
+        }
+
+        bounds = new PixelRect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
+        return bounds.IsValid;
+    }
+
+    public bool TryGetMonitorBounds(nint hwnd, out PixelRect monitorBounds, out PixelRect workArea)
+    {
+        monitorBounds = default;
+        workArea = default;
+        var monitor = PInvoke.MonitorFromWindow(ToHwnd(hwnd), MONITOR_FROM_FLAGS.MONITOR_DEFAULTTONEAREST);
+        if (monitor.IsNull)
+        {
+            return false;
+        }
+
+        var info = new MONITORINFO { cbSize = (uint)Marshal.SizeOf<MONITORINFO>() };
+        if (!PInvoke.GetMonitorInfo(monitor, ref info))
+        {
+            return false;
+        }
+
+        monitorBounds = ToPixelRect(info.rcMonitor);
+        workArea = ToPixelRect(info.rcWork);
+        return monitorBounds.IsValid && workArea.IsValid;
+    }
+
+    private static HWND ToHwnd(nint hwnd) => new((void*)hwnd);
+
+    private static PixelRect ToPixelRect(RECT rect) =>
+        new(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
+}
