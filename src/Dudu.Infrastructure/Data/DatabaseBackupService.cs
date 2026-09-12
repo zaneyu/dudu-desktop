@@ -20,11 +20,21 @@ public sealed class DatabaseBackupService
 {
     private readonly DatabaseOptions _options;
     private readonly Database _database;
+    private readonly Action<string, string> _replaceDatabase;
 
     public DatabaseBackupService(DatabaseOptions options)
+        : this(options, null)
+    {
+    }
+
+    public DatabaseBackupService(
+        DatabaseOptions options,
+        Action<string, string>? replaceDatabase)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _database = new Database(_options);
+        _replaceDatabase = replaceDatabase ?? ((source, destination) =>
+            File.Move(source, destination, overwrite: true));
     }
 
     public DatabaseBackupService(string databasePath, string? backupDirectory = null)
@@ -159,13 +169,24 @@ public sealed class DatabaseBackupService
             using var maintenance = await _database.EnterMaintenanceAsync(cancellationToken);
             Directory.CreateDirectory(Path.GetDirectoryName(_options.DatabasePath)
                 ?? throw new InvalidOperationException("The database path has no directory."));
+            await CheckpointCurrentDatabaseAsync(cancellationToken);
             var temporaryPath = _options.DatabasePath + ".restore-" + Guid.NewGuid().ToString("N");
-            File.Copy(backupPath, temporaryPath, overwrite: false);
-            DeleteSidecars();
-            File.Move(temporaryPath, _options.DatabasePath, overwrite: true);
-            return new RestoreResult(true, RestoreFailure.None, backupPath);
+            try
+            {
+                File.Copy(backupPath, temporaryPath, overwrite: false);
+                _replaceDatabase(temporaryPath, _options.DatabasePath);
+                DeleteSidecars();
+                return new RestoreResult(true, RestoreFailure.None, backupPath);
+            }
+            finally
+            {
+                if (File.Exists(temporaryPath))
+                {
+                    File.Delete(temporaryPath);
+                }
+            }
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SqliteException)
         {
             return new RestoreResult(false, RestoreFailure.RestoreFailed, backupPath, exception);
         }
@@ -200,5 +221,22 @@ public sealed class DatabaseBackupService
             var path = _options.DatabasePath + suffix;
             if (File.Exists(path)) File.Delete(path);
         }
+    }
+
+    private async Task CheckpointCurrentDatabaseAsync(CancellationToken cancellationToken)
+    {
+        if (!File.Exists(_options.DatabasePath))
+        {
+            return;
+        }
+
+        await using var connection = new SqliteConnection(Database.ConnectionString(_options));
+        await connection.OpenAsync(cancellationToken);
+        Database.ConfigureConnection(connection);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        await connection.CloseAsync();
+        SqliteConnection.ClearAllPools();
     }
 }

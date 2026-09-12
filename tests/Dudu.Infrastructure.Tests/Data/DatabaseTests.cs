@@ -234,6 +234,36 @@ public sealed class DatabaseTests
     }
 
     [Fact]
+    public async Task Ambient_processed_conflict_rolls_back_new_envelope_before_outer_commit()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var messageId = "ambient-already-processed";
+        await using (var connection = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken))
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "INSERT INTO processed_remote_messages (message_id, processed_utc) VALUES ($id, $processed);";
+            command.Parameters.AddWithValue("$id", messageId);
+            command.Parameters.AddWithValue("$processed", DateTimeOffset.UtcNow.ToString("O"));
+            await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        var envelope = new RemoteEnvelope(messageId, [9], null, null, null, null, DateTimeOffset.UtcNow);
+        var unitOfWork = new AppUnitOfWork(fixture.Database);
+        await unitOfWork.ExecuteAsync(async (context, cancellationToken) =>
+        {
+            Assert.False(await context.RemoteEnvelopes.TryInsertAndMarkProcessedAsync(
+                envelope, DateTimeOffset.UtcNow, cancellationToken));
+            // Deliberately continue so a leaked envelope would be committed here.
+        }, TestContext.Current.CancellationToken);
+
+        var repository = new RemoteEnvelopeRepository(fixture.Database);
+        Assert.Null(await repository.GetAsync(messageId, TestContext.Current.CancellationToken));
+        Assert.DoesNotContain(messageId,
+            (await repository.ListPendingAsync(TestContext.Current.CancellationToken))
+            .Select(item => item.MessageId));
+    }
+
+    [Fact]
     public async Task Restore_replaces_database_and_removes_stale_wal_sidecars()
     {
         await using var fixture = await DatabaseFixture.CreateAsync();
@@ -251,10 +281,13 @@ public sealed class DatabaseTests
 
         var walPath = fixture.Options.DatabasePath + "-wal";
         var shmPath = fixture.Options.DatabasePath + "-shm";
-        await File.WriteAllBytesAsync(walPath, [1, 2, 3], TestContext.Current.CancellationToken);
-        await File.WriteAllBytesAsync(shmPath, [4, 5, 6], TestContext.Current.CancellationToken);
-
-        var result = await fixture.Backups.TryRestoreAsync(backup!, TestContext.Current.CancellationToken);
+        Assert.True(File.Exists(walPath));
+        Assert.True(File.Exists(shmPath));
+        var restoreTask = fixture.Backups.TryRestoreAsync(backup!, TestContext.Current.CancellationToken);
+        await Task.Yield();
+        Assert.False(restoreTask.IsCompleted);
+        await activeConnection.DisposeAsync();
+        var result = await restoreTask;
 
         Assert.True(result.Restored);
         Assert.False(File.Exists(walPath));
@@ -263,14 +296,59 @@ public sealed class DatabaseTests
     }
 
     [Fact]
+    public async Task Restore_waits_for_inflight_write_lease_before_replacing_database()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var profiles = new ProfileRepository(fixture.Database);
+        await profiles.SaveAsync(new Profile("Before", true), TestContext.Current.CancellationToken);
+        var backup = await fixture.Backups.CreatePreMigrationBackupAsync(TestContext.Current.CancellationToken);
+
+        await using var activeConnection = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken);
+        await using var transaction = (SqliteTransaction)await activeConnection.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await using (var command = activeConnection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = "UPDATE profiles SET recipient_name = 'InFlight' WHERE id = 1;";
+            await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        var restoreTask = fixture.Backups.TryRestoreAsync(backup!, TestContext.Current.CancellationToken);
+        await Task.Yield();
+        Assert.False(restoreTask.IsCompleted);
+
+        await transaction.RollbackAsync(TestContext.Current.CancellationToken);
+        await activeConnection.DisposeAsync();
+        var result = await restoreTask;
+
+        Assert.True(result.Restored);
+        Assert.Equal("Before", (await profiles.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
+    }
+
+    [Fact]
+    public async Task Replacement_failure_preserves_current_database_after_wal_checkpoint()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var profiles = new ProfileRepository(fixture.Database);
+        await profiles.SaveAsync(new Profile("Current", true), TestContext.Current.CancellationToken);
+        var backup = await fixture.Backups.CreatePreMigrationBackupAsync(TestContext.Current.CancellationToken);
+        await profiles.SaveAsync(new Profile("Still current", true), TestContext.Current.CancellationToken);
+
+        var failingBackups = new DatabaseBackupService(
+            fixture.Options,
+            static (_, _) => throw new IOException("injected replacement failure"));
+        var result = await failingBackups.TryRestoreAsync(backup!, TestContext.Current.CancellationToken);
+
+        Assert.False(result.Restored);
+        Assert.Equal(RestoreFailure.RestoreFailed, result.Failure);
+        Assert.Equal("Still current", (await profiles.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
+    }
+
+    [Fact]
     public async Task Public_connection_and_supplied_migration_paths_configure_pragmas()
     {
         await using var fixture = await DatabaseFixture.CreateAsync();
         await using var asyncConnection = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken);
         await AssertPragmasAsync(asyncConnection, TestContext.Current.CancellationToken);
-
-        using var syncConnection = fixture.Database.CreateConnection();
-        await AssertPragmasAsync(syncConnection, TestContext.Current.CancellationToken);
 
         var suppliedPath = Path.Combine(Path.GetDirectoryName(fixture.Options.DatabasePath)!, "supplied.db");
         var supplied = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = suppliedPath, Mode = SqliteOpenMode.ReadWriteCreate }.ToString());
@@ -281,7 +359,14 @@ public sealed class DatabaseTests
     }
 
     [Fact]
-    public async Task Concurrent_first_use_awaits_one_completed_initialization()
+    public void Database_exposes_async_only_connection_initialization()
+    {
+        Assert.Null(typeof(Database).GetMethod("CreateConnection", Type.EmptyTypes));
+        Assert.NotNull(typeof(Database).GetMethod(nameof(Database.CreateConnectionAsync)));
+    }
+
+    [Fact]
+    public async Task Concurrent_first_use_across_database_instances_awaits_one_completed_initialization()
     {
         var root = Path.Combine(Path.GetTempPath(), "dudu-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -289,10 +374,15 @@ public sealed class DatabaseTests
         {
             var options = new DatabaseOptions(Path.Combine(root, "dudu.db"), Path.Combine(root, "backups"));
             var database = new Database(options);
-            var connections = await Task.WhenAll(Enumerable.Range(0, 12).Select(_ => database.CreateConnectionAsync(TestContext.Current.CancellationToken)));
+            var secondDatabase = new Database(options);
+            var connections = await Task.WhenAll(
+                Enumerable.Range(0, 6).Select(_ => database.CreateConnectionAsync(TestContext.Current.CancellationToken))
+                    .Concat(Enumerable.Range(0, 6).Select(_ => secondDatabase.CreateConnectionAsync(TestContext.Current.CancellationToken))));
             foreach (var connection in connections) await connection.DisposeAsync();
             var notes = await new LocalNoteRepository(database).ListEnabledAsync(TestContext.Current.CancellationToken);
             Assert.Equal(12, notes.Count);
+            Assert.Equal(1, database.InitializationRunCount);
+            Assert.Equal(1, secondDatabase.InitializationRunCount);
         }
         finally
         {

@@ -8,18 +8,18 @@ public sealed class Database : IAsyncDisposable, IDisposable
     private static readonly ConcurrentDictionary<string, DatabaseAccessCoordinator> Coordinators = new(StringComparer.OrdinalIgnoreCase);
     private readonly DatabaseOptions _options;
     private readonly DatabaseAccessCoordinator _coordinator;
-    private readonly object _initializationSync = new();
-    private Task? _initializationTask;
 
     public Database(DatabaseOptions options)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _coordinator = Coordinators.GetOrAdd(
             Path.GetFullPath(_options.DatabasePath),
-            static path => new DatabaseAccessCoordinator(path));
+            static _ => new DatabaseAccessCoordinator());
     }
 
     public DatabaseOptions Options => _options;
+
+    public int InitializationRunCount => _coordinator.InitializationRunCount;
 
     public static async Task<Database> OpenAsync(
         DatabaseOptions options,
@@ -43,28 +43,7 @@ public sealed class Database : IAsyncDisposable, IDisposable
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
-        Task initialization;
-        lock (_initializationSync)
-        {
-            _initializationTask ??= InitializeCoreAsync();
-            initialization = _initializationTask;
-        }
-
-        try
-        {
-            await initialization.WaitAsync(cancellationToken);
-        }
-        catch
-        {
-            lock (_initializationSync)
-            {
-                if (_initializationTask is { IsCompleted: true })
-                {
-                    _initializationTask = null;
-                }
-            }
-            throw;
-        }
+        await _coordinator.InitializeAsync(InitializeCoreAsync).WaitAsync(cancellationToken);
     }
 
     public async Task<SqliteConnection> CreateConnectionAsync(
@@ -72,12 +51,6 @@ public sealed class Database : IAsyncDisposable, IDisposable
     {
         await InitializeAsync(cancellationToken);
         return await OpenConnectionAsync(cancellationToken);
-    }
-
-    public SqliteConnection CreateConnection()
-    {
-        InitializeAsync().GetAwaiter().GetResult();
-        return OpenConnection();
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
@@ -128,23 +101,6 @@ public sealed class Database : IAsyncDisposable, IDisposable
         }
     }
 
-    private SqliteConnection OpenConnection()
-    {
-        _coordinator.Gate.Wait();
-        try
-        {
-            var connection = new SqliteConnection(ConnectionString(_options));
-            connection.Open();
-            ConfigureConnection(connection);
-            _coordinator.Track(connection);
-            return connection;
-        }
-        finally
-        {
-            _coordinator.Gate.Release();
-        }
-    }
-
     private async Task InitializeCoreAsync()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(_options.DatabasePath)
@@ -160,18 +116,44 @@ public sealed class Database : IAsyncDisposable, IDisposable
         _coordinator.EnterMaintenanceAsync(cancellationToken);
 }
 
-internal sealed class DatabaseAccessCoordinator(string databasePath)
+internal sealed class DatabaseAccessCoordinator
 {
-    private readonly string _databasePath = databasePath;
     private readonly object _sync = new();
     private readonly HashSet<SqliteConnection> _connections = [];
+    private TaskCompletionSource<bool> _connectionsDrained = CompletedSource();
+    private TaskCompletionSource<bool>? _initializationSource;
+    private int _initializationRunCount;
     public SemaphoreSlim Gate { get; } = new(1, 1);
+
+    public int InitializationRunCount => Volatile.Read(ref _initializationRunCount);
+
+    public Task InitializeAsync(Func<Task> initializer)
+    {
+        ArgumentNullException.ThrowIfNull(initializer);
+        lock (_sync)
+        {
+            if (_initializationSource is not null)
+            {
+                return _initializationSource.Task;
+            }
+
+            var source = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _initializationSource = source;
+            _initializationRunCount++;
+            _ = RunInitializationAsync(source, initializer);
+            return source.Task;
+        }
+    }
 
     public void Track(SqliteConnection connection)
     {
         lock (_sync)
         {
             _connections.Add(connection);
+            if (_connections.Count == 1)
+            {
+                _connectionsDrained = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
         }
 
         connection.StateChange += OnStateChange;
@@ -182,18 +164,15 @@ internal sealed class DatabaseAccessCoordinator(string databasePath)
         await Gate.WaitAsync(cancellationToken);
         try
         {
-            SqliteConnection[] connections;
+            Task drained;
             lock (_sync)
             {
-                connections = _connections.ToArray();
-                _connections.Clear();
+                drained = _connections.Count == 0
+                    ? Task.CompletedTask
+                    : _connectionsDrained.Task;
             }
 
-            foreach (var connection in connections)
-            {
-                await connection.DisposeAsync();
-            }
-
+            await drained.WaitAsync(cancellationToken);
             SqliteConnection.ClearAllPools();
 
             return new MaintenanceLease(Gate);
@@ -211,9 +190,42 @@ internal sealed class DatabaseAccessCoordinator(string databasePath)
         {
             lock (_sync)
             {
-                _connections.Remove(connection);
+                if (_connections.Remove(connection) && _connections.Count == 0)
+                {
+                    _connectionsDrained.TrySetResult(true);
+                }
             }
         }
+    }
+
+    private async Task RunInitializationAsync(
+        TaskCompletionSource<bool> source,
+        Func<Task> initializer)
+    {
+        try
+        {
+            await initializer();
+            source.TrySetResult(true);
+        }
+        catch (Exception exception)
+        {
+            lock (_sync)
+            {
+                if (ReferenceEquals(_initializationSource, source))
+                {
+                    _initializationSource = null;
+                }
+            }
+
+            source.TrySetException(exception);
+        }
+    }
+
+    private static TaskCompletionSource<bool> CompletedSource()
+    {
+        var source = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        source.SetResult(true);
+        return source;
     }
 
     private sealed class MaintenanceLease(SemaphoreSlim gate) : IDisposable

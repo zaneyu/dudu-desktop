@@ -36,13 +36,34 @@ public sealed class RemoteEnvelopeRepository : SqliteRepository, IRemoteEnvelope
         if (IsTransactionBound)
         {
             await using var boundConnection = await OpenAsync(cancellationToken);
+            await using var savepoint = boundConnection.CreateCommand();
+            savepoint.CommandText = "SAVEPOINT remote_insert_and_mark;";
+            await savepoint.ExecuteNonQueryAsync(cancellationToken);
+
             await using var insert = boundConnection.CreateCommand();
             AddInsert(insert, envelope, "INSERT INTO remote_envelopes (message_id,ciphertext,ephemeral_public_key,nonce,authentication_tag,deliver_after_utc,received_utc) VALUES ($id,$ciphertext,$key,$nonce,$tag,$deliverAfter,$received) ON CONFLICT(message_id) DO NOTHING;");
-            await insert.ExecuteNonQueryAsync(cancellationToken);
-            await using var processed = boundConnection.CreateCommand();
-            processed.CommandText = "INSERT INTO processed_remote_messages (message_id,processed_utc) SELECT $id,$processed WHERE EXISTS (SELECT 1 FROM remote_envelopes WHERE message_id=$id) ON CONFLICT(message_id) DO NOTHING;";
-            Add(processed,"$id",envelope.MessageId); Add(processed,"$processed",Utc(processedUtc));
-            return await processed.ExecuteNonQueryAsync(cancellationToken) == 1;
+            try
+            {
+                await insert.ExecuteNonQueryAsync(cancellationToken);
+                await using var processed = boundConnection.CreateCommand();
+                processed.CommandText = "INSERT INTO processed_remote_messages (message_id,processed_utc) SELECT $id,$processed WHERE EXISTS (SELECT 1 FROM remote_envelopes WHERE message_id=$id) ON CONFLICT(message_id) DO NOTHING;";
+                Add(processed,"$id",envelope.MessageId); Add(processed,"$processed",Utc(processedUtc));
+                if (await processed.ExecuteNonQueryAsync(cancellationToken) == 1)
+                {
+                    await using var release = boundConnection.CreateCommand();
+                    release.CommandText = "RELEASE SAVEPOINT remote_insert_and_mark;";
+                    await release.ExecuteNonQueryAsync(cancellationToken);
+                    return true;
+                }
+
+                await RollbackSavepointAsync(boundConnection, cancellationToken);
+                return false;
+            }
+            catch
+            {
+                await RollbackSavepointAsync(boundConnection, CancellationToken.None);
+                throw;
+            }
         }
 
         await using var connection=await OpenAsync(cancellationToken); await using var transaction=(SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
@@ -77,4 +98,14 @@ public sealed class RemoteEnvelopeRepository : SqliteRepository, IRemoteEnvelope
     }
     private static void AddInsert(SqliteCommand c,RemoteEnvelope e,string sql){c.CommandText=sql;Add(c,"$id",e.MessageId);Add(c,"$ciphertext",e.Ciphertext);Add(c,"$key",e.EphemeralPublicKey);Add(c,"$nonce",e.Nonce);Add(c,"$tag",e.AuthenticationTag);Add(c,"$deliverAfter",Utc(e.DeliverAfterUtc));Add(c,"$received",Utc(e.ReceivedUtc));}
     private static RemoteEnvelope Read(SqliteDataReader r)=>new(r.GetString(0),(byte[])r[1],r.IsDBNull(2)?null:(byte[])r[2],r.IsDBNull(3)?null:(byte[])r[3],r.IsDBNull(4)?null:(byte[])r[4],ReadNullableUtc(r[5]),ReadUtc(r[6]));
+
+    private static async Task RollbackSavepointAsync(SqliteConnectionLease connection, CancellationToken cancellationToken)
+    {
+        await using var rollback = connection.CreateCommand();
+        rollback.CommandText = "ROLLBACK TO SAVEPOINT remote_insert_and_mark;";
+        await rollback.ExecuteNonQueryAsync(cancellationToken);
+        await using var release = connection.CreateCommand();
+        release.CommandText = "RELEASE SAVEPOINT remote_insert_and_mark;";
+        await release.ExecuteNonQueryAsync(cancellationToken);
+    }
 }
