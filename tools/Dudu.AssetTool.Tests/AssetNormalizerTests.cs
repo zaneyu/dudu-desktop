@@ -1,5 +1,6 @@
 using Dudu.Core.Assets;
 using Dudu.AssetTool;
+using SkiaSharp;
 using Xunit;
 
 namespace Dudu.AssetTool.Tests;
@@ -19,6 +20,25 @@ public sealed class AssetNormalizerTests
 
         Assert.All(result.Frames, frame => Assert.Equal(result.Anchor, frame.Anchor));
         Assert.All(result.Frames, frame => Assert.Equal(512, frame.CanvasSize));
+    }
+
+    [Fact]
+    public void Normalizer_does_not_upscale_and_emits_deterministic_premultiplied_png()
+    {
+        var input = PngFixture.Rectangle(600, 600, 0, 0, 600, 600);
+
+        var first = AssetNormalizer.Normalize([new AssetInputFrame("large", input, 123)], new PixelPoint(50, 100), 512);
+        var second = AssetNormalizer.Normalize([new AssetInputFrame("large", input, 123)], new PixelPoint(50, 100), 512);
+        using var bitmap = SKBitmap.Decode(first.Frames[0].PngBytes);
+
+        Assert.Equal(512, bitmap.Width);
+        Assert.Equal(512, bitmap.Height);
+        Assert.Equal(SKAlphaType.Premul, bitmap.AlphaType);
+        Assert.Equal("premultiplied BGRA8888 PNG", first.Frames[0].ColorFormat);
+        Assert.Equal(512d / 600d, first.Frames[0].Scale, precision: 6);
+        Assert.Equal(first.Frames[0].Sha256, second.Frames[0].Sha256);
+        Assert.Equal(first.Frames[0].PngBytes, second.Frames[0].PngBytes);
+        Assert.Equal("frames/base/idle/0000-aaaaaaaaaaaa.png", AssetNormalizer.DeterministicFileName("idle", 0, new string('a', 64)));
     }
 
     private static class PngFixture

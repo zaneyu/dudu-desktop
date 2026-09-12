@@ -1,9 +1,7 @@
 using System.Buffers.Binary;
-using System.Net;
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
+using System.Text.Json.Serialization;
 using Dudu.Core;
 using Dudu.Core.Assets;
 
@@ -18,6 +16,7 @@ public static class Program
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true,
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
     };
     private static readonly byte[] PngSignature = [137, 80, 78, 71, 13, 10, 26, 10];
 
@@ -56,7 +55,7 @@ public static class Program
         var document = await ReadSourcesAsync(sourcesPath);
         Directory.CreateDirectory(rawDirectory);
 
-        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        using var client = MediaDownloader.CreateClient();
         client.DefaultRequestHeaders.UserAgent.ParseAdd("Dudu.AssetTool/1.0 private-local-import");
         foreach (var source in document.Sources)
         {
@@ -90,7 +89,6 @@ public static class Program
         }
 
         byte[]? payload = null;
-        string? mediaUrl = source.MediaUrl;
         if (!string.IsNullOrWhiteSpace(source.RawFile))
         {
             var existingPath = SafeRawPath(rawDirectory, source.RawFile);
@@ -113,71 +111,40 @@ public static class Program
 
         if (payload is null)
         {
-            if (!string.IsNullOrWhiteSpace(mediaUrl))
-            {
-                try
-                {
-                    var directMedia = await GetBytesAsync(client, mediaUrl);
-                    if (IsSafeMedia(directMedia.Bytes))
-                    {
-                        payload = directMedia.Bytes;
-                    }
-                }
-                catch (HttpRequestException exception)
-                {
-                    source.Notes = $"Recorded media URL could not be fetched safely; discovery fallback attempted: {exception.Message}";
-                }
-            }
-        }
-
-        if (payload is null)
-        {
-            DownloadResult discovery;
             try
             {
-                discovery = await GetBytesAsync(client, source.DiscoveryUrl);
+                var directMedia = await MediaDownloader.DownloadAsync(client, source.MediaUrl!, MaximumMediaBytes);
+                if (!IsSafeMedia(directMedia.Bytes))
+                {
+                    source.Status = "rejected-media";
+                    source.Notes = "Rejected media URL: payload was not a supported PNG, JPEG, GIF, or WebP image.";
+                    Console.WriteLine($"{source.Id}: rejected-media (unsupported payload).");
+                    return;
+                }
+                payload = directMedia.Bytes;
+                source.MediaUrl = directMedia.FinalUri.AbsoluteUri;
             }
             catch (HttpRequestException exception)
             {
                 source.Status = "unavailable";
-                source.Notes = $"Discovery page could not be fetched safely: {exception.Message}";
+                source.Notes = $"Explicit media URL could not be fetched safely: {exception.Message}";
                 Console.WriteLine($"{source.Id}: unavailable ({exception.Message}).");
                 return;
             }
-            if (!IsHtml(discovery.Bytes, discovery.ContentType))
+            catch (InvalidDataException exception)
             {
-                source.Status = "no-image-media";
-                source.Notes = "Discovery URL did not return HTML from which image media could be identified.";
-                Console.WriteLine($"{source.Id}: no-image-media (discovery response was not HTML).");
+                source.Status = "rejected-media";
+                source.Notes = exception.Message;
+                Console.WriteLine($"{source.Id}: rejected-media ({exception.Message}).");
                 return;
-            }
-
-            var candidates = ExtractImageCandidates(discovery.Bytes, source.DiscoveryUrl);
-            foreach (var candidate in candidates)
-            {
-                try
-                {
-                    var media = await GetBytesAsync(client, candidate);
-                    if (IsSafeMedia(media.Bytes))
-                    {
-                        payload = media.Bytes;
-                        mediaUrl = candidate;
-                        break;
-                    }
-                }
-                catch (HttpRequestException)
-                {
-                    // Continue to the next explicit candidate. The final result remains explicit.
-                }
             }
         }
 
         if (payload is null)
         {
             source.Status = "no-image-media";
-            source.MediaUrl = mediaUrl;
-            source.Notes = "No supported PNG, JPEG, GIF, or WebP image media was yielded by the discovery page; no private asset was fabricated.";
-            Console.WriteLine($"{source.Id}: no-image-media (no supported image payload found).");
+            source.Notes = "No explicit accountable media URL yielded a supported image; no private asset was fabricated.";
+            Console.WriteLine($"{source.Id}: no-image-media (explicit media URL yielded no supported image).");
             return;
         }
 
@@ -191,11 +158,10 @@ public static class Program
             return;
         }
 
-        var extension = MediaExtension(payload);
+        var extension = MediaPayloadValidator.ExtensionFor(payload);
         var fileName = source.Id + extension;
         var outputPath = SafeRawPath(rawDirectory, fileName);
         await File.WriteAllBytesAsync(outputPath, payload);
-        source.MediaUrl = mediaUrl;
         source.RawFile = fileName;
         source.Sha256 = actualSha256;
         source.Status = "imported";
@@ -214,6 +180,21 @@ public static class Program
         var rawDirectory = Path.GetFullPath(inputPath);
         var packDirectory = Path.GetFullPath(outputPath);
         Directory.CreateDirectory(packDirectory);
+        if (!IsReparseSafe(packDirectory, packDirectory))
+        {
+            throw new InvalidDataException($"Pack output directory contains a symlink, junction, or reparse point: {packDirectory}");
+        }
+
+        var framesDirectory = Path.Combine(packDirectory, "frames");
+        if (Directory.Exists(framesDirectory))
+        {
+            if (!IsReparseSafe(packDirectory, framesDirectory))
+            {
+                throw new InvalidDataException($"Pack frame directory contains a symlink, junction, or reparse point: {framesDirectory}");
+            }
+
+            Directory.Delete(framesDirectory, recursive: true);
+        }
 
         var missing = AssetManifestContract.RequiredAnimationKeys
             .Where(key => !document.Sources.Any(source => source.Status == "imported"
@@ -242,35 +223,41 @@ public static class Program
                 throw new InvalidDataException($"Source {source.Id} failed SHA-256 or media validation before normalization.");
             }
 
+            var decodedFrames = AssetNormalizer.DecodeFrames(bytes, source.Id, 180);
             var normalized = AssetNormalizer.Normalize(
-                [new AssetInputFrame(source.Id, bytes, 180)],
+                decodedFrames,
                 new PixelPoint(256, 400),
                 512);
-            var frame = normalized.Frames[0];
-            var relativeFile = AssetNormalizer.DeterministicFileName(animationKey, 0, frame.Sha256);
-            var fullOutputPath = SafePackPath(packDirectory, relativeFile);
-            Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath)!);
-            await File.WriteAllBytesAsync(fullOutputPath, frame.PngBytes);
-
             var transform = transformBySource[source.Id];
-            transform.OutputFiles.Add(relativeFile);
-            transform.OutputSha256.Add(frame.Sha256);
-            transform.Normalization = new NormalizationDetails
+            var animationFrames = new List<AssetFrame>(normalized.Frames.Count);
+            foreach (var (frame, index) in normalized.Frames.Select((frame, index) => (frame, index)))
             {
-                TrimmedSize = frame.TrimmedSize,
-                Scale = frame.Scale,
-                CanvasSize = frame.CanvasSize,
-                Anchor = frame.Anchor,
-                ColorFormat = frame.ColorFormat,
-            };
+                var relativeFile = AssetNormalizer.DeterministicFileName(animationKey, index, frame.Sha256);
+                var fullOutputPath = SafePackPath(packDirectory, relativeFile);
+                Directory.CreateDirectory(Path.GetDirectoryName(fullOutputPath)!);
+                await File.WriteAllBytesAsync(fullOutputPath, frame.PngBytes);
+                transform.OutputFiles.Add(relativeFile);
+                transform.OutputSha256.Add(frame.Sha256);
+                transform.Normalizations.Add(new NormalizationDetails
+                {
+                    FrameIndex = index,
+                    TrimmedSize = frame.TrimmedSize,
+                    Scale = frame.Scale,
+                    CanvasSize = frame.CanvasSize,
+                    Anchor = frame.Anchor,
+                    ColorFormat = frame.ColorFormat,
+                });
+                animationFrames.Add(new AssetFrame { File = relativeFile, DurationMs = frame.DurationMs, Sha256 = frame.Sha256 });
+            }
 
             animations[animationKey] = new AssetAnimation
             {
-                Frames = [new AssetFrame { File = relativeFile, DurationMs = frame.DurationMs, Sha256 = frame.Sha256 }],
+                Frames = animationFrames,
                 Loop = animationKey == "idle" || animationKey == "blink" || animationKey == "focus" ? "loop" : "once",
                 Anchor = normalized.Anchor,
                 NominalSize = new PixelSize(normalized.CanvasSize, normalized.CanvasSize),
-                ReducedMotion = relativeFile,
+                ReducedMotion = animationFrames[0].File,
+                ReducedMotionSha256 = animationFrames[0].Sha256,
             };
         }
 
@@ -328,7 +315,7 @@ public static class Program
         }
 
         await using var stream = File.OpenRead(manifestPath);
-        var manifest = await JsonSerializer.DeserializeAsync<AssetManifest>(stream);
+        var manifest = await JsonSerializer.DeserializeAsync<AssetManifest>(stream, JsonOptions);
         var errors = AssetManifestContract.Validate(manifest).ToList();
         if (manifest is not null)
         {
@@ -342,7 +329,7 @@ public static class Program
                         await ValidateFileAsync(root, frame.File, frame.Sha256, errors);
                     }
 
-                    await ValidateFileAsync(root, animation.ReducedMotion, null, errors);
+                    await ValidateFileAsync(root, animation.ReducedMotion, animation.ReducedMotionSha256, errors);
                 }
             }
         }
@@ -381,6 +368,7 @@ public static class Program
                 Anchor = new PixelPoint(64, 112),
                 NominalSize = new PixelSize(128, 128),
                 ReducedMotion = "idle.png",
+                ReducedMotionSha256 = hash,
             };
         }
 
@@ -424,7 +412,7 @@ public static class Program
         {
             errors.Add($"Referenced file is not PNG: {relativePath}.");
         }
-        else if (bytes.Length < 24 || !bytes.AsSpan(12, 4).SequenceEqual("IHDR"u8))
+        else if (bytes.Length < 26 || !bytes.AsSpan(12, 4).SequenceEqual("IHDR"u8))
         {
             errors.Add($"Referenced PNG has no valid IHDR header: {relativePath}.");
         }
@@ -435,6 +423,11 @@ public static class Program
             if (width is 0 or > 512 || height is 0 or > 512)
             {
                 errors.Add($"Referenced PNG dimensions must be at most 512x512: {relativePath} is {width}x{height}.");
+            }
+
+            if (bytes[24] != 8 || bytes[25] != 6)
+            {
+                errors.Add($"Referenced PNG must be an 8-bit RGBA PNG: {relativePath}.");
             }
         }
 
@@ -454,75 +447,23 @@ public static class Program
             throw new InvalidDataException($"Source metadata must be schemaVersion 1 with at least one source record: {path}");
         }
 
+        foreach (var source in document.Sources)
+        {
+            MediaDownloader.RequireHttps(source.DiscoveryUrl);
+            if (string.IsNullOrWhiteSpace(source.MediaUrl))
+            {
+                throw new InvalidDataException($"Source '{source.Id}' must record an explicit accountable mediaUrl; discovery-page scraping is disabled.");
+            }
+
+            MediaDownloader.RequireHttps(source.MediaUrl);
+        }
+
         return document;
     }
 
     private static async Task WriteSourcesAsync(string path, SourceDocument document)
     {
         await File.WriteAllTextAsync(path, JsonSerializer.Serialize(document, JsonOptions));
-    }
-
-    private static async Task<DownloadResult> GetBytesAsync(HttpClient client, string url)
-    {
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
-        {
-            throw new InvalidDataException($"Only HTTPS source URLs are allowed: {url}");
-        }
-
-        using var response = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead);
-        response.EnsureSuccessStatusCode();
-        if (response.Content.Headers.ContentLength is > MaximumMediaBytes)
-        {
-            throw new InvalidDataException($"Payload exceeds the {MaximumMediaBytes} byte safety limit: {url}");
-        }
-
-        await using var stream = await response.Content.ReadAsStreamAsync();
-        using var buffer = new MemoryStream();
-        var chunk = new byte[81920];
-        while (buffer.Length <= MaximumMediaBytes)
-        {
-            var read = await stream.ReadAsync(chunk);
-            if (read == 0)
-            {
-                break;
-            }
-
-            await buffer.WriteAsync(chunk.AsMemory(0, read));
-        }
-
-        if (buffer.Length > MaximumMediaBytes)
-        {
-            throw new InvalidDataException($"Payload exceeds the {MaximumMediaBytes} byte safety limit: {url}");
-        }
-
-        return new DownloadResult(buffer.ToArray(), response.Content.Headers.ContentType?.MediaType);
-    }
-
-    private static IEnumerable<string> ExtractImageCandidates(byte[] htmlBytes, string discoveryUrl)
-    {
-        var html = Encoding.UTF8.GetString(htmlBytes);
-        var matches = new List<string>();
-        foreach (Match match in Regex.Matches(html, "<(?:meta[^>]+(?:property|name)=[\\\"'](?:og:image|og:image:url|twitter:image)[\\\"'][^>]+content|meta[^>]+content=[\\\"'][^\\\"']+[\\\"'][^>]+(?:property|name)=[\\\"'](?:og:image|og:image:url|twitter:image)[\\\"'])=[\\\"']([^\\\"']+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
-        {
-            AddCandidate(matches, WebUtility.HtmlDecode(match.Groups[1].Value), discoveryUrl);
-        }
-
-        foreach (Match match in Regex.Matches(html, "<(?:img|source)[^>]+(?:src|srcset)=[\\\"']([^\\\"' ]+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
-        {
-            AddCandidate(matches, WebUtility.HtmlDecode(match.Groups[1].Value), discoveryUrl);
-        }
-
-        return matches;
-    }
-
-    private static void AddCandidate(ICollection<string> candidates, string value, string discoveryUrl)
-    {
-        if (Uri.TryCreate(new Uri(discoveryUrl), value, out var uri)
-            && uri.Scheme == Uri.UriSchemeHttps
-            && !candidates.Contains(uri.AbsoluteUri, StringComparer.Ordinal))
-        {
-            candidates.Add(uri.AbsoluteUri);
-        }
     }
 
     private static string EnsureRawDirectory(string outputPath)
@@ -532,6 +473,11 @@ public static class Program
         if (!IsUnder(raw, expected) || !string.Equals(raw, expected, StringComparison.Ordinal))
         {
             throw new InvalidDataException($"Downloads are only allowed directly under assets/raw: {expected}");
+        }
+
+        if (Directory.Exists(raw) && !IsReparseSafe(raw, raw))
+        {
+            throw new InvalidDataException($"Downloads cannot use a symlink, junction, or reparse point as assets/raw: {raw}");
         }
 
         return raw;
@@ -550,7 +496,7 @@ public static class Program
         }
 
         var path = Path.GetFullPath(Path.Combine(rawDirectory, fileName));
-        if (!IsUnder(path, rawDirectory))
+        if (!IsUnder(path, rawDirectory) || !IsReparseSafe(rawDirectory, path))
         {
             throw new InvalidDataException($"Raw asset path escapes assets/raw: {fileName}");
         }
@@ -566,7 +512,7 @@ public static class Program
         }
 
         var path = Path.GetFullPath(Path.Combine(packDirectory, relativePath));
-        if (!IsUnder(path, packDirectory))
+        if (!IsUnder(path, packDirectory) || !IsReparseSafe(packDirectory, path))
         {
             throw new InvalidDataException($"Normalized asset path escapes the pack: {relativePath}");
         }
@@ -581,28 +527,54 @@ public static class Program
         return normalizedPath.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsHtml(byte[] bytes, string? contentType) =>
-        contentType?.Contains("html", StringComparison.OrdinalIgnoreCase) == true
-        || Encoding.UTF8.GetString(bytes.AsSpan(0, Math.Min(bytes.Length, 256))).Contains("<html", StringComparison.OrdinalIgnoreCase);
-
-    private static bool IsSafeMedia(byte[] bytes)
+    private static bool IsReparseSafe(string root, string path)
     {
-        if (bytes.Length == 0 || bytes.Length > MaximumMediaBytes || IsHtml(bytes, null))
+        var rootFull = Path.GetFullPath(root);
+        if (HasReparsePoint(rootFull))
         {
             return false;
         }
 
-        return bytes.AsSpan().StartsWith(PngSignature)
-            || bytes.AsSpan().StartsWith(new byte[] { 255, 216, 255 })
-            || bytes.AsSpan().StartsWith("GIF87a"u8)
-            || bytes.AsSpan().StartsWith("GIF89a"u8)
-            || (bytes.Length >= 12 && bytes.AsSpan(0, 4).SequenceEqual("RIFF"u8) && bytes.AsSpan(8, 4).SequenceEqual("WEBP"u8));
+        var relative = Path.GetRelativePath(rootFull, Path.GetFullPath(path));
+        var current = rootFull;
+        foreach (var segment in relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+        {
+            if (string.IsNullOrEmpty(segment) || segment == ".")
+            {
+                continue;
+            }
+
+            current = Path.Combine(current, segment);
+            if ((File.Exists(current) || Directory.Exists(current)) && HasReparsePoint(current))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
-    private static string MediaExtension(byte[] bytes) => bytes.AsSpan().StartsWith(PngSignature) ? ".png"
-        : bytes.AsSpan().StartsWith(new byte[] { 255, 216, 255 }) ? ".jpg"
-        : bytes.AsSpan().StartsWith("GIF"u8) ? ".gif"
-        : ".webp";
+    private static bool HasReparsePoint(string path)
+    {
+        try
+        {
+            return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
+        }
+        catch (FileNotFoundException)
+        {
+            return false;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return true;
+        }
+    }
+
+    private static bool IsSafeMedia(byte[] bytes) => MediaPayloadValidator.IsSupportedImage(bytes, MaximumMediaBytes);
 
     private static string Sha256(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
 
@@ -620,8 +592,6 @@ public static class Program
 
         return args[index + 1];
     }
-
-    private sealed record DownloadResult(byte[] Bytes, string? ContentType);
 
     private sealed class SourceDocument
     {
@@ -651,13 +621,16 @@ public static class Program
 
     private sealed class SourceTransform
     {
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public NormalizationDetails? Normalization { get; set; }
         public List<string> OutputFiles { get; set; } = [];
         public List<string> OutputSha256 { get; set; } = [];
+        public List<NormalizationDetails> Normalizations { get; set; } = [];
     }
 
     private sealed class NormalizationDetails
     {
+        public int FrameIndex { get; set; }
         public PixelSize TrimmedSize { get; set; }
         public double Scale { get; set; }
         public int CanvasSize { get; set; }

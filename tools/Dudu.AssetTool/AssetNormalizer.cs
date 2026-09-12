@@ -35,6 +35,50 @@ public sealed class NormalizedAssetSet
 
 public static class AssetNormalizer
 {
+    public static IReadOnlyList<AssetInputFrame> DecodeFrames(
+        byte[] bytes,
+        string name,
+        int staticDurationMs)
+    {
+        ArgumentNullException.ThrowIfNull(bytes);
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        if (staticDurationMs <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(staticDurationMs));
+        }
+
+        using var stream = new MemoryStream(bytes, writable: false);
+        using var codec = SKCodec.Create(stream)
+            ?? throw new InvalidDataException($"Source '{name}' is not a decodable image.");
+        var frameCount = codec.FrameCount;
+        if (frameCount <= 1)
+        {
+            return [new AssetInputFrame(name + "-0000", bytes, staticDurationMs)];
+        }
+
+        var info = codec.Info;
+        var frameInfo = codec.FrameInfo;
+        var frames = new List<AssetInputFrame>(frameCount);
+        for (var index = 0; index < frameCount; index++)
+        {
+            using var bitmap = new SKBitmap(new SKImageInfo(info.Width, info.Height, SKColorType.Bgra8888, SKAlphaType.Premul));
+            var result = codec.GetPixels(
+                bitmap.Info,
+                bitmap.GetPixels(),
+                bitmap.RowBytes,
+                new SKCodecOptions(index));
+            if (result is not SKCodecResult.Success and not SKCodecResult.IncompleteInput)
+            {
+                throw new InvalidDataException($"Could not decode GIF frame {index} from '{name}': {result}.");
+            }
+
+            var duration = frameInfo.Length > index ? Math.Max(1, frameInfo[index].Duration) : staticDurationMs;
+            frames.Add(new AssetInputFrame(name + $"-{index:D4}", EncodeBitmap(bitmap), duration));
+        }
+
+        return frames;
+    }
+
     public static NormalizedAssetSet Normalize(
         IEnumerable<AssetInputFrame> frames,
         PixelPoint packAnchor,
@@ -67,14 +111,11 @@ public static class AssetNormalizer
 
             using var source = Decode(input.Bytes, input.Name);
             var bounds = FindOpaqueBounds(source);
-            if (bounds is null)
-            {
-                throw new InvalidDataException($"Frame '{input.Name}' is fully transparent.");
-            }
-
-            var trimmedWidth = bounds.Value.Width;
-            var trimmedHeight = bounds.Value.Height;
-            var scale = Math.Min(1d, Math.Min((double)maxCanvasSize / trimmedWidth, (double)maxCanvasSize / trimmedHeight));
+            var trimmedWidth = bounds?.Width ?? 0;
+            var trimmedHeight = bounds?.Height ?? 0;
+            var scale = bounds is null
+                ? 1d
+                : Math.Min(1d, Math.Min((double)maxCanvasSize / trimmedWidth, (double)maxCanvasSize / trimmedHeight));
             var outputWidth = Math.Max(1, (int)Math.Round(trimmedWidth * scale, MidpointRounding.ToEven));
             var outputHeight = Math.Max(1, (int)Math.Round(trimmedHeight * scale, MidpointRounding.ToEven));
 
@@ -85,8 +126,11 @@ public static class AssetNormalizer
                 var left = Math.Clamp(packAnchor.X - outputWidth / 2, 0, maxCanvasSize - outputWidth);
                 var top = Math.Clamp(packAnchor.Y - outputHeight / 2, 0, maxCanvasSize - outputHeight);
                 var destination = new SKRect(left, top, left + outputWidth, top + outputHeight);
-                var sourceRect = new SKRect(bounds.Value.Left, bounds.Value.Top, bounds.Value.Right, bounds.Value.Bottom);
-                canvas.DrawBitmap(source, sourceRect, destination, new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.None));
+                if (bounds is not null)
+                {
+                    var sourceRect = new SKRect(bounds.Value.Left, bounds.Value.Top, bounds.Value.Right, bounds.Value.Bottom);
+                    canvas.DrawBitmap(source, sourceRect, destination, new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.None));
+                }
                 canvas.Flush();
             }
 
@@ -163,6 +207,14 @@ public static class AssetNormalizer
         using var stream = new MemoryStream(bytes, writable: false);
         return SKBitmap.Decode(stream)
             ?? throw new InvalidDataException($"Frame '{name}' is not a decodable image.");
+    }
+
+    private static byte[] EncodeBitmap(SKBitmap bitmap)
+    {
+        using var image = SKImage.FromBitmap(bitmap);
+        using var data = image.Encode(SKEncodedImageFormat.Png, 100)
+            ?? throw new InvalidDataException("Skia could not encode a decoded image frame.");
+        return data.ToArray();
     }
 
     private static SKRectI? FindOpaqueBounds(SKBitmap bitmap)

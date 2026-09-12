@@ -29,7 +29,8 @@
             "width": 128,
             "height": 128
           },
-          "reducedMotion": "idle.png"
+          "reducedMotion": "idle.png",
+          "reducedMotionSha256": "20d2ede4face1e4636e0386773a9a205686fbbdb55ece27ef32fdfa09e192b01"
         },
         "blink": {
           "frames": [
@@ -48,7 +49,8 @@
             "width": 128,
             "height": 128
           },
-          "reducedMotion": "idle.png"
+          "reducedMotion": "idle.png",
+          "reducedMotionSha256": "20d2ede4face1e4636e0386773a9a205686fbbdb55ece27ef32fdfa09e192b01"
         },
         "greeting": {
           "frames": [
@@ -67,7 +69,8 @@
             "width": 128,
             "height": 128
           },
-          "reducedMotion": "idle.png"
+          "reducedMotion": "idle.png",
+          "reducedMotionSha256": "20d2ede4face1e4636e0386773a9a205686fbbdb55ece27ef32fdfa09e192b01"
         },
         "sleep": {
           "frames": [
@@ -86,7 +89,8 @@
             "width": 128,
             "height": 128
           },
-          "reducedMotion": "idle.png"
+          "reducedMotion": "idle.png",
+          "reducedMotionSha256": "20d2ede4face1e4636e0386773a9a205686fbbdb55ece27ef32fdfa09e192b01"
         },
         "drink": {
           "frames": [
@@ -105,7 +109,8 @@
             "width": 128,
             "height": 128
           },
-          "reducedMotion": "idle.png"
+          "reducedMotion": "idle.png",
+          "reducedMotionSha256": "20d2ede4face1e4636e0386773a9a205686fbbdb55ece27ef32fdfa09e192b01"
         },
         "focus": {
           "frames": [
@@ -124,7 +129,8 @@
             "width": 128,
             "height": 128
           },
-          "reducedMotion": "idle.png"
+          "reducedMotion": "idle.png",
+          "reducedMotionSha256": "20d2ede4face1e4636e0386773a9a205686fbbdb55ece27ef32fdfa09e192b01"
         },
         "celebrate": {
           "frames": [
@@ -143,7 +149,8 @@
             "width": 128,
             "height": 128
           },
-          "reducedMotion": "idle.png"
+          "reducedMotion": "idle.png",
+          "reducedMotionSha256": "20d2ede4face1e4636e0386773a9a205686fbbdb55ece27ef32fdfa09e192b01"
         },
         "comfort-hug": {
           "frames": [
@@ -162,7 +169,8 @@
             "width": 128,
             "height": 128
           },
-          "reducedMotion": "idle.png"
+          "reducedMotion": "idle.png",
+          "reducedMotionSha256": "20d2ede4face1e4636e0386773a9a205686fbbdb55ece27ef32fdfa09e192b01"
         },
         "note-arrival": {
           "frames": [
@@ -181,7 +189,8 @@
             "width": 128,
             "height": 128
           },
-          "reducedMotion": "idle.png"
+          "reducedMotion": "idle.png",
+          "reducedMotionSha256": "20d2ede4face1e4636e0386773a9a205686fbbdb55ece27ef32fdfa09e192b01"
         }
       }
     }

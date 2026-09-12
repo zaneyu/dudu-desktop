@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Dudu.Core;
 using Dudu.Core.Assets;
 
@@ -15,6 +16,7 @@ public static class AssetManifestLoader
         PropertyNameCaseInsensitive = false,
         ReadCommentHandling = JsonCommentHandling.Disallow,
         AllowTrailingCommas = false,
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
     };
 
     public static async Task<AssetPack> LoadAsync(string manifestPath, CancellationToken cancellationToken)
@@ -107,7 +109,7 @@ public static class AssetManifestLoader
                     await ValidatePngAsync(
                         root,
                         animation.ReducedMotion!,
-                        expectedSha256: null,
+                        animation.ReducedMotionSha256,
                         $"outfits.{outfitKey}.animations.{animationKey}.reducedMotion",
                         errors,
                         cancellationToken);
@@ -134,6 +136,12 @@ public static class AssetManifestLoader
             return;
         }
 
+        if (!IsReparseSafe(root, fullPath))
+        {
+            errors.Add($"{field} resolves through a symlink, junction, or reparse point: {relativePath}.");
+            return;
+        }
+
         if (!File.Exists(fullPath))
         {
             errors.Add($"{field} file does not exist: {relativePath}.");
@@ -143,7 +151,7 @@ public static class AssetManifestLoader
         try
         {
             await using var stream = File.OpenRead(fullPath);
-            var header = new byte[24];
+            var header = new byte[26];
             var read = await stream.ReadAsync(header, cancellationToken);
             if (read != header.Length || !header.AsSpan(0, PngSignature.Length).SequenceEqual(PngSignature))
             {
@@ -164,6 +172,11 @@ public static class AssetManifestLoader
                 errors.Add($"{field} dimensions must be at most 512x512: {relativePath} is {width}x{height}.");
             }
 
+            if (header[24] != 8 || header[25] != 6)
+            {
+                errors.Add($"{field} must be an 8-bit RGBA PNG suitable for premultiplied BGRA decoding: {relativePath}.");
+            }
+
             if (!string.IsNullOrWhiteSpace(expectedSha256))
             {
                 stream.Position = 0;
@@ -178,6 +191,53 @@ public static class AssetManifestLoader
         catch (IOException exception)
         {
             errors.Add($"{field} could not be read: {relativePath} ({exception.Message}).");
+        }
+    }
+
+    private static bool IsReparseSafe(string root, string path)
+    {
+        var rootFull = Path.GetFullPath(root);
+        if (HasReparsePoint(rootFull))
+        {
+            return false;
+        }
+
+        var relative = Path.GetRelativePath(rootFull, path);
+        var current = rootFull;
+        foreach (var segment in relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+        {
+            if (string.IsNullOrEmpty(segment) || segment == ".")
+            {
+                continue;
+            }
+
+            current = Path.Combine(current, segment);
+            if ((File.Exists(current) || Directory.Exists(current)) && HasReparsePoint(current))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool HasReparsePoint(string path)
+    {
+        try
+        {
+            return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
+        }
+        catch (FileNotFoundException)
+        {
+            return false;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return true;
         }
     }
 }

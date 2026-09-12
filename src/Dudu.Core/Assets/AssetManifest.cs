@@ -186,8 +186,11 @@ public static class AssetManifestContract
                     errors.Add($"{path}.frames[{index}].durationMs must be positive.");
                 }
 
-                if (!string.IsNullOrWhiteSpace(frame.Sha256)
-                    && !IsSha256(frame.Sha256))
+                if (string.IsNullOrWhiteSpace(frame.Sha256))
+                {
+                    errors.Add($"{path}.frames[{index}].sha256 is required.");
+                }
+                else if (!IsSha256(frame.Sha256))
                 {
                     errors.Add($"{path}.frames[{index}].sha256 must be a 64-character hexadecimal SHA-256.");
                 }
@@ -199,6 +202,12 @@ public static class AssetManifestContract
             && !string.Equals(animation.Loop, "hold", StringComparison.Ordinal))
         {
             errors.Add($"{path}.loop must be one of loop, once, or hold.");
+        }
+
+        var animationKey = path[(path.LastIndexOf('.') + 1)..];
+        if (OneShotAnimationKeys.Contains(animationKey) && string.Equals(animation.Loop, "loop", StringComparison.Ordinal))
+        {
+            errors.Add($"{path}.loop must not be loop for a one-shot animation.");
         }
 
         if (animation.NominalSize.Width <= 0 || animation.NominalSize.Height <= 0)
@@ -221,10 +230,15 @@ public static class AssetManifestContract
         {
             errors.Add($"{path}.reducedMotion must reference a relative .png pose.");
         }
+
+        if (!IsSha256(animation.ReducedMotionSha256))
+        {
+            errors.Add($"{path}.reducedMotionSha256 is required and must be a 64-character hexadecimal SHA-256.");
+        }
     }
 
-    private static bool IsSha256(string value) =>
-        value.Length == 64 && value.All(Uri.IsHexDigit);
+    private static bool IsSha256(string? value) =>
+        value is not null && value.Length == 64 && value.All(Uri.IsHexDigit);
 }
 
 public sealed class AssetManifest
@@ -285,6 +299,9 @@ public sealed class AssetAnimation
 
     [JsonPropertyName("reducedMotion")]
     public string? ReducedMotion { get; init; }
+
+    [JsonPropertyName("reducedMotionSha256")]
+    public string? ReducedMotionSha256 { get; init; }
 }
 
 public sealed class AssetFrame
