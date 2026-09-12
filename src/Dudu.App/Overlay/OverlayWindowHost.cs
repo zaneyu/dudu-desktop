@@ -37,7 +37,6 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private const nint HTCLIENT = 1;
     private const nint HTTRANSPARENT = -1;
     private const int ErrorAccessDenied = 5;
-    private const uint HResultAccessDenied = 0x80070005;
     private static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(5);
     private static readonly object ClassGate = new();
     private static readonly string ClassName = "Dudu.DesktopCompanion.PetOverlay.v1";
@@ -837,16 +836,20 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                 MONITOR_DPI_TYPE.MDT_EFFECTIVE_DPI,
                 out dpiX,
                 out dpiY);
-            if (dpiResult.Failed && (uint)dpiResult != HResultAccessDenied)
+            if (dpiResult.Failed)
             {
-                context.Report(new InvalidOperationException(
-                    $"GetDpiForMonitor failed for {GetDeviceName(info)} with HRESULT {dpiResult}. Using 96 DPI."));
                 dpiX = 96;
+                dpiY = 96;
             }
+            var effectiveDpi = MonitorPlacementService.ResolveEffectiveDpi(
+                (uint)dpiResult,
+                dpiX,
+                dpiY,
+                context.Report);
             context.Monitors.Add(new MonitorInfo(
                 GetDeviceName(info),
                 new PixelRect(work.left, work.top, work.right - work.left, work.bottom - work.top),
-                (int)Math.Max(1, dpiX),
+                effectiveDpi,
                 (info.monitorInfo.dwFlags & 1) != 0));
             return true;
         }

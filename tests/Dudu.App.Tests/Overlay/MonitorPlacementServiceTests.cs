@@ -125,4 +125,25 @@ public sealed class MonitorPlacementServiceTests
 
         Assert.Equal("A", placement.MonitorDeviceName);
     }
+
+    [Theory]
+    [InlineData(0x80070005u, uint.MaxValue, 0u, false)]
+    [InlineData(0x80004005u, 0u, uint.MaxValue, true)]
+    public void Failed_dpi_query_discards_out_values_and_uses_96_dpi(
+        uint hresult,
+        uint dpiX,
+        uint dpiY,
+        bool reportsUnexpectedFailure)
+    {
+        var reports = 0;
+
+        var effectiveDpi = MonitorPlacementService.ResolveEffectiveDpi(
+            hresult,
+            dpiX,
+            dpiY,
+            _ => reports++);
+
+        Assert.Equal(96, effectiveDpi);
+        Assert.Equal(reportsUnexpectedFailure ? 1 : 0, reports);
+    }
 }

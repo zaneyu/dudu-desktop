@@ -24,6 +24,34 @@ public static class MonitorPlacementService
     // physical resize and applying DPI here too would double-scale the pet.
     public const double MinimumScale = 0.5;
     public const double MaximumScale = 2.0;
+    internal const uint HResultAccessDenied = 0x80070005;
+
+    internal static int ResolveEffectiveDpi(
+        uint hresult,
+        uint dpiX,
+        uint dpiY,
+        Action<Exception>? report)
+    {
+        if ((hresult & 0x80000000) != 0)
+        {
+            if (hresult != HResultAccessDenied)
+            {
+                report?.Invoke(new InvalidOperationException(
+                    $"GetDpiForMonitor failed with HRESULT 0x{hresult:X8}. Using 96 DPI."));
+            }
+
+            return 96;
+        }
+
+        if (dpiX == 0 || dpiY == 0 || dpiX > int.MaxValue || dpiY > int.MaxValue)
+        {
+            report?.Invoke(new InvalidOperationException(
+                $"GetDpiForMonitor returned invalid DPI outputs ({dpiX}, {dpiY}). Using 96 DPI."));
+            return 96;
+        }
+
+        return (int)dpiX;
+    }
 
     public static double ClampScale(double scale)
     {
