@@ -109,35 +109,65 @@ internal sealed class WindowsStartupLinkWriter : IStartupLinkWriter
         var temporary = Path.Combine(
             directory,
             $".{Path.GetFileName(shortcutPath)}.{Guid.NewGuid():N}.tmp");
+        object? shell = null;
+        object? shortcut = null;
         try
         {
             var shellType = Type.GetTypeFromProgID("WScript.Shell", throwOnError: true)
                 ?? throw new InvalidOperationException("Windows Script Host is unavailable.");
-            var shell = Activator.CreateInstance(shellType)
+            shell = Activator.CreateInstance(shellType)
                 ?? throw new InvalidOperationException("Windows Script Host could not be created.");
+            shortcut = shellType.InvokeMember(
+                "CreateShortcut",
+                global::System.Reflection.BindingFlags.InvokeMethod,
+                null,
+                shell,
+                new object[] { temporary });
+            if (shortcut is null)
+            {
+                throw new InvalidOperationException("Windows Script Host returned no shortcut object.");
+            }
+
+            dynamic dynamicShortcut = shortcut;
+            dynamicShortcut.TargetPath = targetPath;
+            dynamicShortcut.Arguments = arguments;
+            dynamicShortcut.WorkingDirectory = Path.GetDirectoryName(targetPath) ?? string.Empty;
+            dynamicShortcut.Save();
+
+            // Release both RCWs before replacing the destination. WScript.Shell
+            // can otherwise retain the temporary file on Windows.
             try
             {
-                dynamic shortcut = shellType.InvokeMember(
-                    "CreateShortcut",
-                    global::System.Reflection.BindingFlags.InvokeMethod,
-                    null,
-                    shell,
-                    new object[] { temporary })!;
-                shortcut.TargetPath = targetPath;
-                shortcut.Arguments = arguments;
-                shortcut.WorkingDirectory = Path.GetDirectoryName(targetPath) ?? string.Empty;
-                shortcut.Save();
+                ReleaseComObject(shortcut);
             }
             finally
             {
-                Marshal.FinalReleaseComObject(shell);
+                shortcut = null;
+                ReleaseComObject(shell);
+                shell = null;
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             File.Move(temporary, shortcutPath, overwrite: true);
         }
         finally
         {
-            if (File.Exists(temporary)) File.Delete(temporary);
+            try
+            {
+                ReleaseComObject(shortcut);
+            }
+            finally
+            {
+                ReleaseComObject(shell);
+            }
+            try
+            {
+                if (File.Exists(temporary)) File.Delete(temporary);
+            }
+            catch (IOException)
+            {
+                // Preserve the original failure if cleanup itself is blocked.
+            }
         }
 
         return Task.CompletedTask;
@@ -148,5 +178,13 @@ internal sealed class WindowsStartupLinkWriter : IStartupLinkWriter
         cancellationToken.ThrowIfCancellationRequested();
         if (File.Exists(shortcutPath)) File.Delete(shortcutPath);
         return Task.CompletedTask;
+    }
+
+    private static void ReleaseComObject(object? value)
+    {
+        if (value is not null && Marshal.IsComObject(value))
+        {
+            Marshal.FinalReleaseComObject(value);
+        }
     }
 }

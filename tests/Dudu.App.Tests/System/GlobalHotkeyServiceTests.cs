@@ -55,13 +55,49 @@ public sealed class GlobalHotkeyServiceTests
         Assert.Equal(1, native.UnregisterCount);
     }
 
+    [Fact]
+    public void Hotkey_message_triggers_consumer_and_can_replace_registration()
+    {
+        var native = new FakeHotkeyNativeApi();
+        using var service = new GlobalHotkeyService(native);
+        service.SetGesture(HotkeyGesture.Default);
+        var triggered = 0;
+        service.Triggered += (_, _) =>
+        {
+            triggered++;
+            service.SetGesture(HotkeyGesture.Parse("Ctrl+Shift+D"));
+        };
+
+        Assert.True(service.HandleMessage(GlobalHotkeyService.WmHotkey, GlobalHotkeyService.DefaultId));
+        Assert.Equal(1, triggered);
+        Assert.Equal("Ctrl+Shift+D", service.CurrentGesture.ToString());
+    }
+
+    [Fact]
+    public void Failed_old_unregister_attempt_unwinds_new_registration_and_preserves_previous()
+    {
+        var native = new FakeHotkeyNativeApi();
+        using var service = new GlobalHotkeyService(native);
+        service.SetGesture(HotkeyGesture.Default);
+        native.RejectNextUnregistration();
+
+        Assert.Throws<HotkeyConflictException>(() =>
+            service.SetGesture(HotkeyGesture.Parse("Ctrl+Shift+D")));
+
+        Assert.Equal("Ctrl+Alt+D", service.CurrentGesture.ToString());
+        Assert.Equal(2, native.UnregisterCount);
+    }
+
     private sealed class FakeHotkeyNativeApi : IGlobalHotkeyNativeApi
     {
         private bool _rejectNext;
+        private bool _rejectNextUnregister;
 
         public int UnregisterCount { get; private set; }
 
         public void RejectNextRegistration() => _rejectNext = true;
+
+        public void RejectNextUnregistration() => _rejectNextUnregister = true;
 
         public bool Register(int id, HotkeyModifiers modifiers, uint key)
         {
@@ -77,6 +113,12 @@ public sealed class GlobalHotkeyServiceTests
         public bool Unregister(int id)
         {
             UnregisterCount++;
+            if (_rejectNextUnregister)
+            {
+                _rejectNextUnregister = false;
+                return false;
+            }
+
             return true;
         }
     }

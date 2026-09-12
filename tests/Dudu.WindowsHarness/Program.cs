@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using Dudu.App.Animation;
 using Dudu.App.Hosting;
 using Dudu.App.Overlay;
@@ -172,7 +173,6 @@ static async Task<int> RunSingleInstanceScenarioAsync(string[] args)
             using var frame = composer.Compose(pack, animation, 0);
             await presenter.PresentAsync(frame, CancellationToken.None);
             host.Show();
-            File.AppendAllText(marker + ".overlay", $"{host.Handle}\n");
             await Task.Delay(TimeSpan.FromSeconds(4));
             host.Hide();
         }
@@ -180,7 +180,8 @@ static async Task<int> RunSingleInstanceScenarioAsync(string[] args)
         return 0;
     }
 
-    if (File.Exists(marker)) File.Delete(marker);
+    DeleteIfPresent(marker);
+    DeleteIfPresent(marker + ".overlay");
     var executable = Environment.ProcessPath
         ?? throw new InvalidOperationException("Harness executable path is unavailable.");
     using var primaryProcess = Process.Start(new ProcessStartInfo(executable)
@@ -197,16 +198,51 @@ static async Task<int> RunSingleInstanceScenarioAsync(string[] args)
     });
     if (secondaryProcess is null) return 6;
     await secondaryProcess.WaitForExitAsync();
+    var observedWindows = await WaitForDuduWindowsAsync(primaryProcess.Id);
     await primaryProcess.WaitForExitAsync();
 
     var activations = File.Exists(marker)
         ? File.ReadAllLines(marker).Count(line => line == "OpenHome")
         : 0;
-    var overlays = File.Exists(marker + ".overlay")
-        ? File.ReadAllLines(marker + ".overlay").Count(line => line.Length > 0)
-        : 0;
-    Console.WriteLine($"primaryExit={primaryProcess.ExitCode}; secondaryExit={secondaryProcess.ExitCode}; OpenHome={activations}; overlays={overlays}");
-    return primaryProcess.ExitCode == 0 && secondaryProcess.ExitCode == 0 && activations == 1 && overlays == 1 ? 0 : 7;
+    Console.WriteLine($"primaryExit={primaryProcess.ExitCode}; secondaryExit={secondaryProcess.ExitCode}; OpenHome={activations}; DuduWindows={observedWindows}");
+    return primaryProcess.ExitCode == 0 && secondaryProcess.ExitCode == 0 && activations == 1 && observedWindows == 1 ? 0 : 7;
+}
+
+static void DeleteIfPresent(string path)
+{
+    if (File.Exists(path)) File.Delete(path);
+}
+
+static async Task<int> WaitForDuduWindowsAsync(int processId)
+{
+    for (var attempt = 0; attempt < 40; attempt++)
+    {
+        var count = CountDuduWindows(processId);
+        if (count > 0) return count;
+        await Task.Delay(50);
+    }
+
+    return CountDuduWindows(processId);
+}
+
+static int CountDuduWindows(int processId)
+{
+    var count = 0;
+    NativeMethods.EnumWindows((window, _) =>
+    {
+        NativeMethods.GetWindowThreadProcessId(window, out var ownerProcessId);
+        if (ownerProcessId != processId || !NativeMethods.IsWindowVisible(window)) return true;
+        Span<char> className = stackalloc char[256];
+        var length = NativeMethods.GetClassName(window, ref MemoryMarshal.GetReference(className), className.Length);
+        if (length == OverlayWindowHost.WindowClassName.Length
+            && className[..length].SequenceEqual(OverlayWindowHost.WindowClassName))
+        {
+            count++;
+        }
+
+        return true;
+    }, 0);
+    return count;
 }
 
 static async Task<NotepadTarget?> FindOrLaunchNotepadAsync()
@@ -259,4 +295,22 @@ file sealed class NotepadTarget(Process process, bool startedByHarness) : IDispo
     public IntPtr MainWindowHandle => Process.MainWindowHandle;
 
     public void Dispose() => Process.Dispose();
+}
+
+file static partial class NativeMethods
+{
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool EnumWindows(EnumWindowsCallback callback, nint lParam);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern uint GetWindowThreadProcessId(nint window, out int processId);
+
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    public static extern int GetClassName(nint window, ref char className, int maxCount);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsWindowVisible(nint window);
+
+    public delegate bool EnumWindowsCallback(nint window, nint lParam);
 }

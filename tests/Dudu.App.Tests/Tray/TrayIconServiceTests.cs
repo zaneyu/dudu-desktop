@@ -26,11 +26,26 @@ public sealed class TrayIconServiceTests
         Assert.Equal(7, service.Commands.Count);
     }
 
+    [Fact]
+    public void Native_menu_selection_routes_the_selected_command()
+    {
+        var native = new FakeTrayNativeApi { Selected = TrayCommand.OpenSettings };
+        var commands = new List<TrayCommand>();
+        using var service = new TrayIconService(native, commands.Add);
+        service.Attach(42);
+
+        Assert.True(service.HandleWindowMessage(TrayIconService.CallbackMessage, 0x0205));
+        Assert.Equal([TrayCommand.OpenSettings], commands);
+        Assert.Equal(1, native.MenuCount);
+    }
+
     private sealed class FakeTrayNativeApi : ITrayNativeApi
     {
         public int AddCount { get; private set; }
         public int RemoveCount { get; private set; }
         public int RecreateCount { get; private set; }
+        public int MenuCount { get; private set; }
+        public TrayCommand? Selected { get; init; }
 
         public bool Add(nint ownerWindow, uint callbackMessage, string tooltip)
         {
@@ -48,6 +63,12 @@ public sealed class TrayIconServiceTests
         {
             RecreateCount++;
             return true;
+        }
+
+        public TrayCommand? TrackPopupMenu(nint ownerWindow, IReadOnlyList<TrayCommand> commands)
+        {
+            MenuCount++;
+            return Selected;
         }
     }
 }

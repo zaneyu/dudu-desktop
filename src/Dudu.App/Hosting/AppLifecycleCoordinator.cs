@@ -30,6 +30,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
     private readonly Func<bool> _isQuietHours;
     private readonly Func<bool> _isFullscreen;
     private readonly Func<DateTimeOffset> _clock;
+    private readonly Action? _openHome;
     private readonly TrayIconService? _tray;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private bool _locked;
@@ -46,7 +47,8 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         Func<bool>? isQuietHours = null,
         Func<bool>? isFullscreen = null,
         Func<DateTimeOffset>? clock = null,
-        TrayIconService? tray = null)
+        TrayIconService? tray = null,
+        Action? openHome = null)
     {
         _host = host ?? throw new ArgumentNullException(nameof(host));
         _overlay = overlay ?? throw new ArgumentNullException(nameof(overlay));
@@ -57,6 +59,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         _isFullscreen = isFullscreen ?? (() => false);
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
         _tray = tray;
+        _openHome = openHome;
     }
 
     public async Task OnSessionLockedAsync(CancellationToken cancellationToken = default)
@@ -91,6 +94,21 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
     public Task OnResumeAsync(CancellationToken cancellationToken = default) =>
         ResumeAndMaybeWelcomeAsync(cancellationToken, clearLock: false);
 
+    public async Task OnHotkeyAsync(CancellationToken cancellationToken = default)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            ThrowIfDisposed();
+            if (CanShow(_isFullscreen()))
+            {
+                _openHome?.Invoke();
+                _overlay.Show();
+            }
+        }
+        finally { _gate.Release(); }
+    }
+
     public async Task OnDisplayChangedAsync(CancellationToken cancellationToken = default)
     {
         await _gate.WaitAsync(cancellationToken);
@@ -120,7 +138,10 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
             {
                 _fullscreenHidden = false;
                 _overlay.RestorePlacement();
-                _overlay.Show();
+                if (CanShow(false))
+                {
+                    _overlay.Show();
+                }
             }
         }
         finally { _gate.Release(); }
@@ -180,7 +201,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
                 _pet.Handle(new PetEvent.WelcomeBackRequested());
             }
 
-            if (!_fullscreenHidden && !fullscreen && !_locked && !_suspended)
+            if (!_fullscreenHidden && CanShow(fullscreen))
             {
                 _overlay.Show();
             }
@@ -192,6 +213,17 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
     {
         if (_disposed) throw new ObjectDisposedException(nameof(AppLifecycleCoordinator));
     }
+
+    private bool CanShow(bool fullscreen)
+    {
+        if (_locked || _suspended || (fullscreen && _preferences.HidePetDuringFullscreen))
+        {
+            return false;
+        }
+
+        return !_isQuietHours()
+            && !PausePolicy.IsSuppressed(_pauseState(), _clock(), fullscreen);
+    }
 }
 
 public sealed class OverlayLifecycleAdapter(OverlayWindowHost host) : IOverlayLifecycle
@@ -199,6 +231,6 @@ public sealed class OverlayLifecycleAdapter(OverlayWindowHost host) : IOverlayLi
     public bool IsVisible => host.IsVisible;
     public void Show() => host.Show();
     public void Hide() => host.Hide();
-    public void RestorePlacement() { }
+    public void RestorePlacement() => host.RestorePlacement();
     public ValueTask DisposeAsync() => host.DisposeAsync();
 }

@@ -16,9 +16,21 @@ public enum HotkeyModifiers : uint
     Win = 0x0008,
 }
 
-public sealed record HotkeyGesture(HotkeyModifiers Modifiers, uint Key)
+public sealed record HotkeyGesture
 {
-    public static HotkeyGesture Default { get; } = new(HotkeyModifiers.Ctrl | HotkeyModifiers.Alt, 0x44);
+    private HotkeyGesture(HotkeyModifiers modifiers, uint key)
+    {
+        Modifiers = modifiers;
+        Key = key;
+    }
+
+    public HotkeyModifiers Modifiers { get; }
+
+    public uint Key { get; }
+
+    public static HotkeyGesture Default { get; } = Create(
+        HotkeyModifiers.Ctrl | HotkeyModifiers.Alt,
+        0x44);
 
     public static HotkeyGesture Parse(string value)
     {
@@ -56,7 +68,7 @@ public sealed record HotkeyGesture(HotkeyModifiers Modifiers, uint Key)
             throw new FormatException("A global hotkey requires one or more modifiers and one key.");
         }
 
-        return new HotkeyGesture(modifiers, key);
+        return Create(modifiers, key);
     }
 
     public bool IsValid => Modifiers != HotkeyModifiers.None && Key != 0;
@@ -90,6 +102,16 @@ public sealed record HotkeyGesture(HotkeyModifiers Modifiers, uint Key)
             _ => $"VK_{Key:X2}",
         });
         return string.Join('+', parts);
+    }
+
+    private static HotkeyGesture Create(HotkeyModifiers modifiers, uint key)
+    {
+        if (modifiers == HotkeyModifiers.None || key == 0)
+        {
+            throw new ArgumentException("A global hotkey requires one or more modifiers and one key.");
+        }
+
+        return new HotkeyGesture(modifiers, key);
     }
 
     private static bool TryParseModifier(string token, out HotkeyModifiers modifier)
@@ -157,6 +179,11 @@ public interface IGlobalHotkeyNativeApi
 {
     bool Register(int id, HotkeyModifiers modifiers, uint key);
     bool Unregister(int id);
+
+    bool Register(nint ownerWindow, int id, HotkeyModifiers modifiers, uint key) =>
+        Register(id, modifiers, key);
+
+    bool Unregister(nint ownerWindow, int id) => Unregister(id);
 }
 
 public sealed class GlobalHotkeyService : IDisposable
@@ -167,6 +194,7 @@ public sealed class GlobalHotkeyService : IDisposable
     private readonly IGlobalHotkeyNativeApi _native;
     private readonly object _gate = new();
     private HotkeyGesture _currentGesture = HotkeyGesture.Default;
+    private nint _ownerWindow;
     private int _registeredId;
     private int _nextId = DefaultId + 1;
     private bool _disposed;
@@ -186,6 +214,51 @@ public sealed class GlobalHotkeyService : IDisposable
 
     public event EventHandler? Triggered;
 
+    public nint OwnerWindow
+    {
+        get
+        {
+            lock (_gate) return _ownerWindow;
+        }
+    }
+
+    public void AttachOwnerWindow(nint ownerWindow)
+    {
+        if (ownerWindow == 0) throw new ArgumentOutOfRangeException(nameof(ownerWindow));
+        lock (_gate)
+        {
+            ThrowIfDisposed();
+            if (_ownerWindow == ownerWindow) return;
+
+            if (_registeredId == 0)
+            {
+                _ownerWindow = ownerWindow;
+                return;
+            }
+
+            var previousWindow = _ownerWindow;
+            var requestedId = _nextId++;
+            if (!_native.Register(ownerWindow, requestedId, _currentGesture.Modifiers, _currentGesture.Key))
+            {
+                throw new HotkeyConflictException("The global hotkey could not be moved to the owner window.");
+            }
+
+            if (!_native.Unregister(previousWindow, _registeredId))
+            {
+                if (!_native.Unregister(ownerWindow, requestedId))
+                {
+                    throw new HotkeyConflictException(
+                        "The previous global hotkey could not be restored and the replacement could not be unwound.");
+                }
+
+                throw new HotkeyConflictException("The previous global hotkey could not be moved.");
+            }
+
+            _ownerWindow = ownerWindow;
+            _registeredId = requestedId;
+        }
+    }
+
     public void SetGesture(HotkeyGesture gesture)
     {
         ArgumentNullException.ThrowIfNull(gesture);
@@ -202,14 +275,19 @@ public sealed class GlobalHotkeyService : IDisposable
             }
 
             var requestedId = _registeredId == 0 ? DefaultId : _nextId++;
-            if (!_native.Register(requestedId, gesture.Modifiers, gesture.Key))
+            if (!_native.Register(_ownerWindow, requestedId, gesture.Modifiers, gesture.Key))
             {
                 throw new HotkeyConflictException($"The global hotkey {gesture} is already registered.");
             }
 
-            if (_registeredId != 0 && !_native.Unregister(_registeredId))
+            if (_registeredId != 0 && !_native.Unregister(_ownerWindow, _registeredId))
             {
-                _native.Unregister(requestedId);
+                if (!_native.Unregister(_ownerWindow, requestedId))
+                {
+                    throw new HotkeyConflictException(
+                        "The previous global hotkey could not be replaced and the replacement could not be unwound.");
+                }
+
                 throw new HotkeyConflictException("The previous global hotkey could not be replaced.");
             }
 
@@ -220,16 +298,29 @@ public sealed class GlobalHotkeyService : IDisposable
 
     public bool HandleMessage(uint message, nint hotkeyId)
     {
+        EventHandler? triggered;
         lock (_gate)
         {
             if (!_disposed && message == WmHotkey && hotkeyId == _registeredId && _registeredId != 0)
             {
-                Triggered?.Invoke(this, EventArgs.Empty);
-                return true;
+                triggered = Triggered;
             }
-
-            return false;
+            else
+            {
+                return false;
+            }
         }
+
+        try
+        {
+            triggered?.Invoke(this, EventArgs.Empty);
+        }
+        catch
+        {
+            // A consumer callback must not tear down the native message loop.
+        }
+
+        return true;
     }
 
     public void Dispose()
@@ -244,7 +335,7 @@ public sealed class GlobalHotkeyService : IDisposable
             _disposed = true;
             if (_registeredId != 0)
             {
-                _native.Unregister(_registeredId);
+                _native.Unregister(_ownerWindow, _registeredId);
                 _registeredId = 0;
             }
         }
@@ -256,10 +347,20 @@ public sealed class GlobalHotkeyService : IDisposable
     }
 }
 
-internal sealed class WindowsGlobalHotkeyNativeApi : IGlobalHotkeyNativeApi
+internal sealed unsafe class WindowsGlobalHotkeyNativeApi : IGlobalHotkeyNativeApi
 {
     public bool Register(int id, HotkeyModifiers modifiers, uint key) =>
-        PInvoke.RegisterHotKey(HWND.Null, id, (HOT_KEY_MODIFIERS)(uint)modifiers, key);
+        Register(0, id, modifiers, key);
 
-    public bool Unregister(int id) => PInvoke.UnregisterHotKey(HWND.Null, id);
+    public bool Unregister(int id) => Unregister(0, id);
+
+    public bool Register(nint ownerWindow, int id, HotkeyModifiers modifiers, uint key) =>
+        PInvoke.RegisterHotKey(
+            new HWND((void*)ownerWindow),
+            id,
+            (HOT_KEY_MODIFIERS)(uint)modifiers,
+            key);
+
+    public bool Unregister(nint ownerWindow, int id) =>
+        PInvoke.UnregisterHotKey(new HWND((void*)ownerWindow), id);
 }

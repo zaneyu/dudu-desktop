@@ -3,6 +3,7 @@ using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
+using System.Collections.Concurrent;
 
 namespace Dudu.App.Hosting;
 
@@ -28,6 +29,7 @@ public sealed class SingleInstanceCoordinator : IAsyncDisposable
     private readonly Func<AppActivation, Task> _activationHandler;
     private readonly CancellationTokenSource _disposeCancellation = new();
     private readonly object _gate = new();
+    private readonly SemaphoreSlim _acquisitionGate = new(1, 1);
     private Task? _listenerTask;
     private bool _isPrimary;
     private bool _disposed;
@@ -47,46 +49,51 @@ public sealed class SingleInstanceCoordinator : IAsyncDisposable
 
     public async Task<bool> TryAcquireAsync(CancellationToken cancellationToken = default)
     {
-        lock (_gate)
-        {
-            if (_disposed) throw new ObjectDisposedException(nameof(SingleInstanceCoordinator));
-            if (_isPrimary) return true;
-        }
-
-        if (await _transport.TryAcquirePrimaryAsync(cancellationToken))
-        {
-            lock (_gate) _isPrimary = true;
-            _listenerTask = ListenUntilDisposedAsync();
-            return true;
-        }
-
+        await _acquisitionGate.WaitAsync(cancellationToken);
         try
         {
-            await ActivatePrimaryAsync(AppActivation.OpenHome, cancellationToken);
-        }
-        catch (TimeoutException) when (!cancellationToken.IsCancellationRequested)
-        {
-            // The mutex can outlive a crashed listener for a small window. A
-            // fresh acquisition makes that window recover without starting a
-            // second host while the original mutex is owned.
-            if (await _transport.TryAcquirePrimaryAsync(cancellationToken))
+            lock (_gate)
             {
-                lock (_gate) _isPrimary = true;
-                _listenerTask = ListenUntilDisposedAsync();
-                return true;
+                if (_disposed) throw new ObjectDisposedException(nameof(SingleInstanceCoordinator));
+                if (_isPrimary) return true;
             }
-        }
-        catch (IOException) when (!cancellationToken.IsCancellationRequested)
-        {
-            if (await _transport.TryAcquirePrimaryAsync(cancellationToken))
-            {
-                lock (_gate) _isPrimary = true;
-                _listenerTask = ListenUntilDisposedAsync();
-                return true;
-            }
-        }
 
-        return false;
+            if (await _transport.TryAcquirePrimaryAsync(cancellationToken))
+            {
+                BecomePrimary();
+                return true;
+            }
+
+            try
+            {
+                await ActivatePrimaryAsync(AppActivation.OpenHome, cancellationToken);
+            }
+            catch (TimeoutException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // The mutex can outlive a crashed listener for a small window.
+                // A fresh acquisition recovers only after the OS says the
+                // previous owner is gone; it never starts a second host.
+                if (await _transport.TryAcquirePrimaryAsync(cancellationToken))
+                {
+                    BecomePrimary();
+                    return true;
+                }
+            }
+            catch (IOException) when (!cancellationToken.IsCancellationRequested)
+            {
+                if (await _transport.TryAcquirePrimaryAsync(cancellationToken))
+                {
+                    BecomePrimary();
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        finally
+        {
+            _acquisitionGate.Release();
+        }
     }
 
     public Task ActivatePrimaryAsync(
@@ -119,6 +126,7 @@ public sealed class SingleInstanceCoordinator : IAsyncDisposable
 
         await _transport.DisposeAsync();
         _disposeCancellation.Dispose();
+        _acquisitionGate.Dispose();
     }
 
     public static string GetPipeName(string? sid = null)
@@ -131,12 +139,34 @@ public sealed class SingleInstanceCoordinator : IAsyncDisposable
 
     private async Task ListenUntilDisposedAsync()
     {
-        try
+        while (!_disposeCancellation.IsCancellationRequested)
         {
-            await _transport.ListenAsync(HandlePayloadAsync, _disposeCancellation.Token);
-        }
-        catch (OperationCanceledException) when (_disposeCancellation.IsCancellationRequested)
-        {
+            try
+            {
+                await _transport.ListenAsync(HandlePayloadAsync, _disposeCancellation.Token);
+                if (!_disposeCancellation.IsCancellationRequested)
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(25), _disposeCancellation.Token);
+                }
+            }
+            catch (OperationCanceledException) when (_disposeCancellation.IsCancellationRequested)
+            {
+                return;
+            }
+            catch
+            {
+                if (!_disposeCancellation.IsCancellationRequested)
+                {
+                    try
+                    {
+                        await Task.Delay(TimeSpan.FromMilliseconds(25), _disposeCancellation.Token);
+                    }
+                    catch (OperationCanceledException) when (_disposeCancellation.IsCancellationRequested)
+                    {
+                        return;
+                    }
+                }
+            }
         }
     }
 
@@ -147,35 +177,68 @@ public sealed class SingleInstanceCoordinator : IAsyncDisposable
             return;
         }
 
-        await _activationHandler((AppActivation)payload.Span[0]);
+        try
+        {
+            await _activationHandler((AppActivation)payload.Span[0]);
+        }
+        catch
+        {
+            // An activation is untrusted input. A failed handler must not
+            // terminate the primary listener or strand future activations.
+        }
+    }
+
+    private void BecomePrimary()
+    {
+        lock (_gate)
+        {
+            _isPrimary = true;
+            _listenerTask = ListenUntilDisposedAsync();
+        }
     }
 }
 
 internal sealed class WindowsActivationTransport : IActivationTransport
 {
-    private readonly Mutex _mutex;
+    private readonly string _mutexName;
     private readonly string _pipeName;
+    private readonly BlockingCollection<Action> _ownerCommands = new();
+    private readonly TaskCompletionSource<bool> _ownerReady =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource<bool> _ownerStopped =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly Thread _mutexOwnerThread;
+    private Mutex? _mutex;
     private bool _ownsMutex;
+    private int _disposeRequested;
 
     public WindowsActivationTransport(string mutexName, string pipeName)
     {
-        _mutex = new Mutex(false, mutexName);
+        _mutexName = mutexName;
         _pipeName = pipeName;
+        _mutexOwnerThread = new Thread(MutexOwnerMain)
+        {
+            IsBackground = true,
+            Name = "Dudu single-instance mutex owner",
+        };
+        _mutexOwnerThread.Start();
     }
 
-    public Task<bool> TryAcquirePrimaryAsync(CancellationToken cancellationToken)
+    public async Task<bool> TryAcquirePrimaryAsync(CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        try
+        return await InvokeOnMutexOwnerAsync(() =>
         {
-            _ownsMutex = _mutex.WaitOne(0);
-        }
-        catch (AbandonedMutexException)
-        {
-            _ownsMutex = true;
-        }
+            try
+            {
+                _ownsMutex = _mutex!.WaitOne(0);
+            }
+            catch (AbandonedMutexException)
+            {
+                _ownsMutex = true;
+            }
 
-        return Task.FromResult(_ownsMutex);
+            return _ownsMutex;
+        }, cancellationToken);
     }
 
     public async Task ListenAsync(
@@ -184,9 +247,9 @@ internal sealed class WindowsActivationTransport : IActivationTransport
     {
         while (!cancellationToken.IsCancellationRequested)
         {
-            await using var server = CreateServer();
             try
             {
+                await using var server = CreateServer();
                 await server.WaitForConnectionAsync(cancellationToken);
                 var buffer = new byte[2];
                 var count = 0;
@@ -207,7 +270,25 @@ internal sealed class WindowsActivationTransport : IActivationTransport
             {
                 // A disconnected or crashed secondary must not kill the
                 // primary listener. The next accept creates a fresh pipe.
+                await DelayAfterListenerFailureAsync(cancellationToken);
             }
+            catch
+            {
+                // Invalid payloads and handler failures are isolated to this
+                // client. Recreate the server and continue accepting.
+                await DelayAfterListenerFailureAsync(cancellationToken);
+            }
+        }
+    }
+
+    private static async Task DelayAfterListenerFailureAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(25), cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
         }
     }
 
@@ -232,17 +313,82 @@ internal sealed class WindowsActivationTransport : IActivationTransport
         }
     }
 
-    public ValueTask DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
-        if (_ownsMutex)
+        if (Interlocked.Exchange(ref _disposeRequested, 1) != 0)
         {
-            try { _mutex.ReleaseMutex(); }
-            catch (ApplicationException) { }
-            _ownsMutex = false;
+            await _ownerStopped.Task;
+            return;
         }
 
-        _mutex.Dispose();
-        return ValueTask.CompletedTask;
+        await _ownerReady.Task;
+        var completion = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        _ownerCommands.Add(() =>
+        {
+            completion.TrySetResult(true);
+            _ownerCommands.CompleteAdding();
+        });
+        await completion.Task;
+        await _ownerStopped.Task;
+    }
+
+    private async Task<T> InvokeOnMutexOwnerAsync<T>(
+        Func<T> operation,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        await _ownerReady.Task.WaitAsync(cancellationToken);
+        if (Volatile.Read(ref _disposeRequested) != 0)
+        {
+            throw new ObjectDisposedException(nameof(WindowsActivationTransport));
+        }
+
+        var completion = new TaskCompletionSource<T>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            _ownerCommands.Add(() =>
+            {
+                try { completion.TrySetResult(operation()); }
+                catch (Exception exception) { completion.TrySetException(exception); }
+            });
+        }
+        catch (InvalidOperationException)
+        {
+            throw new ObjectDisposedException(nameof(WindowsActivationTransport));
+        }
+
+        return await completion.Task.WaitAsync(cancellationToken);
+    }
+
+    private void MutexOwnerMain()
+    {
+        try
+        {
+            _mutex = new Mutex(false, _mutexName);
+            _ownerReady.TrySetResult(true);
+            foreach (var command in _ownerCommands.GetConsumingEnumerable())
+            {
+                command();
+            }
+        }
+        catch (Exception exception)
+        {
+            _ownerReady.TrySetException(exception);
+        }
+        finally
+        {
+            if (_ownsMutex)
+            {
+                try { _mutex?.ReleaseMutex(); }
+                catch (ApplicationException) { }
+                _ownsMutex = false;
+            }
+
+            _mutex?.Dispose();
+            _ownerStopped.TrySetResult(true);
+        }
     }
 
     private NamedPipeServerStream CreateServer()

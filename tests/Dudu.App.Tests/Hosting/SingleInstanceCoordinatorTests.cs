@@ -55,6 +55,34 @@ public sealed class SingleInstanceCoordinatorTests
         Assert.True(await recovered.TryAcquireAsync(TestContext.Current.CancellationToken));
     }
 
+    [Fact]
+    public async Task Handler_failure_does_not_stop_listener_recovery()
+    {
+        var transport = new InMemoryActivationTransport();
+        var calls = 0;
+        var secondCall = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var primary = new SingleInstanceCoordinator(
+            transport,
+            _ =>
+            {
+                if (Interlocked.Increment(ref calls) == 1)
+                {
+                    throw new InvalidOperationException("simulated activation failure");
+                }
+
+                secondCall.TrySetResult(true);
+                return Task.CompletedTask;
+            });
+
+        Assert.True(await primary.TryAcquireAsync(TestContext.Current.CancellationToken));
+        await transport.InjectAsync([(byte)AppActivation.OpenHome]);
+        await transport.InjectAsync([(byte)AppActivation.OpenHome]);
+
+        await secondCall.Task.WaitAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(2, calls);
+    }
+
     private sealed class InMemoryActivationTransport : IActivationTransport
     {
         private readonly Channel<byte[]> _payloads = Channel.CreateUnbounded<byte[]>();

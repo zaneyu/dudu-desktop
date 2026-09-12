@@ -39,7 +39,8 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private const int ErrorAccessDenied = 5;
     private static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(5);
     private static readonly object ClassGate = new();
-    private static readonly string ClassName = "Dudu.DesktopCompanion.PetOverlay.v1";
+    public const string WindowClassName = "Dudu.DesktopCompanion.PetOverlay.v1";
+    private static readonly string ClassName = WindowClassName;
     private static readonly ConcurrentDictionary<nint, OverlayWindowHost> Hosts = new();
     private static readonly HWND TopmostWindow = new((void*)(-1));
     private static readonly WNDPROC WindowProcedure = WindowProc;
@@ -49,6 +50,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private readonly PixelSize _nominalSize;
     private readonly Action _openHome;
     private readonly Action _showContextMenu;
+    private readonly Action<uint, nint, nint>? _systemMessageHandler;
     private readonly Action<Exception> _diagnostic;
     private readonly IReadOnlyList<PixelRect> _bubbleHitRegions;
     private readonly ConcurrentQueue<Action> _ownerActions = new();
@@ -83,6 +85,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         Action? showContextMenu,
         IReadOnlyList<PixelRect>? bubbleHitRegions,
         Action<Exception>? diagnostic,
+        Action<uint, nint, nint>? systemMessageHandler,
         CancellationToken creationCancellation)
     {
         _presenter = presenter ?? throw new ArgumentNullException(nameof(presenter));
@@ -95,6 +98,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         _nominalSize = nominalSize;
         _openHome = openHome ?? (() => { });
         _showContextMenu = showContextMenu ?? (() => { });
+        _systemMessageHandler = systemMessageHandler;
         _bubbleHitRegions = bubbleHitRegions?.ToArray() ?? [];
         _diagnostic = diagnostic ?? ReportDiagnostic;
         _creationCancellation = creationCancellation;
@@ -118,6 +122,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         Action? showContextMenu = null,
         IReadOnlyList<PixelRect>? bubbleHitRegions = null,
         Action<Exception>? diagnostic = null,
+        Action<uint, nint, nint>? systemMessageHandler = null,
         CancellationToken cancellationToken = default)
     {
         var host = new OverlayWindowHost(
@@ -128,6 +133,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             showContextMenu,
             bubbleHitRegions,
             diagnostic,
+            systemMessageHandler,
             cancellationToken);
         host._creationRegistration = cancellationToken.Register(
             static state => ((OverlayWindowHost)state!).CancelStartup(),
@@ -185,6 +191,28 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             _placement = placement;
             ResolveAndMove();
         });
+    }
+
+    public void RestorePlacement() => PostToOwner(ResolveAndMove);
+
+    public Task InvokeOnOwnerAsync(Action action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        var completion = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        PostToOwner(() =>
+        {
+            try
+            {
+                action();
+                completion.TrySetResult(true);
+            }
+            catch (Exception exception)
+            {
+                completion.TrySetException(exception);
+            }
+        });
+        return completion.Task;
     }
 
     public void Dispose()
@@ -608,6 +636,8 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         {
             return;
         }
+
+        _systemMessageHandler?.Invoke(message, (nint)wParam.Value, (nint)lParam.Value);
 
         switch (message)
         {

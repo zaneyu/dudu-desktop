@@ -69,6 +69,29 @@ public sealed class AppLifecycleCoordinatorTests
         Assert.Equal(1, overlay.ShowCount);
     }
 
+    [Fact]
+    public async Task Fullscreen_end_restores_placement_but_respects_pause_gate()
+    {
+        var overlay = new FakeOverlay();
+        var now = new DateTimeOffset(2026, 9, 11, 10, 0, 0, TimeSpan.Zero);
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            pauseState: () => PausePolicy.ForOneHour(now),
+            clock: () => now);
+
+        await lifecycle.OnFullscreenChangedAsync(true, TestContext.Current.CancellationToken);
+        await lifecycle.OnFullscreenChangedAsync(false, TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, overlay.RestoreCount);
+        Assert.Equal(0, overlay.ShowCount);
+    }
+
     private sealed class FakeHost : IAppHostLifecycle
     {
         public Task ResumeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;

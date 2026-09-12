@@ -21,6 +21,7 @@ public interface ITrayNativeApi
     bool Add(nint ownerWindow, uint callbackMessage, string tooltip);
     bool Remove(nint ownerWindow);
     bool Recreate(nint ownerWindow, uint callbackMessage, string tooltip);
+    TrayCommand? TrackPopupMenu(nint ownerWindow, IReadOnlyList<TrayCommand> commands) => null;
 }
 
 public sealed class TrayIconService : IDisposable
@@ -36,6 +37,7 @@ public sealed class TrayIconService : IDisposable
     private readonly Action<TrayCommand> _commandHandler;
     private readonly object _gate = new();
     private readonly string _tooltip;
+    private Func<Action, Task>? _ownerDispatcher;
     private nint _ownerWindow;
     private int _ownerThreadId;
     private bool _created;
@@ -62,13 +64,14 @@ public sealed class TrayIconService : IDisposable
         TrayCommand.Exit,
     ];
 
-    public void Attach(nint ownerWindow)
+    public void Attach(nint ownerWindow, Func<Action, Task>? ownerDispatcher = null)
     {
         if (ownerWindow == 0) throw new ArgumentOutOfRangeException(nameof(ownerWindow));
         lock (_gate)
         {
             ThrowIfDisposed();
             EnsureOwnerThread();
+            _ownerDispatcher = ownerDispatcher;
             if (_created && _ownerWindow == ownerWindow) return;
             if (_created) _native.Remove(_ownerWindow);
             _ownerWindow = ownerWindow;
@@ -77,8 +80,12 @@ public sealed class TrayIconService : IDisposable
         }
     }
 
-    public bool HandleWindowMessage(uint message, nint lParam)
+    public bool HandleWindowMessage(uint message, nint lParam) =>
+        HandleWindowMessage(message, 0, lParam);
+
+    public bool HandleWindowMessage(uint message, nint wParam, nint lParam)
     {
+        TrayCommand? command = null;
         lock (_gate)
         {
             if (_disposed) return false;
@@ -88,31 +95,53 @@ public sealed class TrayIconService : IDisposable
                 return true;
             }
 
-            if (message != CallbackMessage) return false;
-            var notification = unchecked((uint)lParam);
-            if (notification == 0x0205 /* WM_RBUTTONUP */)
+            if (message == 0x0111 /* WM_COMMAND */)
             {
-                // The application owns menu presentation; this service only
-                // translates menu choices so it never activates the pet HWND.
-                return true;
+                var commandIndex = (int)(unchecked((nuint)wParam) & 0xffff);
+                if (commandIndex is > 0 and <= 7)
+                {
+                    command = Commands[commandIndex - 1];
+                }
+                else return false;
             }
-
-            return false;
+            else if (message != CallbackMessage) return false;
+            var notification = unchecked((uint)lParam);
+            if (message == CallbackMessage && notification == 0x0205 /* WM_RBUTTONUP */)
+            {
+                command = _native.TrackPopupMenu(_ownerWindow, Commands);
+            }
+            else if (message == CallbackMessage) return false;
         }
+
+        if (command is { } selected)
+        {
+            ExecuteCommand(selected);
+        }
+
+        return true;
     }
 
     public void ExecuteCommand(TrayCommand command)
     {
+        Action<TrayCommand> handler;
         lock (_gate)
         {
             ThrowIfDisposed();
             if (!Commands.Contains(command)) throw new ArgumentOutOfRangeException(nameof(command));
-            _commandHandler(command);
+            handler = _commandHandler;
         }
+
+        handler(command);
     }
 
     public void Recreate()
     {
+        if (NeedsOwnerDispatch())
+        {
+            _ownerDispatcher!(() => Recreate()).GetAwaiter().GetResult();
+            return;
+        }
+
         lock (_gate)
         {
             ThrowIfDisposed();
@@ -122,6 +151,12 @@ public sealed class TrayIconService : IDisposable
 
     public void Dispose()
     {
+        if (NeedsOwnerDispatch())
+        {
+            _ownerDispatcher!(() => Dispose()).GetAwaiter().GetResult();
+            return;
+        }
+
         lock (_gate)
         {
             if (_disposed) return;
@@ -156,6 +191,16 @@ public sealed class TrayIconService : IDisposable
         }
     }
 
+    private bool NeedsOwnerDispatch()
+    {
+        lock (_gate)
+        {
+            return _ownerThreadId != 0
+                && _ownerThreadId != Environment.CurrentManagedThreadId
+                && _ownerDispatcher is not null;
+        }
+    }
+
     private void ThrowIfDisposed()
     {
         if (_disposed) throw new ObjectDisposedException(nameof(TrayIconService));
@@ -175,6 +220,9 @@ internal sealed class WindowsTrayNativeApi : ITrayNativeApi
         NativeShellNotifyIcon.Remove(ownerWindow);
         return NativeShellNotifyIcon.Change(ownerWindow, callbackMessage, tooltip, add: true);
     }
+
+    public TrayCommand? TrackPopupMenu(nint ownerWindow, IReadOnlyList<TrayCommand> commands) =>
+        NativeTrayMenu.Show(ownerWindow, commands);
 }
 
 internal static unsafe class NativeShellNotifyIcon
@@ -187,9 +235,12 @@ internal static unsafe class NativeShellNotifyIcon
             cbSize = (uint)sizeof(NOTIFYICONDATAW),
             hWnd = new HWND((void*)ownerWindow),
             uID = 1,
-            uFlags = NOTIFY_ICON_DATA_FLAGS.NIF_MESSAGE | NOTIFY_ICON_DATA_FLAGS.NIF_TIP,
+            uFlags = NOTIFY_ICON_DATA_FLAGS.NIF_MESSAGE
+                | NOTIFY_ICON_DATA_FLAGS.NIF_TIP
+                | NOTIFY_ICON_DATA_FLAGS.NIF_ICON,
             uCallbackMessage = callbackMessage,
             szTip = tooltip,
+            hIcon = PInvoke.LoadIcon(HINSTANCE.Null, new PCWSTR((char*)32512)),
         };
         return PInvoke.Shell_NotifyIcon(
             add ? NOTIFY_ICON_MESSAGE.NIM_ADD : NOTIFY_ICON_MESSAGE.NIM_DELETE,
@@ -197,4 +248,56 @@ internal static unsafe class NativeShellNotifyIcon
     }
 
     public static bool Remove(nint ownerWindow) => Change(ownerWindow, 0, string.Empty, add: false);
+}
+
+internal static unsafe class NativeTrayMenu
+{
+    private const uint MfString = 0x0000;
+    private const uint TpmRightButton = 0x0002;
+
+    public static TrayCommand? Show(nint ownerWindow, IReadOnlyList<TrayCommand> commands)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            throw new PlatformNotSupportedException("Tray menus require Windows.");
+        }
+
+        using var menu = PInvoke.CreatePopupMenu_SafeHandle();
+        if (menu.IsInvalid) return null;
+
+        for (var index = 0; index < commands.Count; index++)
+        {
+            var label = GetLabel(commands[index]);
+            if (!PInvoke.AppendMenu(
+                    menu,
+                    (MENU_ITEM_FLAGS)MfString,
+                    (nuint)(index + 1),
+                    label))
+            {
+                return null;
+            }
+        }
+
+        if (!PInvoke.GetCursorPos(out var point)) return null;
+        _ = PInvoke.TrackPopupMenuEx(
+            menu,
+            TpmRightButton,
+            point.X,
+            point.Y,
+            new HWND((void*)ownerWindow),
+            null);
+        return null;
+    }
+
+    private static string GetLabel(TrayCommand command) => command switch
+    {
+        TrayCommand.ShowOrHide => "Show or hide Dudu",
+        TrayCommand.PauseOneHour => "Pause for one hour",
+        TrayCommand.PauseUntilTomorrowAtSeven => "Pause until tomorrow at 07:00",
+        TrayCommand.PauseUntilFullscreenEnds => "Pause until fullscreen ends",
+        TrayCommand.PauseIndefinitelyOrResume => "Pause indefinitely or resume",
+        TrayCommand.OpenSettings => "Open settings",
+        TrayCommand.Exit => "Exit",
+        _ => command.ToString(),
+    };
 }

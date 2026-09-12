@@ -62,6 +62,16 @@ Shell_NotifyIcon
 NOTIFYICONDATAW
 NOTIFY_ICON_MESSAGE
 NOTIFY_ICON_DATA_FLAGS
+LoadIcon
+CreatePopupMenu
+AppendMenu
+TrackPopupMenuEx
+DestroyMenu
+GetCursorPos
+MENU_ITEM_FLAGS
+TRACK_POPUP_MENU_FLAGS
+WTSRegisterSessionNotification
+WTSUnRegisterSessionNotification
 WINDOW_STYLE
 WINDOW_EX_STYLE
 UPDATE_LAYERED_WINDOW_FLAGS
