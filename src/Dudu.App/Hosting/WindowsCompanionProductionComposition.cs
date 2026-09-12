@@ -27,7 +27,7 @@ public sealed class CompanionUiActions
         Action<StartupSettingsService> openSettings,
         Action exit,
         Action<CompanionSettingsContext>? configureSettings = null,
-        Action<string>? navigateSettingsDestination = null)
+        Func<string, CancellationToken, Task>? navigateSettingsDestination = null)
     {
         OpenHome = openHome ?? throw new ArgumentNullException(nameof(openHome));
         OpenSettings = openSettings ?? throw new ArgumentNullException(nameof(openSettings));
@@ -43,7 +43,7 @@ public sealed class CompanionUiActions
     public Action Exit { get; }
 
     public Action<CompanionSettingsContext>? ConfigureSettings { get; }
-    public Action<string>? NavigateSettingsDestination { get; }
+    public Func<string, CancellationToken, Task>? NavigateSettingsDestination { get; }
 }
 
 public sealed record CompanionSettingsContext(
@@ -138,6 +138,7 @@ public static class WindowsCompanionProductionComposition
         var composer = default(SkiaFrameComposer);
         var presenter = default(LayeredFramePresenter);
         AnimationEngine? animationEngine = null;
+        PetPresentationCoordinator? presentationCoordinator = null;
         StartupRegistrationService? startup = null;
         var actionSurface = new OverlayActionSurfaceController();
 
@@ -220,6 +221,13 @@ public static class WindowsCompanionProductionComposition
                         pack,
                         overlay,
                         composer: composer);
+                    presentationCoordinator = new PetPresentationCoordinator(
+                        pet,
+                        animationEngine.PlayAsync,
+                        () => new AnimationOptions
+                        {
+                            ReducedMotionEnabled = runtimePreferences.Current.ReducedMotion,
+                        });
                     _ = StartAnimationPlayback(
                         animationEngine.PlayAsync(
                             pet.Current,
@@ -228,9 +236,6 @@ public static class WindowsCompanionProductionComposition
                                 : AnimationOptions.Default,
                             cancellationToken));
                     await overlay.SetActionSurfaceAsync(actionSurface, cancellationToken);
-                    actionSurface.Open(
-                        new PixelRect(0, 0, animation.NominalSize.Width, animation.NominalSize.Height),
-                        new PixelPoint(animation.NominalSize.Width / 2, animation.NominalSize.Height / 2));
                 },
                 initialUserVisible: showOverlay,
                 isQuietHours: () => QuietHoursPolicy.IsQuiet(
@@ -283,6 +288,7 @@ public static class WindowsCompanionProductionComposition
                 services.GetRequiredService<Dudu.Core.Focus.FocusService>(),
                 services.GetRequiredService<Dudu.Core.Notes.LocalNoteSelector>(),
                 services.GetRequiredService<IPairingService>(),
+                services.GetRequiredService<ICompanionFeatureTransactions>(),
                 pet,
                 applyPreferencesAsync: async (updated, token) =>
                 {
@@ -311,6 +317,10 @@ public static class WindowsCompanionProductionComposition
                     }
                     return Task.CompletedTask;
                 },
+                presentOneShotPetAsync: (petEvent, dismissalId, token) =>
+                    (presentationCoordinator ?? throw new InvalidOperationException(
+                        "The pet presentation coordinator is not ready."))
+                    .PresentOneShotAsync(petEvent, dismissalId, token),
                 applyOutfitAsync: (outfit, token) =>
                 {
                     if (animationEngine is null)
@@ -338,19 +348,7 @@ public static class WindowsCompanionProductionComposition
                 });
             var overlayRouter = new OverlayCommandRouter(
                 featureContext,
-                (destination, token) =>
-                {
-                    token.ThrowIfCancellationRequested();
-                    if (actions.NavigateSettingsDestination is not null)
-                    {
-                        actions.NavigateSettingsDestination(destination);
-                    }
-                    else
-                    {
-                        actions.OpenSettings(startupSettings);
-                    }
-                    return Task.CompletedTask;
-                });
+                (destination, token) => DispatchSettingsDestinationAsync(actions, destination, token));
             actionSurface.Bind(overlayRouter);
             actions.ConfigureSettings?.Invoke(new CompanionSettingsContext(
                 startupSettings,
@@ -396,6 +394,19 @@ public static class WindowsCompanionProductionComposition
     {
         _ = ObserveAnimationAsync(playback);
         return Task.CompletedTask;
+    }
+
+    internal static Task DispatchSettingsDestinationAsync(
+        CompanionUiActions actions,
+        string destination,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(actions);
+        ArgumentException.ThrowIfNullOrWhiteSpace(destination);
+        cancellationToken.ThrowIfCancellationRequested();
+        return actions.NavigateSettingsDestination?.Invoke(destination, cancellationToken)
+            ?? Task.FromException(new InvalidOperationException(
+                "Dudu could not dispatch settings navigation to the UI thread."));
     }
 
     private static async Task ObserveAnimationAsync(Task playback)

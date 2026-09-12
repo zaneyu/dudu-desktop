@@ -11,6 +11,7 @@ public sealed class OverlayCommandRouter
     private readonly Func<string, CancellationToken, Task>? _navigateSettings;
     private readonly Func<TimeSpan, CancellationToken, Task> _delayAsync;
     private CancellationTokenSource? _breathingCancellation;
+    private bool _closePanelAfterBreathingCancellation;
 
     public OverlayCommandRouter(
         CompanionFeatureContext context,
@@ -32,7 +33,7 @@ public sealed class OverlayCommandRouter
         OverlayAction.ComfortMe,
     ];
 
-    public static IReadOnlyList<ComfortAction> ComfortActions => ActionBubbleArrangement.ComfortActions;
+    public static IReadOnlyList<ComfortAction> ComfortActions => ActionBubbleLayout.ComfortActions;
 
     public bool IsReducedMotion => _context.CurrentPreferences.ReducedMotion;
     public bool IsBreathing { get; private set; }
@@ -58,7 +59,7 @@ public sealed class OverlayCommandRouter
         CancellationToken cancellationToken = default) => action switch
         {
             ComfortAction.BreatheWithMe => BreatheWithMeAsync(cancellationToken),
-            ComfortAction.TinyHug => PresentComfortAsync(cancellationToken),
+            ComfortAction.TinyHug => PresentTinyHugAsync(cancellationToken),
             ComfortAction.ReadALoveNote => NavigateAsync("notes", cancellationToken),
             ComfortAction.TakeAFiveMinuteBreak => TakeFiveMinuteBreakAsync(cancellationToken),
             ComfortAction.Close => CloseComfortAsync(cancellationToken),
@@ -76,10 +77,16 @@ public sealed class OverlayCommandRouter
     };
 
     private Task ExecutePetAsync(CancellationToken cancellationToken) =>
-        PresentAsync(new PetEvent.AmbientRequested("wave"), cancellationToken);
+        _context.PresentOneShotPetAsync(
+            new PetEvent.AmbientRequested("greeting"),
+            "greeting",
+            cancellationToken);
 
     private Task ExecuteDrinkWaterAsync(CancellationToken cancellationToken) =>
-        PresentAsync(new PetEvent.AmbientRequested("blink"), cancellationToken);
+        _context.PresentOneShotPetAsync(
+            new PetEvent.AmbientRequested("drink"),
+            "drink",
+            cancellationToken);
 
     private async Task ExecuteStartFocusAsync(CancellationToken cancellationToken)
     {
@@ -88,8 +95,12 @@ public sealed class OverlayCommandRouter
         await NavigateAsync("tasks", cancellationToken);
     }
 
-    private Task ExecuteComfortAsync(CancellationToken cancellationToken) =>
-        PresentComfortAsync(cancellationToken);
+    private Task ExecuteComfortAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        OpenComfortPanel();
+        return Task.CompletedTask;
+    }
 
     private Task NavigateAsync(string destination, CancellationToken cancellationToken)
     {
@@ -103,22 +114,25 @@ public sealed class OverlayCommandRouter
         return _navigateSettings(destination, cancellationToken);
     }
 
-    private Task PresentComfortAsync(CancellationToken cancellationToken) =>
-        PresentAsync(new PetEvent.ComfortRequested(), cancellationToken);
+    private Task PresentTinyHugAsync(CancellationToken cancellationToken) =>
+        _context.PresentOneShotPetAsync(
+            new PetEvent.ComfortRequested(),
+            "comfort",
+            cancellationToken);
 
     private async Task TakeFiveMinuteBreakAsync(CancellationToken cancellationToken)
     {
         await _context.ApplyPauseAsync(
             PausePolicy.ForFiveMinutes(_context.Clock.UtcNow.ToUniversalTime()),
             cancellationToken);
-        await PresentComfortAsync(cancellationToken);
+        await PresentTinyHugAsync(cancellationToken);
     }
 
     private async Task CloseComfortAsync(CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        CancelBreathing(closePanel: true);
         await PresentAsync(new PetEvent.Dismissed("comfort"), cancellationToken);
-        SetComfortPanel(ComfortPanelState.Closed);
-        await NavigateAsync("home", cancellationToken);
     }
 
     private async Task BreatheWithMeAsync(CancellationToken cancellationToken)
@@ -134,6 +148,7 @@ public sealed class OverlayCommandRouter
         _breathingCancellation?.Cancel();
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _breathingCancellation = linked;
+        _closePanelAfterBreathingCancellation = false;
         IsBreathing = true;
         try
         {
@@ -148,21 +163,31 @@ public sealed class OverlayCommandRouter
         finally
         {
             IsBreathing = false;
-            if (ReferenceEquals(_breathingCancellation, linked)) _breathingCancellation = null;
-            SetComfortPanel(linked.IsCancellationRequested
-                ? new ComfortPanelState(true, false, BreathVisualPhase.Idle, "Breathing exercise cancelled.")
-                : new ComfortPanelState(true, false, BreathVisualPhase.Complete, "Nice job. You took a minute for yourself."));
+            var closePanel = _closePanelAfterBreathingCancellation;
+            if (ReferenceEquals(_breathingCancellation, linked))
+            {
+                _breathingCancellation = null;
+                _closePanelAfterBreathingCancellation = false;
+            }
+            SetComfortPanel(closePanel
+                ? ComfortPanelState.Closed
+                : linked.IsCancellationRequested
+                    ? new ComfortPanelState(true, false, BreathVisualPhase.Idle, "Breathing exercise cancelled.")
+                    : new ComfortPanelState(true, false, BreathVisualPhase.Complete, "Nice job. You took a minute for yourself."));
         }
     }
 
     public void OpenComfortPanel() => SetComfortPanel(new ComfortPanelState(true, false, BreathVisualPhase.Idle, "Choose a gentle next step."));
 
-    public void CancelBreathing()
+    public void CancelBreathing(bool closePanel = false)
     {
+        _closePanelAfterBreathingCancellation = closePanel;
         _breathingCancellation?.Cancel();
         _breathingCancellation = null;
         IsBreathing = false;
-        SetComfortPanel(new ComfortPanelState(true, false, BreathVisualPhase.Idle, "Breathing exercise cancelled."));
+        SetComfortPanel(closePanel
+            ? ComfortPanelState.Closed
+            : new ComfortPanelState(true, false, BreathVisualPhase.Idle, "Breathing exercise cancelled."));
     }
 
     private void SetComfortPanel(ComfortPanelState state)

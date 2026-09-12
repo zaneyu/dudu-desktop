@@ -125,6 +125,12 @@ public sealed class TaskService
     public Task<IReadOnlyList<TaskItem>> ListActiveAsync(CancellationToken cancellationToken) =>
         _repository.ListActiveAsync(cancellationToken);
 
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken)
+    {
+        _ = await GetRequiredAsync(id, cancellationToken);
+        await _repository.DeleteAsync(id, cancellationToken);
+    }
+
     private async Task<TaskItem> GetRequiredAsync(Guid id, CancellationToken cancellationToken)
     {
         var task = await _repository.GetAsync(id, cancellationToken);

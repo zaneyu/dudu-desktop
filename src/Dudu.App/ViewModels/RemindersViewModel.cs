@@ -162,7 +162,7 @@ public sealed class RemindersViewModel : FeatureViewModelBase
     public Task SaveReminderPreferencesAsync(CancellationToken cancellationToken = default) =>
         RunAsync(async () =>
         {
-            var updated = await _context.UpdatePreferencesAsync(current => current with
+            await _context.UpdatePreferencesAndDefaultRemindersAsync(current => current with
             {
                 HydrationRemindersEnabled = HydrationRemindersEnabled,
                 BreakRemindersEnabled = BreakRemindersEnabled,
@@ -170,12 +170,9 @@ public sealed class RemindersViewModel : FeatureViewModelBase
 
             // These stable IDs make toggle changes an upsert, not a duplicate
             // or a stale disabled default left behind by initial hydration.
-            foreach (var reminder in LocalReminderDefaults.Create(
-                updated,
-                _context.Clock.UtcNow.ToUniversalTime(),
-                TimeZoneInfo.Local))
+            foreach (var reminder in (await _context.Reminders.ListAsync(cancellationToken))
+                .Where(item => item.Id is "default-hydration" or "default-break"))
             {
-                await _context.ReminderWriter.SaveAsync(reminder, cancellationToken);
                 Replace(reminder);
             }
         }, "Reminder preferences saved.");

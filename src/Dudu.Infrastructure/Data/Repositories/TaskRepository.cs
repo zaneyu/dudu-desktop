@@ -61,6 +61,15 @@ public sealed class TaskRepository : SqliteRepository, ITaskRepository
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    public async Task DeleteAsync(Guid id, CancellationToken cancellationToken)
+    {
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM tasks WHERE id = $id;";
+        Add(command, "$id", id.ToString("D"));
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     private static TaskItem Read(Microsoft.Data.Sqlite.SqliteDataReader reader) => new(
         Guid.Parse(reader.GetString(0)), reader.GetString(1), ReadString(reader, 2), ReadNullableUtc(reader[3]),
         reader.GetInt32(4) != 0, ReadUtc(reader[5]), ReadUtc(reader[6]), ReadNullableUtc(reader[7]));

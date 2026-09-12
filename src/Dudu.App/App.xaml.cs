@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Dudu.App.Hosting;
 using Dudu.App.Windows;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 
 namespace Dudu.App;
@@ -15,9 +16,12 @@ public sealed partial class App : Application
     private Window? _settingsWindow;
     private CompanionSettingsContext? _settingsContext;
     private string _launchArguments = string.Empty;
+    private readonly DispatcherQueue _dispatcherQueue;
 
     public App()
     {
+        _dispatcherQueue = DispatcherQueue.GetForCurrentThread()
+            ?? throw new InvalidOperationException("Dudu must start on a WinUI dispatcher thread.");
         EnsureDefaultBootstrapFactory();
     }
 
@@ -60,7 +64,7 @@ public sealed partial class App : Application
             OpenSettings,
             ExitApplication,
             ConfigureSettings,
-            NavigateSettingsDestination);
+            NavigateSettingsDestinationAsync);
         _bootstrapFactory = static (arguments, cancellationToken) =>
             Task.FromResult(
                 WindowsCompanionProductionComposition.CreateBootstrap(
@@ -127,14 +131,54 @@ public sealed partial class App : Application
         _settingsWindow.Activate();
     }
 
-    private void NavigateSettingsDestination(string destination)
+    private Task NavigateSettingsDestinationAsync(
+        string destination,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(destination);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_dispatcherQueue.HasThreadAccess)
+        {
+            NavigateSettingsDestinationCore(destination);
+            return Task.CompletedTask;
+        }
+
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_dispatcherQueue.TryEnqueue(() =>
+            {
+                try
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    NavigateSettingsDestinationCore(destination);
+                    completion.TrySetResult();
+                }
+                catch (OperationCanceledException exception)
+                {
+                    completion.TrySetCanceled(exception.CancellationToken);
+                }
+                catch (Exception exception)
+                {
+                    completion.TrySetException(exception);
+                }
+            }))
+        {
+            completion.TrySetException(new InvalidOperationException(
+                "The WinUI dispatcher rejected settings navigation."));
+        }
+
+        return completion.Task;
+    }
+
+    private void NavigateSettingsDestinationCore(string destination)
     {
         OpenSettings(_settingsContext?.StartupSettings
             ?? throw new InvalidOperationException("Settings context is not ready."));
-        if (_settingsWindow?.Content is SettingsWindow settings)
+        if (_settingsWindow?.Content is not SettingsWindow settings)
         {
-            settings.NavigateTo(destination);
+            throw new InvalidOperationException("The settings window is not available for navigation.");
         }
+
+        settings.NavigateTo(destination);
     }
 
     private static void ReportStartupFailure(Exception exception) =>

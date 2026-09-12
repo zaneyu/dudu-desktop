@@ -44,6 +44,9 @@ public static class DependencyInjection
         services.AddSingleton<AppUnitOfWork>();
         services.AddSingleton<IAppUnitOfWork>(static provider =>
             provider.GetRequiredService<AppUnitOfWork>());
+        services.AddSingleton<CompanionFeatureTransactionService>();
+        services.AddSingleton<ICompanionFeatureTransactions>(static provider =>
+            provider.GetRequiredService<CompanionFeatureTransactionService>());
         services.AddSingleton<IClock, SystemClock>();
         services.AddSingleton<IRandomSource, CryptographicRandomSource>();
         services.AddSingleton<Preferences>(static _ => DefaultPreferences());

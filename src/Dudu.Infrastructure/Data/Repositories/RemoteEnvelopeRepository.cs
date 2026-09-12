@@ -33,21 +33,21 @@ public sealed class RemoteEnvelopeRepository : SqliteRepository, IRemoteEnvelope
     public async Task<bool> TryConsumeAsync(string messageId, DateTimeOffset processedUtc, CancellationToken cancellationToken)
     {
         ValidateMessageId(messageId);
+        if (IsTransactionBound)
+        {
+            await using var boundConnection = await OpenAsync(cancellationToken);
+            return await ConsumeAsync(boundConnection, messageId, processedUtc, cancellationToken);
+        }
+
         await using var connection = await OpenAsync(cancellationToken);
         await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
         try
         {
-            await using var mark = connection.CreateCommand(); mark.Transaction = transaction;
-            mark.CommandText = "INSERT INTO processed_remote_messages (message_id,processed_utc) SELECT $id,$processed WHERE EXISTS (SELECT 1 FROM remote_envelopes WHERE message_id=$id) ON CONFLICT(message_id) DO NOTHING;";
-            Add(mark, "$id", messageId); Add(mark, "$processed", Utc(processedUtc));
-            if (await mark.ExecuteNonQueryAsync(cancellationToken) != 1)
+            if (!await ConsumeAsync(connection, messageId, processedUtc, cancellationToken, transaction))
             {
                 await transaction.RollbackAsync(CancellationToken.None);
                 return false;
             }
-            await using var delete = connection.CreateCommand(); delete.Transaction = transaction;
-            delete.CommandText = "DELETE FROM remote_envelopes WHERE message_id=$id;"; Add(delete, "$id", messageId);
-            await delete.ExecuteNonQueryAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return true;
         }
@@ -131,5 +131,29 @@ public sealed class RemoteEnvelopeRepository : SqliteRepository, IRemoteEnvelope
         await using var release = connection.CreateCommand();
         release.CommandText = "RELEASE SAVEPOINT remote_insert_and_mark;";
         await release.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task<bool> ConsumeAsync(
+        SqliteConnectionLease connection,
+        string messageId,
+        DateTimeOffset processedUtc,
+        CancellationToken cancellationToken,
+        SqliteTransaction? transaction = null)
+    {
+        await using var mark = connection.CreateCommand();
+        if (transaction is not null) mark.Transaction = transaction;
+        mark.CommandText = "INSERT INTO processed_remote_messages (message_id,processed_utc) SELECT $id,$processed WHERE EXISTS (SELECT 1 FROM remote_envelopes WHERE message_id=$id) ON CONFLICT(message_id) DO NOTHING;";
+        Add(mark, "$id", messageId);
+        Add(mark, "$processed", Utc(processedUtc));
+        if (await mark.ExecuteNonQueryAsync(cancellationToken) != 1)
+        {
+            return false;
+        }
+
+        await using var delete = connection.CreateCommand();
+        if (transaction is not null) delete.Transaction = transaction;
+        delete.CommandText = "DELETE FROM remote_envelopes WHERE message_id=$id;";
+        Add(delete, "$id", messageId);
+        return await delete.ExecuteNonQueryAsync(cancellationToken) == 1;
     }
 }

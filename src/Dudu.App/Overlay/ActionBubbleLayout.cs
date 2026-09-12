@@ -2,31 +2,34 @@ using Dudu.Core.Assets;
 
 namespace Dudu.App.Overlay;
 
-public enum OverlayAction
-{
-    Pet,
-    DrinkWater,
-    StartFocus,
-    Tasks,
-    LoveNote,
-    ComfortMe,
-}
+public enum OverlayAction { Pet, DrinkWater, StartFocus, Tasks, LoveNote, ComfortMe }
 
-public enum ComfortAction
-{
-    BreatheWithMe,
-    TinyHug,
-    ReadALoveNote,
-    TakeAFiveMinuteBreak,
-    Close,
-}
+public enum ComfortAction { BreatheWithMe, TinyHug, ReadALoveNote, TakeAFiveMinuteBreak, Close }
+
+public enum OverlayActionSurfaceKind { Closed, Primary, Comfort }
 
 public sealed record OverlayActionPlacement(OverlayAction Action, PixelRect HitRegion);
 
+public sealed record ComfortActionPlacement(ComfortAction Action, PixelRect HitRegion);
+
 public sealed record ActionBubbleArrangement(
     PixelRect Bounds,
-    IReadOnlyList<OverlayActionPlacement> PrimaryActions)
+    IReadOnlyList<OverlayActionPlacement> PrimaryActions);
+
+public sealed record ComfortBubbleArrangement(
+    PixelRect Bounds,
+    IReadOnlyList<ComfortActionPlacement> Actions);
+
+public static class ActionBubbleLayout
 {
+    private const int BubbleWidth = 280;
+    private const int PreferredActionHeight = 44;
+    private const int MinimumActionHeight = 16;
+    private const int PreferredPadding = 12;
+    private const int PreferredGap = 8;
+    private const int MinimumSurfaceWidth = 16;
+    private static readonly OverlayAction[] AllowedActions = Enum.GetValues<OverlayAction>();
+
     public static IReadOnlyList<ComfortAction> ComfortActions { get; } =
     [
         ComfortAction.BreatheWithMe,
@@ -35,24 +38,21 @@ public sealed record ActionBubbleArrangement(
         ComfortAction.TakeAFiveMinuteBreak,
         ComfortAction.Close,
     ];
-}
-
-public static class ActionBubbleLayout
-{
-    private const int BubbleWidth = 280;
-    private const int ActionHeight = 44;
-    private const int BubblePadding = 12;
-    private const int BubbleGap = 8;
-    private static readonly OverlayAction[] AllowedActions = Enum.GetValues<OverlayAction>();
 
     public static ActionBubbleArrangement Arrange(
+        IEnumerable<OverlayAction> actions,
+        PixelRect workArea,
+        PixelPoint petAnchor) =>
+        TryArrange(actions, workArea, petAnchor)
+        ?? throw new InvalidOperationException("The work area is too small for an action surface.");
+
+    public static ActionBubbleArrangement? TryArrange(
         IEnumerable<OverlayAction> actions,
         PixelRect workArea,
         PixelPoint petAnchor)
     {
         ArgumentNullException.ThrowIfNull(actions);
-        if (!workArea.IsValid) throw new ArgumentException("The work area must be valid.", nameof(workArea));
-
+        ValidateWorkArea(workArea);
         var selected = actions
             .Where(action => AllowedActions.Contains(action))
             .Distinct()
@@ -60,30 +60,25 @@ public static class ActionBubbleLayout
             .ToArray();
         if (selected.Length == 0) selected = [OverlayAction.Pet];
 
-        var height = BubblePadding * 2 + selected.Length * ActionHeight + (selected.Length - 1) * BubbleGap;
-        var x = petAnchor.X - BubbleWidth / 2;
-        var y = petAnchor.Y - height - BubbleGap;
-        var width = Math.Min(BubbleWidth, workArea.Width);
-        var visibleHeight = Math.Min(height, workArea.Height);
-        x = Math.Clamp(x, workArea.X, Math.Max(workArea.X, workArea.Right - width));
-        y = Math.Clamp(y, workArea.Y, Math.Max(workArea.Y, workArea.Bottom - visibleHeight));
+        var rows = ArrangeRows(selected.Length, workArea, petAnchor);
+        if (rows is null) return null;
+        return new ActionBubbleArrangement(
+            rows.Value.Bounds,
+            selected.Take(rows.Value.Regions.Count)
+                .Select((action, index) => new OverlayActionPlacement(action, rows.Value.Regions[index]))
+                .ToArray());
+    }
 
-        var bounds = new PixelRect(x, y, width, visibleHeight);
-        var placements = new List<OverlayActionPlacement>(selected.Length);
-        var horizontalPadding = Math.Min(BubblePadding, Math.Max(0, bounds.Width / 2));
-        var verticalPadding = Math.Min(BubblePadding, Math.Max(0, bounds.Height / 2));
-        var availableHeight = Math.Max(1, bounds.Height - verticalPadding * 2 - BubbleGap * (selected.Length - 1));
-        var rowHeight = Math.Max(1, availableHeight / selected.Length);
-        var currentY = bounds.Y + verticalPadding;
-        foreach (var action in selected)
-        {
-            var actionHeight = Math.Min(rowHeight, Math.Max(1, bounds.Bottom - currentY - verticalPadding));
-            var actionWidth = Math.Max(1, bounds.Width - horizontalPadding * 2);
-            placements.Add(new OverlayActionPlacement(action, new PixelRect(bounds.X + horizontalPadding, currentY, actionWidth, actionHeight)));
-            currentY += rowHeight + BubbleGap;
-        }
-
-        return new ActionBubbleArrangement(bounds, placements);
+    public static ComfortBubbleArrangement? ArrangeComfort(PixelRect workArea, PixelPoint petAnchor)
+    {
+        ValidateWorkArea(workArea);
+        var rows = ArrangeRows(ComfortActions.Count, workArea, petAnchor);
+        if (rows is null) return null;
+        return new ComfortBubbleArrangement(
+            rows.Value.Bounds,
+            ComfortActions.Take(rows.Value.Regions.Count)
+                .Select((action, index) => new ComfortActionPlacement(action, rows.Value.Regions[index]))
+                .ToArray());
     }
 
     public static string Label(OverlayAction action) => action switch
@@ -97,7 +92,8 @@ public static class ActionBubbleLayout
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown overlay action."),
     };
 
-    public static string AutomationId(OverlayAction action) => $"OverlayAction{Label(action).Replace(" ", string.Empty, StringComparison.Ordinal)}";
+    public static string AutomationId(OverlayAction action) =>
+        $"OverlayAction{Label(action).Replace(" ", string.Empty, StringComparison.Ordinal)}";
 
     public static string ComfortLabel(ComfortAction action) => action switch
     {
@@ -108,4 +104,44 @@ public static class ActionBubbleLayout
         ComfortAction.Close => "Close",
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown comfort action."),
     };
+
+    private static (PixelRect Bounds, IReadOnlyList<PixelRect> Regions)? ArrangeRows(
+        int requestedCount,
+        PixelRect workArea,
+        PixelPoint petAnchor)
+    {
+        if (workArea.Width < MinimumSurfaceWidth || workArea.Height < MinimumActionHeight) return null;
+
+        var preferredHeight = requestedCount * PreferredActionHeight
+            + (requestedCount - 1) * PreferredGap
+            + PreferredPadding * 2;
+        var usePreferredSpacing = workArea.Height >= preferredHeight;
+        var padding = usePreferredSpacing ? PreferredPadding : 0;
+        var gap = usePreferredSpacing ? PreferredGap : 0;
+        var available = workArea.Height - padding * 2;
+        var maximumRows = Math.Max(1, (available + gap) / (MinimumActionHeight + gap));
+        var count = Math.Min(requestedCount, maximumRows);
+        var rowHeight = Math.Min(PreferredActionHeight, (available - gap * (count - 1)) / count);
+        if (rowHeight < MinimumActionHeight) return null;
+
+        var height = padding * 2 + rowHeight * count + gap * (count - 1);
+        var width = Math.Min(BubbleWidth, workArea.Width);
+        var x = Math.Clamp(petAnchor.X - width / 2, workArea.X, workArea.Right - width);
+        var y = Math.Clamp(petAnchor.Y - height - PreferredGap, workArea.Y, workArea.Bottom - height);
+        var bounds = new PixelRect(x, y, width, height);
+        var horizontalPadding = width > PreferredPadding * 2 ? PreferredPadding : 0;
+        var regions = Enumerable.Range(0, count)
+            .Select(index => new PixelRect(
+                bounds.X + horizontalPadding,
+                bounds.Y + padding + index * (rowHeight + gap),
+                bounds.Width - horizontalPadding * 2,
+                rowHeight))
+            .ToArray();
+        return (bounds, regions);
+    }
+
+    private static void ValidateWorkArea(PixelRect workArea)
+    {
+        if (!workArea.IsValid) throw new ArgumentException("The work area must be valid.", nameof(workArea));
+    }
 }

@@ -47,6 +47,32 @@ public sealed class ActionBubbleLayoutTests
             Assert.True(item.HitRegion.Width > 0);
             Assert.True(item.HitRegion.Height > 0);
             Assert.True(layout.Bounds.Contains(item.HitRegion));
+            Assert.True(workArea.Contains(item.HitRegion));
         });
+    }
+
+    [Fact]
+    public void Action_and_comfort_surfaces_return_none_when_area_is_smaller_than_one_safe_row()
+    {
+        var tooSmall = new PixelRect(2, 3, 15, 15);
+
+        Assert.Null(ActionBubbleLayout.TryArrange(
+            OverlayCommandRouter.PrimaryActions,
+            tooSmall,
+            new PixelPoint(4, 4)));
+        Assert.Null(ActionBubbleLayout.ArrangeComfort(tooSmall, new PixelPoint(4, 4)));
+    }
+
+    [Fact]
+    public void Comfort_hit_regions_are_contained_at_exactly_24_by_18()
+    {
+        var workArea = new PixelRect(9, 11, 24, 18);
+
+        var layout = Assert.IsType<ComfortBubbleArrangement>(
+            ActionBubbleLayout.ArrangeComfort(workArea, new PixelPoint(999, -999)));
+
+        Assert.True(workArea.Contains(layout.Bounds));
+        Assert.Single(layout.Actions);
+        Assert.All(layout.Actions, item => Assert.True(workArea.Contains(item.HitRegion)));
     }
 }

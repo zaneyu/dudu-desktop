@@ -14,4 +14,8 @@ public interface ITaskRepository
             "This task repository does not support task history."));
 
     Task SaveAsync(TaskItem task, CancellationToken cancellationToken);
+
+    Task DeleteAsync(Guid id, CancellationToken cancellationToken) =>
+        Task.FromException(new NotSupportedException(
+            "This task repository does not support task deletion."));
 }

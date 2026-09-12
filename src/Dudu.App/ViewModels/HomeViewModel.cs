@@ -29,7 +29,9 @@ public sealed class HomeViewModel : FeatureViewModelBase
         ResumeCommand = new AsyncRelayCommand(() =>
             SetPauseAsync(PauseState.None, CancellationToken.None));
         CreateCountdownCommand = new AsyncRelayCommand(() =>
-            CreateCountdownAsync(CancellationToken.None));
+            SaveCountdownAsync(CancellationToken.None));
+        SelectCountdownCommand = new RelayCommand<Countdown>(SelectCountdown);
+        DeleteCountdownCommand = new AsyncRelayCommand<Countdown>(DeleteCountdownAsync);
         RecordCheckInCommand = new AsyncRelayCommand(() =>
             RecordCheckInAsync(CancellationToken.None));
     }
@@ -39,6 +41,8 @@ public sealed class HomeViewModel : FeatureViewModelBase
     public IAsyncRelayCommand PauseForOneHourCommand { get; }
     public IAsyncRelayCommand ResumeCommand { get; }
     public IAsyncRelayCommand CreateCountdownCommand { get; }
+    public IRelayCommand<Countdown> SelectCountdownCommand { get; }
+    public IAsyncRelayCommand<Countdown> DeleteCountdownCommand { get; }
     public IAsyncRelayCommand RecordCheckInCommand { get; }
 
     public ObservableCollection<Countdown> Countdowns { get; } = [];
@@ -130,8 +134,9 @@ public sealed class HomeViewModel : FeatureViewModelBase
     public Task PetAsync(CancellationToken cancellationToken = default) =>
         RunAsync(async () =>
         {
-            await _context.PresentPetAsync(
-                new PetEvent.AmbientRequested("wave"),
+            await _context.PresentOneShotPetAsync(
+                new PetEvent.AmbientRequested("greeting"),
+                "greeting",
                 cancellationToken);
             OnPropertyChanged(nameof(PetPresentation));
         });
@@ -146,7 +151,17 @@ public sealed class HomeViewModel : FeatureViewModelBase
             OnPropertyChanged(nameof(PauseDescription));
         });
 
+    public void SelectCountdown(Countdown? countdown)
+    {
+        SelectedCountdown = countdown;
+        CountdownTitle = countdown?.Title ?? string.Empty;
+        CountdownTargetUtc = countdown?.TargetUtc;
+    }
+
     public Task CreateCountdownAsync(CancellationToken cancellationToken = default) =>
+        SaveCountdownAsync(cancellationToken);
+
+    public Task SaveCountdownAsync(CancellationToken cancellationToken = default) =>
         RunAsync(async () =>
         {
             var title = CountdownTitle.Trim();
@@ -158,17 +173,31 @@ public sealed class HomeViewModel : FeatureViewModelBase
             var target = CountdownTargetUtc?.ToUniversalTime()
                 ?? _context.Clock.UtcNow.AddDays(1).ToUniversalTime();
             var countdown = new Countdown(
-                Guid.NewGuid().ToString("N"),
+                SelectedCountdown?.Id ?? Guid.NewGuid().ToString("N"),
                 title,
                 target,
                 isAllDay: false,
                 TimeZoneInfo.Local);
             await _context.Countdowns.SaveAsync(countdown, cancellationToken);
-            Countdowns.Add(countdown);
-            SelectedCountdown = countdown;
-            CountdownTitle = string.Empty;
-            CountdownTargetUtc = null;
+            var existing = Countdowns.FirstOrDefault(item => item.Id == countdown.Id);
+            if (existing is null) Countdowns.Add(countdown);
+            else Countdowns[Countdowns.IndexOf(existing)] = countdown;
+            SelectCountdown(null);
         }, "Countdown saved.");
+
+    public Task DeleteCountdownAsync(
+        Countdown? countdown,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(countdown);
+        return RunAsync(async () =>
+        {
+            await _context.Countdowns.DeleteAsync(countdown.Id, cancellationToken);
+            var existing = Countdowns.FirstOrDefault(item => item.Id == countdown.Id);
+            if (existing is not null) Countdowns.Remove(existing);
+            if (SelectedCountdown?.Id == countdown.Id) SelectCountdown(null);
+        }, "Countdown deleted.");
+    }
 
     public Task RecordCheckInAsync(CancellationToken cancellationToken = default) =>
         RunAsync(async () =>

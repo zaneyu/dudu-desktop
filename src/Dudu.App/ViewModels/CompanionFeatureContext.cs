@@ -7,6 +7,7 @@ using Dudu.Core.Notes;
 using Dudu.Core.Pet;
 using Dudu.Core.Time;
 using Dudu.Core.Tasks;
+using System.Runtime.ExceptionServices;
 
 namespace Dudu.App.ViewModels;
 
@@ -37,6 +38,7 @@ public sealed class CompanionFeatureContext
         FocusService focusService,
         LocalNoteSelector noteSelector,
         IPairingService pairing,
+        ICompanionFeatureTransactions featureTransactions,
         PetStateMachine pet,
         Func<Preferences, CancellationToken, Task>? applyPreferencesAsync = null,
         Func<PetPlacement, CancellationToken, Task>? applyPlacementAsync = null,
@@ -44,6 +46,7 @@ public sealed class CompanionFeatureContext
         Func<PauseState>? getPauseState = null,
         Func<PauseState, CancellationToken, Task>? applyPauseAsync = null,
         Func<PetEvent, CancellationToken, Task>? presentPetAsync = null,
+        Func<PetEvent, string, CancellationToken, Task>? presentOneShotPetAsync = null,
         Func<RemoteEnvelope, CancellationToken, Task<string>>? revealRemoteNoteAsync = null,
         Func<CancellationToken, Task>? backupAsync = null,
         Func<CancellationToken, Task>? restoreAsync = null,
@@ -70,6 +73,7 @@ public sealed class CompanionFeatureContext
         FocusService = focusService ?? throw new ArgumentNullException(nameof(focusService));
         NoteSelector = noteSelector ?? throw new ArgumentNullException(nameof(noteSelector));
         Pairing = pairing ?? throw new ArgumentNullException(nameof(pairing));
+        FeatureTransactions = featureTransactions ?? throw new ArgumentNullException(nameof(featureTransactions));
         Pet = pet ?? throw new ArgumentNullException(nameof(pet));
         ApplyPreferencesAsync = applyPreferencesAsync ?? ((_, _) => Task.CompletedTask);
         ApplyPlacementAsync = applyPlacementAsync ?? ((_, _) => Task.CompletedTask);
@@ -80,6 +84,12 @@ public sealed class CompanionFeatureContext
         {
             Pet.Handle(petEvent);
             return Task.CompletedTask;
+        });
+        PresentOneShotPetAsync = presentOneShotPetAsync ?? (async (petEvent, dismissalId, token) =>
+        {
+            await PresentPetAsync(petEvent, token);
+            Pet.Handle(new PetEvent.PresentationAcknowledged());
+            Pet.Handle(new PetEvent.Dismissed(dismissalId));
         });
         RevealRemoteNoteAsync = revealRemoteNoteAsync ?? ((_, _) =>
             Task.FromException<string>(new NotSupportedException(
@@ -118,6 +128,7 @@ public sealed class CompanionFeatureContext
     public FocusService FocusService { get; }
     public LocalNoteSelector NoteSelector { get; }
     public IPairingService Pairing { get; }
+    public ICompanionFeatureTransactions FeatureTransactions { get; }
     public PetStateMachine Pet { get; }
     public Func<Preferences, CancellationToken, Task> ApplyPreferencesAsync { get; }
     public Func<PetPlacement, CancellationToken, Task> ApplyPlacementAsync { get; }
@@ -125,6 +136,7 @@ public sealed class CompanionFeatureContext
     public Func<PauseState> GetPauseState { get; }
     public Func<PauseState, CancellationToken, Task> ApplyPauseAsync { get; }
     public Func<PetEvent, CancellationToken, Task> PresentPetAsync { get; }
+    public Func<PetEvent, string, CancellationToken, Task> PresentOneShotPetAsync { get; }
     public Func<RemoteEnvelope, CancellationToken, Task<string>> RevealRemoteNoteAsync { get; }
     public Func<CancellationToken, Task> BackupAsync { get; }
     public Func<CancellationToken, Task> RestoreAsync { get; }
@@ -134,9 +146,14 @@ public sealed class CompanionFeatureContext
     public Func<string, CancellationToken, Task> SetGlobalShortcutAsync { get; }
 
     /// <summary>Serializes preference read/modify/write operations across
-    /// feature pages. The shared current snapshot changes only after the
-    /// repository write has succeeded.</summary>
+    /// feature pages. The shared current snapshot changes only after durable
+    /// persistence and runtime application have both succeeded.</summary>
     public async Task<Preferences> UpdatePreferencesAsync(
+        Func<Preferences, Preferences> update,
+        CancellationToken cancellationToken = default) =>
+        await UpdatePreferencesAsync(update, Preferences.SaveAsync, cancellationToken);
+
+    public async Task<Preferences> UpdatePreferencesAndDefaultRemindersAsync(
         Func<Preferences, Preferences> update,
         CancellationToken cancellationToken = default)
     {
@@ -144,10 +161,88 @@ public sealed class CompanionFeatureContext
         await _preferencesGate.WaitAsync(cancellationToken);
         try
         {
-            var updated = update(_currentPreferences);
-            await Preferences.SaveAsync(updated, cancellationToken);
+            var previous = _currentPreferences;
+            var previousDefaults = (await Reminders.ListAsync(cancellationToken))
+                .Where(reminder => reminder.Id is "default-hydration" or "default-break")
+                .ToArray();
+            var updated = update(previous);
+            await FeatureTransactions.SavePreferencesAndDefaultRemindersAsync(
+                updated,
+                Clock.UtcNow.ToUniversalTime(),
+                Clock.LocalTimeZone,
+                cancellationToken);
+            try
+            {
+                await ApplyPreferencesAsync(updated, cancellationToken);
+            }
+            catch (Exception applyFailure)
+            {
+                try
+                {
+                    await FeatureTransactions.RestorePreferencesAndDefaultRemindersAsync(
+                        previous,
+                        previousDefaults,
+                        CancellationToken.None);
+                    await ApplyPreferencesAsync(previous, CancellationToken.None);
+                }
+                catch (Exception compensationFailure)
+                {
+                    throw new AggregateException(
+                        "Dudu could not restore reminder preferences after runtime application failed.",
+                        applyFailure,
+                        compensationFailure);
+                }
+
+                ExceptionDispatchInfo.Capture(applyFailure).Throw();
+                throw;
+            }
+
             Volatile.Write(ref _currentPreferences, updated);
-            await ApplyPreferencesAsync(updated, cancellationToken);
+            return updated;
+        }
+        finally
+        {
+            _preferencesGate.Release();
+        }
+    }
+
+    private async Task<Preferences> UpdatePreferencesAsync(
+        Func<Preferences, Preferences> update,
+        Func<Preferences, CancellationToken, Task> persistAsync,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(update);
+        ArgumentNullException.ThrowIfNull(persistAsync);
+        await _preferencesGate.WaitAsync(cancellationToken);
+        try
+        {
+            var previous = _currentPreferences;
+            var updated = update(previous);
+            await persistAsync(updated, cancellationToken);
+            try
+            {
+                await ApplyPreferencesAsync(updated, cancellationToken);
+            }
+            catch (Exception applyFailure)
+            {
+                try
+                {
+                    await persistAsync(previous, CancellationToken.None);
+                    await ApplyPreferencesAsync(previous, CancellationToken.None);
+                }
+                catch (Exception compensationFailure)
+                {
+                    throw new AggregateException(
+                        "Dudu could not restore preferences after runtime application failed.",
+                        applyFailure,
+                        compensationFailure);
+                }
+
+                ExceptionDispatchInfo.Capture(applyFailure).Throw();
+                throw;
+            }
+
+            Volatile.Write(ref _currentPreferences, updated);
             return updated;
         }
         finally

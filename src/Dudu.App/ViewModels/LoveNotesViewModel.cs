@@ -98,21 +98,18 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
             var envelope = OpenedRemoteEnvelope ?? throw new InvalidOperationException("Open a note before saving it.");
             var text = OpenedRemoteNoteText ?? throw new InvalidOperationException("Open a note before saving it.");
             var note = new LocalLoveNote($"remote-{envelope.MessageId}", text);
-            await _context.LocalNotes.SaveToJarAsync(note, cancellationToken);
-            Replace(note);
-            if (!await _context.RemoteEnvelopes.TryConsumeAsync(
+            await _context.FeatureTransactions.SaveRemoteNoteAndConsumeEnvelopeAsync(
+                note,
                 envelope.MessageId,
                 _context.Clock.UtcNow.ToUniversalTime(),
-                cancellationToken))
-            {
-                throw new InvalidOperationException("That remote note was already consumed or is no longer available.");
-            }
-            await _context.PresentPetAsync(new PetEvent.Dismissed(envelope.MessageId), cancellationToken);
+                cancellationToken);
+            Replace(note);
             PendingRemoteNotes.Remove(envelope);
             OpenedRemoteEnvelope = null;
             OpenedRemoteNoteText = null;
             OnPropertyChanged(nameof(HasOpenedRemoteNote));
             OnPropertyChanged(nameof(UnopenedRemoteNoteCount));
+            await _context.PresentPetAsync(new PetEvent.Dismissed(envelope.MessageId), cancellationToken);
         }, "Saved to the local note jar.");
 
     public Task ShowLocalNoteAsync(CancellationToken cancellationToken = default) =>

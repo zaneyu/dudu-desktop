@@ -12,6 +12,7 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
     private FocusSnapshot? _activeFocus;
     private string _title = string.Empty;
     private string? _notes;
+    private DateTimeOffset? _dueUtc;
     private int _selectedDurationMinutes = 25;
     private int _customDurationMinutes = 30;
 
@@ -20,7 +21,9 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
         _context = context ?? throw new ArgumentNullException(nameof(context));
         RefreshCommand = new AsyncRelayCommand(() => RefreshAsync(CancellationToken.None));
         SaveTaskCommand = new AsyncRelayCommand(() => SaveTaskAsync(CancellationToken.None));
+        SelectTaskCommand = new RelayCommand<TaskItem>(SelectTask);
         CompleteTaskCommand = new AsyncRelayCommand<TaskItem>(CompleteTaskAsync);
+        DeleteTaskCommand = new AsyncRelayCommand<TaskItem>(DeleteTaskAsync);
         StartFocusCommand = new AsyncRelayCommand(StartFocusAsync);
         PauseFocusCommand = new AsyncRelayCommand(PauseFocusAsync);
         ResumeFocusCommand = new AsyncRelayCommand(ResumeFocusAsync);
@@ -30,7 +33,9 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
 
     public IAsyncRelayCommand RefreshCommand { get; }
     public IAsyncRelayCommand SaveTaskCommand { get; }
+    public IRelayCommand<TaskItem> SelectTaskCommand { get; }
     public IAsyncRelayCommand<TaskItem> CompleteTaskCommand { get; }
+    public IAsyncRelayCommand<TaskItem> DeleteTaskCommand { get; }
     public IAsyncRelayCommand StartFocusCommand { get; }
     public IAsyncRelayCommand PauseFocusCommand { get; }
     public IAsyncRelayCommand ResumeFocusCommand { get; }
@@ -46,6 +51,7 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
     public FocusSnapshot? ActiveFocus { get => _activeFocus; private set => SetProperty(ref _activeFocus, value); }
     public string Title { get => _title; set => SetProperty(ref _title, value); }
     public string? Notes { get => _notes; set => SetProperty(ref _notes, value); }
+    public DateTimeOffset? DueUtc { get => _dueUtc; set => SetProperty(ref _dueUtc, value?.ToUniversalTime()); }
     public int SelectedDurationMinutes { get => _selectedDurationMinutes; set => SetProperty(ref _selectedDurationMinutes, value); }
     public int CustomDurationMinutes { get => _customDurationMinutes; set => SetProperty(ref _customDurationMinutes, Math.Clamp(value, 1, 240)); }
     public bool IsFocusActive => ActiveFocus is { Status: FocusStatus.Running or FocusStatus.Paused };
@@ -69,13 +75,19 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
         RunAsync(async () =>
         {
             var saved = SelectedTask is null
-                ? await _context.TaskService.CreateAsync(Title, Normalize(Notes), cancellationToken)
-                : await _context.TaskService.UpdateAsync(SelectedTask.Id, Title, Normalize(Notes), cancellationToken);
+                ? await _context.TaskService.CreateAsync(Title, Normalize(Notes), DueUtc, cancellationToken)
+                : await _context.TaskService.UpdateAsync(SelectedTask.Id, Title, Normalize(Notes), DueUtc, cancellationToken);
             ReplaceTask(saved);
-            SelectedTask = saved;
-            Title = string.Empty;
-            Notes = null;
+            SelectTask(null);
         }, "Task saved.");
+
+    public void SelectTask(TaskItem? task)
+    {
+        SelectedTask = task;
+        Title = task?.Title ?? string.Empty;
+        Notes = task?.Notes;
+        DueUtc = task?.DueUtc;
+    }
 
     public Task CompleteTaskAsync(TaskItem? task, CancellationToken cancellationToken = default)
     {
@@ -83,10 +95,25 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
         return RunAsync(async () =>
         {
             var completed = await _context.TaskService.CompleteAsync(task.Id, cancellationToken);
-            ActiveTasks.Remove(task);
+            var active = ActiveTasks.FirstOrDefault(item => item.Id == task.Id);
+            if (active is not null) ActiveTasks.Remove(active);
             CompletedTasks.Insert(0, completed);
             if (SelectedTask?.Id == task.Id) SelectedTask = null;
         }, "Task completed.");
+    }
+
+    public Task DeleteTaskAsync(TaskItem? task, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(task);
+        return RunAsync(async () =>
+        {
+            await _context.TaskService.DeleteAsync(task.Id, cancellationToken);
+            var active = ActiveTasks.FirstOrDefault(item => item.Id == task.Id);
+            if (active is not null) ActiveTasks.Remove(active);
+            var completed = CompletedTasks.FirstOrDefault(item => item.Id == task.Id);
+            if (completed is not null) CompletedTasks.Remove(completed);
+            if (SelectedTask?.Id == task.Id) SelectTask(null);
+        }, "Task deleted.");
     }
 
     public Task StartFocusAsync(CancellationToken cancellationToken = default) =>

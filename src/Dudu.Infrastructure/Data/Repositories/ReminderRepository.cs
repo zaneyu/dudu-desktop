@@ -105,6 +105,16 @@ public sealed class ReminderRepository : SqliteRepository, IReminderRepository, 
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    public async Task DeleteAsync(string reminderId, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(reminderId);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM reminders WHERE id=$id;";
+        Add(command, "$id", reminderId);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     private const string Select = "SELECT id,title,details,enabled,rule_kind,local_time,weekdays_mask,interval_ticks,first_due_utc,local_time_zone_id,quiet_hours_behavior,missed_policy,next_due_utc,snoozed_until_utc,quiet_hours_enabled,quiet_hours_start,quiet_hours_end FROM reminders";
     private static Reminder Read(SqliteDataReader r) => new(
         r.GetString(0), r.GetString(1), ReadString(r,2), r.GetInt32(3)!=0,

@@ -71,6 +71,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private HWND _window;
     private bool _dragging;
     private bool _actionSurfacePointerArmed;
+    private bool _petBodyPointerArmed;
     private int _dragOriginX;
     private int _dragOriginY;
     private PixelRect _dragStartBounds;
@@ -682,21 +683,33 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         {
             case WmLButtonDown:
                 if (TryArmActionSurfacePointer(lParam)) break;
-                BeginDrag(lParam);
+                _petBodyPointerArmed = BeginDrag(lParam);
                 break;
             case WmMouseMove:
                 ContinueDrag(lParam);
                 break;
             case WmLButtonUp:
+                var releasedPoint = GetClientPoint(lParam);
+                var toggleActionSurface = _petBodyPointerArmed
+                    && Math.Abs(releasedPoint.X - _dragOriginX) <= 4
+                    && Math.Abs(releasedPoint.Y - _dragOriginY) <= 4;
+                _petBodyPointerArmed = false;
                 ReleasePointerCapture();
                 if (_actionSurfacePointerArmed)
                 {
                     _actionSurfacePointerArmed = false;
                     _ = TryHandleActionSurfacePointer(lParam);
                 }
+                else if (toggleActionSurface && _actionSurface is not null)
+                {
+                    _actionSurface.ToggleFromPetBody(
+                        new PixelRect(0, 0, _windowBounds.Width, _windowBounds.Height),
+                        new PixelPoint(releasedPoint.X, releasedPoint.Y));
+                }
                 break;
             case WmLButtonDoubleClick:
                 ReleasePointerCapture();
+                _petBodyPointerArmed = false;
                 _openHome();
                 break;
             case WmRButtonUp:
@@ -715,6 +728,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             case WmCaptureChanged:
                 ReleasePointerCapture();
                 _actionSurfacePointerArmed = false;
+                _petBodyPointerArmed = false;
                 break;
             case WmDestroy:
                 ReleasePointerCapture();
@@ -728,13 +742,13 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         }
     }
 
-    private void BeginDrag(LPARAM lParam)
+    private bool BeginDrag(LPARAM lParam)
     {
         var point = GetClientPoint(lParam);
         if (_presenter is not LayeredFramePresenter layered
             || !layered.IsInteractiveAt(point.X, point.Y, CurrentBubbleHitRegions()))
         {
-            return;
+            return false;
         }
 
         if (!TryConfirmPointerCapture(
@@ -744,13 +758,14 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                 () => _ = PInvoke.ReleaseCapture()))
         {
             ReportDiagnostic(new InvalidOperationException("SetCapture did not establish capture."));
-            return;
+            return false;
         }
 
         _dragging = true;
         _dragOriginX = point.X;
         _dragOriginY = point.Y;
         _dragStartBounds = _windowBounds;
+        return true;
     }
 
     private void ContinueDrag(LPARAM lParam)
@@ -761,6 +776,10 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         }
 
         var point = GetClientPoint(lParam);
+        if (Math.Abs(point.X - _dragOriginX) > 4 || Math.Abs(point.Y - _dragOriginY) > 4)
+        {
+            _petBodyPointerArmed = false;
+        }
         var x = _dragStartBounds.X + point.X - _dragOriginX;
         var y = _dragStartBounds.Y + point.Y - _dragOriginY;
         var bounds = new PixelRect(x, y, _windowBounds.Width, _windowBounds.Height);

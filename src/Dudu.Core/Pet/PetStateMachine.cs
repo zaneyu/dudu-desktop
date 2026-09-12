@@ -189,7 +189,8 @@ public sealed class PetStateMachine
 
     private static bool IsAllowedAmbientAnimation(string animationKey)
     {
-        return animationKey is "idle" or "blink" or "wave" or "sleep";
+        return animationKey is "idle" or "blink" or "wave" or "sleep"
+            or "greeting" or "drink" or "celebrate";
     }
 
     private static PetPresentation Present(PetState state, string animationKey)

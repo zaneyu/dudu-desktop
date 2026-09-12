@@ -118,6 +118,31 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Closing_during_breathing_keeps_the_comfort_panel_closed()
+    {
+        var fixture = FeatureFixture.Create();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var router = new OverlayCommandRouter(
+            fixture.Context,
+            (_, _) => Task.CompletedTask,
+            async (_, token) =>
+            {
+                started.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            });
+        router.OpenComfortPanel();
+        var breathing = router.ExecuteComfortAsync(
+            ComfortAction.BreatheWithMe,
+            TestContext.Current.CancellationToken);
+        await started.Task.WaitAsync(TestContext.Current.CancellationToken);
+
+        await router.ExecuteComfortAsync(ComfortAction.Close, TestContext.Current.CancellationToken);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => breathing);
+
+        Assert.False(router.ComfortPanel.IsOpen);
+    }
+
+    [Fact]
     public async Task Offline_pairing_never_reports_a_code_as_ready()
     {
         var fixture = FeatureFixture.Create();
@@ -140,6 +165,248 @@ public sealed class FeatureViewModelTests
         Assert.True(fixture.Context.CurrentPreferences.ReducedMotion);
     }
 
+    [Fact]
+    public async Task Preference_save_failure_never_publishes_or_applies_false_state()
+    {
+        var fixture = FeatureFixture.Create();
+        var original = fixture.Context.CurrentPreferences;
+        fixture.Preferences.FailNextSave = true;
+
+        await Assert.ThrowsAsync<IOException>(() => fixture.Context.UpdatePreferencesAsync(
+            current => current with { Theme = AppTheme.Dark },
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal(original, fixture.Context.CurrentPreferences);
+        Assert.Equal(original, fixture.RuntimePreferences.Current);
+        Assert.Empty(fixture.RuntimePreferences.ApplyHistory);
+    }
+
+    [Fact]
+    public async Task Preference_apply_failure_compensates_storage_and_runtime_before_rethrowing()
+    {
+        var fixture = FeatureFixture.Create();
+        var original = fixture.Context.CurrentPreferences;
+        fixture.RuntimePreferences.FailNextApply = true;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Context.UpdatePreferencesAsync(
+            current => current with { Theme = AppTheme.Dark },
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal(original, fixture.Context.CurrentPreferences);
+        Assert.Equal(original, fixture.Preferences.Current);
+        Assert.Equal(original, fixture.RuntimePreferences.Current);
+        Assert.Equal(2, fixture.Preferences.SaveHistory.Count);
+        Assert.Equal(2, fixture.RuntimePreferences.ApplyHistory.Count);
+    }
+
+    [Fact]
+    public async Task Concurrent_preference_updates_serialize_without_losing_fields()
+    {
+        var fixture = FeatureFixture.Create();
+
+        await Task.WhenAll(
+            fixture.Context.UpdatePreferencesAsync(
+                current => current with { Theme = AppTheme.Dark },
+                TestContext.Current.CancellationToken),
+            fixture.Context.UpdatePreferencesAsync(
+                current => current with { ReducedMotion = true },
+                TestContext.Current.CancellationToken));
+
+        Assert.Equal(AppTheme.Dark, fixture.Context.CurrentPreferences.Theme);
+        Assert.True(fixture.Context.CurrentPreferences.ReducedMotion);
+        Assert.Equal(fixture.Context.CurrentPreferences, fixture.Preferences.Current);
+        Assert.Equal(fixture.Context.CurrentPreferences, fixture.RuntimePreferences.Current);
+    }
+
+    [Fact]
+    public async Task Reminder_default_commit_precedes_runtime_publish_and_failure_keeps_old_state()
+    {
+        var fixture = FeatureFixture.Create();
+        var original = fixture.Context.CurrentPreferences;
+        fixture.Transactions.FailNextReminderCommit = true;
+        var viewModel = new RemindersViewModel(fixture.Context)
+        {
+            HydrationRemindersEnabled = true,
+            BreakRemindersEnabled = true,
+        };
+
+        await viewModel.SaveReminderPreferencesAsync(TestContext.Current.CancellationToken);
+
+        Assert.NotNull(viewModel.ErrorMessage);
+        Assert.Equal(original, fixture.Context.CurrentPreferences);
+        Assert.Equal(original, fixture.RuntimePreferences.Current);
+        Assert.DoesNotContain(fixture.Reminders.Items, item =>
+            item.Id is "default-hydration" or "default-break");
+
+        await viewModel.SaveReminderPreferencesAsync(TestContext.Current.CancellationToken);
+        Assert.True(fixture.Context.CurrentPreferences.HydrationRemindersEnabled);
+        Assert.True(fixture.Context.CurrentPreferences.BreakRemindersEnabled);
+        Assert.Equal(2, fixture.Reminders.Items.Count(item =>
+            item.Id is "default-hydration" or "default-break"));
+    }
+
+    [Fact]
+    public async Task Reminder_runtime_apply_failure_restores_exact_previous_default_rows()
+    {
+        var fixture = FeatureFixture.Create();
+        var previous = fixture.Reminder with
+        {
+            Id = "default-hydration",
+            Title = "My water schedule",
+            SnoozedUntilUtc = DateTimeOffset.Parse("2026-09-12T11:30:00Z"),
+        };
+        fixture.Reminders.Items.Add(previous);
+        fixture.RuntimePreferences.FailNextApply = true;
+        var viewModel = new RemindersViewModel(fixture.Context)
+        {
+            HydrationRemindersEnabled = false,
+            BreakRemindersEnabled = true,
+        };
+
+        await viewModel.SaveReminderPreferencesAsync(TestContext.Current.CancellationToken);
+
+        Assert.NotNull(viewModel.ErrorMessage);
+        Assert.Equal(fixture.Context.CurrentPreferences, fixture.Preferences.Current);
+        Assert.Equal(fixture.Context.CurrentPreferences, fixture.RuntimePreferences.Current);
+        Assert.Equal(previous, fixture.Reminders.Items.Single(item => item.Id == "default-hydration"));
+        Assert.DoesNotContain(fixture.Reminders.Items, item => item.Id == "default-break");
+    }
+
+    [Fact]
+    public async Task Remote_note_transaction_failure_does_not_mutate_view_model_state()
+    {
+        var fixture = FeatureFixture.Create();
+        var envelope = new RemoteEnvelope("atomic-note", [1], fixture.Clock.UtcNow);
+        fixture.RemoteNotes.Pending.Add(envelope);
+        var viewModel = new LoveNotesViewModel(fixture.Context);
+        await viewModel.RefreshAsync(TestContext.Current.CancellationToken);
+        await viewModel.RevealRemoteNoteAsync(envelope, TestContext.Current.CancellationToken);
+        fixture.Transactions.FailNextRemoteCommit = true;
+
+        await viewModel.SaveOpenedNoteAsync(null, TestContext.Current.CancellationToken);
+
+        Assert.NotNull(viewModel.ErrorMessage);
+        Assert.Empty(fixture.LocalNotes.Notes);
+        Assert.Contains(envelope, viewModel.PendingRemoteNotes);
+        Assert.Equal(envelope, viewModel.OpenedRemoteEnvelope);
+    }
+
+    [Fact]
+    public async Task Countdown_supports_create_select_edit_and_delete()
+    {
+        var fixture = FeatureFixture.Create();
+        var viewModel = new HomeViewModel(fixture.Context)
+        {
+            CountdownTitle = "Anniversary",
+            CountdownTargetUtc = DateTimeOffset.Parse("2026-12-01T12:00:00Z"),
+        };
+        await viewModel.SaveCountdownAsync(TestContext.Current.CancellationToken);
+        var countdown = Assert.Single(fixture.Countdowns.Items);
+
+        viewModel.SelectCountdown(countdown);
+        viewModel.CountdownTitle = "Our anniversary";
+        viewModel.CountdownTargetUtc = DateTimeOffset.Parse("2026-12-02T12:00:00Z");
+        await viewModel.SaveCountdownAsync(TestContext.Current.CancellationToken);
+
+        var updated = Assert.Single(fixture.Countdowns.Items);
+        Assert.Equal(countdown.Id, updated.Id);
+        Assert.Equal("Our anniversary", updated.Title);
+        Assert.Equal(DateTimeOffset.Parse("2026-12-02T12:00:00Z"), updated.TargetUtc);
+
+        await viewModel.DeleteCountdownAsync(updated, TestContext.Current.CancellationToken);
+        Assert.Empty(fixture.Countdowns.Items);
+        Assert.Null(viewModel.SelectedCountdown);
+    }
+
+    [Fact]
+    public async Task Tasks_support_due_date_edit_completion_and_deletion()
+    {
+        var fixture = FeatureFixture.Create();
+        var viewModel = new TasksFocusViewModel(fixture.Context)
+        {
+            Title = "Book dinner",
+            DueUtc = DateTimeOffset.Parse("2026-09-20T18:00:00Z"),
+        };
+        await viewModel.SaveTaskAsync(TestContext.Current.CancellationToken);
+        var task = Assert.Single(fixture.Tasks.Items);
+        Assert.Equal(DateTimeOffset.Parse("2026-09-20T18:00:00Z"), task.DueUtc);
+
+        viewModel.SelectTask(task);
+        viewModel.Title = "Book birthday dinner";
+        viewModel.DueUtc = DateTimeOffset.Parse("2026-09-21T18:00:00Z");
+        await viewModel.SaveTaskAsync(TestContext.Current.CancellationToken);
+        var updated = Assert.Single(fixture.Tasks.Items);
+        Assert.Equal(task.Id, updated.Id);
+        Assert.Equal(DateTimeOffset.Parse("2026-09-21T18:00:00Z"), updated.DueUtc);
+
+        await viewModel.CompleteTaskAsync(updated, TestContext.Current.CancellationToken);
+        var completed = Assert.Single(fixture.Tasks.Items);
+        Assert.True(completed.IsCompleted);
+
+        await viewModel.DeleteTaskAsync(completed, TestContext.Current.CancellationToken);
+        Assert.Empty(fixture.Tasks.Items);
+    }
+
+    [Fact]
+    public async Task Action_surface_toggles_from_pet_and_routes_primary_and_comfort_hits()
+    {
+        var fixture = FeatureFixture.Create();
+        var destinations = new List<string>();
+        var router = new OverlayCommandRouter(
+            fixture.Context,
+            (destination, _) =>
+            {
+                destinations.Add(destination);
+                return Task.CompletedTask;
+            },
+            (_, _) => Task.CompletedTask);
+        var surface = new OverlayActionSurfaceController();
+        surface.Bind(router);
+        var workArea = new PixelRect(0, 0, 640, 480);
+        var anchor = new Dudu.Core.Assets.PixelPoint(320, 400);
+
+        Assert.Equal(OverlayActionSurfaceKind.Closed, surface.Kind);
+        surface.ToggleFromPetBody(workArea, anchor);
+        Assert.Equal(OverlayActionSurfaceKind.Primary, surface.Kind);
+        var comfort = surface.Arrangement!.PrimaryActions.Single(item => item.Action == OverlayAction.ComfortMe);
+        await surface.HandlePointerAsync(Center(comfort.HitRegion), TestContext.Current.CancellationToken);
+        Assert.Equal(OverlayActionSurfaceKind.Comfort, surface.Kind);
+        Assert.All(surface.ComfortArrangement!.Actions, item =>
+            Assert.True(surface.ComfortArrangement.Bounds.Contains(item.HitRegion)));
+        var close = surface.ComfortArrangement.Actions.Single(item => item.Action == ComfortAction.Close);
+        await surface.HandlePointerAsync(Center(close.HitRegion), TestContext.Current.CancellationToken);
+        Assert.Equal(OverlayActionSurfaceKind.Closed, surface.Kind);
+
+        surface.ToggleFromPetBody(workArea, anchor);
+        var tasks = surface.Arrangement!.PrimaryActions.Single(item => item.Action == OverlayAction.Tasks);
+        await surface.HandlePointerAsync(Center(tasks.HitRegion), TestContext.Current.CancellationToken);
+        Assert.Equal(["tasks"], destinations);
+        Assert.Equal(OverlayActionSurfaceKind.Closed, surface.Kind);
+    }
+
+    [Fact]
+    public async Task Action_surface_keeps_failed_navigation_visible_with_an_error()
+    {
+        var fixture = FeatureFixture.Create();
+        var router = new OverlayCommandRouter(
+            fixture.Context,
+            (_, _) => Task.FromException(new InvalidOperationException("navigation failed")));
+        var surface = new OverlayActionSurfaceController();
+        surface.Bind(router);
+        surface.Open(
+            new PixelRect(0, 0, 640, 480),
+            new Dudu.Core.Assets.PixelPoint(320, 400));
+        var tasks = surface.Arrangement!.PrimaryActions.Single(item => item.Action == OverlayAction.Tasks);
+
+        await surface.HandlePointerAsync(Center(tasks.HitRegion), TestContext.Current.CancellationToken);
+
+        Assert.Equal(OverlayActionSurfaceKind.Primary, surface.Kind);
+        Assert.Equal("navigation failed", surface.ErrorMessage);
+    }
+
+    private static Dudu.Core.Assets.PixelPoint Center(PixelRect rectangle) =>
+        new(rectangle.X + rectangle.Width / 2, rectangle.Y + rectangle.Height / 2);
+
     private sealed class FeatureFixture
     {
         private FeatureFixture(
@@ -147,6 +414,11 @@ public sealed class FeatureViewModelTests
             FakeReminderRepository reminders,
             FakeLocalNoteRepository localNotes,
             FakeRemoteEnvelopeRepository remoteNotes,
+            FakePreferencesRepository preferences,
+            FakeTaskRepository tasks,
+            FakeCountdownRepository countdowns,
+            FakeFeatureTransactions transactions,
+            FakeRuntimePreferences runtimePreferences,
             CompanionFeatureContext context,
             List<string> events)
         {
@@ -154,6 +426,11 @@ public sealed class FeatureViewModelTests
             Reminders = reminders;
             LocalNotes = localNotes;
             RemoteNotes = remoteNotes;
+            Preferences = preferences;
+            Tasks = tasks;
+            Countdowns = countdowns;
+            Transactions = transactions;
+            RuntimePreferences = runtimePreferences;
             Context = context;
             Events = events;
         }
@@ -162,6 +439,11 @@ public sealed class FeatureViewModelTests
         public FakeReminderRepository Reminders { get; }
         public FakeLocalNoteRepository LocalNotes { get; }
         public FakeRemoteEnvelopeRepository RemoteNotes { get; }
+        public FakePreferencesRepository Preferences { get; }
+        public FakeTaskRepository Tasks { get; }
+        public FakeCountdownRepository Countdowns { get; }
+        public FakeFeatureTransactions Transactions { get; }
+        public FakeRuntimePreferences RuntimePreferences { get; }
         public CompanionFeatureContext Context { get; }
         public List<string> Events { get; }
         public Reminder Reminder { get; } = new(
@@ -203,6 +485,8 @@ public sealed class FeatureViewModelTests
             var checkInService = new CheckInService(checkIns, clock);
             var noteSelector = new LocalNoteSelector(localNotes, clock, new FixedRandom(), preferences);
             var pause = PauseState.None;
+            var transactions = new FakeFeatureTransactions(preferenceRepository, reminders, localNotes, remoteNotes);
+            var runtimePreferences = new FakeRuntimePreferences(preferences);
             var context = new CompanionFeatureContext(
                 clock,
                 preferences,
@@ -222,7 +506,9 @@ public sealed class FeatureViewModelTests
                 focusService,
                 noteSelector,
                 new FakePairing(),
+                transactions,
                 PetStateMachine.CreateIdle(),
+                applyPreferencesAsync: runtimePreferences.ApplyAsync,
                 getPauseState: () => pause,
                 applyPauseAsync: (state, _) =>
                 {
@@ -235,7 +521,18 @@ public sealed class FeatureViewModelTests
                     return Task.CompletedTask;
                 },
                 revealRemoteNoteAsync: (_, _) => Task.FromResult("You can do it"));
-            return new FeatureFixture(clock, reminders, localNotes, remoteNotes, context, events);
+            return new FeatureFixture(
+                clock,
+                reminders,
+                localNotes,
+                remoteNotes,
+                preferenceRepository,
+                tasks,
+                countdowns,
+                transactions,
+                runtimePreferences,
+                context,
+                events);
         }
     }
 
@@ -266,6 +563,11 @@ public sealed class FeatureViewModelTests
             if (index >= 0) Items[index] = reminder; else Items.Add(reminder);
             return Task.CompletedTask;
         }
+        public Task DeleteAsync(string reminderId, CancellationToken cancellationToken = default)
+        {
+            Items.RemoveAll(item => item.Id == reminderId);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class FakeLocalNoteRepository : ILocalNoteRepository
@@ -294,14 +596,32 @@ public sealed class FeatureViewModelTests
         public Task<bool> TryInsertAsync(RemoteEnvelope envelope, CancellationToken cancellationToken) { Pending.Add(envelope); return Task.FromResult(true); }
         public Task<bool> IsProcessedAsync(string messageId, CancellationToken cancellationToken) => Task.FromResult(false);
         public Task<bool> TryMarkProcessedAsync(string messageId, DateTimeOffset processedUtc, CancellationToken cancellationToken) => Task.FromResult(true);
+        public Task<bool> TryConsumeAsync(string messageId, DateTimeOffset processedUtc, CancellationToken cancellationToken)
+        {
+            var removed = Pending.RemoveAll(item => item.MessageId == messageId) == 1;
+            return Task.FromResult(removed);
+        }
         public Task<bool> TryInsertAndMarkProcessedAsync(RemoteEnvelope envelope, DateTimeOffset processedUtc, CancellationToken cancellationToken) => Task.FromResult(true);
         public Task DeleteAsync(string messageId, CancellationToken cancellationToken) { Pending.RemoveAll(item => item.MessageId == messageId); return Task.CompletedTask; }
     }
 
     private sealed class FakePreferencesRepository : IPreferencesRepository
     {
-        public Task<Preferences?> GetAsync(CancellationToken cancellationToken) => Task.FromResult<Preferences?>(null);
-        public Task SaveAsync(Preferences preferences, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Preferences? Current { get; private set; }
+        public bool FailNextSave { get; set; }
+        public List<Preferences> SaveHistory { get; } = [];
+        public Task<Preferences?> GetAsync(CancellationToken cancellationToken) => Task.FromResult(Current);
+        public Task SaveAsync(Preferences preferences, CancellationToken cancellationToken)
+        {
+            if (FailNextSave)
+            {
+                FailNextSave = false;
+                throw new IOException("injected preference save failure");
+            }
+            Current = preferences;
+            SaveHistory.Add(preferences);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class FakeProfileRepository : IProfileRepository
@@ -321,10 +641,12 @@ public sealed class FeatureViewModelTests
     private sealed class FakeTaskRepository : ITaskRepository
     {
         private readonly Dictionary<Guid, TaskItem> _tasks = [];
+        public IReadOnlyCollection<TaskItem> Items => _tasks.Values;
         public Task<TaskItem?> GetAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult(_tasks.GetValueOrDefault(id));
         public Task<IReadOnlyList<TaskItem>> ListActiveAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<TaskItem>>(_tasks.Values.Where(item => !item.IsCompleted).ToArray());
         public Task<IReadOnlyList<TaskItem>> ListCompletedAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<TaskItem>>(_tasks.Values.Where(item => item.IsCompleted).ToArray());
         public Task SaveAsync(TaskItem task, CancellationToken cancellationToken) { _tasks[task.Id] = task; return Task.CompletedTask; }
+        public Task DeleteAsync(Guid id, CancellationToken cancellationToken) { _tasks.Remove(id); return Task.CompletedTask; }
     }
 
     private sealed class FakeFocusRepository : IFocusSessionRepository
@@ -340,10 +662,12 @@ public sealed class FeatureViewModelTests
 
     private sealed class FakeCountdownRepository : ICountdownRepository
     {
-        public Task<Countdown?> GetAsync(string id, CancellationToken cancellationToken) => Task.FromResult<Countdown?>(null);
-        public Task<IReadOnlyList<Countdown>> ListAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<Countdown>>([]);
-        public Task SaveAsync(Countdown countdown, CancellationToken cancellationToken) => Task.CompletedTask;
-        public Task DeleteAsync(string id, CancellationToken cancellationToken) => Task.CompletedTask;
+        private readonly Dictionary<string, Countdown> _items = [];
+        public IReadOnlyCollection<Countdown> Items => _items.Values;
+        public Task<Countdown?> GetAsync(string id, CancellationToken cancellationToken) => Task.FromResult(_items.GetValueOrDefault(id));
+        public Task<IReadOnlyList<Countdown>> ListAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<Countdown>>(_items.Values.ToArray());
+        public Task SaveAsync(Countdown countdown, CancellationToken cancellationToken) { _items[countdown.Id] = countdown; return Task.CompletedTask; }
+        public Task DeleteAsync(string id, CancellationToken cancellationToken) { _items.Remove(id); return Task.CompletedTask; }
     }
 
     private sealed class FakeCheckInRepository : ICheckInRepository
@@ -358,5 +682,87 @@ public sealed class FeatureViewModelTests
         public Task<PairingCodeResult> CreateCodeAsync(CancellationToken cancellationToken = default) => Task.FromResult(PairingCodeResult.Offline);
         public Task DisconnectSenderSessionsAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task DeleteRemoteDeviceAsync(string? deviceId = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
+    private sealed class FakeFeatureTransactions(
+        IPreferencesRepository preferences,
+        FakeReminderRepository reminders,
+        FakeLocalNoteRepository localNotes,
+        FakeRemoteEnvelopeRepository remoteNotes) : ICompanionFeatureTransactions
+    {
+        public bool FailNextReminderCommit { get; set; }
+        public bool FailNextRemoteCommit { get; set; }
+
+        public async Task SavePreferencesAndDefaultRemindersAsync(
+            Preferences value,
+            DateTimeOffset nowUtc,
+            TimeZoneInfo localTimeZone,
+            CancellationToken cancellationToken = default)
+        {
+            if (FailNextReminderCommit)
+            {
+                FailNextReminderCommit = false;
+                throw new IOException("injected reminder transaction failure");
+            }
+            await preferences.SaveAsync(value, cancellationToken);
+            foreach (var reminder in Dudu.Core.Reminders.LocalReminderDefaults.Create(
+                value,
+                nowUtc,
+                localTimeZone))
+            {
+                await reminders.SaveAsync(reminder, cancellationToken);
+            }
+        }
+
+        public async Task SaveRemoteNoteAndConsumeEnvelopeAsync(
+            LocalLoveNote note,
+            string messageId,
+            DateTimeOffset processedUtc,
+            CancellationToken cancellationToken = default)
+        {
+            if (FailNextRemoteCommit)
+            {
+                FailNextRemoteCommit = false;
+                throw new IOException("injected remote transaction failure");
+            }
+            await localNotes.SaveToJarAsync(note, cancellationToken);
+            if (!await remoteNotes.TryConsumeAsync(messageId, processedUtc, cancellationToken))
+            {
+                throw new InvalidOperationException("Remote note is unavailable.");
+            }
+        }
+
+        public async Task RestorePreferencesAndDefaultRemindersAsync(
+            Preferences value,
+            IReadOnlyList<Reminder> previousDefaultReminders,
+            CancellationToken cancellationToken = default)
+        {
+            await preferences.SaveAsync(value, cancellationToken);
+            await reminders.DeleteAsync("default-hydration", cancellationToken);
+            await reminders.DeleteAsync("default-break", cancellationToken);
+            foreach (var reminder in previousDefaultReminders)
+            {
+                await reminders.SaveAsync(reminder, cancellationToken);
+            }
+        }
+    }
+
+    private sealed class FakeRuntimePreferences(Preferences initial)
+    {
+        public Preferences Current { get; private set; } = initial;
+        public bool FailNextApply { get; set; }
+        public List<Preferences> ApplyHistory { get; } = [];
+
+        public Task ApplyAsync(Preferences preferences, CancellationToken cancellationToken)
+        {
+            ApplyHistory.Add(preferences);
+            if (FailNextApply)
+            {
+                FailNextApply = false;
+                throw new InvalidOperationException("injected runtime apply failure");
+            }
+            Current = preferences;
+            return Task.CompletedTask;
+        }
     }
 }

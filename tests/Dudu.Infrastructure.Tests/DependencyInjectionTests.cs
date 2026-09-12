@@ -28,6 +28,8 @@ public sealed class DependencyInjectionTests
         Assert.IsType<ProfileRepository>(provider.GetRequiredService<IProfileRepository>());
         Assert.IsType<RemoteEnvelopeRepository>(provider.GetRequiredService<IRemoteEnvelopeRepository>());
         Assert.IsType<TaskRepository>(provider.GetRequiredService<ITaskRepository>());
+        Assert.IsType<CompanionFeatureTransactionService>(
+            provider.GetRequiredService<ICompanionFeatureTransactions>());
 
         Assert.Same(
             provider.GetRequiredService<IFocusSessionRepository>(),

@@ -22,10 +22,28 @@ public sealed class ProductionStartupContractTests
             "WindowsCompanionBootstrap.cs"));
 
         Assert.DoesNotContain("overlay.Show();", composition);
+        Assert.DoesNotContain("actionSurface.Open(", composition);
+        Assert.Contains("await overlay.SetActionSurfaceAsync(actionSurface", composition);
+        Assert.Contains("PresentOneShotAsync(petEvent, dismissalId, token)", composition);
         Assert.Contains("var fullscreen = new FullscreenDetector();", runtime);
         Assert.Contains("isFullscreen ??= fullscreen.IsForegroundFullscreen;", runtime);
         Assert.Contains("new WindowsCompanionEventSource(fullscreen)", runtime);
         Assert.Contains("await StartupVisibilityGate.ApplyAsync(", runtime);
+    }
+
+    [Fact]
+    public void Native_overlay_clicks_and_settings_navigation_use_production_controllers()
+    {
+        var root = FindRepositoryRoot();
+        var host = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.App", "Overlay", "OverlayWindowHost.cs"));
+        var app = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "App.xaml.cs"));
+
+        Assert.Contains("ToggleFromPetBody(", host);
+        Assert.Contains("OverlayActionSurfaceObserver.ObserveAsync", host);
+        Assert.Contains("DispatcherQueue.GetForCurrentThread()", app);
+        Assert.Contains("_dispatcherQueue.TryEnqueue", app);
+        Assert.Contains("completion.TrySetException", app);
     }
 
     private static string FindRepositoryRoot()

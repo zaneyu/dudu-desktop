@@ -46,6 +46,47 @@ public sealed class CompanionCompositionTests
     }
 
     [Fact]
+    public async Task Production_settings_dispatch_awaits_ui_callback_and_surfaces_failure()
+    {
+        var destinations = new List<string>();
+        var actions = new CompanionUiActions(
+            () => { },
+            _ => { },
+            () => { },
+            navigateSettingsDestination: (destination, _) =>
+            {
+                destinations.Add(destination);
+                return Task.CompletedTask;
+            });
+
+        await WindowsCompanionProductionComposition.DispatchSettingsDestinationAsync(
+            actions,
+            "tasks",
+            TestContext.Current.CancellationToken);
+        Assert.Equal(["tasks"], destinations);
+
+        var unavailable = new CompanionUiActions(() => { }, _ => { }, () => { });
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            WindowsCompanionProductionComposition.DispatchSettingsDestinationAsync(
+                unavailable,
+                "notes",
+                TestContext.Current.CancellationToken));
+
+        var rejected = new CompanionUiActions(
+            () => { },
+            _ => { },
+            () => { },
+            navigateSettingsDestination: (_, _) => Task.FromException(
+                new InvalidOperationException("dispatcher rejected")));
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            WindowsCompanionProductionComposition.DispatchSettingsDestinationAsync(
+                rejected,
+                "notes",
+                TestContext.Current.CancellationToken));
+        Assert.Equal("dispatcher rejected", exception.Message);
+    }
+
+    [Fact]
     public async Task Production_command_router_maps_pause_settings_and_exit()
     {
         var overlay = new FakeOverlay();
