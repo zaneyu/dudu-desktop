@@ -81,7 +81,7 @@
                 <TextBox Header="Note" Text="{x:Bind ViewModel.CheckInNote, Mode=TwoWay}" TextWrapping="Wrap" AcceptsReturn="True" AutomationProperties.AutomationId="HomeCheckInNote" />
                 <Button Content="Save check-in" Command="{x:Bind ViewModel.RecordCheckInCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="HomeSaveCheckIn" />
                 <TextBlock x:Name="HomeCheckInSummary" Text="{x:Bind ViewModel.CheckInSummaryText, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.AutomationId="HomeCheckInSummary" />
-                <ItemsControl x:Name="HomeCheckInHistory" AutomationProperties.AutomationId="HomeCheckInHistory">
+                <ItemsControl x:Name="HomeCheckInHistory" ItemsSource="{x:Bind ViewModel.RecentCheckIns, Mode=OneWay}" AutomationProperties.AutomationId="HomeCheckInHistory">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate x:DataType="models:MoodCheckIn">
                             <StackPanel Margin="0,4" Spacing="2">
