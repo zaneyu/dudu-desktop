@@ -220,6 +220,36 @@ public sealed class AppLifecycleCoordinatorTests
         Assert.False(overlay.IsVisible);
     }
 
+    [Fact]
+    public async Task Desired_visibility_during_fullscreen_waits_until_fullscreen_ends()
+    {
+        var overlay = new FakeOverlay { IsVisible = false };
+        var fullscreen = false;
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            isFullscreen: () => fullscreen,
+            initialUserVisible: false);
+
+        fullscreen = true;
+        await lifecycle.OnFullscreenChangedAsync(true, TestContext.Current.CancellationToken);
+        await lifecycle.SetUserVisibleAsync(true, TestContext.Current.CancellationToken);
+
+        Assert.Equal(0, overlay.ShowCount);
+        Assert.False(overlay.IsVisible);
+
+        fullscreen = false;
+        await lifecycle.OnFullscreenChangedAsync(false, TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, overlay.ShowCount);
+        Assert.True(overlay.IsVisible);
+    }
+
     private sealed class FakeHost : IAppHostLifecycle
     {
         public Task ResumeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;

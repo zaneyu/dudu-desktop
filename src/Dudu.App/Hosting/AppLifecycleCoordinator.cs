@@ -41,7 +41,6 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
     private bool _suspended;
     private bool _fullscreenHidden;
     private bool _userVisible;
-    private bool _visibleBeforeFullscreen;
     private bool _disposed;
     private Task? _disposeTask;
 
@@ -171,33 +170,37 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
     private async Task EnsureUserVisibleAsync(CancellationToken cancellationToken)
     {
         var snapshot = await CaptureAsync(cancellationToken);
-        if (snapshot.UserVisible)
-        {
-            return;
-        }
-
-        var fullscreen = TryReadFullscreen("show-fullscreen");
-        if (!TryCanShow(fullscreen, snapshot.Locked, snapshot.Suspended, "show-gate"))
-        {
-            return;
-        }
-
-        await _gate.WaitAsync(cancellationToken);
+        await _visibilityGate.WaitAsync(cancellationToken);
         try
         {
-            ThrowIfDisposed();
-            if (_locked != snapshot.Locked
-                || _suspended != snapshot.Suspended
-                || _fullscreenHidden != snapshot.FullscreenHidden)
+            await _gate.WaitAsync(cancellationToken);
+            try
             {
-                return;
+                ThrowIfDisposed();
+                // This is desired state, not permission to bypass a gate.
+                // Keeping it true lets fullscreen/pause/session transitions
+                // restore the pet after suppression ends.
+                _userVisible = true;
+
+                var fullscreen = TryReadFullscreen("show-fullscreen");
+                if (snapshot.FullscreenHidden
+                    || _fullscreenHidden
+                    || fullscreen
+                    || _locked
+                    || _suspended
+                    || !TryCanShow(fullscreen, _locked, _suspended, "show-gate"))
+                {
+                    return;
+                }
+
+                // Keep the lifecycle gate held until the show request is
+                // issued. OnFullscreenChangedAsync updates the same state
+                // under this gate before it can hide the request again.
+                InvokeSafely(_overlay.Show, "user-show");
             }
-
-            _userVisible = true;
+            finally { _gate.Release(); }
         }
-        finally { _gate.Release(); }
-
-        await InvokeVisualSafelyAsync(_overlay.Show, "user-show", cancellationToken);
+        finally { _visibilityGate.Release(); }
     }
 
     private async Task HideForUserAsync(CancellationToken cancellationToken)
@@ -235,7 +238,6 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
             if (fullscreen)
             {
                 if (_fullscreenHidden) return;
-                _visibleBeforeFullscreen = _userVisible;
                 _fullscreenHidden = true;
                 hide = true;
                 restore = false;
@@ -245,8 +247,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
             else
             {
                 if (!_fullscreenHidden) return;
-                restoreVisible = _visibleBeforeFullscreen;
-                _visibleBeforeFullscreen = false;
+                restoreVisible = _userVisible;
                 _fullscreenHidden = false;
                 hide = false;
                 restore = true;

@@ -1,6 +1,7 @@
 using FlaUI.Core;
 using FlaUI.Core.AutomationElements;
 using FlaUI.UIA3;
+using System.Diagnostics;
 using Xunit;
 
 namespace Dudu.UiTests;
@@ -36,33 +37,76 @@ public sealed class OnboardingTests
         actions++;
         Find(window, "OnboardingRecommendedDefaults").AsButton().Invoke();
         actions++;
-        Find(window, "OnboardingNext").AsButton().Invoke();
-        actions++;
-        Assert.NotNull(Find(window, "OnboardingPlacementStep"));
-        var overlay = FindOverlay(automation);
+        // Recipient -> Appearance -> Quiet Hours -> Reminders -> Placement.
+        Advance(
+            window,
+            ref actions,
+            "OnboardingTheme",
+            "OnboardingQuietHoursEnabled",
+            "OnboardingHydrationReminders",
+            "OnboardingPlacementStep");
+        var overlay = WaitForOverlay(automation);
         Assert.False(overlay.Properties.IsOffscreen.ValueOrDefault);
-        Find(window, "OnboardingNext").AsButton().Invoke();
-        actions++;
-        Find(window, "OnboardingNext").AsButton().Invoke();
-        actions++;
-        Find(window, "OnboardingNext").AsButton().Invoke();
-        actions++;
+
+        // Placement -> Pairing, then skip the optional pairing step.
+        Advance(window, ref actions, "OnboardingSkipPairing");
         Find(window, "OnboardingSkipPairing").AsButton().Invoke();
         actions++;
         Find(window, "OnboardingComplete").AsButton().Invoke();
         actions++;
 
         Assert.True(actions < 20);
-        Assert.NotNull(Find(window, "NavHome"));
-        Assert.False(FindOverlay(automation).Properties.IsOffscreen.ValueOrDefault);
+        WaitUntil(() => TryFind(window, "NavHome") is not null);
+        Assert.False(WaitForOverlay(automation).Properties.IsOffscreen.ValueOrDefault);
     }
 
-    private static AutomationElement FindOverlay(UIA3Automation automation) =>
-        automation.GetDesktop().FindFirstDescendant(
-            cf => cf.ByClassName("Dudu.DesktopCompanion.PetOverlay.v1"))
-        ?? throw new InvalidOperationException("The Dudu placement overlay was not visible.");
+    private static void Advance(Window window, ref int actions, params string[] visibleControlIds)
+    {
+        foreach (var visibleControlId in visibleControlIds)
+        {
+            Find(window, "OnboardingNext").AsButton().Invoke();
+            actions++;
+            WaitUntil(() => IsVisible(window, visibleControlId));
+        }
+    }
+
+    private static AutomationElement WaitForOverlay(UIA3Automation automation)
+    {
+        AutomationElement? overlay = null;
+        WaitUntil(() =>
+        {
+            overlay = automation.GetDesktop().FindFirstDescendant(
+                cf => cf.ByClassName("Dudu.DesktopCompanion.PetOverlay.v1"));
+            return overlay is not null;
+        });
+        return overlay!;
+    }
+
+    private static void WaitUntil(Func<bool> condition)
+    {
+        var deadline = Stopwatch.GetTimestamp() +
+            (long)(Stopwatch.Frequency * TimeSpan.FromSeconds(5).TotalSeconds);
+        while (!condition())
+        {
+            if (Stopwatch.GetTimestamp() >= deadline)
+            {
+                throw new TimeoutException("Timed out waiting for the onboarding transition.");
+            }
+
+            Thread.Sleep(50);
+        }
+    }
 
     private static AutomationElement Find(Window window, string automationId) =>
-        window.FindFirstDescendant(cf => cf.ByAutomationId(automationId))
+        TryFind(window, automationId)
         ?? throw new InvalidOperationException($"Automation id '{automationId}' was not found.");
+
+    private static AutomationElement? TryFind(Window window, string automationId) =>
+        window.FindFirstDescendant(cf => cf.ByAutomationId(automationId));
+
+    private static bool IsVisible(Window window, string automationId)
+    {
+        var element = TryFind(window, automationId);
+        return element is not null && !element.Properties.IsOffscreen.ValueOrDefault;
+    }
 }
