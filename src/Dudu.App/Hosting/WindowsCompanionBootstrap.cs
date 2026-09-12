@@ -624,6 +624,11 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
     public Task OnFullscreenChangedAsync(bool fullscreen, CancellationToken cancellationToken = default) =>
         _lifecycle.OnFullscreenChangedAsync(fullscreen, cancellationToken);
 
+    public Task SetUserVisibleAsync(
+        bool visible,
+        CancellationToken cancellationToken = default) =>
+        _lifecycle.SetUserVisibleAsync(visible, cancellationToken);
+
     public bool HandleWindowMessage(uint message, nint wParam, nint lParam)
     {
         return _hotkey.HandleMessage(message, wParam)

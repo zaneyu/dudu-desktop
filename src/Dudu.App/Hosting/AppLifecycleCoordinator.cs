@@ -154,15 +154,25 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         var snapshot = await CaptureAsync(cancellationToken);
         if (snapshot.UserVisible)
         {
-            await _gate.WaitAsync(cancellationToken);
-            try
-            {
-                ThrowIfDisposed();
-                _userVisible = false;
-            }
-            finally { _gate.Release(); }
+            await SetUserVisibleAsync(false, cancellationToken);
+            return;
+        }
 
-            await InvokeVisualSafelyAsync(_overlay.Hide, "user-hide", cancellationToken);
+        await SetUserVisibleAsync(true, cancellationToken);
+    }
+
+    public Task SetUserVisibleAsync(
+        bool visible,
+        CancellationToken cancellationToken = default) =>
+        visible
+            ? EnsureUserVisibleAsync(cancellationToken)
+            : HideForUserAsync(cancellationToken);
+
+    private async Task EnsureUserVisibleAsync(CancellationToken cancellationToken)
+    {
+        var snapshot = await CaptureAsync(cancellationToken);
+        if (snapshot.UserVisible)
+        {
             return;
         }
 
@@ -188,6 +198,19 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         finally { _gate.Release(); }
 
         await InvokeVisualSafelyAsync(_overlay.Show, "user-show", cancellationToken);
+    }
+
+    private async Task HideForUserAsync(CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            ThrowIfDisposed();
+            _userVisible = false;
+        }
+        finally { _gate.Release(); }
+
+        await InvokeVisualSafelyAsync(_overlay.Hide, "user-hide", cancellationToken);
     }
 
     public async Task OnDisplayChangedAsync(CancellationToken cancellationToken = default)

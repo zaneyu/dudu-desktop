@@ -162,12 +162,24 @@ public sealed class StartupSettingsService
 
     public bool DesiredLaunchAtSignIn => _reconciliationDesiredState ?? _preferences.LaunchAtSignIn;
 
-    public void Adopt(Preferences preferences)
+    public void Adopt(Preferences preferences, bool preserveReconciliation = true)
     {
+        var hadActiveReconciliation = _needsReconciliation;
+        var desiredState = _reconciliationDesiredState;
+        var reconciliationError = _reconciliationError;
         _preferences = preferences ?? throw new ArgumentNullException(nameof(preferences));
-        _reconciliationDesiredState = null;
-        _needsReconciliation = false;
-        _reconciliationError = null;
+        if (preserveReconciliation && hadActiveReconciliation)
+        {
+            _reconciliationDesiredState = desiredState;
+            _needsReconciliation = true;
+            _reconciliationError = reconciliationError;
+        }
+        else
+        {
+            _reconciliationDesiredState = null;
+            _needsReconciliation = false;
+            _reconciliationError = null;
+        }
     }
 
     public async Task SetLaunchAtSignInAsync(

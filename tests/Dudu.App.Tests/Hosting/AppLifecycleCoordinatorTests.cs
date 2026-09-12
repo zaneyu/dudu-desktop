@@ -189,6 +189,37 @@ public sealed class AppLifecycleCoordinatorTests
         Assert.Equal(0, overlay.ShowCount);
     }
 
+    [Fact]
+    public async Task Onboarding_visibility_transition_shows_pet_but_respects_pause_gate()
+    {
+        var overlay = new FakeOverlay { IsVisible = false };
+        var now = new DateTimeOffset(2026, 9, 11, 10, 0, 0, TimeSpan.Zero);
+        var pause = PauseState.None;
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            pauseState: () => pause,
+            clock: () => now,
+            initialUserVisible: false);
+
+        await lifecycle.SetUserVisibleAsync(true, TestContext.Current.CancellationToken);
+        Assert.Equal(1, overlay.ShowCount);
+        Assert.True(overlay.IsVisible);
+
+        await lifecycle.SetUserVisibleAsync(false, TestContext.Current.CancellationToken);
+        Assert.Equal(1, overlay.HideCount);
+
+        pause = PausePolicy.ForOneHour(now);
+        await lifecycle.SetUserVisibleAsync(true, TestContext.Current.CancellationToken);
+        Assert.Equal(1, overlay.ShowCount);
+        Assert.False(overlay.IsVisible);
+    }
+
     private sealed class FakeHost : IAppHostLifecycle
     {
         public Task ResumeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -200,7 +231,7 @@ public sealed class AppLifecycleCoordinatorTests
         public int HideCount { get; private set; }
         public int ShowCount { get; private set; }
         public int RestoreCount { get; private set; }
-        public bool IsVisible { get; private set; } = true;
+        public bool IsVisible { get; set; } = true;
         public void Show() { ShowCount++; IsVisible = true; }
         public void Hide() { HideCount++; IsVisible = false; }
         public void RestorePlacement() => RestoreCount++;

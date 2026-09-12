@@ -38,6 +38,9 @@ public sealed class OnboardingTests
         actions++;
         Find(window, "OnboardingNext").AsButton().Invoke();
         actions++;
+        Assert.NotNull(Find(window, "OnboardingPlacementStep"));
+        var overlay = FindOverlay(automation);
+        Assert.False(overlay.Properties.IsOffscreen.ValueOrDefault);
         Find(window, "OnboardingNext").AsButton().Invoke();
         actions++;
         Find(window, "OnboardingNext").AsButton().Invoke();
@@ -51,7 +54,13 @@ public sealed class OnboardingTests
 
         Assert.True(actions < 20);
         Assert.NotNull(Find(window, "NavHome"));
+        Assert.False(FindOverlay(automation).Properties.IsOffscreen.ValueOrDefault);
     }
+
+    private static AutomationElement FindOverlay(UIA3Automation automation) =>
+        automation.GetDesktop().FindFirstDescendant(
+            cf => cf.ByClassName("Dudu.DesktopCompanion.PetOverlay.v1"))
+        ?? throw new InvalidOperationException("The Dudu placement overlay was not visible.");
 
     private static AutomationElement Find(Window window, string automationId) =>
         window.FindFirstDescendant(cf => cf.ByAutomationId(automationId))

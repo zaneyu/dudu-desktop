@@ -376,7 +376,7 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
                 {
                     if (_startupSettings is not null)
                     {
-                        _startupSettings.Adopt(preferences);
+                        _startupSettings.Adopt(preferences, preserveReconciliation: false);
                         await _startupSettings.RetryStartupRegistrationAsync(cancellationToken);
                     }
                     else

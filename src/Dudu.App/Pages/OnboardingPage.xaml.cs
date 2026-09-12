@@ -11,11 +11,17 @@ public sealed partial class OnboardingPage : Page
 {
     private readonly OnboardingViewModel _viewModel;
     private readonly Action _completed;
+    private readonly Func<bool, CancellationToken, Task>? _setUserVisible;
+    private bool? _placementVisibilityRequested;
 
-    public OnboardingPage(OnboardingViewModel viewModel, Action completed)
+    public OnboardingPage(
+        OnboardingViewModel viewModel,
+        Action completed,
+        Func<bool, CancellationToken, Task>? setUserVisible = null)
     {
         _viewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         _completed = completed ?? throw new ArgumentNullException(nameof(completed));
+        _setUserVisible = setUserVisible;
         InitializeComponent();
         SyncControlsFromDraft();
         RefreshStep();
@@ -31,9 +37,23 @@ public sealed partial class OnboardingPage : Page
 
     private async void RecommendedPlacementButton_Click(object sender, RoutedEventArgs args)
     {
-        await _viewModel.UseRecommendedPlacementAsync();
-        SyncControlsFromDraft();
-        SetMessage(null);
+        try
+        {
+            await _viewModel.UseRecommendedPlacementAsync();
+            SyncControlsFromDraft();
+            SetMessage(null);
+        }
+        catch (OperationCanceledException)
+        {
+            SetMessage("Placement was paused. Your draft is still here.");
+        }
+        catch (Exception exception)
+        {
+            SetMessage("Dudu could not preview that placement yet. Your draft is still here.");
+            global::System.Diagnostics.Trace.TraceInformation(
+                "Dudu recommended placement failed: {0}",
+                exception.Message);
+        }
     }
 
     private async void PlacementScaleSlider_ValueChanged(
@@ -101,7 +121,25 @@ public sealed partial class OnboardingPage : Page
         {
             var completed = await _viewModel.CompleteAsync();
             SetMessage(completed ? null : _viewModel.ValidationMessage);
-            if (completed) _completed();
+            if (completed)
+            {
+                try
+                {
+                    if (_setUserVisible is not null)
+                    {
+                        await _setUserVisible(true, CancellationToken.None);
+                    }
+                }
+                catch (Exception exception)
+                {
+                    SetMessage("Setup was saved, but Dudu could not be shown yet.");
+                    global::System.Diagnostics.Trace.TraceError(
+                        "Dudu could not show the companion after onboarding: {0}",
+                        exception);
+                }
+
+                _completed();
+            }
         }
         catch (OperationCanceledException)
         {
@@ -168,6 +206,35 @@ public sealed partial class OnboardingPage : Page
             ? Visibility.Visible
             : Visibility.Collapsed;
         RefreshStartupRecovery();
+
+        var shouldShowPlacementPet = _viewModel.CurrentStep is OnboardingStep.Placement or OnboardingStep.Pairing;
+        if (_placementVisibilityRequested != shouldShowPlacementPet)
+        {
+            _placementVisibilityRequested = shouldShowPlacementPet;
+            _ = SetPlacementVisibilityAsync(shouldShowPlacementPet);
+        }
+    }
+
+    private async Task SetPlacementVisibilityAsync(bool visible)
+    {
+        if (_setUserVisible is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _setUserVisible(visible, CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            SetMessage(visible
+                ? "Dudu could not be shown yet. You can continue and try again."
+                : null);
+            global::System.Diagnostics.Trace.TraceInformation(
+                "Dudu placement visibility change failed: {0}",
+                exception.Message);
+        }
     }
 
     private void RefreshStartupRecovery()

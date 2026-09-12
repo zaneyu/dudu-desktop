@@ -54,7 +54,8 @@ public sealed record CompanionSettingsContext(
     MonitorPlacementSnapshot PlacementSnapshot,
     Func<Preferences, PetPlacement, CancellationToken, Task> ApplyRuntimeAsync,
     Func<CancellationToken, Task<MonitorPlacementSnapshot>> CapturePlacementAsync,
-    Func<PetPlacement, CancellationToken, Task> ApplyPlacementAsync);
+    Func<PetPlacement, CancellationToken, Task> ApplyPlacementAsync,
+    Func<bool, CancellationToken, Task> SetUserVisibleAsync);
 
 public sealed record CompanionLaunchOptions(bool Background)
 {
@@ -264,7 +265,8 @@ public static class WindowsCompanionProductionComposition
                 placementSnapshot with { Placement = currentMonitorPlacement },
                 runtime.ApplySettingsAsync,
                 runtime.CapturePlacementSnapshotAsync,
-                runtime.ApplyPlacementAsync));
+                runtime.ApplyPlacementAsync,
+                runtime.SetUserVisibleAsync));
             return new ComposedPrimaryRuntime(runtime, animationEngine!, presenter, startup, services);
         }
         catch

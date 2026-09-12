@@ -35,7 +35,7 @@ public sealed partial class SettingsWindow : UserControl
             },
             placementCapture: context.CapturePlacementAsync,
             placementPreviewer: context.ApplyPlacementAsync,
-            startupSettings: context.StartupSettings);
+                startupSettings: context.StartupSettings);
         InitializeComponent();
         RootNavigation.SelectedItem = RootNavigation.MenuItems[0];
         Loaded += OnLoaded;
@@ -58,7 +58,10 @@ public sealed partial class SettingsWindow : UserControl
             else
             {
                 RootNavigation.Visibility = Visibility.Collapsed;
-                ContentFrame.Content = new OnboardingPage(_onboarding, OnboardingCompleted);
+                ContentFrame.Content = new OnboardingPage(
+                    _onboarding,
+                    OnboardingCompleted,
+                    context.SetUserVisibleAsync);
             }
         }
         catch (Exception exception)

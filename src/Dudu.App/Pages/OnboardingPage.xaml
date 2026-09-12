@@ -48,7 +48,7 @@
                         <NumberBox x:Name="NoteLimitBox" Header="Daily local note limit" AutomationProperties.AutomationId="OnboardingLocalNoteLimit" Minimum="0" Maximum="12" Value="3" SpinButtonPlacementMode="Compact" />
                     </StackPanel>
 
-                    <StackPanel x:Name="PlacementStep" Spacing="12" Visibility="Collapsed">
+                    <StackPanel x:Name="PlacementStep" Spacing="12" Visibility="Collapsed" AutomationProperties.AutomationId="OnboardingPlacementStep">
                         <TextBlock Text="Place Dudu" Style="{StaticResource SectionHeadingStyle}" />
                         <TextBlock Text="Drag Dudu to the place you want. Finish setup captures its current monitor and position." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                         <Button x:Name="RecommendedPlacementButton" Content="Use recommended placement" AutomationProperties.AutomationId="OnboardingRecommendedPlacement" Click="RecommendedPlacementButton_Click" />

@@ -169,6 +169,30 @@ public sealed class OnboardingViewModelTests
         Assert.False(fixture.StartupSettings.NeedsReconciliation);
     }
 
+    [Fact]
+    public async Task Production_shaped_runtime_adoption_preserves_startup_retry_state()
+    {
+        await using var fixture = OnboardingFixture.Create(
+            runtimeApplier: (_, _, _) => throw new InvalidOperationException("live apply failed"),
+            adoptPreferencesInRuntimeApply: true);
+        fixture.StartupWriter.FailWrite = true;
+        fixture.ViewModel.RecipientName = "Mia";
+
+        Assert.True(await fixture.ViewModel.CompleteAsync(fixture.CancellationToken));
+        Assert.True(fixture.StartupSettings.NeedsReconciliation);
+        Assert.True(fixture.StartupSettings.DesiredLaunchAtSignIn);
+        Assert.NotNull(fixture.StartupSettings.ReconciliationError);
+        Assert.NotNull(fixture.ViewModel.RuntimeApplyError);
+
+        fixture.StartupWriter.FailWrite = false;
+        await fixture.ViewModel.RetryStartupRegistrationAsync(fixture.CancellationToken);
+
+        Assert.False(fixture.StartupSettings.NeedsReconciliation);
+        Assert.Null(fixture.StartupSettings.ReconciliationError);
+        Assert.Null(fixture.ViewModel.StartupRegistrationError);
+        Assert.NotNull(fixture.ViewModel.RuntimeApplyError);
+    }
+
     private sealed class OnboardingFixture : IAsyncDisposable
     {
         private OnboardingFixture(
@@ -176,7 +200,8 @@ public sealed class OnboardingViewModelTests
             Func<Preferences, PetPlacement, CancellationToken, Task>? runtimeApplier,
             PetPlacement? initialPlacement,
             List<string>? events,
-            Func<CancellationToken, Task<MonitorPlacementSnapshot>>? placementCapture)
+            Func<CancellationToken, Task<MonitorPlacementSnapshot>>? placementCapture,
+            bool adoptPreferencesInRuntimeApply)
         {
             Preferences = new RecordingPreferencesRepository();
             Profiles = new RecordingProfileRepository();
@@ -201,6 +226,22 @@ public sealed class OnboardingViewModelTests
                     false,
                     true,
                     TimeSpan.FromMinutes(15)));
+            var applyRuntime = runtimeApplier ?? ((_, _, _) =>
+            {
+                Events.Add("runtime");
+                AppliedPlacement = SavedPlacements.Single();
+                RuntimeApplyCount++;
+                return Task.CompletedTask;
+            });
+            if (adoptPreferencesInRuntimeApply)
+            {
+                var originalApply = applyRuntime;
+                applyRuntime = async (preferences, placement, cancellationToken) =>
+                {
+                    StartupSettings.Adopt(preferences);
+                    await originalApply(preferences, placement, cancellationToken);
+                };
+            }
             ViewModel = new OnboardingViewModel(
                 Preferences,
                 Profiles,
@@ -209,13 +250,7 @@ public sealed class OnboardingViewModelTests
                 Startup,
                 new OfflinePairingService(),
                 initialPlacement: initialPlacement ?? new PetPlacement("MONITOR-2", 0.8, 0.8, 1),
-                runtimeApplier: runtimeApplier ?? ((_, _, _) =>
-                {
-                    Events.Add("runtime");
-                    AppliedPlacement = SavedPlacements.Single();
-                    RuntimeApplyCount++;
-                    return Task.CompletedTask;
-                }),
+                runtimeApplier: applyRuntime,
                 placementCapture: placementCapture ?? (_ => Task.FromResult(new MonitorPlacementSnapshot(
                     initialPlacement ?? new PetPlacement("MONITOR-2", 0.8, 0.8, 1),
                     new PixelRect(0, 0, 100, 100),
@@ -249,8 +284,9 @@ public sealed class OnboardingViewModelTests
             Func<Preferences, PetPlacement, CancellationToken, Task>? runtimeApplier = null,
             PetPlacement? initialPlacement = null,
             List<string>? events = null,
-            Func<CancellationToken, Task<MonitorPlacementSnapshot>>? placementCapture = null) =>
-            new(failCommit, runtimeApplier, initialPlacement, events, placementCapture);
+            Func<CancellationToken, Task<MonitorPlacementSnapshot>>? placementCapture = null,
+            bool adoptPreferencesInRuntimeApply = false) =>
+            new(failCommit, runtimeApplier, initialPlacement, events, placementCapture, adoptPreferencesInRuntimeApply);
 
         public async ValueTask DisposeAsync()
         {
