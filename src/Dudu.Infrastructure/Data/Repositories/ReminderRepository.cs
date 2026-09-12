@@ -4,7 +4,7 @@ using Microsoft.Data.Sqlite;
 
 namespace Dudu.Infrastructure.Data.Repositories;
 
-public sealed class ReminderRepository : SqliteRepository, IReminderRepository
+public sealed class ReminderRepository : SqliteRepository, IReminderRepository, IReminderWriter
 {
     public ReminderRepository(Database database) : base(database) { }
     internal ReminderRepository(Database database, SqliteTransactionContext context) : base(database, context) { }

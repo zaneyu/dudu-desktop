@@ -185,8 +185,16 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
 
     public void SetPlacement(PetPlacement placement)
     {
+        _ = SetPlacementAsync(placement);
+    }
+
+    public Task SetPlacementAsync(
+        PetPlacement placement,
+        CancellationToken cancellationToken = default)
+    {
         ArgumentNullException.ThrowIfNull(placement);
-        PostToOwner(() =>
+        cancellationToken.ThrowIfCancellationRequested();
+        return InvokeOnOwnerAsync(() =>
         {
             _placement = placement;
             ResolveAndMove();
@@ -194,6 +202,26 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     }
 
     public void RestorePlacement() => PostToOwner(ResolveAndMove);
+
+    public Task<MonitorPlacementSnapshot> CapturePlacementSnapshotAsync(
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return InvokeOnOwnerAsync(() =>
+        {
+            var monitors = EnumerateMonitors();
+            var monitor = monitors.FirstOrDefault(item =>
+                string.Equals(item.DeviceName, _placement.MonitorDeviceName, StringComparison.Ordinal))
+                ?? monitors.FirstOrDefault(item => item.IsPrimary)
+                ?? monitors[0];
+            var placement = MonitorPlacementService.Capture(
+                _windowBounds,
+                _placement.Scale,
+                _nominalSize,
+                monitors);
+            return new MonitorPlacementSnapshot(placement, _windowBounds, monitor);
+        });
+    }
 
     public Task InvokeOnOwnerAsync(Action action)
     {
@@ -206,6 +234,25 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             {
                 action();
                 completion.TrySetResult(true);
+            }
+            catch (Exception exception)
+            {
+                completion.TrySetException(exception);
+            }
+        });
+        return completion.Task;
+    }
+
+    public Task<TResult> InvokeOnOwnerAsync<TResult>(Func<TResult> action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        var completion = new TaskCompletionSource<TResult>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        PostToOwner(() =>
+        {
+            try
+            {
+                completion.TrySetResult(action());
             }
             catch (Exception exception)
             {

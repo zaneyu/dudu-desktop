@@ -1,9 +1,11 @@
+using System.Diagnostics;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using Dudu.App.Overlay;
 using Dudu.App.System;
 using Dudu.Core.Abstractions;
 using Dudu.Core.Models;
+using Dudu.Core.Reminders;
 
 namespace Dudu.App.ViewModels;
 
@@ -33,6 +35,8 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
     private readonly IAppUnitOfWork _unitOfWork;
     private readonly StartupRegistrationService _startupRegistration;
     private readonly IPairingService _pairingService;
+    private readonly PetPlacement _initialPlacement;
+    private readonly Func<Preferences, PetPlacement, CancellationToken, Task>? _runtimeApplier;
     private readonly string _monitorDeviceName;
     private readonly SemaphoreSlim _navigationGate = new(1, 1);
     private bool _disposed;
@@ -56,6 +60,7 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
     private bool _isCompleting;
     private bool _isComplete;
     private string? _validationMessage;
+    private string? _runtimeApplyError;
 
     public OnboardingViewModel(
         IPreferencesRepository preferencesRepository,
@@ -64,7 +69,9 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
         IAppUnitOfWork unitOfWork,
         StartupRegistrationService startupRegistration,
         IPairingService pairingService,
-        string? monitorDeviceName = null)
+        string? monitorDeviceName = null,
+        PetPlacement? initialPlacement = null,
+        Func<Preferences, PetPlacement, CancellationToken, Task>? runtimeApplier = null)
     {
         _preferencesRepository = preferencesRepository ?? throw new ArgumentNullException(nameof(preferencesRepository));
         _profileRepository = profileRepository ?? throw new ArgumentNullException(nameof(profileRepository));
@@ -72,9 +79,16 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
         _unitOfWork = unitOfWork ?? throw new ArgumentNullException(nameof(unitOfWork));
         _startupRegistration = startupRegistration ?? throw new ArgumentNullException(nameof(startupRegistration));
         _pairingService = pairingService ?? throw new ArgumentNullException(nameof(pairingService));
-        _monitorDeviceName = string.IsNullOrWhiteSpace(monitorDeviceName)
-            ? DefaultMonitorDeviceName
-            : monitorDeviceName.Trim();
+        _initialPlacement = initialPlacement ?? new PetPlacement(
+            string.IsNullOrWhiteSpace(monitorDeviceName) ? DefaultMonitorDeviceName : monitorDeviceName.Trim(),
+            0.8,
+            0.8,
+            1);
+        _monitorDeviceName = _initialPlacement.MonitorDeviceName;
+        _runtimeApplier = runtimeApplier;
+        _placementX = _initialPlacement.NormalizedX;
+        _placementY = _initialPlacement.NormalizedY;
+        _placementScale = MonitorPlacementService.ClampScale(_initialPlacement.Scale);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -99,6 +113,7 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
     public bool IsCompleting { get => _isCompleting; private set => Set(ref _isCompleting, value); }
     public bool IsComplete { get => _isComplete; private set => Set(ref _isComplete, value); }
     public string? ValidationMessage { get => _validationMessage; private set => Set(ref _validationMessage, value); }
+    public string? RuntimeApplyError { get => _runtimeApplyError; private set => Set(ref _runtimeApplyError, value); }
     public bool CanGoBack => CurrentStep > OnboardingStep.Recipient && !IsCompleting && !IsComplete;
     public string ProgressText => $"Step {(int)CurrentStep + 1} of {StepCount}";
 
@@ -117,6 +132,8 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
                 QuietHoursStart = preferences.QuietHours.Start;
                 QuietHoursEnd = preferences.QuietHours.End;
                 LocalNoteDailyLimit = preferences.LocalNoteDailyLimit;
+                HydrationRemindersEnabled = preferences.HydrationRemindersEnabled;
+                BreakRemindersEnabled = preferences.BreakRemindersEnabled;
                 LaunchAtSignIn = preferences.LaunchAtSignIn;
                 HidePetDuringFullscreen = preferences.HidePetDuringFullscreen;
             }
@@ -263,16 +280,9 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
             }
 
             IsCompleting = true;
-            var previousStartupEnabled = _startupRegistration.IsEnabled;
-            var startupChanged = previousStartupEnabled != LaunchAtSignIn;
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (startupChanged)
-                {
-                    await _startupRegistration.SetEnabledAsync(LaunchAtSignIn, cancellationToken);
-                }
-
                 var profile = new Profile(RecipientName.Trim(), OnboardingComplete: true);
                 var preferences = new Preferences(
                     Theme,
@@ -282,7 +292,9 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
                     LaunchAtSignIn,
                     AlwaysOnTop: false,
                     HidePetDuringFullscreen,
-                    AmbientMinimumInterval: TimeSpan.FromMinutes(15));
+                    AmbientMinimumInterval: TimeSpan.FromMinutes(15),
+                    HydrationRemindersEnabled,
+                    BreakRemindersEnabled);
                 var placement = new PetPlacement(
                     _monitorDeviceName,
                     PlacementX,
@@ -294,32 +306,54 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
                     await context.Profiles.SaveAsync(profile, token);
                     await context.Preferences.SaveAsync(preferences, token);
                     await context.PetPlacements.SaveAsync(placement, token);
+                    if (context.Reminders is IReminderWriter reminderWriter)
+                    {
+                        foreach (var reminder in LocalReminderDefaults.Create(
+                            preferences,
+                            DateTimeOffset.UtcNow,
+                            TimeZoneInfo.Local))
+                        {
+                            await reminderWriter.SaveAsync(reminder, token);
+                        }
+                    }
                 }, cancellationToken);
 
                 IsComplete = true;
                 ValidationMessage = null;
                 OnPropertyChanged(nameof(CanGoBack));
-                return true;
-            }
-            catch
-            {
-                if (startupChanged)
+
+                var startupRegistrationFailed = false;
+                try
+                {
+                    await _startupRegistration.SetEnabledAsync(LaunchAtSignIn, cancellationToken);
+                }
+                catch (Exception exception)
+                {
+                    startupRegistrationFailed = true;
+                    RuntimeApplyError = "Dudu saved your setup, but could not register startup. You can retry from Home.";
+                    Trace.TraceError("Dudu startup registration failed after commit: {0}", exception);
+                }
+
+                if (_runtimeApplier is not null)
                 {
                     try
                     {
-                        await _startupRegistration.SetEnabledAsync(
-                            previousStartupEnabled,
-                            CancellationToken.None);
+                        await _runtimeApplier(preferences, placement, cancellationToken);
+                        if (!startupRegistrationFailed)
+                        {
+                            RuntimeApplyError = null;
+                        }
                     }
-                    catch
+                    catch (Exception exception)
                     {
-                        // The database transaction remains the source of truth;
-                        // a later settings visit can reconcile the shortcut.
+                        RuntimeApplyError = "Dudu saved your setup, but could not apply it live. Open settings again to retry.";
+                        Trace.TraceError("Dudu runtime settings apply failed after commit: {0}", exception);
                     }
                 }
 
-                throw;
+                return true;
             }
+            catch { throw; }
             finally
             {
                 IsCompleting = false;

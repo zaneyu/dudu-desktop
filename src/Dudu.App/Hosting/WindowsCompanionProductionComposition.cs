@@ -1,9 +1,11 @@
 using Dudu.App.Animation;
+using Dudu.App.Overlay;
 using Dudu.App.System;
 using Dudu.Core.Abstractions;
 using Dudu.Core.Assets;
 using Dudu.Core.Models;
 using Dudu.Core.Pet;
+using Dudu.Core.Policies;
 using Dudu.Infrastructure;
 using Dudu.Infrastructure.Data;
 using Microsoft.Extensions.DependencyInjection;
@@ -45,7 +47,11 @@ public sealed record CompanionSettingsContext(
     IProfileRepository Profiles,
     IPetPlacementRepository PetPlacements,
     IAppUnitOfWork UnitOfWork,
-    IPairingService Pairing);
+    IPairingService Pairing,
+    Profile? Profile,
+    PetPlacement InitialPlacement,
+    MonitorPlacementSnapshot PlacementSnapshot,
+    Func<Preferences, PetPlacement, CancellationToken, Task> ApplyRuntimeAsync);
 
 public sealed record CompanionLaunchOptions(bool Background)
 {
@@ -70,6 +76,12 @@ public sealed record CompanionLaunchOptions(bool Background)
         ArgumentNullException.ThrowIfNull(preferences);
         return !Background || !preferences.LaunchAtSignIn;
     }
+
+    public bool ShouldOpenSettings(Profile? profile) =>
+        profile?.OnboardingComplete != true || !Background;
+
+    public bool ShouldShowOverlay(Preferences preferences, Profile? profile) =>
+        profile?.OnboardingComplete == true && ShouldShowOverlay(preferences);
 }
 
 public static class WindowsCompanionProductionComposition
@@ -120,11 +132,15 @@ public static class WindowsCompanionProductionComposition
             var preferencesRepository = services.GetRequiredService<IPreferencesRepository>();
             var preferences = await preferencesRepository.GetAsync(cancellationToken)
                 ?? services.GetRequiredService<Preferences>();
+            var profileRepository = services.GetRequiredService<IProfileRepository>();
+            var profile = await profileRepository.GetAsync(cancellationToken);
             var savedPlacements = await services
                 .GetRequiredService<IPetPlacementRepository>()
                 .ListAsync(cancellationToken);
-            var initialPlacement = savedPlacements.FirstOrDefault()
-                ?? new PetPlacement("MISSING", 0.8, 0.8, 1);
+            // The host starts from a safe neutral placement so its first
+            // monitor snapshot describes the monitor it actually occupies.
+            // Saved placements are selected only after that identity is known.
+            var initialPlacement = new PetPlacement("MISSING", 0.8, 0.8, 1);
             var pet = services.GetRequiredService<PetStateMachine>();
             var manifestPath = Path.Combine(
                 AppContext.BaseDirectory,
@@ -140,20 +156,16 @@ public static class WindowsCompanionProductionComposition
             composer = new SkiaFrameComposer(pack);
             presenter = new LayeredFramePresenter();
             startup = new StartupRegistrationService();
-            await startup.SetEnabledAsync(preferences.LaunchAtSignIn, cancellationToken);
+            await startup.SetEnabledAsync(
+                profile?.OnboardingComplete == true && preferences.LaunchAtSignIn,
+                cancellationToken);
             var startupSettings = new StartupSettingsService(
                 startup,
                 preferencesRepository,
                 preferences);
-            actions.ConfigureSettings?.Invoke(new CompanionSettingsContext(
-                startupSettings,
-                startup,
-                preferencesRepository,
-                services.GetRequiredService<IProfileRepository>(),
-                services.GetRequiredService<IPetPlacementRepository>(),
-                services.GetRequiredService<IAppUnitOfWork>(),
-                services.GetRequiredService<IPairingService>()));
             var pause = new PauseStateStore();
+            var runtimePreferences = new RuntimePreferencesState(preferences);
+            var showOverlay = launchOptions.ShouldShowOverlay(preferences, profile);
 
             var runtime = await WindowsCompanionRuntime.CreateAsync(
                 host,
@@ -174,13 +186,39 @@ public static class WindowsCompanionProductionComposition
                 {
                     using var frame = composer.Compose(pack, animation, 0);
                     await overlay.PresentAsync(frame, cancellationToken);
-                    if (launchOptions.ShouldShowOverlay(preferences))
+                    if (showOverlay)
                     {
                         overlay.Show();
                     }
                 },
-                initialUserVisible: launchOptions.ShouldShowOverlay(preferences),
+                initialUserVisible: showOverlay,
+                isQuietHours: () => QuietHoursPolicy.IsQuiet(
+                    DateTimeOffset.UtcNow,
+                    runtimePreferences.Current.QuietHours,
+                    TimeZoneInfo.Local),
+                onPreferencesChanged: runtimePreferences.Set,
                 cancellationToken: cancellationToken);
+
+            var placementSnapshot = await runtime.CapturePlacementSnapshotAsync(cancellationToken);
+            var currentMonitorPlacement = savedPlacements.FirstOrDefault(item =>
+                string.Equals(
+                    item.MonitorDeviceName,
+                    placementSnapshot.Monitor.DeviceName,
+                    StringComparison.Ordinal))
+                ?? placementSnapshot.Placement;
+            await runtime.ApplySettingsAsync(preferences, currentMonitorPlacement, cancellationToken);
+            actions.ConfigureSettings?.Invoke(new CompanionSettingsContext(
+                startupSettings,
+                startup,
+                preferencesRepository,
+                profileRepository,
+                services.GetRequiredService<IPetPlacementRepository>(),
+                services.GetRequiredService<IAppUnitOfWork>(),
+                services.GetRequiredService<IPairingService>(),
+                profile,
+                currentMonitorPlacement,
+                placementSnapshot with { Placement = currentMonitorPlacement },
+                runtime.ApplySettingsAsync));
             return new ComposedPrimaryRuntime(runtime, composer, presenter, startup, services);
         }
         catch

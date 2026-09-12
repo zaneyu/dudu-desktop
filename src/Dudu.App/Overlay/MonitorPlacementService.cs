@@ -9,6 +9,11 @@ public sealed record MonitorInfo(
     int Dpi,
     bool IsPrimary = false);
 
+public sealed record MonitorPlacementSnapshot(
+    PetPlacement Placement,
+    PixelRect WindowBounds,
+    MonitorInfo Monitor);
+
 public readonly record struct PlacementResolution(
     string MonitorDeviceName,
     PixelRect WindowBounds,

@@ -26,7 +26,13 @@ public sealed partial class SettingsWindow : UserControl
             context.PetPlacements,
             context.UnitOfWork,
             context.StartupRegistration,
-            context.Pairing);
+            context.Pairing,
+            initialPlacement: context.InitialPlacement,
+            runtimeApplier: async (preferences, placement, cancellationToken) =>
+            {
+                context.StartupSettings.Adopt(preferences);
+                await context.ApplyRuntimeAsync(preferences, placement, cancellationToken);
+            });
         InitializeComponent();
         RootNavigation.SelectedItem = RootNavigation.MenuItems[0];
         Loaded += OnLoaded;
@@ -105,6 +111,15 @@ public sealed partial class SettingsWindow : UserControl
             {
                 Text = $"Dudu is ready for {(_onboarding.RecipientName.Length == 0 ? "you" : _onboarding.RecipientName)}.",
                 FontSize = 16,
+                TextWrapping = TextWrapping.Wrap,
+            },
+            new TextBlock
+            {
+                Text = _onboarding.RuntimeApplyError ?? string.Empty,
+                Visibility = string.IsNullOrWhiteSpace(_onboarding.RuntimeApplyError)
+                    ? Visibility.Collapsed
+                    : Visibility.Visible,
+                Foreground = (Brush)Application.Current.Resources["WarningBrush"],
                 TextWrapping = TextWrapping.Wrap,
             },
             new Border

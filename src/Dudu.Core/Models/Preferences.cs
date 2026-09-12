@@ -17,4 +17,6 @@ public sealed record Preferences(
     bool LaunchAtSignIn,
     bool AlwaysOnTop,
     bool HidePetDuringFullscreen,
-    TimeSpan AmbientMinimumInterval);
+    TimeSpan AmbientMinimumInterval,
+    bool HydrationRemindersEnabled = true,
+    bool BreakRemindersEnabled = true);

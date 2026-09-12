@@ -26,7 +26,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
     private readonly IAppHostLifecycle _host;
     private readonly IOverlayLifecycle _overlay;
     private readonly PetStateMachine _pet;
-    private readonly Preferences _preferences;
+    private Preferences _preferences;
     private readonly Func<PauseState> _pauseState;
     private readonly Func<bool> _isQuietHours;
     private readonly Func<bool> _isFullscreen;
@@ -71,6 +71,22 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         _openHome = openHome;
         _diagnostic = diagnostic;
         _userVisible = initialUserVisible ?? overlay.IsVisible;
+    }
+
+    public Preferences CurrentPreferences => Volatile.Read(ref _preferences);
+
+    public async Task UpdatePreferencesAsync(
+        Preferences preferences,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(preferences);
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            ThrowIfDisposed();
+            Volatile.Write(ref _preferences, preferences);
+        }
+        finally { _gate.Release(); }
     }
 
     public async Task OnSessionLockedAsync(CancellationToken cancellationToken = default)
@@ -192,7 +208,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         try
         {
             ThrowIfDisposed();
-            if (!_preferences.HidePetDuringFullscreen) return;
+            if (!CurrentPreferences.HidePetDuringFullscreen) return;
             if (fullscreen)
             {
                 if (_fullscreenHidden) return;
@@ -392,7 +408,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
     {
         try
         {
-            if (locked || suspended || (fullscreen && _preferences.HidePetDuringFullscreen))
+            if (locked || suspended || (fullscreen && CurrentPreferences.HidePetDuringFullscreen))
             {
                 return false;
             }

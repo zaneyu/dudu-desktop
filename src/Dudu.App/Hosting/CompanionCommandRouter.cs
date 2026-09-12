@@ -152,6 +152,11 @@ public sealed class StartupSettingsService
 
     public Preferences Current => _preferences;
 
+    public void Adopt(Preferences preferences)
+    {
+        _preferences = preferences ?? throw new ArgumentNullException(nameof(preferences));
+    }
+
     public async Task SetLaunchAtSignInAsync(
         bool enabled,
         CancellationToken cancellationToken = default)

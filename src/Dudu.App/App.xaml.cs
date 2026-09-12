@@ -73,7 +73,9 @@ public sealed partial class App : Application
         {
             await startupTask;
             _bootstrap = _startupRunner?.Bootstrap;
-            if (!CompanionLaunchOptions.Parse(_launchArguments).Background)
+            if (_settingsContext is not null
+                && CompanionLaunchOptions.Parse(_launchArguments)
+                    .ShouldOpenSettings(_settingsContext.Profile))
             {
                 OpenHome();
             }

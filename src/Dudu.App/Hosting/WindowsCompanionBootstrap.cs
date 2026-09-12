@@ -422,6 +422,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
     private readonly TrayIconService _tray;
     private readonly GlobalHotkeyService _hotkey;
     private readonly ICompanionEventSource _events;
+    private readonly Action<Preferences>? _onPreferencesChanged;
     private bool _started;
 
     public WindowsCompanionRuntime(
@@ -430,7 +431,8 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         AppLifecycleCoordinator lifecycle,
         TrayIconService tray,
         GlobalHotkeyService hotkey,
-        ICompanionEventSource events)
+        ICompanionEventSource events,
+        Action<Preferences>? onPreferencesChanged)
     {
         _host = host ?? throw new ArgumentNullException(nameof(host));
         _overlay = overlay ?? throw new ArgumentNullException(nameof(overlay));
@@ -438,6 +440,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         _tray = tray ?? throw new ArgumentNullException(nameof(tray));
         _hotkey = hotkey ?? throw new ArgumentNullException(nameof(hotkey));
         _events = events ?? throw new ArgumentNullException(nameof(events));
+        _onPreferencesChanged = onPreferencesChanged;
     }
 
     public static async Task<WindowsCompanionRuntime> CreateAsync(
@@ -456,6 +459,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         Func<AppLifecycleCoordinator, Action<TrayCommand>>? trayCommandHandlerFactory = null,
         Func<OverlayWindowHost, Task>? initializeOverlay = null,
         bool initialUserVisible = true,
+        Action<Preferences>? onPreferencesChanged = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(openHome);
@@ -501,7 +505,14 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
             {
                 await initializeOverlay(overlay);
             }
-            return new WindowsCompanionRuntime(host, overlay, lifecycle!, tray, hotkey, events);
+            return new WindowsCompanionRuntime(
+                host,
+                overlay,
+                lifecycle!,
+                tray,
+                hotkey,
+                events,
+                onPreferencesChanged);
         }
         catch
         {
@@ -518,6 +529,22 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
             throw;
         }
     }
+
+    public async Task ApplySettingsAsync(
+        Preferences preferences,
+        PetPlacement placement,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(preferences);
+        ArgumentNullException.ThrowIfNull(placement);
+        await _lifecycle.UpdatePreferencesAsync(preferences, cancellationToken);
+        _onPreferencesChanged?.Invoke(preferences);
+        await _overlay.SetPlacementAsync(placement, cancellationToken);
+    }
+
+    public Task<MonitorPlacementSnapshot> CapturePlacementSnapshotAsync(
+        CancellationToken cancellationToken = default) =>
+        _overlay.CapturePlacementSnapshotAsync(cancellationToken);
 
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {
