@@ -2,11 +2,13 @@ using System.Diagnostics;
 using Dudu.App.Animation;
 using Dudu.App.Overlay;
 using Dudu.App.System;
+using Dudu.App.ViewModels;
 using Dudu.Core.Abstractions;
 using Dudu.Core.Assets;
 using Dudu.Core.Models;
 using Dudu.Core.Pet;
 using Dudu.Core.Policies;
+using Dudu.Core.Time;
 using Dudu.Infrastructure;
 using Dudu.Infrastructure.Data;
 using Microsoft.Extensions.DependencyInjection;
@@ -55,7 +57,10 @@ public sealed record CompanionSettingsContext(
     Func<Preferences, PetPlacement, CancellationToken, Task> ApplyRuntimeAsync,
     Func<CancellationToken, Task<MonitorPlacementSnapshot>> CapturePlacementAsync,
     Func<PetPlacement, CancellationToken, Task> ApplyPlacementAsync,
-    Func<bool, CancellationToken, Task> SetUserVisibleAsync);
+    Func<bool, CancellationToken, Task> SetUserVisibleAsync)
+{
+    public CompanionFeatureContext? Features { get; init; }
+}
 
 public sealed record CompanionLaunchOptions(bool Background)
 {
@@ -248,6 +253,68 @@ public static class WindowsCompanionProductionComposition
                     StringComparison.Ordinal))
                 ?? placementSnapshot.Placement;
             await runtime.ApplySettingsAsync(preferences, currentMonitorPlacement, cancellationToken);
+            var featureContext = new CompanionFeatureContext(
+                services.GetRequiredService<IClock>(),
+                preferences,
+                preferencesRepository,
+                profileRepository,
+                services.GetRequiredService<IPetPlacementRepository>(),
+                services.GetRequiredService<IReminderRepository>(),
+                services.GetRequiredService<IReminderRepository>() as IReminderWriter
+                    ?? throw new InvalidOperationException("Reminder writer is not registered."),
+                services.GetRequiredService<ITaskRepository>(),
+                services.GetRequiredService<IFocusSessionRepository>(),
+                services.GetRequiredService<ILocalNoteRepository>(),
+                services.GetRequiredService<IRemoteEnvelopeRepository>(),
+                services.GetRequiredService<ICountdownRepository>(),
+                services.GetRequiredService<ICheckInRepository>(),
+                services.GetRequiredService<Dudu.Core.CheckIns.CheckInService>(),
+                services.GetRequiredService<Dudu.Core.Tasks.TaskService>(),
+                services.GetRequiredService<Dudu.Core.Focus.FocusService>(),
+                services.GetRequiredService<Dudu.Core.Notes.LocalNoteSelector>(),
+                services.GetRequiredService<IPairingService>(),
+                pet,
+                applyPreferencesAsync: async (updated, token) =>
+                {
+                    await preferencesRepository.SaveAsync(updated, token);
+                    await runtime.ApplySettingsAsync(updated, currentMonitorPlacement, token);
+                },
+                applyPlacementAsync: runtime.ApplyPlacementAsync,
+                setUserVisibleAsync: runtime.SetUserVisibleAsync,
+                getPauseState: () => pause.GetEffective(DateTimeOffset.UtcNow),
+                applyPauseAsync: async (state, token) =>
+                {
+                    pause.Set(state);
+                    await runtime.SetUserVisibleAsync(state.Mode == PauseMode.None, token);
+                },
+                presentPetAsync: async (petEvent, token) =>
+                {
+                    pet.Handle(petEvent);
+                    if (animationEngine is not null)
+                    {
+                        await animationEngine.PlayAsync(
+                            pet.Current,
+                            new AnimationOptions
+                            {
+                                ReducedMotionEnabled = runtimePreferences.Current.ReducedMotion,
+                            },
+                            token);
+                    }
+                },
+                applyOutfitAsync: async (outfit, token) =>
+                {
+                    if (animationEngine is not null)
+                    {
+                        await animationEngine.PlayAsync(
+                            pet.Current,
+                            new AnimationOptions
+                            {
+                                ReducedMotionEnabled = runtimePreferences.Current.ReducedMotion,
+                                OutfitKey = outfit,
+                            },
+                            token);
+                    }
+                });
             actions.ConfigureSettings?.Invoke(new CompanionSettingsContext(
                 startupSettings,
                 startup,
@@ -262,7 +329,10 @@ public static class WindowsCompanionProductionComposition
                 runtime.ApplySettingsAsync,
                 runtime.CapturePlacementSnapshotAsync,
                 runtime.ApplyPlacementAsync,
-                runtime.SetUserVisibleAsync));
+                runtime.SetUserVisibleAsync)
+            {
+                Features = featureContext,
+            });
             return new ComposedPrimaryRuntime(runtime, animationEngine!, presenter, startup, services);
         }
         catch
