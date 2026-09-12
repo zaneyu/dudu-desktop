@@ -16,6 +16,28 @@ public sealed class OfflinePairingService : IPairingService
         return Task.FromResult(PairingCodeResult.Offline);
     }
 
+    public Task<int> GetSessionCountAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(0);
+    }
+
+    public Task<IReadOnlyList<PairingSessionSummary>> ListSessionsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult<IReadOnlyList<PairingSessionSummary>>(Array.Empty<PairingSessionSummary>());
+    }
+
+    public Task RevokeSessionAsync(
+        string sessionId,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.CompletedTask;
+    }
+
     public Task DisconnectSenderSessionsAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();

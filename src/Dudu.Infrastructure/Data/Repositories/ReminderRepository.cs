@@ -8,6 +8,22 @@ public sealed class ReminderRepository : SqliteRepository, IReminderRepository, 
 {
     public ReminderRepository(Database database) : base(database) { }
     internal ReminderRepository(Database database, SqliteTransactionContext context) : base(database, context) { }
+
+    public async Task<IReadOnlyList<Reminder>> ListAsync(CancellationToken cancellationToken)
+    {
+        var result = new List<Reminder>();
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = Select + " ORDER BY next_due_utc, id;";
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            result.Add(Read(reader));
+        }
+
+        return result;
+    }
+
     public async Task<IReadOnlyList<Reminder>> LoadDueAsync(DateTimeOffset utcNow, CancellationToken cancellationToken)
     {
         var result = new List<Reminder>();

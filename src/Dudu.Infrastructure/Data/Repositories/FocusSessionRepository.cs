@@ -27,6 +27,23 @@ public sealed class FocusSessionRepository : SqliteRepository, IFocusSessionRepo
         return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
     }
 
+    public async Task<IReadOnlyList<FocusSession>> ListHistoryAsync(CancellationToken cancellationToken)
+    {
+        var result = new List<FocusSession>();
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = Select + " WHERE status NOT IN ($running, $paused) ORDER BY updated_utc DESC, id;";
+        Add(command, "$running", (int)FocusStatus.Running);
+        Add(command, "$paused", (int)FocusStatus.Paused);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            result.Add(Read(reader));
+        }
+
+        return result;
+    }
+
     public async Task<bool> TryCreateActiveAsync(FocusSession session, CancellationToken cancellationToken)
     {
         if (IsTransactionBound)

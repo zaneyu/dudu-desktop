@@ -7,6 +7,22 @@ public sealed class LocalNoteRepository : SqliteRepository, ILocalNoteRepository
 {
     public LocalNoteRepository(Database database) : base(database) { }
     internal LocalNoteRepository(Database database, SqliteTransactionContext context) : base(database, context) { }
+
+    public async Task<IReadOnlyList<LocalLoveNote>> ListAsync(CancellationToken cancellationToken)
+    {
+        var result = new List<LocalLoveNote>();
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT id,text,enabled FROM local_notes ORDER BY id;";
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            result.Add(new LocalLoveNote(reader.GetString(0), reader.GetString(1), reader.GetInt32(2) != 0));
+        }
+
+        return result;
+    }
+
     public async Task<IReadOnlyList<LocalLoveNote>> ListEnabledAsync(CancellationToken cancellationToken)
     {
         var result = new List<LocalLoveNote>();
@@ -15,6 +31,34 @@ public sealed class LocalNoteRepository : SqliteRepository, ILocalNoteRepository
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken)) result.Add(new(reader.GetString(0), reader.GetString(1), reader.GetInt32(2)!=0));
         return result;
+    }
+
+    public async Task SaveToJarAsync(LocalLoveNote note, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(note);
+        ArgumentException.ThrowIfNullOrWhiteSpace(note.Id);
+        ArgumentException.ThrowIfNullOrWhiteSpace(note.Text);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO local_notes (id,text,enabled,is_default)
+            VALUES ($id,$text,$enabled,0)
+            ON CONFLICT(id) DO UPDATE SET text=excluded.text, enabled=excluded.enabled;
+            """;
+        Add(command, "$id", note.Id);
+        Add(command, "$text", note.Text);
+        Add(command, "$enabled", note.Enabled ? 1 : 0);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task DeleteAsync(string noteId, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(noteId);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM local_notes WHERE id=$id;";
+        Add(command, "$id", noteId);
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task<int> CountUnsolicitedShownAsync(DateOnly localDate, CancellationToken cancellationToken)

@@ -18,6 +18,7 @@ public sealed class DependencyInjectionTests
         using var provider = fixture.Provider;
 
         Assert.IsType<ReminderRepository>(provider.GetRequiredService<IReminderRepository>());
+        Assert.IsType<ReminderRepository>(provider.GetRequiredService<IReminderWriter>());
         Assert.IsType<CheckInRepository>(provider.GetRequiredService<ICheckInRepository>());
         Assert.IsType<CountdownRepository>(provider.GetRequiredService<ICountdownRepository>());
         Assert.IsType<FocusSessionRepository>(provider.GetRequiredService<IFocusSessionRepository>());
@@ -35,6 +36,9 @@ public sealed class DependencyInjectionTests
             provider.GetRequiredService<FocusSessionRepository>(),
             provider.GetRequiredService<IFocusSessionRepository>());
         Assert.Same(
+            provider.GetRequiredService<IReminderRepository>(),
+            provider.GetRequiredService<IReminderWriter>());
+        Assert.Same(
             provider.GetRequiredService<Database>(),
             provider.GetRequiredService<Database>());
         Assert.Same(
@@ -46,10 +50,13 @@ public sealed class DependencyInjectionTests
         Assert.Equal(
             PetState.Idle,
             provider.GetRequiredService<PetStateMachine>().Current.State);
+        var pairing = provider.GetRequiredService<IPairingService>();
         Assert.Equal(
             PairingAvailability.Offline,
-            await provider.GetRequiredService<IPairingService>()
-                .GetStateAsync(TestContext.Current.CancellationToken));
+            await pairing.GetStateAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(0, await pairing.GetSessionCountAsync(TestContext.Current.CancellationToken));
+        Assert.Empty(await pairing.ListSessionsAsync(TestContext.Current.CancellationToken));
+        await pairing.RevokeSessionAsync("opaque-session-handle", TestContext.Current.CancellationToken);
     }
 
     private sealed class ServiceFixture : IDisposable

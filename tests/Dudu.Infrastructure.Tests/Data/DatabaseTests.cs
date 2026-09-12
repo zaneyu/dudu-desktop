@@ -29,10 +29,10 @@ public sealed class DatabaseTests
         await using var fixture = await DatabaseFixture.CreateAsync();
         await using var connection = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken);
         var runner = new MigrationRunner(fixture.Options);
-        runner.AddMigration(2, "CREATE TABLE broken(;" );
+        runner.AddMigration(3, "CREATE TABLE broken(;" );
 
         await Assert.ThrowsAsync<SqliteException>(() => runner.RunAsync(connection, TestContext.Current.CancellationToken));
-        Assert.Equal(1, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(2, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
         Assert.True(File.Exists(fixture.Options.DatabasePath));
     }
 
@@ -89,6 +89,71 @@ public sealed class DatabaseTests
 
         Assert.Single(results, result => result);
         Assert.Equal(1, await repositoryA.CountUnsolicitedShownAsync(date, TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task Local_note_jar_supports_explicit_save_list_and_delete()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var repository = new LocalNoteRepository(fixture.Database);
+        var original = new LocalLoveNote("jar-note", "You can do it.", Enabled: false);
+
+        await repository.SaveToJarAsync(original, cancellationToken);
+
+        Assert.Contains(original, await repository.ListAsync(cancellationToken));
+        Assert.DoesNotContain(original, await repository.ListEnabledAsync(cancellationToken));
+
+        var updated = original with { Text = "You really can do it.", Enabled = true };
+        await repository.SaveToJarAsync(updated, cancellationToken);
+        Assert.Contains(updated, await repository.ListEnabledAsync(cancellationToken));
+
+        await repository.DeleteAsync(updated.Id, cancellationToken);
+        Assert.DoesNotContain(
+            (await repository.ListAsync(cancellationToken)).Select(note => note.Id),
+            id => id == updated.Id);
+    }
+
+    [Fact]
+    public async Task Feature_history_queries_exclude_active_work_and_order_newest_first()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var earlier = DateTimeOffset.Parse("2026-09-11T10:00:00Z");
+        var later = earlier.AddMinutes(1);
+
+        var tasks = new TaskRepository(fixture.Database);
+        var completedTask = new TaskItem(Guid.NewGuid(), "Completed", null, null, true, earlier, later, later);
+        var activeTask = new TaskItem(Guid.NewGuid(), "Active", null, null, false, earlier, later, null);
+        await tasks.SaveAsync(completedTask, cancellationToken);
+        await tasks.SaveAsync(activeTask, cancellationToken);
+        Assert.Equal([completedTask], await tasks.ListCompletedAsync(cancellationToken));
+
+        var focus = new FocusSessionRepository(fixture.Database);
+        var completed = new FocusSession(Guid.NewGuid(), null, earlier, earlier.AddMinutes(25), TimeSpan.Zero, FocusStatus.Completed, earlier);
+        var ended = new FocusSession(Guid.NewGuid(), null, earlier, null, TimeSpan.FromMinutes(12), FocusStatus.EndedEarly, later);
+        var running = new FocusSession(Guid.NewGuid(), null, later, later.AddMinutes(25), TimeSpan.Zero, FocusStatus.Running, later);
+        await focus.SaveAsync(completed, cancellationToken);
+        await focus.SaveAsync(ended, cancellationToken);
+        await focus.SaveAsync(running, cancellationToken);
+
+        Assert.Equal([ended, completed], await focus.ListHistoryAsync(cancellationToken));
+    }
+
+    [Fact]
+    public async Task Reminder_list_includes_disabled_reminders_for_settings_editing()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var repository = new ReminderRepository(fixture.Database);
+        var first = new Reminder("first", "First", null, true, new RecurrenceRule.Once(), "UTC",
+            QuietHoursBehavior.DeliverImmediately, MissedOccurrencePolicy.LatestOnly,
+            DateTimeOffset.Parse("2026-09-12T09:00:00Z"));
+        var second = first with { Id = "second", Title = "Second", Enabled = false };
+        await repository.SaveAsync(first, cancellationToken);
+        await repository.SaveAsync(second, cancellationToken);
+
+        Assert.Equal([first, second], await repository.ListAsync(cancellationToken));
     }
 
     [Fact]

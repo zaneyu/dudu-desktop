@@ -28,6 +28,21 @@ public sealed class TaskRepository : SqliteRepository, ITaskRepository
         return result;
     }
 
+    public async Task<IReadOnlyList<TaskItem>> ListCompletedAsync(CancellationToken cancellationToken)
+    {
+        var result = new List<TaskItem>();
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT id, title, notes, due_utc, is_completed, created_utc, updated_utc, completed_utc FROM tasks WHERE is_completed = 1 ORDER BY completed_utc DESC, updated_utc DESC, id;";
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            result.Add(Read(reader));
+        }
+
+        return result;
+    }
+
     public async Task SaveAsync(TaskItem task, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(task);

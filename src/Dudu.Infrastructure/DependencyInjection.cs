@@ -37,6 +37,8 @@ public static class DependencyInjection
         RegisterRepository<ProfileRepository, IProfileRepository>(services);
         RegisterRepository<RemoteEnvelopeRepository, IRemoteEnvelopeRepository>(services);
         RegisterRepository<ReminderRepository, IReminderRepository>(services);
+        services.AddSingleton<IReminderWriter>(static provider =>
+            provider.GetRequiredService<ReminderRepository>());
         RegisterRepository<TaskRepository, ITaskRepository>(services);
 
         services.AddSingleton<AppUnitOfWork>();
