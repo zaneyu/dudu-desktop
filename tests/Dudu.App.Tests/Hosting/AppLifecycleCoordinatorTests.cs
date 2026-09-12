@@ -161,13 +161,14 @@ public sealed class AppLifecycleCoordinatorTests
                 false, 3, true, false, true, TimeSpan.FromMinutes(15)),
             pauseState: () =>
             {
+                var observedPause = pause;
                 if (Interlocked.Increment(ref calls) == 1)
                 {
                     firstGateCheck.TrySetResult(true);
                     releaseFirstCheck.Task.GetAwaiter().GetResult();
                 }
 
-                return pause;
+                return observedPause;
             },
             clock: () => now);
 
