@@ -456,6 +456,20 @@ public sealed class DatabaseTests
         }
     }
 
+    [Fact]
+    public async Task Initialization_cancellation_after_start_does_not_detach_shared_initialization()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        using var cancellation = new CancellationTokenSource();
+
+        var initialization = fixture.Database.InitializeAsync(cancellation.Token);
+        cancellation.Cancel();
+
+        await initialization;
+        Assert.Equal(1, fixture.Database.InitializationRunCount);
+        Assert.True(File.Exists(fixture.Options.DatabasePath));
+    }
+
     private static async Task AssertPragmasAsync(SqliteConnection connection, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();

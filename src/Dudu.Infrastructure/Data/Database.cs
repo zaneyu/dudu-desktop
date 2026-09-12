@@ -43,7 +43,13 @@ public sealed class Database : IAsyncDisposable, IDisposable
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
-        await _coordinator.InitializeAsync(InitializeCoreAsync).WaitAsync(cancellationToken);
+        // InitializeCoreAsync deliberately runs with its own uncancelled
+        // ownership. Do not let a caller abandon the await while the shared
+        // coordinator continues mutating the database; callers can cancel
+        // before initialization begins, and connection operations remain
+        // independently cancellable after initialization completes.
+        cancellationToken.ThrowIfCancellationRequested();
+        await _coordinator.InitializeAsync(InitializeCoreAsync);
     }
 
     public async Task<SqliteConnection> CreateConnectionAsync(

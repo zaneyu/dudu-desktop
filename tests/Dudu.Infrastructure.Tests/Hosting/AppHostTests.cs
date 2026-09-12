@@ -7,6 +7,27 @@ namespace Dudu.Infrastructure.Tests.Hosting;
 public sealed class AppHostTests
 {
     [Fact]
+    public async Task Concurrent_and_repeated_starts_are_single_flight_and_idempotent()
+    {
+        using var fixture = new AppHostFixture();
+        fixture.Database.InitializationGate = NewSource();
+
+        var firstStart = fixture.Host.StartAsync(CancellationToken.None);
+        await fixture.Database.InitializationEntered.Task.WaitAsync(TestContext.Current.CancellationToken);
+        var concurrentStart = fixture.Host.StartAsync(CancellationToken.None);
+
+        Assert.Same(firstStart, concurrentStart);
+        fixture.Database.InitializationGate.TrySetResult(true);
+        await Task.WhenAll(firstStart, concurrentStart);
+        await fixture.Host.StartAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, fixture.Database.InitializeCount);
+        Assert.Equal(1, fixture.Reminder.TickCount);
+        Assert.Equal(1, fixture.TimerFactory.CreateCount);
+        await fixture.Host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
     public async Task Startup_waits_for_migration_before_first_tick_and_starts_scheduler()
     {
         using var fixture = new AppHostFixture();
@@ -86,6 +107,55 @@ public sealed class AppHostTests
         Assert.True(fixture.Database.Disposed);
     }
 
+    [Fact]
+    public async Task Shutdown_is_bounded_when_cancellation_callback_is_slow_and_throws()
+    {
+        using var fixture = new AppHostFixture(stopTimeout: TimeSpan.FromMilliseconds(100));
+        await fixture.Host.StartAsync(TestContext.Current.CancellationToken);
+        fixture.Reminder.BlockNextTick = true;
+        fixture.Reminder.CancellationCallback = () =>
+        {
+            fixture.Reminder.CancellationCallbackEntered.TrySetResult(true);
+            Thread.Sleep(300);
+            throw new InvalidOperationException("cancellation callback failed");
+        };
+
+        var resumeTask = fixture.Host.ResumeAsync(TestContext.Current.CancellationToken);
+        await fixture.Reminder.BlockEntered.Task.WaitAsync(TestContext.Current.CancellationToken);
+
+        var stopwatch = Stopwatch.StartNew();
+        await fixture.Host.StopAsync(TestContext.Current.CancellationToken);
+        stopwatch.Stop();
+
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(1));
+        Assert.False(fixture.Database.Disposed);
+
+        fixture.Reminder.ReleaseBlockedTick();
+        await resumeTask;
+        await fixture.Database.DisposedSignal.Task.WaitAsync(TestContext.Current.CancellationToken);
+        await fixture.Errors.WaitForOperationAsync(
+            "host-shutdown-cancellation",
+            TestContext.Current.CancellationToken);
+        Assert.True(fixture.Database.Disposed);
+    }
+
+    [Fact]
+    public async Task Shutdown_waits_for_underlying_database_initialization_before_disposal()
+    {
+        using var fixture = new AppHostFixture(stopTimeout: TimeSpan.FromMilliseconds(100));
+        fixture.Database.InitializationGate = NewSource();
+        var startTask = fixture.Host.StartAsync(TestContext.Current.CancellationToken);
+        await fixture.Database.InitializationEntered.Task.WaitAsync(TestContext.Current.CancellationToken);
+
+        await fixture.Host.StopAsync(TestContext.Current.CancellationToken);
+
+        Assert.False(fixture.Database.Disposed);
+        fixture.Database.InitializationGate.TrySetResult(true);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => startTask);
+        await fixture.Database.DisposedSignal.Task.WaitAsync(TestContext.Current.CancellationToken);
+        Assert.True(fixture.Database.Disposed);
+    }
+
     private sealed class AppHostFixture : IDisposable
     {
         private readonly string _root = Path.Combine(
@@ -137,19 +207,28 @@ public sealed class AppHostTests
     {
         public bool Initialized { get; private set; }
         public bool Disposed { get; private set; }
+        public int InitializeCount { get; private set; }
         public Exception? InitializationException { get; set; }
+        public TaskCompletionSource<bool>? InitializationGate { get; set; }
+        public TaskCompletionSource<bool> InitializationEntered { get; } = NewSource();
         public TaskCompletionSource<bool> DisposedSignal { get; } = NewSource();
 
-        public Task InitializeAsync(CancellationToken cancellationToken = default)
+        public async Task InitializeAsync(CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            InitializeCount++;
+            InitializationEntered.TrySetResult(true);
             if (InitializationException is not null)
             {
                 throw InitializationException;
             }
 
+            if (InitializationGate is not null)
+            {
+                await InitializationGate.Task;
+            }
+
             Initialized = true;
-            return Task.CompletedTask;
         }
 
         public ValueTask DisposeAsync()
@@ -167,8 +246,10 @@ public sealed class AppHostTests
 
         public bool BlockNextTick { get; set; }
         public bool ThrowOnScheduledTick { get; set; }
+        public Action? CancellationCallback { get; set; }
         public int TickCount { get; private set; }
         public TaskCompletionSource<bool> BlockEntered { get; } = NewSource();
+        public TaskCompletionSource<bool> CancellationCallbackEntered { get; } = NewSource();
 
         public async Task TickAsync(CancellationToken cancellationToken = default)
         {
@@ -184,6 +265,10 @@ public sealed class AppHostTests
                 {
                     BlockNextTick = false;
                     _blockedTick = NewSource();
+                    if (CancellationCallback is not null)
+                    {
+                        cancellationToken.Register(CancellationCallback);
+                    }
                     BlockEntered.TrySetResult(true);
                 }
 
@@ -252,13 +337,35 @@ public sealed class AppHostTests
 
     private sealed class TestErrorReporter : IAppHostErrorReporter
     {
+        private readonly object _sync = new();
+        private readonly List<string> _operations = [];
         public string? LastOperation { get; private set; }
         public TaskCompletionSource<bool> Reported { get; } = NewSource();
 
         public void Report(string operation, Exception exception)
         {
-            LastOperation = operation;
+            lock (_sync)
+            {
+                LastOperation = operation;
+                _operations.Add(operation);
+            }
             Reported.TrySetResult(true);
+        }
+
+        public async Task WaitForOperationAsync(string operation, CancellationToken cancellationToken)
+        {
+            while (true)
+            {
+                lock (_sync)
+                {
+                    if (_operations.Contains(operation, StringComparer.Ordinal))
+                    {
+                        return;
+                    }
+                }
+
+                await Task.Delay(10, cancellationToken);
+            }
         }
     }
 

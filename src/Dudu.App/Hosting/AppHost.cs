@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using Dudu.Core.Reminders;
 using Dudu.Infrastructure.Data;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace Dudu.App.Hosting;
 
@@ -45,6 +47,8 @@ public sealed class AppHost : IAsyncDisposable
     private readonly CancellationTokenSource _hostStopSource = new();
     private readonly object _operationSync = new();
     private TaskCompletionSource<bool> _operationsDrained = CompletedSource();
+    private TaskCompletionSource<bool>? _startCompletion;
+    private Task? _hostCancellationTask;
     private Task? _schedulerTask;
     private Task? _cleanupTask;
     private int _activeOperations;
@@ -65,7 +69,8 @@ public sealed class AppHost : IAsyncDisposable
                     ?? throw new InvalidOperationException("Database is not registered.")),
             new ReminderHostService(
                 services.GetService<ReminderEngine>()
-                    ?? throw new InvalidOperationException("ReminderEngine is not registered.")))
+                    ?? throw new InvalidOperationException("ReminderEngine is not registered.")),
+            errorReporter: ResolveErrorReporter(services))
     {
     }
 
@@ -92,7 +97,7 @@ public sealed class AppHost : IAsyncDisposable
         _database = database ?? throw new ArgumentNullException(nameof(database));
         _reminderService = reminderService ?? throw new ArgumentNullException(nameof(reminderService));
         _timerFactory = timerFactory ?? new PeriodicAppHostTimerFactory();
-        _errorReporter = errorReporter ?? NullAppHostErrorReporter.Instance;
+        _errorReporter = errorReporter ?? new DiagnosticAppHostErrorReporter();
         _stopTimeout = stopTimeout ?? DefaultStopTimeout;
         if (_stopTimeout <= TimeSpan.Zero)
         {
@@ -102,41 +107,94 @@ public sealed class AppHost : IAsyncDisposable
 
     public bool IsStarted => Volatile.Read(ref _started) != 0;
 
-    public async Task StartAsync(CancellationToken cancellationToken = default)
+    public Task StartAsync(CancellationToken cancellationToken = default)
     {
-        var operation = await BeginOperationAsync(
-            requiresStarted: false,
-            cancellationToken);
-        if (operation is null)
+        Task startTask;
+        TaskCompletionSource<bool>? startCompletionForRunner = null;
+        lock (_operationSync)
         {
-            return;
-        }
-
-        await using (operation)
-        {
-            CreateDirectories();
-            await _database.InitializeAsync(operation.CancellationToken);
-            await RunReminderTickAsync(operation.CancellationToken);
-
-            if (!await TryAcquireLifecycleGateAsync(_stopTimeout, operation.CancellationToken))
+            if (Volatile.Read(ref _stopRequested) != 0)
             {
-                return;
+                startTask = Task.FromException(
+                    new ObjectDisposedException(nameof(AppHost)));
             }
-
-            try
+            else if (Volatile.Read(ref _started) != 0)
             {
-                if (Volatile.Read(ref _stopRequested) != 0
-                    || operation.CancellationToken.IsCancellationRequested)
+                startTask = Task.CompletedTask;
+            }
+            else
+            {
+                if (_startCompletion is null)
                 {
-                    return;
+                    _startCompletion = NewCompletionSource();
+                    startCompletionForRunner = _startCompletion;
                 }
 
-                Volatile.Write(ref _started, 1);
-                _schedulerTask = RunReminderSchedulerAsync(_hostStopSource.Token);
+                startTask = _startCompletion.Task;
             }
-            finally
+        }
+
+        if (startCompletionForRunner is not null)
+        {
+            _ = RunStartAsync(startCompletionForRunner);
+        }
+
+        return cancellationToken.CanBeCanceled
+            ? startTask.WaitAsync(cancellationToken)
+            : startTask;
+    }
+
+    private async Task RunStartAsync(TaskCompletionSource<bool> completion)
+    {
+        try
+        {
+            var operation = await BeginOperationAsync(
+                requiresStarted: false,
+                CancellationToken.None);
+            if (operation is null)
             {
-                _lifecycleGate.Release();
+                throw new ObjectDisposedException(nameof(AppHost));
+            }
+
+            await using (operation)
+            {
+                CreateDirectories();
+                await _database.InitializeAsync(operation.CancellationToken);
+                await RunReminderTickAsync(operation.CancellationToken);
+
+                if (!await TryAcquireLifecycleGateAsync(_stopTimeout, operation.CancellationToken))
+                {
+                    throw new TimeoutException("The application host lifecycle gate could not be acquired.");
+                }
+
+                try
+                {
+                    if (Volatile.Read(ref _stopRequested) != 0
+                        || operation.CancellationToken.IsCancellationRequested)
+                    {
+                        throw new OperationCanceledException(operation.CancellationToken);
+                    }
+
+                    Volatile.Write(ref _started, 1);
+                    _schedulerTask = RunReminderSchedulerAsync(_hostStopSource.Token);
+                }
+                finally
+                {
+                    _lifecycleGate.Release();
+                }
+            }
+
+            completion.TrySetResult(true);
+        }
+        catch (Exception exception)
+        {
+            completion.TrySetException(exception);
+            lock (_operationSync)
+            {
+                if (ReferenceEquals(_startCompletion, completion))
+                {
+                    _startCompletion = null;
+                }
             }
         }
     }
@@ -154,8 +212,8 @@ public sealed class AppHost : IAsyncDisposable
     {
         // Shutdown owns cancellation. A caller's cancellation token must not
         // leave the host half-stopped or allow gate acquisition to wait forever.
-        _hostStopSource.Cancel();
         Interlocked.Exchange(ref _stopRequested, 1);
+        RequestHostCancellation();
         var deadline = DateTimeOffset.UtcNow + _stopTimeout;
 
         Task? schedulerTask = Volatile.Read(ref _schedulerTask);
@@ -173,7 +231,10 @@ public sealed class AppHost : IAsyncDisposable
         }
 
         var operations = GetOperationsDrainedTask();
-        var cleanup = EnsureCleanupScheduled(schedulerTask, operations);
+        var cleanup = EnsureCleanupScheduled(
+            schedulerTask,
+            operations,
+            GetHostCancellationTask());
         try
         {
             await cleanup.WaitAsync(Remaining(deadline));
@@ -224,7 +285,7 @@ public sealed class AppHost : IAsyncDisposable
                 }
                 catch (Exception exception)
                 {
-                    _errorReporter.Report("reminder-scheduler", exception);
+                    ReportError("reminder-scheduler", exception);
                 }
             }
         }
@@ -233,7 +294,7 @@ public sealed class AppHost : IAsyncDisposable
         }
         catch (Exception exception)
         {
-            _errorReporter.Report("reminder-scheduler", exception);
+            ReportError("reminder-scheduler", exception);
         }
     }
 
@@ -324,15 +385,24 @@ public sealed class AppHost : IAsyncDisposable
         }
     }
 
-    private Task EnsureCleanupScheduled(Task? schedulerTask, Task operationsDrained)
+    private Task EnsureCleanupScheduled(
+        Task? schedulerTask,
+        Task operationsDrained,
+        Task hostCancellationTask)
     {
         lock (_operationSync)
         {
-            return _cleanupTask ??= CleanupAsync(schedulerTask, operationsDrained);
+            return _cleanupTask ??= CleanupAsync(
+                schedulerTask,
+                operationsDrained,
+                hostCancellationTask);
         }
     }
 
-    private async Task CleanupAsync(Task? schedulerTask, Task operationsDrained)
+    private async Task CleanupAsync(
+        Task? schedulerTask,
+        Task operationsDrained,
+        Task hostCancellationTask)
     {
         if (schedulerTask is not null)
         {
@@ -342,11 +412,12 @@ public sealed class AppHost : IAsyncDisposable
             }
             catch (Exception exception)
             {
-                _errorReporter.Report("reminder-scheduler-shutdown", exception);
+                ReportError("reminder-scheduler-shutdown", exception);
             }
         }
 
         await operationsDrained;
+        await ObserveHostCancellationAsync(hostCancellationTask);
         if (Interlocked.Exchange(ref _databaseDisposed, 1) == 0)
         {
             await _database.DisposeAsync();
@@ -375,6 +446,83 @@ public sealed class AppHost : IAsyncDisposable
         return source;
     }
 
+    private static TaskCompletionSource<bool> NewCompletionSource() =>
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    private void RequestHostCancellation()
+    {
+        Exception? cancellationException = null;
+        lock (_operationSync)
+        {
+            if (_hostCancellationTask is not null)
+            {
+                return;
+            }
+
+            try
+            {
+                _hostCancellationTask = _hostStopSource.CancelAsync();
+            }
+            catch (Exception exception)
+            {
+                cancellationException = exception;
+                _hostCancellationTask = Task.CompletedTask;
+            }
+        }
+
+        if (cancellationException is not null)
+        {
+            ReportError("host-shutdown-cancellation", cancellationException);
+        }
+
+        _ = ObserveHostCancellationAsync(_hostCancellationTask);
+    }
+
+    private Task GetHostCancellationTask()
+    {
+        lock (_operationSync)
+        {
+            return _hostCancellationTask ?? Task.CompletedTask;
+        }
+    }
+
+    private async Task ObserveHostCancellationAsync(Task? cancellationTask)
+    {
+        if (cancellationTask is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await cancellationTask;
+        }
+        catch (Exception exception)
+        {
+            ReportError("host-shutdown-cancellation", exception);
+        }
+    }
+
+    private void ReportError(string operation, Exception exception)
+    {
+        try
+        {
+            _errorReporter.Report(operation, exception);
+        }
+        catch (Exception reporterException)
+        {
+            Trace.TraceError(
+                "Dudu AppHost error reporter failed for {0}: {1}",
+                operation,
+                reporterException);
+        }
+    }
+
+    private static IAppHostErrorReporter ResolveErrorReporter(IServiceProvider services) =>
+        services.GetService<IAppHostErrorReporter>()
+            ?? new DiagnosticAppHostErrorReporter(
+                services.GetService<ILoggerFactory>()?.CreateLogger("Dudu.AppHost"));
+
     private sealed class HostOperation(
         AppHost owner,
         CancellationTokenSource linkedCancellation) : IAsyncDisposable
@@ -383,15 +531,15 @@ public sealed class AppHost : IAsyncDisposable
 
         public CancellationToken CancellationToken => linkedCancellation.Token;
 
-        public ValueTask DisposeAsync()
+        public async ValueTask DisposeAsync()
         {
             if (Interlocked.Exchange(ref _disposed, 1) == 0)
             {
+                await owner.ObserveHostCancellationAsync(owner.GetHostCancellationTask());
                 linkedCancellation.Dispose();
                 owner.EndOperation();
             }
 
-            return ValueTask.CompletedTask;
         }
     }
 
@@ -433,12 +581,24 @@ public sealed class AppHost : IAsyncDisposable
         }
     }
 
-    private sealed class NullAppHostErrorReporter : IAppHostErrorReporter
+    private sealed class DiagnosticAppHostErrorReporter(ILogger? logger = null) : IAppHostErrorReporter
     {
-        public static NullAppHostErrorReporter Instance { get; } = new();
-
         public void Report(string operation, Exception exception)
         {
+            if (logger is not null)
+            {
+                logger.LogError(
+                    exception,
+                    "Dudu AppHost operation {Operation} failed.",
+                    operation);
+                return;
+            }
+
+            Trace.TraceError(
+                "Dudu AppHost operation {0} failed: {1}",
+                operation,
+                exception);
+            Console.Error.WriteLine($"Dudu AppHost operation '{operation}' failed: {exception}");
         }
     }
 }
