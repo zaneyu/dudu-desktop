@@ -1,6 +1,5 @@
 using Dudu.App.System;
 using Dudu.App.Tray;
-using Dudu.Core.Abstractions;
 using Dudu.Core.Models;
 
 namespace Dudu.App.Hosting;
@@ -43,14 +42,14 @@ public sealed class CompanionCommandRouter
     private readonly AppLifecycleCoordinator _lifecycle;
     private readonly IPauseStateStore _pause;
     private readonly Func<DateTimeOffset> _clock;
-    private readonly Action _openSettings;
-    private readonly Action _exit;
+    private readonly Func<CancellationToken, Task> _openSettings;
+    private readonly Func<CancellationToken, Task> _exit;
 
     public CompanionCommandRouter(
         AppLifecycleCoordinator lifecycle,
         IPauseStateStore pause,
-        Action openSettings,
-        Action exit,
+        Func<CancellationToken, Task> openSettings,
+        Func<CancellationToken, Task> exit,
         Func<DateTimeOffset>? clock = null)
     {
         _lifecycle = lifecycle ?? throw new ArgumentNullException(nameof(lifecycle));
@@ -60,127 +59,80 @@ public sealed class CompanionCommandRouter
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
     }
 
-    public void Handle(TrayCommand command)
+    public async Task HandleAsync(
+        TrayCommand command,
+        CancellationToken cancellationToken = default)
     {
         switch (command)
         {
             case TrayCommand.ShowOrHide:
-                Run(_lifecycle.OnUserShowOrHideAsync(), "tray-show-hide");
+                await _lifecycle.OnUserShowOrHideAsync(cancellationToken);
                 break;
             case TrayCommand.PauseOneHour:
-                SetPause(PausePolicy.ForOneHour(_clock()), "tray-pause-one-hour");
+                await SetPauseAsync(PausePolicy.ForOneHour(_clock()), cancellationToken);
                 break;
             case TrayCommand.PauseUntilTomorrowAtSeven:
-                SetPause(
+                await SetPauseAsync(
                     PausePolicy.UntilTomorrowAtSeven(_clock()),
-                    "tray-pause-tomorrow");
+                    cancellationToken);
                 break;
             case TrayCommand.PauseUntilFullscreenEnds:
-                SetPause(
+                await SetPauseAsync(
                     new PauseState(PauseMode.UntilFullscreenEnds, null),
-                    "tray-pause-fullscreen");
+                    cancellationToken);
                 break;
             case TrayCommand.PauseIndefinitelyOrResume:
-                SetPause(
+                await SetPauseAsync(
                     _pause.GetEffective(_clock()).Mode == PauseMode.Indefinite
                         ? PauseState.None
                         : new PauseState(PauseMode.Indefinite, null),
-                    "tray-pause-toggle");
+                    cancellationToken);
                 break;
             case TrayCommand.OpenSettings:
-                Invoke(_openSettings, "tray-open-settings");
+                await _openSettings(cancellationToken);
                 break;
             case TrayCommand.Exit:
-                Invoke(_exit, "tray-exit");
+                await _exit(cancellationToken);
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(command));
         }
     }
 
-    private void SetPause(PauseState state, string operation)
+    private async Task SetPauseAsync(PauseState state, CancellationToken cancellationToken)
     {
         _pause.Set(state);
-        Run(_lifecycle.OnPauseStateChangedAsync(), operation);
-    }
-
-    private static void Run(Task task, string operation)
-    {
-        _ = Observe(task, operation);
-    }
-
-    private static void Invoke(Action callback, string operation)
-    {
-        try { callback(); }
-        catch (Exception exception)
-        {
-            global::System.Diagnostics.Trace.TraceError(
-                "Dudu command '{0}' failed: {1}",
-                operation,
-                exception);
-        }
-    }
-
-    private static async Task Observe(Task task, string operation)
-    {
-        try { await task; }
-        catch (Exception exception)
-        {
-            global::System.Diagnostics.Trace.TraceError(
-                "Dudu command '{0}' failed: {1}",
-                operation,
-                exception);
-        }
+        await _lifecycle.OnPauseStateChangedAsync(cancellationToken);
     }
 }
 
 public sealed class StartupSettingsService
 {
     private readonly StartupRegistrationService _startup;
-    private readonly IPreferencesRepository _repository;
+    private readonly PreferenceMutationCoordinator _preferenceMutations;
     private readonly SemaphoreSlim _operationGate = new(1, 1);
-    private Preferences _preferences;
     private bool _needsReconciliation;
     private string? _reconciliationError;
     private bool? _reconciliationDesiredState;
 
     public StartupSettingsService(
         StartupRegistrationService startup,
-        IPreferencesRepository repository,
-        Preferences preferences)
+        PreferenceMutationCoordinator preferenceMutations)
     {
         _startup = startup ?? throw new ArgumentNullException(nameof(startup));
-        _repository = repository ?? throw new ArgumentNullException(nameof(repository));
-        _preferences = preferences ?? throw new ArgumentNullException(nameof(preferences));
+        _preferenceMutations = preferenceMutations
+            ?? throw new ArgumentNullException(nameof(preferenceMutations));
     }
 
-    public Preferences Current => _preferences;
+    public Preferences Current => _preferenceMutations.Current;
+
+    public PreferenceMutationCoordinator PreferenceMutations => _preferenceMutations;
 
     public bool NeedsReconciliation => _needsReconciliation;
 
     public string? ReconciliationError => _reconciliationError;
 
-    public bool DesiredLaunchAtSignIn => _reconciliationDesiredState ?? _preferences.LaunchAtSignIn;
-
-    public void Adopt(Preferences preferences, bool preserveReconciliation = true)
-    {
-        var hadActiveReconciliation = _needsReconciliation;
-        var desiredState = _reconciliationDesiredState;
-        var reconciliationError = _reconciliationError;
-        _preferences = preferences ?? throw new ArgumentNullException(nameof(preferences));
-        if (preserveReconciliation && hadActiveReconciliation)
-        {
-            _reconciliationDesiredState = desiredState;
-            _needsReconciliation = true;
-            _reconciliationError = reconciliationError;
-        }
-        else
-        {
-            _reconciliationDesiredState = null;
-            _needsReconciliation = false;
-            _reconciliationError = null;
-        }
-    }
+    public bool DesiredLaunchAtSignIn => _reconciliationDesiredState ?? Current.LaunchAtSignIn;
 
     public async Task SetLaunchAtSignInAsync(
         bool enabled,
@@ -189,9 +141,9 @@ public sealed class StartupSettingsService
         await _operationGate.WaitAsync(cancellationToken);
         try
         {
-            var updated = _preferences with { LaunchAtSignIn = enabled };
-            await _repository.SaveAsync(updated, cancellationToken);
-            _preferences = updated;
+            var updated = await _preferenceMutations.UpdateAsync(
+                current => current with { LaunchAtSignIn = enabled },
+                cancellationToken);
             await ReconcileCoreAsync(updated.LaunchAtSignIn, cancellationToken);
         }
         finally
@@ -206,7 +158,7 @@ public sealed class StartupSettingsService
         await _operationGate.WaitAsync(cancellationToken);
         try
         {
-            await ReconcileCoreAsync(_reconciliationDesiredState ?? _preferences.LaunchAtSignIn, cancellationToken);
+            await ReconcileCoreAsync(_reconciliationDesiredState ?? Current.LaunchAtSignIn, cancellationToken);
         }
         finally
         {

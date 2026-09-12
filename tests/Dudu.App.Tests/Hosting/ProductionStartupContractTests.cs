@@ -38,12 +38,15 @@ public sealed class ProductionStartupContractTests
         var host = File.ReadAllText(Path.Combine(
             root, "src", "Dudu.App", "Overlay", "OverlayWindowHost.cs"));
         var app = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "App.xaml.cs"));
+        var dispatcher = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.App", "System", "AwaitableUiDispatcher.cs"));
 
         Assert.Contains("ToggleFromPetBody(", host);
         Assert.Contains("OverlayActionSurfaceObserver.ObserveAsync", host);
         Assert.Contains("DispatcherQueue.GetForCurrentThread()", app);
         Assert.Contains("_dispatcherQueue.TryEnqueue", app);
-        Assert.Contains("completion.TrySetException", app);
+        Assert.Contains("_uiDispatcher.InvokeAsync", app);
+        Assert.Contains("completion.TrySetException", dispatcher);
     }
 
     private static string FindRepositoryRoot()

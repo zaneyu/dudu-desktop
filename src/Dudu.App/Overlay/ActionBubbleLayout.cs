@@ -72,11 +72,11 @@ public static class ActionBubbleLayout
     public static ComfortBubbleArrangement? ArrangeComfort(PixelRect workArea, PixelPoint petAnchor)
     {
         ValidateWorkArea(workArea);
-        var rows = ArrangeRows(ComfortActions.Count, workArea, petAnchor);
-        if (rows is null) return null;
+        var rows = ArrangeRows(ComfortActions.Count, workArea, petAnchor, requireAllRows: true);
+        if (rows is null || rows.Value.Regions.Count != ComfortActions.Count) return null;
         return new ComfortBubbleArrangement(
             rows.Value.Bounds,
-            ComfortActions.Take(rows.Value.Regions.Count)
+            ComfortActions
                 .Select((action, index) => new ComfortActionPlacement(action, rows.Value.Regions[index]))
                 .ToArray());
     }
@@ -108,7 +108,8 @@ public static class ActionBubbleLayout
     private static (PixelRect Bounds, IReadOnlyList<PixelRect> Regions)? ArrangeRows(
         int requestedCount,
         PixelRect workArea,
-        PixelPoint petAnchor)
+        PixelPoint petAnchor,
+        bool requireAllRows = false)
     {
         if (workArea.Width < MinimumSurfaceWidth || workArea.Height < MinimumActionHeight) return null;
 
@@ -120,6 +121,7 @@ public static class ActionBubbleLayout
         var gap = usePreferredSpacing ? PreferredGap : 0;
         var available = workArea.Height - padding * 2;
         var maximumRows = Math.Max(1, (available + gap) / (MinimumActionHeight + gap));
+        if (requireAllRows && maximumRows < requestedCount) return null;
         var count = Math.Min(requestedCount, maximumRows);
         var rowHeight = Math.Min(PreferredActionHeight, (available - gap * (count - 1)) / count);
         if (rowHeight < MinimumActionHeight) return null;

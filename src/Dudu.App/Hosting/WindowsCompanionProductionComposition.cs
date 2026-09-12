@@ -23,9 +23,9 @@ namespace Dudu.App.Hosting;
 public sealed class CompanionUiActions
 {
     public CompanionUiActions(
-        Action openHome,
-        Action<StartupSettingsService> openSettings,
-        Action exit,
+        Func<CancellationToken, Task> openHome,
+        Func<StartupSettingsService, CancellationToken, Task> openSettings,
+        Func<CancellationToken, Task> exit,
         Action<CompanionSettingsContext>? configureSettings = null,
         Func<string, CancellationToken, Task>? navigateSettingsDestination = null)
     {
@@ -36,11 +36,11 @@ public sealed class CompanionUiActions
         NavigateSettingsDestination = navigateSettingsDestination;
     }
 
-    public Action OpenHome { get; }
+    public Func<CancellationToken, Task> OpenHome { get; }
 
-    public Action<StartupSettingsService> OpenSettings { get; }
+    public Func<StartupSettingsService, CancellationToken, Task> OpenSettings { get; }
 
-    public Action Exit { get; }
+    public Func<CancellationToken, Task> Exit { get; }
 
     public Action<CompanionSettingsContext>? ConfigureSettings { get; }
     public Func<string, CancellationToken, Task>? NavigateSettingsDestination { get; }
@@ -49,7 +49,7 @@ public sealed class CompanionUiActions
 public sealed record CompanionSettingsContext(
     StartupSettingsService StartupSettings,
     StartupRegistrationService StartupRegistration,
-    IPreferencesRepository Preferences,
+    PreferenceMutationCoordinator PreferenceMutations,
     IProfileRepository Profiles,
     IPetPlacementRepository PetPlacements,
     IAppUnitOfWork UnitOfWork,
@@ -173,10 +173,17 @@ public static class WindowsCompanionProductionComposition
             composer = new SkiaFrameComposer(pack);
             presenter = new LayeredFramePresenter();
             startup = new StartupRegistrationService();
+            WindowsCompanionRuntime? activeRuntime = null;
+            var activePlacement = initialPlacement;
+            var preferenceMutations = new PreferenceMutationCoordinator(
+                preferences,
+                preferencesRepository,
+                (updated, token) => (activeRuntime
+                    ?? throw new InvalidOperationException("The companion runtime is not ready."))
+                    .ApplySettingsAsync(updated, activePlacement, token));
             var startupSettings = new StartupSettingsService(
                 startup,
-                preferencesRepository,
-                preferences);
+                preferenceMutations);
             try
             {
                 if (profile?.OnboardingComplete == true)
@@ -210,11 +217,16 @@ public static class WindowsCompanionProductionComposition
                 pauseState: () => pause.GetEffective(DateTimeOffset.UtcNow),
                 openHome: actions.OpenHome,
                 trayCommandHandlerFactory: lifecycle =>
-                    new CompanionCommandRouter(
+                {
+                    var router = new CompanionCommandRouter(
                         lifecycle,
                         pause,
-                        () => actions.OpenSettings(startupSettings),
-                        actions.Exit).Handle,
+                        token => actions.OpenSettings(startupSettings, token),
+                        actions.Exit);
+                    return command => _ = ObserveNativeCallbackAsync(
+                        router.HandleAsync(command),
+                        $"tray-{command}");
+                },
                 initializeOverlay: async overlay =>
                 {
                     animationEngine = new AnimationEngine(
@@ -259,6 +271,7 @@ public static class WindowsCompanionProductionComposition
                             token));
                 },
                 cancellationToken: cancellationToken);
+            activeRuntime = runtime;
 
             var placementSnapshot = await runtime.CapturePlacementSnapshotAsync(cancellationToken);
             var currentMonitorPlacement = savedPlacements.FirstOrDefault(item =>
@@ -267,11 +280,11 @@ public static class WindowsCompanionProductionComposition
                     placementSnapshot.Monitor.DeviceName,
                     StringComparison.Ordinal))
                 ?? placementSnapshot.Placement;
+            activePlacement = currentMonitorPlacement;
             await runtime.ApplySettingsAsync(preferences, currentMonitorPlacement, cancellationToken);
             var featureContext = new CompanionFeatureContext(
                 services.GetRequiredService<IClock>(),
-                preferences,
-                preferencesRepository,
+                preferenceMutations,
                 profileRepository,
                 services.GetRequiredService<IPetPlacementRepository>(),
                 services.GetRequiredService<IReminderRepository>(),
@@ -290,10 +303,6 @@ public static class WindowsCompanionProductionComposition
                 services.GetRequiredService<IPairingService>(),
                 services.GetRequiredService<ICompanionFeatureTransactions>(),
                 pet,
-                applyPreferencesAsync: async (updated, token) =>
-                {
-                    await runtime.ApplySettingsAsync(updated, currentMonitorPlacement, token);
-                },
                 applyPlacementAsync: runtime.ApplyPlacementAsync,
                 setUserVisibleAsync: runtime.SetUserVisibleAsync,
                 getPauseState: () => pause.GetEffective(DateTimeOffset.UtcNow),
@@ -353,7 +362,7 @@ public static class WindowsCompanionProductionComposition
             actions.ConfigureSettings?.Invoke(new CompanionSettingsContext(
                 startupSettings,
                 startup,
-                preferencesRepository,
+                preferenceMutations,
                 profileRepository,
                 services.GetRequiredService<IPetPlacementRepository>(),
                 services.GetRequiredService<IAppUnitOfWork>(),
@@ -421,6 +430,21 @@ public static class WindowsCompanionProductionComposition
         catch (Exception exception)
         {
             Trace.TraceError("Dudu animation playback failed: {0}", exception);
+        }
+    }
+
+    internal static async Task ObserveNativeCallbackAsync(Task callback, string operation)
+    {
+        try
+        {
+            await callback;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            Trace.TraceError("Dudu native callback '{0}' failed: {1}", operation, exception);
         }
     }
 

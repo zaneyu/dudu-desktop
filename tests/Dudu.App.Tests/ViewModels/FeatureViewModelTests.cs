@@ -1,7 +1,9 @@
 using Dudu.App.Overlay;
+using Dudu.App.Hosting;
 using Dudu.App.System;
 using Dudu.App.ViewModels;
 using Dudu.Core.Abstractions;
+using Dudu.Core.Assets;
 using Dudu.Core.CheckIns;
 using Dudu.Core.Focus;
 using Dudu.Core.Models;
@@ -163,6 +165,149 @@ public sealed class FeatureViewModelTests
 
         Assert.Equal(AppTheme.Dark, fixture.Context.CurrentPreferences.Theme);
         Assert.True(fixture.Context.CurrentPreferences.ReducedMotion);
+    }
+
+    [Fact]
+    public async Task Startup_and_feature_writers_share_one_sequential_snapshot()
+    {
+        var fixture = FeatureFixture.Create();
+        await using var startup = new StartupRegistrationService(
+            "/opt/Dudu.exe",
+            Path.Combine(Path.GetTempPath(), "dudu-shared-preferences-" + Guid.NewGuid().ToString("N")),
+            new FakeStartupWriter());
+        var startupSettings = new StartupSettingsService(startup, fixture.Context.PreferenceMutations);
+        var appearance = new AppearanceViewModel(fixture.Context) { Theme = AppTheme.Dark };
+
+        await startupSettings.SetLaunchAtSignInAsync(false, TestContext.Current.CancellationToken);
+        await appearance.SaveAsync(TestContext.Current.CancellationToken);
+
+        Assert.Same(fixture.Context.PreferenceMutations, startupSettings.PreferenceMutations);
+        Assert.False(fixture.Context.CurrentPreferences.LaunchAtSignIn);
+        Assert.Equal(AppTheme.Dark, fixture.Context.CurrentPreferences.Theme);
+        Assert.Equal(fixture.Context.CurrentPreferences, fixture.Preferences.Current);
+    }
+
+    [Fact]
+    public async Task Concurrent_startup_and_feature_writes_do_not_lose_fields()
+    {
+        var fixture = FeatureFixture.Create();
+        await using var startup = new StartupRegistrationService(
+            "/opt/Dudu.exe",
+            Path.Combine(Path.GetTempPath(), "dudu-concurrent-preferences-" + Guid.NewGuid().ToString("N")),
+            new FakeStartupWriter());
+        var startupSettings = new StartupSettingsService(startup, fixture.Context.PreferenceMutations);
+        var appearance = new AppearanceViewModel(fixture.Context)
+        {
+            Theme = AppTheme.Dark,
+            ReducedMotion = true,
+        };
+
+        await Task.WhenAll(
+            startupSettings.SetLaunchAtSignInAsync(false, TestContext.Current.CancellationToken),
+            appearance.SaveAsync(TestContext.Current.CancellationToken));
+
+        Assert.False(fixture.Context.CurrentPreferences.LaunchAtSignIn);
+        Assert.Equal(AppTheme.Dark, fixture.Context.CurrentPreferences.Theme);
+        Assert.True(fixture.Context.CurrentPreferences.ReducedMotion);
+        Assert.Equal(fixture.Context.CurrentPreferences, fixture.Preferences.Current);
+    }
+
+    [Fact]
+    public async Task Concurrent_startup_and_default_reminder_writes_share_the_same_owner()
+    {
+        var fixture = FeatureFixture.Create();
+        await using var startup = new StartupRegistrationService(
+            "/opt/Dudu.exe",
+            Path.Combine(Path.GetTempPath(), "dudu-concurrent-defaults-" + Guid.NewGuid().ToString("N")),
+            new FakeStartupWriter());
+        var startupSettings = new StartupSettingsService(startup, fixture.Context.PreferenceMutations);
+        var reminders = new RemindersViewModel(fixture.Context)
+        {
+            HydrationRemindersEnabled = false,
+            BreakRemindersEnabled = true,
+        };
+
+        await Task.WhenAll(
+            startupSettings.SetLaunchAtSignInAsync(false, TestContext.Current.CancellationToken),
+            reminders.SaveReminderPreferencesAsync(TestContext.Current.CancellationToken));
+
+        Assert.False(fixture.Context.CurrentPreferences.LaunchAtSignIn);
+        Assert.False(fixture.Context.CurrentPreferences.HydrationRemindersEnabled);
+        Assert.True(fixture.Context.CurrentPreferences.BreakRemindersEnabled);
+        Assert.Equal(fixture.Context.CurrentPreferences, fixture.Preferences.Current);
+        Assert.Equal(2, fixture.Reminders.Items.Count(item =>
+            item.Id is "default-hydration" or "default-break"));
+    }
+
+    [Fact]
+    public async Task Focus_end_uses_one_shot_acknowledgment_and_restores_idle()
+    {
+        var fixture = FeatureFixture.Create();
+        var viewModel = new TasksFocusViewModel(fixture.Context);
+        await viewModel.StartFocusOrThrowAsync(TestContext.Current.CancellationToken);
+
+        await viewModel.EndFocusAsync(TestContext.Current.CancellationToken);
+
+        Assert.Contains("pet.focus-end", fixture.Events);
+        Assert.Equal(PetState.Idle, fixture.Context.Pet.Current.State);
+        Assert.Equal(FocusStatus.EndedEarly, viewModel.ActiveFocus!.Status);
+    }
+
+    [Theory]
+    [InlineData(true, false, "another focus session is active")]
+    [InlineData(false, true, "injected focus repository failure")]
+    public async Task Start_focus_failure_keeps_action_surface_open_and_does_not_navigate(
+        bool rejectCreate,
+        bool throwOnCreate,
+        string expectedError)
+    {
+        var fixture = FeatureFixture.Create();
+        fixture.FocusSessions.RejectCreate = rejectCreate;
+        fixture.FocusSessions.ThrowOnCreate = throwOnCreate;
+        var destinations = new List<string>();
+        var router = new OverlayCommandRouter(
+            fixture.Context,
+            (destination, _) =>
+            {
+                destinations.Add(destination);
+                return Task.CompletedTask;
+            });
+        var surface = new OverlayActionSurfaceController();
+        surface.Bind(router);
+        surface.Open(new PixelRect(0, 0, 640, 480), new PixelPoint(320, 400));
+        var start = surface.Arrangement!.PrimaryActions.Single(item => item.Action == OverlayAction.StartFocus);
+
+        await surface.HandlePointerAsync(Center(start.HitRegion), TestContext.Current.CancellationToken);
+
+        Assert.Equal(OverlayActionSurfaceKind.Primary, surface.Kind);
+        Assert.Contains(expectedError, surface.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(destinations);
+    }
+
+    [Fact]
+    public async Task Start_focus_navigates_and_closes_only_after_repository_success()
+    {
+        var fixture = FeatureFixture.Create();
+        var destinations = new List<string>();
+        var router = new OverlayCommandRouter(
+            fixture.Context,
+            (destination, _) =>
+            {
+                Assert.NotNull(fixture.FocusSessions.Active);
+                destinations.Add(destination);
+                return Task.CompletedTask;
+            });
+        var surface = new OverlayActionSurfaceController();
+        surface.Bind(router);
+        surface.Open(new PixelRect(0, 0, 640, 480), new PixelPoint(320, 400));
+        var start = surface.Arrangement!.PrimaryActions.Single(item => item.Action == OverlayAction.StartFocus);
+
+        await surface.HandlePointerAsync(Center(start.HitRegion), TestContext.Current.CancellationToken);
+
+        Assert.NotNull(fixture.FocusSessions.Active);
+        Assert.Equal(["tasks"], destinations);
+        Assert.Equal(OverlayActionSurfaceKind.Closed, surface.Kind);
+        Assert.Null(surface.ErrorMessage);
     }
 
     [Fact]
@@ -416,6 +561,7 @@ public sealed class FeatureViewModelTests
             FakeRemoteEnvelopeRepository remoteNotes,
             FakePreferencesRepository preferences,
             FakeTaskRepository tasks,
+            FakeFocusRepository focusSessions,
             FakeCountdownRepository countdowns,
             FakeFeatureTransactions transactions,
             FakeRuntimePreferences runtimePreferences,
@@ -428,6 +574,7 @@ public sealed class FeatureViewModelTests
             RemoteNotes = remoteNotes;
             Preferences = preferences;
             Tasks = tasks;
+            FocusSessions = focusSessions;
             Countdowns = countdowns;
             Transactions = transactions;
             RuntimePreferences = runtimePreferences;
@@ -441,6 +588,7 @@ public sealed class FeatureViewModelTests
         public FakeRemoteEnvelopeRepository RemoteNotes { get; }
         public FakePreferencesRepository Preferences { get; }
         public FakeTaskRepository Tasks { get; }
+        public FakeFocusRepository FocusSessions { get; }
         public FakeCountdownRepository Countdowns { get; }
         public FakeFeatureTransactions Transactions { get; }
         public FakeRuntimePreferences RuntimePreferences { get; }
@@ -487,10 +635,14 @@ public sealed class FeatureViewModelTests
             var pause = PauseState.None;
             var transactions = new FakeFeatureTransactions(preferenceRepository, reminders, localNotes, remoteNotes);
             var runtimePreferences = new FakeRuntimePreferences(preferences);
-            var context = new CompanionFeatureContext(
-                clock,
+            var preferenceMutations = new PreferenceMutationCoordinator(
                 preferences,
                 preferenceRepository,
+                runtimePreferences.ApplyAsync);
+            var pet = PetStateMachine.CreateIdle();
+            var context = new CompanionFeatureContext(
+                clock,
+                preferenceMutations,
                 profileRepository,
                 placementRepository,
                 reminders,
@@ -507,8 +659,7 @@ public sealed class FeatureViewModelTests
                 noteSelector,
                 new FakePairing(),
                 transactions,
-                PetStateMachine.CreateIdle(),
-                applyPreferencesAsync: runtimePreferences.ApplyAsync,
+                pet,
                 getPauseState: () => pause,
                 applyPauseAsync: (state, _) =>
                 {
@@ -517,7 +668,13 @@ public sealed class FeatureViewModelTests
                 },
                 presentPetAsync: (petEvent, _) =>
                 {
-                    events.Add(petEvent is PetEvent.Dismissed ? "pet.dismiss" : "pet.present");
+                    pet.Handle(petEvent);
+                    events.Add(petEvent switch
+                    {
+                        PetEvent.Dismissed => "pet.dismiss",
+                        PetEvent.FocusEnded => "pet.focus-end",
+                        _ => "pet.present",
+                    });
                     return Task.CompletedTask;
                 },
                 revealRemoteNoteAsync: (_, _) => Task.FromResult("You can do it"));
@@ -528,6 +685,7 @@ public sealed class FeatureViewModelTests
                 remoteNotes,
                 preferenceRepository,
                 tasks,
+                focusSessions,
                 countdowns,
                 transactions,
                 runtimePreferences,
@@ -652,10 +810,20 @@ public sealed class FeatureViewModelTests
     private sealed class FakeFocusRepository : IFocusSessionRepository
     {
         private readonly Dictionary<Guid, FocusSession> _sessions = [];
+        public FocusSession? Active => _sessions.Values.FirstOrDefault(
+            item => item.Status is FocusStatus.Running or FocusStatus.Paused);
+        public bool RejectCreate { get; set; }
+        public bool ThrowOnCreate { get; set; }
         public Task<FocusSession?> GetAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult(_sessions.GetValueOrDefault(id));
-        public Task<FocusSession?> GetActiveAsync(CancellationToken cancellationToken) => Task.FromResult(_sessions.Values.FirstOrDefault(item => item.Status is FocusStatus.Running or FocusStatus.Paused));
+        public Task<FocusSession?> GetActiveAsync(CancellationToken cancellationToken) => Task.FromResult(Active);
         public Task<IReadOnlyList<FocusSession>> ListHistoryAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<FocusSession>>(_sessions.Values.Where(item => item.Status is not (FocusStatus.Running or FocusStatus.Paused)).ToArray());
-        public Task<bool> TryCreateActiveAsync(FocusSession session, CancellationToken cancellationToken) { _sessions[session.Id] = session; return Task.FromResult(true); }
+        public Task<bool> TryCreateActiveAsync(FocusSession session, CancellationToken cancellationToken)
+        {
+            if (ThrowOnCreate) throw new IOException("injected focus repository failure");
+            if (RejectCreate) return Task.FromResult(false);
+            _sessions[session.Id] = session;
+            return Task.FromResult(true);
+        }
         public Task<bool> TryCompareAndSetAsync(FocusSession expected, FocusSession replacement, CancellationToken cancellationToken) { _sessions[expected.Id] = replacement; return Task.FromResult(true); }
         public Task SaveAsync(FocusSession session, CancellationToken cancellationToken) { _sessions[session.Id] = session; return Task.CompletedTask; }
     }
@@ -682,6 +850,17 @@ public sealed class FeatureViewModelTests
         public Task<PairingCodeResult> CreateCodeAsync(CancellationToken cancellationToken = default) => Task.FromResult(PairingCodeResult.Offline);
         public Task DisconnectSenderSessionsAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task DeleteRemoteDeviceAsync(string? deviceId = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
+    private sealed class FakeStartupWriter : IStartupLinkWriter
+    {
+        public Task WriteAtomicAsync(
+            string shortcutPath,
+            string targetPath,
+            string arguments,
+            CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task DeleteAsync(string shortcutPath, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private sealed class FakeFeatureTransactions(

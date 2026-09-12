@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Dudu.App.Hosting;
+using Dudu.App.System;
 using Dudu.App.Windows;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
@@ -17,11 +18,15 @@ public sealed partial class App : Application
     private CompanionSettingsContext? _settingsContext;
     private string _launchArguments = string.Empty;
     private readonly DispatcherQueue _dispatcherQueue;
+    private readonly AwaitableUiDispatcher _uiDispatcher;
 
     public App()
     {
         _dispatcherQueue = DispatcherQueue.GetForCurrentThread()
             ?? throw new InvalidOperationException("Dudu must start on a WinUI dispatcher thread.");
+        _uiDispatcher = new AwaitableUiDispatcher(
+            () => _dispatcherQueue.HasThreadAccess,
+            callback => _dispatcherQueue.TryEnqueue(() => callback()));
         EnsureDefaultBootstrapFactory();
     }
 
@@ -49,7 +54,7 @@ public sealed partial class App : Application
         _startupRunner = new CompanionStartupRunner(
             _bootstrapFactory!,
             ReportStartupFailure,
-            ExitApplication);
+            ExitApplicationCore);
         _startupTask = _startupRunner.RunAsync(args.Arguments ?? string.Empty, CancellationToken.None);
         _ = ObserveStartupAsync(_startupTask);
     }
@@ -62,7 +67,7 @@ public sealed partial class App : Application
         _productionActions ??= new CompanionUiActions(
             OpenHome,
             OpenSettings,
-            ExitApplication,
+            ExitApplicationAsync,
             ConfigureSettings,
             NavigateSettingsDestinationAsync);
         _bootstrapFactory = static (arguments, cancellationToken) =>
@@ -82,28 +87,33 @@ public sealed partial class App : Application
                 && CompanionLaunchOptions.Parse(_launchArguments)
                     .ShouldOpenSettings(_settingsContext.Profile))
             {
-                OpenHome();
+                await OpenHome(CancellationToken.None);
             }
         }
         catch (Exception exception)
         {
             ReportStartupFailure(exception);
-            ExitApplication();
+            await ExitApplicationAsync(CancellationToken.None);
         }
     }
 
-    private void OpenHome()
-    {
-        OpenSettings(_settingsContext?.StartupSettings
-            ?? throw new InvalidOperationException("Settings context is not ready."));
-    }
+    private Task OpenHome(CancellationToken cancellationToken) =>
+        _uiDispatcher.InvokeAsync(
+            () => OpenSettingsCore(_settingsContext?.StartupSettings
+                ?? throw new InvalidOperationException("Settings context is not ready.")),
+            cancellationToken);
 
     private void ConfigureSettings(CompanionSettingsContext context)
     {
         _settingsContext = context ?? throw new ArgumentNullException(nameof(context));
     }
 
-    private void OpenSettings(StartupSettingsService startup)
+    private Task OpenSettings(
+        StartupSettingsService startup,
+        CancellationToken cancellationToken) =>
+        _uiDispatcher.InvokeAsync(() => OpenSettingsCore(startup), cancellationToken);
+
+    private void OpenSettingsCore(StartupSettingsService startup)
     {
         if (_settingsContext is null)
         {
@@ -136,42 +146,14 @@ public sealed partial class App : Application
         CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(destination);
-        cancellationToken.ThrowIfCancellationRequested();
-        if (_dispatcherQueue.HasThreadAccess)
-        {
-            NavigateSettingsDestinationCore(destination);
-            return Task.CompletedTask;
-        }
-
-        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (!_dispatcherQueue.TryEnqueue(() =>
-            {
-                try
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    NavigateSettingsDestinationCore(destination);
-                    completion.TrySetResult();
-                }
-                catch (OperationCanceledException exception)
-                {
-                    completion.TrySetCanceled(exception.CancellationToken);
-                }
-                catch (Exception exception)
-                {
-                    completion.TrySetException(exception);
-                }
-            }))
-        {
-            completion.TrySetException(new InvalidOperationException(
-                "The WinUI dispatcher rejected settings navigation."));
-        }
-
-        return completion.Task;
+        return _uiDispatcher.InvokeAsync(
+            () => NavigateSettingsDestinationCore(destination),
+            cancellationToken);
     }
 
     private void NavigateSettingsDestinationCore(string destination)
     {
-        OpenSettings(_settingsContext?.StartupSettings
+        OpenSettingsCore(_settingsContext?.StartupSettings
             ?? throw new InvalidOperationException("Settings context is not ready."));
         if (_settingsWindow?.Content is not SettingsWindow settings)
         {
@@ -184,7 +166,10 @@ public sealed partial class App : Application
     private static void ReportStartupFailure(Exception exception) =>
         Trace.TraceError("Dudu startup failed: {0}", exception);
 
-    private static void ExitApplication()
+    private Task ExitApplicationAsync(CancellationToken cancellationToken) =>
+        _uiDispatcher.InvokeAsync(ExitApplicationCore, cancellationToken);
+
+    private static void ExitApplicationCore()
     {
         Current?.Exit();
     }

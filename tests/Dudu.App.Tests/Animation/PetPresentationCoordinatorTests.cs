@@ -36,4 +36,29 @@ public sealed class PetPresentationCoordinatorTests
         Assert.Equal(PetState.Idle, presentations[1].State);
         Assert.Equal(PetState.Idle, pet.Current.State);
     }
+
+    [Fact]
+    public async Task Focus_end_is_acknowledged_then_restores_authoritative_idle_state()
+    {
+        var pet = PetStateMachine.CreateIdle();
+        pet.Handle(new PetEvent.FocusStarted("focus-1"));
+        var presentations = new List<PetPresentation>();
+        var coordinator = new PetPresentationCoordinator(
+            pet,
+            (presentation, _, _) =>
+            {
+                presentations.Add(presentation);
+                return Task.CompletedTask;
+            });
+
+        await coordinator.PresentOneShotAsync(
+            new PetEvent.FocusEnded("focus-1"),
+            "focus-end",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(PetState.FocusTransition, presentations[0].State);
+        Assert.Equal("focus-end", presentations[0].AnimationKey);
+        Assert.Equal(PetState.Idle, presentations[^1].State);
+        Assert.Equal(PetState.Idle, pet.Current.State);
+    }
 }

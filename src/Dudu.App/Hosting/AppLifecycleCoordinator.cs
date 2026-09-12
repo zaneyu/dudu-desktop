@@ -31,7 +31,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
     private readonly Func<bool> _isQuietHours;
     private readonly Func<bool> _isFullscreen;
     private readonly Func<DateTimeOffset> _clock;
-    private readonly Action? _openHome;
+    private readonly Func<CancellationToken, Task>? _openHome;
     private readonly Action<Exception>? _diagnostic;
     private readonly TrayIconService? _tray;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -54,7 +54,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         Func<bool>? isFullscreen = null,
         Func<DateTimeOffset>? clock = null,
         TrayIconService? tray = null,
-        Action? openHome = null,
+        Func<CancellationToken, Task>? openHome = null,
         Action<Exception>? diagnostic = null,
         bool? initialUserVisible = null)
     {
@@ -144,7 +144,10 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         }
         finally { _gate.Release(); }
 
-        InvokeSafely(_openHome, "open-home");
+        if (_openHome is not null)
+        {
+            await _openHome(cancellationToken);
+        }
         await InvokeVisualSafelyAsync(_overlay.Show, "hotkey-show", cancellationToken);
     }
 

@@ -21,21 +21,19 @@ public sealed partial class SettingsWindow : UserControl
         _context = context ?? throw new ArgumentNullException(nameof(context));
         _shell = new SettingsShellViewModel();
         _onboarding = new OnboardingViewModel(
-            context.Preferences,
+            context.StartupSettings.PreferenceMutations,
             context.Profiles,
             context.PetPlacements,
             context.UnitOfWork,
-            context.StartupRegistration,
+            context.StartupSettings,
             context.Pairing,
             initialPlacement: context.PlacementSnapshot.Placement,
             runtimeApplier: async (preferences, placement, cancellationToken) =>
             {
-                context.StartupSettings.Adopt(preferences);
                 await context.ApplyRuntimeAsync(preferences, placement, cancellationToken);
             },
             placementCapture: context.CapturePlacementAsync,
-            placementPreviewer: context.ApplyPlacementAsync,
-                startupSettings: context.StartupSettings);
+            placementPreviewer: context.ApplyPlacementAsync);
         InitializeComponent();
         RootNavigation.SelectedItem = RootNavigation.MenuItems[0];
         Loaded += OnLoaded;

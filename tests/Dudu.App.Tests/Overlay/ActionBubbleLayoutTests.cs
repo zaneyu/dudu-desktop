@@ -64,15 +64,55 @@ public sealed class ActionBubbleLayoutTests
     }
 
     [Fact]
-    public void Comfort_hit_regions_are_contained_at_exactly_24_by_18()
+    public void Comfort_surface_is_absent_at_exactly_24_by_18()
     {
         var workArea = new PixelRect(9, 11, 24, 18);
+
+        Assert.Null(ActionBubbleLayout.ArrangeComfort(workArea, new PixelPoint(999, -999)));
+    }
+
+    [Theory]
+    [InlineData(24, 80)]
+    [InlineData(80, 120)]
+    [InlineData(280, 284)]
+    public void Every_non_empty_comfort_surface_contains_exactly_five_safe_actions(
+        int width,
+        int height)
+    {
+        var workArea = new PixelRect(9, 11, width, height);
 
         var layout = Assert.IsType<ComfortBubbleArrangement>(
             ActionBubbleLayout.ArrangeComfort(workArea, new PixelPoint(999, -999)));
 
         Assert.True(workArea.Contains(layout.Bounds));
-        Assert.Single(layout.Actions);
+        Assert.Equal(5, layout.Actions.Count);
         Assert.All(layout.Actions, item => Assert.True(workArea.Contains(item.HitRegion)));
+    }
+
+    [Theory]
+    [InlineData(24, 79)]
+    [InlineData(23, 64)]
+    [InlineData(16, 18)]
+    public void Comfort_surface_returns_none_when_five_safe_rows_cannot_fit(int width, int height)
+    {
+        Assert.Null(ActionBubbleLayout.ArrangeComfort(
+            new PixelRect(0, 0, width, height),
+            new PixelPoint(0, 0)));
+    }
+
+    [Fact]
+    public void Comfort_layout_invariant_is_exactly_five_or_none_across_constrained_sizes()
+    {
+        foreach (var width in new[] { 1, 15, 16, 24, 80, 279, 280 })
+        foreach (var height in new[] { 1, 15, 16, 18, 64, 79, 80, 120, 283, 284 })
+        {
+            var workArea = new PixelRect(3, 7, width, height);
+            var layout = ActionBubbleLayout.ArrangeComfort(workArea, new PixelPoint(-50, 900));
+            if (layout is null) continue;
+
+            Assert.Equal(5, layout.Actions.Count);
+            Assert.True(workArea.Contains(layout.Bounds));
+            Assert.All(layout.Actions, item => Assert.True(workArea.Contains(item.HitRegion)));
+        }
     }
 }

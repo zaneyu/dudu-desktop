@@ -171,11 +171,10 @@ public sealed class OnboardingViewModelTests
     }
 
     [Fact]
-    public async Task Production_shaped_runtime_adoption_preserves_startup_retry_state()
+    public async Task Shared_preference_ownership_preserves_startup_retry_state()
     {
         await using var fixture = OnboardingFixture.Create(
-            runtimeApplier: (_, _, _) => throw new InvalidOperationException("live apply failed"),
-            adoptPreferencesInRuntimeApply: true);
+            runtimeApplier: (_, _, _) => throw new InvalidOperationException("live apply failed"));
         fixture.StartupWriter.FailWrite = true;
         fixture.ViewModel.RecipientName = "Mia";
 
@@ -201,8 +200,7 @@ public sealed class OnboardingViewModelTests
             Func<Preferences, PetPlacement, CancellationToken, Task>? runtimeApplier,
             PetPlacement? initialPlacement,
             List<string>? events,
-            Func<CancellationToken, Task<MonitorPlacementSnapshot>>? placementCapture,
-            bool adoptPreferencesInRuntimeApply)
+            Func<CancellationToken, Task<MonitorPlacementSnapshot>>? placementCapture)
         {
             Preferences = new RecordingPreferencesRepository();
             Profiles = new RecordingProfileRepository();
@@ -217,8 +215,8 @@ public sealed class OnboardingViewModelTests
                 StartupWriter);
             StartupSettings = new StartupSettingsService(
                 Startup,
-                Preferences,
-                new Preferences(
+                new PreferenceMutationCoordinator(
+                    new Preferences(
                     AppTheme.System,
                     new QuietHours(true, new TimeOnly(22, 0), new TimeOnly(7, 0)),
                     false,
@@ -226,7 +224,8 @@ public sealed class OnboardingViewModelTests
                     true,
                     false,
                     true,
-                    TimeSpan.FromMinutes(15)));
+                    TimeSpan.FromMinutes(15)),
+                    Preferences));
             var applyRuntime = runtimeApplier ?? ((_, _, _) =>
             {
                 Events.Add("runtime");
@@ -234,33 +233,24 @@ public sealed class OnboardingViewModelTests
                 RuntimeApplyCount++;
                 return Task.CompletedTask;
             });
-            if (adoptPreferencesInRuntimeApply)
-            {
-                var originalApply = applyRuntime;
-                applyRuntime = async (preferences, placement, cancellationToken) =>
-                {
-                    StartupSettings.Adopt(preferences);
-                    await originalApply(preferences, placement, cancellationToken);
-                };
-            }
             ViewModel = new OnboardingViewModel(
-                Preferences,
+                StartupSettings.PreferenceMutations,
                 Profiles,
                 Placements,
                 UnitOfWork,
-                Startup,
+                StartupSettings,
                 new OfflinePairingService(),
                 initialPlacement: initialPlacement ?? new PetPlacement("MONITOR-2", 0.8, 0.8, 1),
                 runtimeApplier: applyRuntime,
-                placementCapture: placementCapture ?? (_ => Task.FromResult(new MonitorPlacementSnapshot(
-                    initialPlacement ?? new PetPlacement("MONITOR-2", 0.8, 0.8, 1),
-                    new PixelRect(0, 0, 100, 100),
-                    new MonitorInfo(
-                        initialPlacement?.MonitorDeviceName ?? "MONITOR-2",
-                        new PixelRect(0, 0, 1920, 1040),
-                        96,
-                        true)))),
-                startupSettings: StartupSettings);
+                placementCapture: placementCapture ?? (_ => Task.FromResult(
+                    new MonitorPlacementSnapshot(
+                        initialPlacement ?? new PetPlacement("MONITOR-2", 0.8, 0.8, 1),
+                        new PixelRect(0, 0, 100, 100),
+                        new MonitorInfo(
+                            initialPlacement?.MonitorDeviceName ?? "MONITOR-2",
+                            new PixelRect(0, 0, 1920, 1040),
+                            96,
+                            true)))));
         }
 
         public RecordingPreferencesRepository Preferences { get; }
@@ -285,9 +275,8 @@ public sealed class OnboardingViewModelTests
             Func<Preferences, PetPlacement, CancellationToken, Task>? runtimeApplier = null,
             PetPlacement? initialPlacement = null,
             List<string>? events = null,
-            Func<CancellationToken, Task<MonitorPlacementSnapshot>>? placementCapture = null,
-            bool adoptPreferencesInRuntimeApply = false) =>
-            new(failCommit, runtimeApplier, initialPlacement, events, placementCapture, adoptPreferencesInRuntimeApply);
+            Func<CancellationToken, Task<MonitorPlacementSnapshot>>? placementCapture = null) =>
+            new(failCommit, runtimeApplier, initialPlacement, events, placementCapture);
 
         public async ValueTask DisposeAsync()
         {

@@ -128,9 +128,9 @@ public sealed class AppLifecycleCoordinatorTests
                 AppTheme.System,
                 new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
                 false, 3, true, false, true, TimeSpan.FromMinutes(15)),
-            openHome: () =>
+            openHome: async _ =>
             {
-                lifecycle!.OnUserShowOrHideAsync().GetAwaiter().GetResult();
+                await lifecycle!.OnUserShowOrHideAsync();
                 callbackCompleted.TrySetResult(true);
             });
         await using (lifecycle)
@@ -138,6 +138,28 @@ public sealed class AppLifecycleCoordinatorTests
             await lifecycle.OnHotkeyAsync(TestContext.Current.CancellationToken);
             await callbackCompleted.Task.WaitAsync(TestContext.Current.CancellationToken);
         }
+    }
+
+    [Fact]
+    public async Task Open_home_dispatch_failure_propagates_and_does_not_show_overlay()
+    {
+        var overlay = new FakeOverlay { IsVisible = false };
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            openHome: _ => Task.FromException(new InvalidOperationException("home dispatch failed")),
+            initialUserVisible: false);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            lifecycle.OnHotkeyAsync(TestContext.Current.CancellationToken));
+
+        Assert.Equal("home dispatch failed", exception.Message);
+        Assert.Equal(0, overlay.ShowCount);
     }
 
     [Fact]

@@ -117,18 +117,27 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
     }
 
     public Task StartFocusAsync(CancellationToken cancellationToken = default) =>
-        RunAsync(async () =>
-        {
-            var minutes = SelectedDurationMinutes > 0 ? SelectedDurationMinutes : CustomDurationMinutes;
-            if (SelectedDurationMinutes <= 0) minutes = CustomDurationMinutes;
-            var snapshot = await _context.FocusService.StartAsync(
-                SelectedTask?.Id,
-                TimeSpan.FromMinutes(minutes),
-                cancellationToken);
-            ActiveFocus = snapshot;
-            await _context.PresentPetAsync(new PetEvent.FocusStarted(snapshot.Id.ToString("D")), cancellationToken);
-            OnPropertyChanged(nameof(IsFocusActive));
-        }, "Focus started.");
+        RunAsync(async () => await StartFocusCoreAsync(cancellationToken), "Focus started.");
+
+    /// <summary>Result-bearing start path for callers that must not navigate
+    /// or dismiss their surface until the focus session is durable.</summary>
+    public Task<FocusSnapshot> StartFocusOrThrowAsync(
+        CancellationToken cancellationToken = default) =>
+        StartFocusCoreAsync(cancellationToken);
+
+    private async Task<FocusSnapshot> StartFocusCoreAsync(CancellationToken cancellationToken)
+    {
+        var minutes = SelectedDurationMinutes > 0 ? SelectedDurationMinutes : CustomDurationMinutes;
+        if (SelectedDurationMinutes <= 0) minutes = CustomDurationMinutes;
+        var snapshot = await _context.FocusService.StartAsync(
+            SelectedTask?.Id,
+            TimeSpan.FromMinutes(minutes),
+            cancellationToken);
+        ActiveFocus = snapshot;
+        await _context.PresentPetAsync(new PetEvent.FocusStarted(snapshot.Id.ToString("D")), cancellationToken);
+        OnPropertyChanged(nameof(IsFocusActive));
+        return snapshot;
+    }
 
     public Task PauseFocusAsync(CancellationToken cancellationToken = default) =>
         RunFocusTransitionAsync((id, token) => _context.FocusService.PauseAsync(id, token), "Focus paused.", cancellationToken);
@@ -147,7 +156,10 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
             var focus = ActiveFocus ?? throw new InvalidOperationException("There is no active focus session.");
             var ended = await _context.FocusService.EndAsync(focus.Id, cancellationToken);
             ActiveFocus = ended;
-            await _context.PresentPetAsync(new PetEvent.FocusEnded(ended.Id.ToString("D")), cancellationToken);
+            await _context.PresentOneShotPetAsync(
+                new PetEvent.FocusEnded(ended.Id.ToString("D")),
+                "focus-end",
+                cancellationToken);
             OnPropertyChanged(nameof(IsFocusActive));
         }, "Focus ended.");
 

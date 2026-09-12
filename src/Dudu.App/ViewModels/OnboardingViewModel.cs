@@ -30,12 +30,11 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
     public const int StepCount = 6;
     public const string DefaultMonitorDeviceName = "PRIMARY";
 
-    private readonly IPreferencesRepository _preferencesRepository;
+    private readonly PreferenceMutationCoordinator _preferenceMutations;
     private readonly IProfileRepository _profileRepository;
     private readonly IPetPlacementRepository _petPlacementRepository;
     private readonly IAppUnitOfWork _unitOfWork;
-    private readonly StartupRegistrationService _startupRegistration;
-    private readonly StartupSettingsService? _startupSettings;
+    private readonly StartupSettingsService _startupSettings;
     private readonly IPairingService _pairingService;
     private readonly PetPlacement _initialPlacement;
     private readonly Func<Preferences, PetPlacement, CancellationToken, Task>? _runtimeApplier;
@@ -68,26 +67,24 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
     private string? _startupRegistrationError;
 
     public OnboardingViewModel(
-        IPreferencesRepository preferencesRepository,
+        PreferenceMutationCoordinator preferenceMutations,
         IProfileRepository profileRepository,
         IPetPlacementRepository petPlacementRepository,
         IAppUnitOfWork unitOfWork,
-        StartupRegistrationService startupRegistration,
+        StartupSettingsService startupSettings,
         IPairingService pairingService,
         string? monitorDeviceName = null,
         PetPlacement? initialPlacement = null,
         Func<Preferences, PetPlacement, CancellationToken, Task>? runtimeApplier = null,
         Func<CancellationToken, Task<MonitorPlacementSnapshot>>? placementCapture = null,
-        Func<PetPlacement, CancellationToken, Task>? placementPreviewer = null,
-        StartupSettingsService? startupSettings = null)
+        Func<PetPlacement, CancellationToken, Task>? placementPreviewer = null)
     {
-        _preferencesRepository = preferencesRepository ?? throw new ArgumentNullException(nameof(preferencesRepository));
+        _preferenceMutations = preferenceMutations ?? throw new ArgumentNullException(nameof(preferenceMutations));
         _profileRepository = profileRepository ?? throw new ArgumentNullException(nameof(profileRepository));
         _petPlacementRepository = petPlacementRepository ?? throw new ArgumentNullException(nameof(petPlacementRepository));
         _unitOfWork = unitOfWork ?? throw new ArgumentNullException(nameof(unitOfWork));
-        _startupRegistration = startupRegistration ?? throw new ArgumentNullException(nameof(startupRegistration));
         _pairingService = pairingService ?? throw new ArgumentNullException(nameof(pairingService));
-        _startupSettings = startupSettings;
+        _startupSettings = startupSettings ?? throw new ArgumentNullException(nameof(startupSettings));
         _initialPlacement = initialPlacement ?? new PetPlacement(
             string.IsNullOrWhiteSpace(monitorDeviceName) ? DefaultMonitorDeviceName : monitorDeviceName.Trim(),
             0.8,
@@ -126,7 +123,7 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
     public string? ValidationMessage { get => _validationMessage; private set => Set(ref _validationMessage, value); }
     public string? RuntimeApplyError { get => _runtimeApplyError; private set => Set(ref _runtimeApplyError, value); }
     public string? StartupRegistrationError { get => _startupRegistrationError; private set => Set(ref _startupRegistrationError, value); }
-    public StartupSettingsService? StartupSettings => _startupSettings;
+    public StartupSettingsService StartupSettings => _startupSettings;
     public bool CanGoBack => CurrentStep > OnboardingStep.Recipient && !IsCompleting && !IsComplete;
     public string ProgressText => $"Step {(int)CurrentStep + 1} of {StepCount}";
 
@@ -136,20 +133,17 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
         await _navigationGate.WaitAsync(cancellationToken);
         try
         {
-            var preferences = await _preferencesRepository.GetAsync(cancellationToken);
-            if (preferences is not null)
-            {
-                Theme = preferences.Theme;
-                ReducedMotion = preferences.ReducedMotion;
-                QuietHoursEnabled = preferences.QuietHours.Enabled;
-                QuietHoursStart = preferences.QuietHours.Start;
-                QuietHoursEnd = preferences.QuietHours.End;
-                LocalNoteDailyLimit = preferences.LocalNoteDailyLimit;
-                HydrationRemindersEnabled = preferences.HydrationRemindersEnabled;
-                BreakRemindersEnabled = preferences.BreakRemindersEnabled;
-                LaunchAtSignIn = preferences.LaunchAtSignIn;
-                HidePetDuringFullscreen = preferences.HidePetDuringFullscreen;
-            }
+            var preferences = _preferenceMutations.Current;
+            Theme = preferences.Theme;
+            ReducedMotion = preferences.ReducedMotion;
+            QuietHoursEnabled = preferences.QuietHours.Enabled;
+            QuietHoursStart = preferences.QuietHours.Start;
+            QuietHoursEnd = preferences.QuietHours.End;
+            LocalNoteDailyLimit = preferences.LocalNoteDailyLimit;
+            HydrationRemindersEnabled = preferences.HydrationRemindersEnabled;
+            BreakRemindersEnabled = preferences.BreakRemindersEnabled;
+            LaunchAtSignIn = preferences.LaunchAtSignIn;
+            HidePetDuringFullscreen = preferences.HidePetDuringFullscreen;
 
             var profile = await _profileRepository.GetAsync(cancellationToken);
             if (profile is not null)
@@ -333,17 +327,6 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
                     ? null
                     : await _placementCapture(cancellationToken);
                 var profile = new Profile(RecipientName.Trim(), OnboardingComplete: true);
-                var preferences = new Preferences(
-                    Theme,
-                    new QuietHours(QuietHoursEnabled, QuietHoursStart, QuietHoursEnd),
-                    ReducedMotion,
-                    LocalNoteDailyLimit,
-                    LaunchAtSignIn,
-                    AlwaysOnTop: false,
-                    HidePetDuringFullscreen,
-                    AmbientMinimumInterval: TimeSpan.FromMinutes(15),
-                    HydrationRemindersEnabled,
-                    BreakRemindersEnabled);
                 var placement = capturedPlacement?.Placement
                     ?? new PetPlacement(
                         _monitorDeviceName,
@@ -351,22 +334,38 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
                         PlacementY,
                         MonitorPlacementService.ClampScale(PlacementScale));
 
-                await _unitOfWork.ExecuteAsync(async (context, token) =>
-                {
-                    await context.Profiles.SaveAsync(profile, token);
-                    await context.Preferences.SaveAsync(preferences, token);
-                    await context.PetPlacements.SaveAsync(placement, token);
-                    if (context.Reminders is IReminderWriter reminderWriter)
+                await _preferenceMutations.CommitAsync(
+                    current => current with
                     {
-                        foreach (var reminder in LocalReminderDefaults.Create(
-                            preferences,
-                            DateTimeOffset.UtcNow,
-                            TimeZoneInfo.Local))
+                        Theme = Theme,
+                        QuietHours = new QuietHours(QuietHoursEnabled, QuietHoursStart, QuietHoursEnd),
+                        ReducedMotion = ReducedMotion,
+                        LocalNoteDailyLimit = LocalNoteDailyLimit,
+                        LaunchAtSignIn = LaunchAtSignIn,
+                        HidePetDuringFullscreen = HidePetDuringFullscreen,
+                        HydrationRemindersEnabled = HydrationRemindersEnabled,
+                        BreakRemindersEnabled = BreakRemindersEnabled,
+                    },
+                    async (_, updated, token) =>
+                    {
+                        await _unitOfWork.ExecuteAsync(async (context, transactionToken) =>
                         {
-                            await reminderWriter.SaveAsync(reminder, token);
-                        }
-                    }
-                }, cancellationToken);
+                            await context.Profiles.SaveAsync(profile, transactionToken);
+                            await context.Preferences.SaveAsync(updated, transactionToken);
+                            await context.PetPlacements.SaveAsync(placement, transactionToken);
+                            if (context.Reminders is IReminderWriter reminderWriter)
+                            {
+                                foreach (var reminder in LocalReminderDefaults.Create(
+                                    updated,
+                                    DateTimeOffset.UtcNow,
+                                    TimeZoneInfo.Local))
+                                {
+                                    await reminderWriter.SaveAsync(reminder, transactionToken);
+                                }
+                            }
+                        }, token);
+                    },
+                    cancellationToken);
 
                 IsComplete = true;
                 ValidationMessage = null;
@@ -374,15 +373,7 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
 
                 try
                 {
-                    if (_startupSettings is not null)
-                    {
-                        _startupSettings.Adopt(preferences, preserveReconciliation: false);
-                        await _startupSettings.RetryStartupRegistrationAsync(cancellationToken);
-                    }
-                    else
-                    {
-                        await _startupRegistration.SetEnabledAsync(LaunchAtSignIn, cancellationToken);
-                    }
+                    await _startupSettings.RetryStartupRegistrationAsync(cancellationToken);
                 }
                 catch (Exception exception)
                 {
@@ -394,7 +385,9 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
                 {
                     try
                     {
-                        await _runtimeApplier(preferences, placement, cancellationToken);
+                        await _preferenceMutations.ApplyCurrentAsync(
+                            (current, token) => _runtimeApplier(current, placement, token),
+                            cancellationToken);
                         RuntimeApplyError = null;
                     }
                     catch (Exception exception)
@@ -421,11 +414,6 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
     public async Task RetryStartupRegistrationAsync(CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        if (_startupSettings is null)
-        {
-            return;
-        }
-
         await _startupSettings.RetryStartupRegistrationAsync(cancellationToken);
         StartupRegistrationError = null;
     }

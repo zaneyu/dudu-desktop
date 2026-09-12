@@ -56,7 +56,7 @@ public sealed class StartupRegistrationServiceTests
             AppTheme.System,
             new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
             false, 3, false, false, true, TimeSpan.FromMinutes(15));
-        var settings = new StartupSettingsService(startup, repository, preferences);
+        var settings = CreateSettings(startup, repository, preferences);
 
         await settings.SetLaunchAtSignInAsync(true, TestContext.Current.CancellationToken);
 
@@ -74,7 +74,7 @@ public sealed class StartupRegistrationServiceTests
             "/tmp/startup-enable-repository-failure-" + Guid.NewGuid().ToString("N"),
             writer);
         var repository = new FakePreferencesRepository { FailSave = true };
-        var settings = new StartupSettingsService(startup, repository, CreatePreferences(false));
+        var settings = CreateSettings(startup, repository, CreatePreferences(false));
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             settings.SetLaunchAtSignInAsync(true, TestContext.Current.CancellationToken));
@@ -95,7 +95,7 @@ public sealed class StartupRegistrationServiceTests
             writer);
         await startup.SetEnabledAsync(true, TestContext.Current.CancellationToken);
         var repository = new FakePreferencesRepository();
-        var settings = new StartupSettingsService(startup, repository, CreatePreferences(true));
+        var settings = CreateSettings(startup, repository, CreatePreferences(true));
         repository.FailSave = true;
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -104,6 +104,41 @@ public sealed class StartupRegistrationServiceTests
         Assert.True(settings.Current.LaunchAtSignIn);
         Assert.True(startup.IsEnabled);
         Assert.Empty(writer.Deletes);
+    }
+
+    [Fact]
+    public async Task Runtime_apply_failure_rolls_back_shared_startup_snapshot_and_storage()
+    {
+        var writer = new FakeWriter();
+        await using var startup = new StartupRegistrationService(
+            "/opt/Dudu.exe",
+            "/tmp/startup-runtime-failure-" + Guid.NewGuid().ToString("N"),
+            writer);
+        var repository = new FakePreferencesRepository();
+        var original = CreatePreferences(false);
+        var failNextApply = true;
+        var coordinator = new PreferenceMutationCoordinator(
+            original,
+            repository,
+            (_, _) =>
+            {
+                if (failNextApply)
+                {
+                    failNextApply = false;
+                    throw new InvalidOperationException("runtime apply failed");
+                }
+
+                return Task.CompletedTask;
+            });
+        var settings = new StartupSettingsService(startup, coordinator);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            settings.SetLaunchAtSignInAsync(true, TestContext.Current.CancellationToken));
+
+        Assert.Equal(original, settings.Current);
+        Assert.Equal(original, repository.LastSaved);
+        Assert.Empty(writer.Writes);
+        Assert.False(settings.NeedsReconciliation);
     }
 
     [Fact]
@@ -116,7 +151,7 @@ public sealed class StartupRegistrationServiceTests
             writer);
         await startup.SetEnabledAsync(true, TestContext.Current.CancellationToken);
         var repository = new FakePreferencesRepository();
-        var settings = new StartupSettingsService(startup, repository, CreatePreferences(true));
+        var settings = CreateSettings(startup, repository, CreatePreferences(true));
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             settings.SetLaunchAtSignInAsync(false, TestContext.Current.CancellationToken));
@@ -143,7 +178,7 @@ public sealed class StartupRegistrationServiceTests
             "/tmp/startup-enable-external-failure-" + Guid.NewGuid().ToString("N"),
             writer);
         var repository = new FakePreferencesRepository();
-        var settings = new StartupSettingsService(startup, repository, CreatePreferences(false));
+        var settings = CreateSettings(startup, repository, CreatePreferences(false));
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             settings.SetLaunchAtSignInAsync(true, TestContext.Current.CancellationToken));
@@ -172,7 +207,7 @@ public sealed class StartupRegistrationServiceTests
             "/tmp/startup-incomplete-disable-" + Guid.NewGuid().ToString("N"),
             writer);
         await startup.SetEnabledAsync(true, TestContext.Current.CancellationToken);
-        var settings = new StartupSettingsService(
+        var settings = CreateSettings(
             startup,
             new FakePreferencesRepository(),
             CreatePreferences(true));
@@ -203,6 +238,12 @@ public sealed class StartupRegistrationServiceTests
         false,
         true,
         TimeSpan.FromMinutes(15));
+
+    private static StartupSettingsService CreateSettings(
+        StartupRegistrationService startup,
+        IPreferencesRepository repository,
+        Preferences preferences) =>
+        new(startup, new PreferenceMutationCoordinator(preferences, repository));
 
     private sealed class FakeWriter : IStartupLinkWriter
     {

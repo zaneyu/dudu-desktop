@@ -38,11 +38,11 @@ public sealed class CompanionCompositionTests
     public void Production_ui_actions_require_every_external_callback()
     {
         Assert.Throws<ArgumentNullException>(() =>
-            new CompanionUiActions(null!, _ => { }, () => { }));
+            new CompanionUiActions(null!, (_, _) => Task.CompletedTask, _ => Task.CompletedTask));
         Assert.Throws<ArgumentNullException>(() =>
-            new CompanionUiActions(() => { }, null!, () => { }));
+            new CompanionUiActions(_ => Task.CompletedTask, null!, _ => Task.CompletedTask));
         Assert.Throws<ArgumentNullException>(() =>
-            new CompanionUiActions(() => { }, _ => { }, null!));
+            new CompanionUiActions(_ => Task.CompletedTask, (_, _) => Task.CompletedTask, null!));
     }
 
     [Fact]
@@ -50,9 +50,9 @@ public sealed class CompanionCompositionTests
     {
         var destinations = new List<string>();
         var actions = new CompanionUiActions(
-            () => { },
-            _ => { },
-            () => { },
+            _ => Task.CompletedTask,
+            (_, _) => Task.CompletedTask,
+            _ => Task.CompletedTask,
             navigateSettingsDestination: (destination, _) =>
             {
                 destinations.Add(destination);
@@ -65,7 +65,10 @@ public sealed class CompanionCompositionTests
             TestContext.Current.CancellationToken);
         Assert.Equal(["tasks"], destinations);
 
-        var unavailable = new CompanionUiActions(() => { }, _ => { }, () => { });
+        var unavailable = new CompanionUiActions(
+            _ => Task.CompletedTask,
+            (_, _) => Task.CompletedTask,
+            _ => Task.CompletedTask);
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             WindowsCompanionProductionComposition.DispatchSettingsDestinationAsync(
                 unavailable,
@@ -73,9 +76,9 @@ public sealed class CompanionCompositionTests
                 TestContext.Current.CancellationToken));
 
         var rejected = new CompanionUiActions(
-            () => { },
-            _ => { },
-            () => { },
+            _ => Task.CompletedTask,
+            (_, _) => Task.CompletedTask,
+            _ => Task.CompletedTask,
             navigateSettingsDestination: (_, _) => Task.FromException(
                 new InvalidOperationException("dispatcher rejected")));
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -107,24 +110,49 @@ public sealed class CompanionCompositionTests
         var router = new CompanionCommandRouter(
             lifecycle,
             pause,
-            () => settings++,
-            () => exit++,
+            _ => { settings++; return Task.CompletedTask; },
+            _ => { exit++; return Task.CompletedTask; },
             () => now);
 
-        router.Handle(TrayCommand.PauseOneHour);
+        await router.HandleAsync(TrayCommand.PauseOneHour, TestContext.Current.CancellationToken);
         Assert.Equal(PauseMode.OneHour, pause.Current.Mode);
-        router.Handle(TrayCommand.PauseUntilTomorrowAtSeven);
+        await router.HandleAsync(TrayCommand.PauseUntilTomorrowAtSeven, TestContext.Current.CancellationToken);
         Assert.Equal(PauseMode.UntilTomorrowAtSeven, pause.Current.Mode);
-        router.Handle(TrayCommand.PauseUntilFullscreenEnds);
+        await router.HandleAsync(TrayCommand.PauseUntilFullscreenEnds, TestContext.Current.CancellationToken);
         Assert.Equal(PauseMode.UntilFullscreenEnds, pause.Current.Mode);
-        router.Handle(TrayCommand.PauseIndefinitelyOrResume);
+        await router.HandleAsync(TrayCommand.PauseIndefinitelyOrResume, TestContext.Current.CancellationToken);
         Assert.Equal(PauseMode.Indefinite, pause.Current.Mode);
-        router.Handle(TrayCommand.PauseIndefinitelyOrResume);
+        await router.HandleAsync(TrayCommand.PauseIndefinitelyOrResume, TestContext.Current.CancellationToken);
         Assert.Equal(PauseMode.None, pause.Current.Mode);
-        router.Handle(TrayCommand.OpenSettings);
-        router.Handle(TrayCommand.Exit);
+        await router.HandleAsync(TrayCommand.OpenSettings, TestContext.Current.CancellationToken);
+        await router.HandleAsync(TrayCommand.Exit, TestContext.Current.CancellationToken);
         Assert.Equal(1, settings);
         Assert.Equal(1, exit);
+    }
+
+    [Theory]
+    [InlineData(TrayCommand.OpenSettings)]
+    [InlineData(TrayCommand.Exit)]
+    public async Task Production_command_router_propagates_ui_route_failure(TrayCommand command)
+    {
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            new FakeOverlay(),
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)));
+        var router = new CompanionCommandRouter(
+            lifecycle,
+            new PauseStateStore(),
+            _ => Task.FromException(new InvalidOperationException("settings dispatch failed")),
+            _ => Task.FromException(new InvalidOperationException("exit dispatch failed")));
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            router.HandleAsync(command, TestContext.Current.CancellationToken));
+
+        Assert.Contains("dispatch failed", exception.Message, StringComparison.Ordinal);
     }
 
     private sealed class FakeHost : IAppHostLifecycle

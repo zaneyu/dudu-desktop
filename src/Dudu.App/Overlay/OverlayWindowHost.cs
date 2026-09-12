@@ -49,7 +49,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
 
     private readonly IFramePresenter _presenter;
     private readonly PixelSize _nominalSize;
-    private readonly Action _openHome;
+    private readonly Func<CancellationToken, Task> _openHome;
     private readonly Action _showContextMenu;
     private readonly Action<uint, nint, nint>? _systemMessageHandler;
     private readonly Action<Exception> _diagnostic;
@@ -84,7 +84,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         IFramePresenter presenter,
         PetPlacement placement,
         PixelSize nominalSize,
-        Action? openHome,
+        Func<CancellationToken, Task>? openHome,
         Action? showContextMenu,
         IReadOnlyList<PixelRect>? bubbleHitRegions,
         Action<Exception>? diagnostic,
@@ -99,7 +99,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         }
 
         _nominalSize = nominalSize;
-        _openHome = openHome ?? (() => { });
+        _openHome = openHome ?? (_ => Task.CompletedTask);
         _showContextMenu = showContextMenu ?? (() => { });
         _systemMessageHandler = systemMessageHandler;
         _bubbleHitRegions = bubbleHitRegions?.ToArray() ?? [];
@@ -125,7 +125,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         IFramePresenter presenter,
         PetPlacement placement,
         PixelSize nominalSize,
-        Action? openHome = null,
+        Func<CancellationToken, Task>? openHome = null,
         Action? showContextMenu = null,
         IReadOnlyList<PixelRect>? bubbleHitRegions = null,
         Action<Exception>? diagnostic = null,
@@ -710,7 +710,9 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             case WmLButtonDoubleClick:
                 ReleasePointerCapture();
                 _petBodyPointerArmed = false;
-                _openHome();
+                _ = OverlayNativeCallbackObserver.ObserveAsync(
+                    _openHome(CancellationToken.None),
+                    _diagnostic);
                 break;
             case WmRButtonUp:
                 _showContextMenu();

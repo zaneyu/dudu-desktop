@@ -457,7 +457,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         Func<bool>? isQuietHours = null,
         Func<bool>? isFullscreen = null,
         Func<DateTimeOffset>? clock = null,
-        Action? openHome = null,
+        Func<CancellationToken, Task>? openHome = null,
         Action<TrayCommand>? trayCommandHandler = null,
         Func<AppLifecycleCoordinator, Action<TrayCommand>>? trayCommandHandlerFactory = null,
         Func<OverlayWindowHost, Task>? initializeOverlay = null,
@@ -661,7 +661,13 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
     private static async Task Observe(Task task)
     {
         try { await task; }
-        catch { }
+        catch (OperationCanceledException) { }
+        catch (Exception exception)
+        {
+            global::System.Diagnostics.Trace.TraceError(
+                "Dudu hotkey callback failed: {0}",
+                exception);
+        }
     }
 }
 
