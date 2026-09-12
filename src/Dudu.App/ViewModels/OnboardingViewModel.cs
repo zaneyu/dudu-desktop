@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using Dudu.App.Hosting;
 using Dudu.App.Overlay;
 using Dudu.App.System;
 using Dudu.Core.Abstractions;
@@ -34,9 +35,12 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
     private readonly IPetPlacementRepository _petPlacementRepository;
     private readonly IAppUnitOfWork _unitOfWork;
     private readonly StartupRegistrationService _startupRegistration;
+    private readonly StartupSettingsService? _startupSettings;
     private readonly IPairingService _pairingService;
     private readonly PetPlacement _initialPlacement;
     private readonly Func<Preferences, PetPlacement, CancellationToken, Task>? _runtimeApplier;
+    private readonly Func<CancellationToken, Task<MonitorPlacementSnapshot>>? _placementCapture;
+    private readonly Func<PetPlacement, CancellationToken, Task>? _placementPreviewer;
     private readonly string _monitorDeviceName;
     private readonly SemaphoreSlim _navigationGate = new(1, 1);
     private bool _disposed;
@@ -71,7 +75,10 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
         IPairingService pairingService,
         string? monitorDeviceName = null,
         PetPlacement? initialPlacement = null,
-        Func<Preferences, PetPlacement, CancellationToken, Task>? runtimeApplier = null)
+        Func<Preferences, PetPlacement, CancellationToken, Task>? runtimeApplier = null,
+        Func<CancellationToken, Task<MonitorPlacementSnapshot>>? placementCapture = null,
+        Func<PetPlacement, CancellationToken, Task>? placementPreviewer = null,
+        StartupSettingsService? startupSettings = null)
     {
         _preferencesRepository = preferencesRepository ?? throw new ArgumentNullException(nameof(preferencesRepository));
         _profileRepository = profileRepository ?? throw new ArgumentNullException(nameof(profileRepository));
@@ -79,6 +86,7 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
         _unitOfWork = unitOfWork ?? throw new ArgumentNullException(nameof(unitOfWork));
         _startupRegistration = startupRegistration ?? throw new ArgumentNullException(nameof(startupRegistration));
         _pairingService = pairingService ?? throw new ArgumentNullException(nameof(pairingService));
+        _startupSettings = startupSettings;
         _initialPlacement = initialPlacement ?? new PetPlacement(
             string.IsNullOrWhiteSpace(monitorDeviceName) ? DefaultMonitorDeviceName : monitorDeviceName.Trim(),
             0.8,
@@ -89,6 +97,8 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
         _placementX = _initialPlacement.NormalizedX;
         _placementY = _initialPlacement.NormalizedY;
         _placementScale = MonitorPlacementService.ClampScale(_initialPlacement.Scale);
+        _placementCapture = placementCapture;
+        _placementPreviewer = placementPreviewer;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -187,6 +197,39 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
         }
     }
 
+    public async Task PreviewPlacementAsync(CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (_placementCapture is null || _placementPreviewer is null)
+        {
+            return;
+        }
+
+        var current = await _placementCapture(cancellationToken);
+        var preview = current.Placement with
+        {
+            Scale = MonitorPlacementService.ClampScale(PlacementScale),
+        };
+        await _placementPreviewer(preview, cancellationToken);
+    }
+
+    public async Task UseRecommendedPlacementAsync(CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        PlacementX = 0.8;
+        PlacementY = 0.8;
+        PlacementScale = 1.0;
+        if (_placementCapture is null || _placementPreviewer is null)
+        {
+            return;
+        }
+
+        var current = await _placementCapture(cancellationToken);
+        await _placementPreviewer(
+            current.Placement with { NormalizedX = 0.8, NormalizedY = 0.8, Scale = 1.0 },
+            cancellationToken);
+    }
+
     public void SkipPairing()
     {
         ThrowIfDisposed();
@@ -283,6 +326,9 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                var capturedPlacement = _placementCapture is null
+                    ? null
+                    : await _placementCapture(cancellationToken);
                 var profile = new Profile(RecipientName.Trim(), OnboardingComplete: true);
                 var preferences = new Preferences(
                     Theme,
@@ -295,11 +341,12 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
                     AmbientMinimumInterval: TimeSpan.FromMinutes(15),
                     HydrationRemindersEnabled,
                     BreakRemindersEnabled);
-                var placement = new PetPlacement(
-                    _monitorDeviceName,
-                    PlacementX,
-                    PlacementY,
-                    MonitorPlacementService.ClampScale(PlacementScale));
+                var placement = capturedPlacement?.Placement
+                    ?? new PetPlacement(
+                        _monitorDeviceName,
+                        PlacementX,
+                        PlacementY,
+                        MonitorPlacementService.ClampScale(PlacementScale));
 
                 await _unitOfWork.ExecuteAsync(async (context, token) =>
                 {
@@ -325,7 +372,15 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
                 var startupRegistrationFailed = false;
                 try
                 {
-                    await _startupRegistration.SetEnabledAsync(LaunchAtSignIn, cancellationToken);
+                    if (_startupSettings is not null)
+                    {
+                        _startupSettings.Adopt(preferences);
+                        await _startupSettings.RetryStartupRegistrationAsync(cancellationToken);
+                    }
+                    else
+                    {
+                        await _startupRegistration.SetEnabledAsync(LaunchAtSignIn, cancellationToken);
+                    }
                 }
                 catch (Exception exception)
                 {

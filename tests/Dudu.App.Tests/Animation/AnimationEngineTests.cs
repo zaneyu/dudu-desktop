@@ -78,6 +78,18 @@ public sealed class AnimationEngineTests
     }
 
     [Fact]
+    public async Task Replacing_the_current_pose_with_reduced_motion_updates_live_mode()
+    {
+        using var fixture = AnimationFixture.Create([100], loop: "once", animationKey: "idle", immediateClock: true);
+
+        await fixture.Engine.PlayAsync(TestPresentation("idle"), AnimationOptions.ReducedMotion, TestContext.Current.CancellationToken);
+
+        Assert.True(fixture.Engine.CurrentOptions.ReducedMotionEnabled);
+        Assert.Equal(TestPresentation("idle"), fixture.Engine.CurrentPresentation);
+        Assert.NotEmpty(fixture.Presenter.Frames);
+    }
+
+    [Fact]
     public async Task Invalid_scale_is_rejected_before_playback()
     {
         using var fixture = AnimationFixture.Create([100], loop: "once", animationKey: "idle");

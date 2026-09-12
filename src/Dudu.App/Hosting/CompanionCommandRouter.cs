@@ -138,7 +138,10 @@ public sealed class StartupSettingsService
 {
     private readonly StartupRegistrationService _startup;
     private readonly IPreferencesRepository _repository;
+    private readonly SemaphoreSlim _operationGate = new(1, 1);
     private Preferences _preferences;
+    private bool _needsReconciliation;
+    private string? _reconciliationError;
 
     public StartupSettingsService(
         StartupRegistrationService startup,
@@ -152,6 +155,10 @@ public sealed class StartupSettingsService
 
     public Preferences Current => _preferences;
 
+    public bool NeedsReconciliation => _needsReconciliation;
+
+    public string? ReconciliationError => _reconciliationError;
+
     public void Adopt(Preferences preferences)
     {
         _preferences = preferences ?? throw new ArgumentNullException(nameof(preferences));
@@ -161,9 +168,47 @@ public sealed class StartupSettingsService
         bool enabled,
         CancellationToken cancellationToken = default)
     {
-        await _startup.SetEnabledAsync(enabled, cancellationToken);
-        var updated = _preferences with { LaunchAtSignIn = enabled };
-        await _repository.SaveAsync(updated, cancellationToken);
-        _preferences = updated;
+        await _operationGate.WaitAsync(cancellationToken);
+        try
+        {
+            var updated = _preferences with { LaunchAtSignIn = enabled };
+            await _repository.SaveAsync(updated, cancellationToken);
+            _preferences = updated;
+            await ReconcileCoreAsync(cancellationToken);
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+    }
+
+    public async Task RetryStartupRegistrationAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await _operationGate.WaitAsync(cancellationToken);
+        try
+        {
+            await ReconcileCoreAsync(cancellationToken);
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+    }
+
+    private async Task ReconcileCoreAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _startup.SetEnabledAsync(_preferences.LaunchAtSignIn, cancellationToken);
+            _needsReconciliation = false;
+            _reconciliationError = null;
+        }
+        catch (Exception exception)
+        {
+            _needsReconciliation = true;
+            _reconciliationError = "Startup registration needs another try.";
+            throw new InvalidOperationException(_reconciliationError, exception);
+        }
     }
 }

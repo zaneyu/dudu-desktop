@@ -1,4 +1,5 @@
 using Dudu.App.System;
+using Dudu.App.Overlay;
 using Dudu.App.ViewModels;
 using Dudu.Core.Abstractions;
 using Dudu.Core.Models;
@@ -110,13 +111,51 @@ public sealed class OnboardingViewModelTests
         Assert.Equal(1, fixture.RuntimeApplyCount);
     }
 
+    [Fact]
+    public async Task Completion_persists_and_applies_current_dragged_monitor_placement()
+    {
+        var captured = new MonitorPlacementSnapshot(
+            new PetPlacement("MONITOR-CURRENT", 0.17, 0.63, 1.25),
+            new PixelRect(2100, 140, 640, 640),
+            new MonitorInfo("MONITOR-CURRENT", new PixelRect(1920, 0, 1920, 1040), 144));
+        await using var fixture = OnboardingFixture.Create(
+            initialPlacement: new PetPlacement("MONITOR-STALE", 0.8, 0.8, 1),
+            placementCapture: _ => Task.FromResult(captured));
+        fixture.ViewModel.RecipientName = "Mia";
+
+        Assert.True(await fixture.ViewModel.CompleteAsync(fixture.CancellationToken));
+
+        Assert.Equal(captured.Placement, fixture.SavedPlacements.Single());
+        Assert.Equal(captured.Placement, fixture.AppliedPlacement);
+    }
+
+    [Fact]
+    public async Task Completion_passes_reduced_motion_to_the_live_animation_applier()
+    {
+        var reducedMotionModes = new List<bool>();
+        await using var fixture = OnboardingFixture.Create(
+            runtimeApplier: (preferences, _, _) =>
+            {
+                reducedMotionModes.Add(preferences.ReducedMotion);
+                return Task.CompletedTask;
+            });
+        fixture.ViewModel.RecipientName = "Mia";
+        fixture.ViewModel.ReducedMotion = true;
+
+        Assert.True(await fixture.ViewModel.CompleteAsync(fixture.CancellationToken));
+
+        Assert.Equal(new[] { true }, reducedMotionModes);
+        Assert.True(fixture.SavedPreferences!.ReducedMotion);
+    }
+
     private sealed class OnboardingFixture : IAsyncDisposable
     {
         private OnboardingFixture(
             bool failCommit,
             Func<Preferences, PetPlacement, CancellationToken, Task>? runtimeApplier,
             PetPlacement? initialPlacement,
-            List<string>? events)
+            List<string>? events,
+            Func<CancellationToken, Task<MonitorPlacementSnapshot>>? placementCapture)
         {
             Preferences = new RecordingPreferencesRepository();
             Profiles = new RecordingProfileRepository();
@@ -139,9 +178,18 @@ public sealed class OnboardingViewModelTests
                 runtimeApplier: runtimeApplier ?? ((_, _, _) =>
                 {
                     Events.Add("runtime");
+                    AppliedPlacement = SavedPlacements.Single();
                     RuntimeApplyCount++;
                     return Task.CompletedTask;
-                }));
+                }),
+                placementCapture: placementCapture ?? (_ => Task.FromResult(new MonitorPlacementSnapshot(
+                    initialPlacement ?? new PetPlacement("MONITOR-2", 0.8, 0.8, 1),
+                    new PixelRect(0, 0, 100, 100),
+                    new MonitorInfo(
+                        initialPlacement?.MonitorDeviceName ?? "MONITOR-2",
+                        new PixelRect(0, 0, 1920, 1040),
+                        96,
+                        true)))));
         }
 
         public RecordingPreferencesRepository Preferences { get; }
@@ -157,13 +205,15 @@ public sealed class OnboardingViewModelTests
         public IReadOnlyList<PetPlacement> SavedPlacements => Placements.Saved;
         public List<string> Events { get; }
         public int RuntimeApplyCount { get; private set; }
+        public PetPlacement? AppliedPlacement { get; private set; }
 
         public static OnboardingFixture Create(
             bool failCommit = false,
             Func<Preferences, PetPlacement, CancellationToken, Task>? runtimeApplier = null,
             PetPlacement? initialPlacement = null,
-            List<string>? events = null) =>
-            new(failCommit, runtimeApplier, initialPlacement, events);
+            List<string>? events = null,
+            Func<CancellationToken, Task<MonitorPlacementSnapshot>>? placementCapture = null) =>
+            new(failCommit, runtimeApplier, initialPlacement, events, placementCapture);
 
         public async ValueTask DisposeAsync()
         {

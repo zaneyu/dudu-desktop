@@ -3,6 +3,7 @@ using Dudu.Core.Abstractions;
 using Dudu.Core.Models;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 
 namespace Dudu.App.Pages;
 
@@ -27,13 +28,19 @@ public sealed partial class OnboardingPage : Page
         SetMessage(null);
     }
 
-    private void RecommendedPlacementButton_Click(object sender, RoutedEventArgs args)
+    private async void RecommendedPlacementButton_Click(object sender, RoutedEventArgs args)
     {
-        _viewModel.PlacementX = 0.8;
-        _viewModel.PlacementY = 0.8;
-        _viewModel.PlacementScale = 1.0;
+        await _viewModel.UseRecommendedPlacementAsync();
         SyncControlsFromDraft();
         SetMessage(null);
+    }
+
+    private async void PlacementScaleSlider_ValueChanged(
+        object sender,
+        RangeBaseValueChangedEventArgs args)
+    {
+        _viewModel.PlacementScale = args.NewValue;
+        await PreviewPlacementAsync();
     }
 
     private async void PairingCheckButton_Click(object sender, RoutedEventArgs args)
@@ -191,5 +198,19 @@ public sealed partial class OnboardingPage : Page
     private void SetMessage(string? message)
     {
         OnboardingValidationMessage.Text = message ?? string.Empty;
+    }
+
+    private async Task PreviewPlacementAsync()
+    {
+        try
+        {
+            await _viewModel.PreviewPlacementAsync();
+        }
+        catch (Exception exception)
+        {
+            global::System.Diagnostics.Trace.TraceInformation(
+                "Dudu placement preview failed: {0}",
+                exception.Message);
+        }
     }
 }

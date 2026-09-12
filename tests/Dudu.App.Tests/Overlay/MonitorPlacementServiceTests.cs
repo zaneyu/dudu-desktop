@@ -126,6 +126,26 @@ public sealed class MonitorPlacementServiceTests
         Assert.Equal("A", placement.MonitorDeviceName);
     }
 
+    [Fact]
+    public void Capture_snapshot_monitor_matches_the_monitor_selected_from_actual_bounds()
+    {
+        var monitors = new[]
+        {
+            new MonitorInfo("PRIMARY", new PixelRect(0, 0, 1920, 1040), 96, true),
+            new MonitorInfo("RIGHT", new PixelRect(1920, 0, 1920, 1040), 144),
+        };
+
+        var snapshot = MonitorPlacementService.CaptureSnapshot(
+            new PixelRect(2200, 120, 240, 200),
+            1.25,
+            new PixelSize(240, 200),
+            monitors);
+
+        Assert.Equal("RIGHT", snapshot.Placement.MonitorDeviceName);
+        Assert.Equal("RIGHT", snapshot.Monitor.DeviceName);
+        Assert.Equal(new PixelRect(2200, 120, 240, 200), snapshot.WindowBounds);
+    }
+
     [Theory]
     [InlineData(0x80070005u, uint.MaxValue, 0u, false)]
     [InlineData(0x80004005u, 0u, uint.MaxValue, true)]

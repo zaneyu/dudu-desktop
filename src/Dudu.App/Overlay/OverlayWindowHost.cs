@@ -210,16 +210,11 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         return InvokeOnOwnerAsync(() =>
         {
             var monitors = EnumerateMonitors();
-            var monitor = monitors.FirstOrDefault(item =>
-                string.Equals(item.DeviceName, _placement.MonitorDeviceName, StringComparison.Ordinal))
-                ?? monitors.FirstOrDefault(item => item.IsPrimary)
-                ?? monitors[0];
-            var placement = MonitorPlacementService.Capture(
+            return MonitorPlacementService.CaptureSnapshot(
                 _windowBounds,
                 _placement.Scale,
                 _nominalSize,
                 monitors);
-            return new MonitorPlacementSnapshot(placement, _windowBounds, monitor);
         });
     }
 

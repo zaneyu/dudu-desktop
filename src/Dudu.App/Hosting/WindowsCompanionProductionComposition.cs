@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Dudu.App.Animation;
 using Dudu.App.Overlay;
 using Dudu.App.System;
@@ -51,7 +52,9 @@ public sealed record CompanionSettingsContext(
     Profile? Profile,
     PetPlacement InitialPlacement,
     MonitorPlacementSnapshot PlacementSnapshot,
-    Func<Preferences, PetPlacement, CancellationToken, Task> ApplyRuntimeAsync);
+    Func<Preferences, PetPlacement, CancellationToken, Task> ApplyRuntimeAsync,
+    Func<CancellationToken, Task<MonitorPlacementSnapshot>> CapturePlacementAsync,
+    Func<PetPlacement, CancellationToken, Task> ApplyPlacementAsync);
 
 public sealed record CompanionLaunchOptions(bool Background)
 {
@@ -123,6 +126,7 @@ public static class WindowsCompanionProductionComposition
         var host = new AppHost(services, paths);
         var composer = default(SkiaFrameComposer);
         var presenter = default(LayeredFramePresenter);
+        AnimationEngine? animationEngine = null;
         StartupRegistrationService? startup = null;
 
         try
@@ -156,13 +160,29 @@ public static class WindowsCompanionProductionComposition
             composer = new SkiaFrameComposer(pack);
             presenter = new LayeredFramePresenter();
             startup = new StartupRegistrationService();
-            await startup.SetEnabledAsync(
-                profile?.OnboardingComplete == true && preferences.LaunchAtSignIn,
-                cancellationToken);
             var startupSettings = new StartupSettingsService(
                 startup,
                 preferencesRepository,
                 preferences);
+            try
+            {
+                if (profile?.OnboardingComplete == true)
+                {
+                    await startupSettings.RetryStartupRegistrationAsync(cancellationToken);
+                }
+                else
+                {
+                    await startup.SetEnabledAsync(false, cancellationToken);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                Trace.TraceError("Dudu startup registration reconciliation failed: {0}", exception);
+            }
             var pause = new PauseStateStore();
             var runtimePreferences = new RuntimePreferencesState(preferences);
             var showOverlay = launchOptions.ShouldShowOverlay(preferences, profile);
@@ -184,8 +204,17 @@ public static class WindowsCompanionProductionComposition
                         actions.Exit).Handle,
                 initializeOverlay: async overlay =>
                 {
-                    using var frame = composer.Compose(pack, animation, 0);
-                    await overlay.PresentAsync(frame, cancellationToken);
+                    animationEngine = new AnimationEngine(
+                        pack,
+                        overlay,
+                        composer: composer);
+                    _ = StartAnimationPlayback(
+                        animationEngine.PlayAsync(
+                            pet.Current,
+                            preferences.ReducedMotion
+                                ? AnimationOptions.ReducedMotion
+                                : AnimationOptions.Default,
+                            cancellationToken));
                     if (showOverlay)
                     {
                         overlay.Show();
@@ -196,7 +225,22 @@ public static class WindowsCompanionProductionComposition
                     DateTimeOffset.UtcNow,
                     runtimePreferences.Current.QuietHours,
                     TimeZoneInfo.Local),
-                onPreferencesChanged: runtimePreferences.Set,
+                onPreferencesChanged: (updated, token) =>
+                {
+                    runtimePreferences.Set(updated);
+                    if (animationEngine is null)
+                    {
+                        return Task.CompletedTask;
+                    }
+
+                    return StartAnimationPlayback(
+                        animationEngine.PlayAsync(
+                            pet.Current,
+                            updated.ReducedMotion
+                                ? AnimationOptions.ReducedMotion
+                                : AnimationOptions.Default,
+                            token));
+                },
                 cancellationToken: cancellationToken);
 
             var placementSnapshot = await runtime.CapturePlacementSnapshotAsync(cancellationToken);
@@ -218,13 +262,22 @@ public static class WindowsCompanionProductionComposition
                 profile,
                 currentMonitorPlacement,
                 placementSnapshot with { Placement = currentMonitorPlacement },
-                runtime.ApplySettingsAsync));
-            return new ComposedPrimaryRuntime(runtime, composer, presenter, startup, services);
+                runtime.ApplySettingsAsync,
+                runtime.CapturePlacementSnapshotAsync,
+                runtime.ApplyPlacementAsync));
+            return new ComposedPrimaryRuntime(runtime, animationEngine!, presenter, startup, services);
         }
         catch
         {
             startup?.DisposeAsync().AsTask().GetAwaiter().GetResult();
-            composer?.Dispose();
+            if (animationEngine is not null)
+            {
+                await animationEngine.DisposeAsync();
+            }
+            else
+            {
+                composer?.Dispose();
+            }
             presenter?.Dispose();
             await host.DisposeAsync();
             await services.DisposeAsync();
@@ -232,9 +285,30 @@ public static class WindowsCompanionProductionComposition
         }
     }
 
+    private static Task StartAnimationPlayback(Task playback)
+    {
+        _ = ObserveAnimationAsync(playback);
+        return Task.CompletedTask;
+    }
+
+    private static async Task ObserveAnimationAsync(Task playback)
+    {
+        try
+        {
+            await playback;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            Trace.TraceError("Dudu animation playback failed: {0}", exception);
+        }
+    }
+
     private sealed class ComposedPrimaryRuntime(
         WindowsCompanionRuntime runtime,
-        SkiaFrameComposer composer,
+        AnimationEngine animationEngine,
         LayeredFramePresenter presenter,
         StartupRegistrationService startup,
         ServiceProvider services) : IPrimaryAppRuntime
@@ -249,9 +323,9 @@ public static class WindowsCompanionProductionComposition
 
         public async ValueTask DisposeAsync()
         {
+            await animationEngine.DisposeAsync();
             await runtime.DisposeAsync();
             await startup.DisposeAsync();
-            composer.Dispose();
             presenter.Dispose();
             await services.DisposeAsync();
         }

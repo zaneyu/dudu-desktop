@@ -185,6 +185,25 @@ public static class MonitorPlacementService
             ClampScale(scale));
     }
 
+    public static MonitorPlacementSnapshot CaptureSnapshot(
+        PixelRect windowBounds,
+        double scale,
+        PixelSize nominalSize,
+        IEnumerable<MonitorInfo> monitors)
+    {
+        ArgumentNullException.ThrowIfNull(monitors);
+        var monitorList = monitors
+            .Where(monitor => monitor is not null && monitor.WorkArea.IsValid)
+            .ToArray();
+        var placement = Capture(windowBounds, scale, nominalSize, monitorList);
+        var monitor = monitorList.FirstOrDefault(item =>
+            string.Equals(item.DeviceName, placement.MonitorDeviceName, StringComparison.Ordinal));
+        return monitor is null
+            ? throw new InvalidOperationException(
+                $"The captured monitor '{placement.MonitorDeviceName}' was not enumerated.")
+            : new MonitorPlacementSnapshot(placement, windowBounds, monitor);
+    }
+
     private static double DistanceSquared(PixelRect area, long x, long y)
     {
         var dx = x < area.X ? area.X - x : x >= area.Right ? x - area.Right + 1 : 0;

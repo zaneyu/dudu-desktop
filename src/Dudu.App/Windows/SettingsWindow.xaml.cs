@@ -27,12 +27,15 @@ public sealed partial class SettingsWindow : UserControl
             context.UnitOfWork,
             context.StartupRegistration,
             context.Pairing,
-            initialPlacement: context.InitialPlacement,
+            initialPlacement: context.PlacementSnapshot.Placement,
             runtimeApplier: async (preferences, placement, cancellationToken) =>
             {
                 context.StartupSettings.Adopt(preferences);
                 await context.ApplyRuntimeAsync(preferences, placement, cancellationToken);
-            });
+            },
+            placementCapture: context.CapturePlacementAsync,
+            placementPreviewer: context.ApplyPlacementAsync,
+            startupSettings: context.StartupSettings);
         InitializeComponent();
         RootNavigation.SelectedItem = RootNavigation.MenuItems[0];
         Loaded += OnLoaded;
@@ -147,7 +150,22 @@ public sealed partial class SettingsWindow : UserControl
         AutomationProperties.SetAutomationId(toggle, "SettingsLaunchAtSignIn");
         toggle.Checked += StartupToggle_Changed;
         toggle.Unchecked += StartupToggle_Changed;
-        return toggle;
+        var panel = new StackPanel { Spacing = 8, Children = { toggle } };
+        if (_context.StartupSettings.NeedsReconciliation)
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text = _context.StartupSettings.ReconciliationError,
+                Foreground = (Brush)Application.Current.Resources["WarningBrush"],
+                TextWrapping = TextWrapping.Wrap,
+            });
+            var retry = new Button { Content = "Retry startup registration" };
+            AutomationProperties.SetAutomationId(retry, "SettingsRetryStartupRegistration");
+            retry.Click += RetryStartupRegistration_Click;
+            panel.Children.Add(retry);
+        }
+
+        return panel;
     }
 
     private async void StartupToggle_Changed(object sender, RoutedEventArgs args)
@@ -156,12 +174,28 @@ public sealed partial class SettingsWindow : UserControl
         try
         {
             await _context.StartupSettings.SetLaunchAtSignInAsync(enabled);
+            ShowDestination("home");
         }
         catch (Exception exception)
         {
-            toggle.IsChecked = !enabled;
+            toggle.IsChecked = _context.StartupSettings.Current.LaunchAtSignIn;
+            ShowDestination("home");
             global::System.Diagnostics.Trace.TraceError("Dudu startup setting failed: {0}", exception);
         }
+    }
+
+    private async void RetryStartupRegistration_Click(object sender, RoutedEventArgs args)
+    {
+        try
+        {
+            await _context.StartupSettings.RetryStartupRegistrationAsync();
+        }
+        catch (Exception exception)
+        {
+            global::System.Diagnostics.Trace.TraceError("Dudu startup retry failed: {0}", exception);
+        }
+
+        ShowDestination("home");
     }
 
     private FrameworkElement CreateAppearancePage() => new StackPanel

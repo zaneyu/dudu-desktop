@@ -50,9 +50,9 @@
 
                     <StackPanel x:Name="PlacementStep" Spacing="12" Visibility="Collapsed">
                         <TextBlock Text="Place Dudu" Style="{StaticResource SectionHeadingStyle}" />
-                        <TextBlock Text="The pet stays on your desktop and can be moved any time." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                        <TextBlock Text="Drag Dudu to the place you want. Finish setup captures its current monitor and position." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                         <Button x:Name="RecommendedPlacementButton" Content="Use recommended placement" AutomationProperties.AutomationId="OnboardingRecommendedPlacement" Click="RecommendedPlacementButton_Click" />
-                        <Slider x:Name="PlacementScaleSlider" Header="Pet size" AutomationProperties.AutomationId="OnboardingPetScale" Minimum="0.5" Maximum="2" SmallChange="0.1" Value="1" />
+                        <Slider x:Name="PlacementScaleSlider" Header="Pet size" AutomationProperties.AutomationId="OnboardingPetScale" Minimum="0.5" Maximum="2" SmallChange="0.1" Value="1" ValueChanged="PlacementScaleSlider_ValueChanged" />
                         <CheckBox x:Name="HideFullscreenBox" Content="Hide Dudu during fullscreen work" AutomationProperties.AutomationId="OnboardingHideDuringFullscreen" IsChecked="True" />
                         <CheckBox x:Name="LaunchAtSignInBox" Content="Launch Dudu when I sign in" AutomationProperties.AutomationId="OnboardingLaunchAtSignIn" IsChecked="True" />
                     </StackPanel>

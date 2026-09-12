@@ -69,6 +69,8 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
     private CancellationTokenSource? _activeCancellation;
     private TaskCompletionSource<object?>? _disposeCompletion;
     private TaskCompletionSource<object?>? _mutationUsersCompletion;
+    private AnimationOptions _currentOptions = AnimationOptions.Default;
+    private PetPresentation? _currentPresentation;
     private int _mutationUsers;
     private bool _mutationDisposeRequested;
     private bool _disposed;
@@ -102,6 +104,28 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
     {
     }
 
+    public AnimationOptions CurrentOptions
+    {
+        get
+        {
+            lock (_stateGate)
+            {
+                return _currentOptions;
+            }
+        }
+    }
+
+    public PetPresentation? CurrentPresentation
+    {
+        get
+        {
+            lock (_stateGate)
+            {
+                return _currentPresentation;
+            }
+        }
+    }
+
     public Task PlayAsync(
         PetPresentation presentation,
         AnimationOptions? options = null,
@@ -124,6 +148,8 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
                 ThrowIfDisposed();
                 previous = _activeTask;
                 _activeCancellation?.Cancel();
+                _currentPresentation = presentation;
+                _currentOptions = options;
                 operationCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 _activeCancellation = operationCancellation;
                 var task = RunReplacementAsync(previous, presentation, options, operationCancellation);

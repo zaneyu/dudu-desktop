@@ -422,7 +422,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
     private readonly TrayIconService _tray;
     private readonly GlobalHotkeyService _hotkey;
     private readonly ICompanionEventSource _events;
-    private readonly Action<Preferences>? _onPreferencesChanged;
+    private readonly Func<Preferences, CancellationToken, Task>? _onPreferencesChanged;
     private bool _started;
 
     public WindowsCompanionRuntime(
@@ -432,7 +432,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         TrayIconService tray,
         GlobalHotkeyService hotkey,
         ICompanionEventSource events,
-        Action<Preferences>? onPreferencesChanged)
+        Func<Preferences, CancellationToken, Task>? onPreferencesChanged)
     {
         _host = host ?? throw new ArgumentNullException(nameof(host));
         _overlay = overlay ?? throw new ArgumentNullException(nameof(overlay));
@@ -459,7 +459,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         Func<AppLifecycleCoordinator, Action<TrayCommand>>? trayCommandHandlerFactory = null,
         Func<OverlayWindowHost, Task>? initializeOverlay = null,
         bool initialUserVisible = true,
-        Action<Preferences>? onPreferencesChanged = null,
+        Func<Preferences, CancellationToken, Task>? onPreferencesChanged = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(openHome);
@@ -538,9 +538,17 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         ArgumentNullException.ThrowIfNull(preferences);
         ArgumentNullException.ThrowIfNull(placement);
         await _lifecycle.UpdatePreferencesAsync(preferences, cancellationToken);
-        _onPreferencesChanged?.Invoke(preferences);
+        if (_onPreferencesChanged is not null)
+        {
+            await _onPreferencesChanged(preferences, cancellationToken);
+        }
         await _overlay.SetPlacementAsync(placement, cancellationToken);
     }
+
+    public Task ApplyPlacementAsync(
+        PetPlacement placement,
+        CancellationToken cancellationToken = default) =>
+        _overlay.SetPlacementAsync(placement, cancellationToken);
 
     public Task<MonitorPlacementSnapshot> CapturePlacementSnapshotAsync(
         CancellationToken cancellationToken = default) =>
