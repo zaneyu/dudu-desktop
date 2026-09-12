@@ -172,7 +172,7 @@ public static class WindowsCompanionProductionComposition
                 }
                 else
                 {
-                    await startup.SetEnabledAsync(false, cancellationToken);
+                    await startupSettings.ReconcileExternalAsync(false, cancellationToken);
                 }
             }
             catch (OperationCanceledException)

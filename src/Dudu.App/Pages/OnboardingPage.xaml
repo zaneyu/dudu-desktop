@@ -66,6 +66,10 @@
                     </StackPanel>
 
                     <TextBlock x:Name="OnboardingValidationMessage" AutomationProperties.AutomationId="OnboardingValidationMessage" Foreground="{ThemeResource ErrorBrush}" TextWrapping="Wrap" />
+                    <StackPanel x:Name="StartupRecoveryPanel" Spacing="8" Visibility="Collapsed">
+                        <TextBlock x:Name="StartupRecoveryMessage" AutomationProperties.AutomationId="OnboardingStartupRecoveryMessage" Foreground="{ThemeResource WarningBrush}" TextWrapping="Wrap" />
+                        <Button x:Name="RetryStartupButton" Content="Retry startup registration" AutomationProperties.AutomationId="OnboardingRetryStartupRegistration" Click="RetryStartupButton_Click" />
+                    </StackPanel>
                 </StackPanel>
             </Border>
 

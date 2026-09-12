@@ -188,7 +188,7 @@ public sealed partial class SettingsWindow : UserControl
     {
         try
         {
-            await _context.StartupSettings.RetryStartupRegistrationAsync();
+            await _onboarding.RetryStartupRegistrationAsync();
         }
         catch (Exception exception)
         {

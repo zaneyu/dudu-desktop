@@ -142,6 +142,7 @@ public sealed class StartupSettingsService
     private Preferences _preferences;
     private bool _needsReconciliation;
     private string? _reconciliationError;
+    private bool? _reconciliationDesiredState;
 
     public StartupSettingsService(
         StartupRegistrationService startup,
@@ -159,9 +160,14 @@ public sealed class StartupSettingsService
 
     public string? ReconciliationError => _reconciliationError;
 
+    public bool DesiredLaunchAtSignIn => _reconciliationDesiredState ?? _preferences.LaunchAtSignIn;
+
     public void Adopt(Preferences preferences)
     {
         _preferences = preferences ?? throw new ArgumentNullException(nameof(preferences));
+        _reconciliationDesiredState = null;
+        _needsReconciliation = false;
+        _reconciliationError = null;
     }
 
     public async Task SetLaunchAtSignInAsync(
@@ -174,7 +180,7 @@ public sealed class StartupSettingsService
             var updated = _preferences with { LaunchAtSignIn = enabled };
             await _repository.SaveAsync(updated, cancellationToken);
             _preferences = updated;
-            await ReconcileCoreAsync(cancellationToken);
+            await ReconcileCoreAsync(updated.LaunchAtSignIn, cancellationToken);
         }
         finally
         {
@@ -188,7 +194,7 @@ public sealed class StartupSettingsService
         await _operationGate.WaitAsync(cancellationToken);
         try
         {
-            await ReconcileCoreAsync(cancellationToken);
+            await ReconcileCoreAsync(_reconciliationDesiredState ?? _preferences.LaunchAtSignIn, cancellationToken);
         }
         finally
         {
@@ -196,13 +202,32 @@ public sealed class StartupSettingsService
         }
     }
 
-    private async Task ReconcileCoreAsync(CancellationToken cancellationToken)
+    public async Task ReconcileExternalAsync(
+        bool desiredLaunchAtSignIn,
+        CancellationToken cancellationToken = default)
     {
+        await _operationGate.WaitAsync(cancellationToken);
         try
         {
-            await _startup.SetEnabledAsync(_preferences.LaunchAtSignIn, cancellationToken);
+            await ReconcileCoreAsync(desiredLaunchAtSignIn, cancellationToken);
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+    }
+
+    private async Task ReconcileCoreAsync(
+        bool desiredLaunchAtSignIn,
+        CancellationToken cancellationToken)
+    {
+        _reconciliationDesiredState = desiredLaunchAtSignIn;
+        try
+        {
+            await _startup.SetEnabledAsync(desiredLaunchAtSignIn, cancellationToken);
             _needsReconciliation = false;
             _reconciliationError = null;
+            _reconciliationDesiredState = null;
         }
         catch (Exception exception)
         {

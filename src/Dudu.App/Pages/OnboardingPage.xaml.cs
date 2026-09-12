@@ -19,6 +19,7 @@ public sealed partial class OnboardingPage : Page
         InitializeComponent();
         SyncControlsFromDraft();
         RefreshStep();
+        RefreshStartupRecovery();
     }
 
     private async void RecommendedDefaultsButton_Click(object sender, RoutedEventArgs args)
@@ -65,6 +66,20 @@ public sealed partial class OnboardingPage : Page
         _viewModel.SkipPairing();
         PairingStatus.Text = "Skipped for now. You can pair later from Connection.";
         SetMessage(null);
+    }
+
+    private async void RetryStartupButton_Click(object sender, RoutedEventArgs args)
+    {
+        try
+        {
+            await _viewModel.RetryStartupRegistrationAsync();
+            RefreshStartupRecovery();
+        }
+        catch (Exception exception)
+        {
+            RefreshStartupRecovery();
+            global::System.Diagnostics.Trace.TraceError("Dudu startup retry during onboarding failed: {0}", exception);
+        }
     }
 
     private void BackButton_Click(object sender, RoutedEventArgs args)
@@ -152,6 +167,17 @@ public sealed partial class OnboardingPage : Page
         CompleteButton.Visibility = _viewModel.CurrentStep == OnboardingStep.Pairing
             ? Visibility.Visible
             : Visibility.Collapsed;
+        RefreshStartupRecovery();
+    }
+
+    private void RefreshStartupRecovery()
+    {
+        var startup = _viewModel.StartupSettings;
+        var visible = startup?.NeedsReconciliation == true;
+        StartupRecoveryPanel.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        StartupRecoveryMessage.Text = visible
+            ? startup!.ReconciliationError ?? "Startup registration needs another try."
+            : string.Empty;
     }
 
     private void SyncDraftFromControls()

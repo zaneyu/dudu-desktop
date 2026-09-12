@@ -148,6 +148,27 @@ public sealed class OnboardingViewModelTests
         Assert.True(fixture.SavedPreferences!.ReducedMotion);
     }
 
+    [Fact]
+    public async Task Startup_retry_clears_only_startup_error_and_preserves_live_runtime_error()
+    {
+        await using var fixture = OnboardingFixture.Create(
+            runtimeApplier: (_, _, _) => throw new InvalidOperationException("live apply failed"));
+        fixture.StartupWriter.FailWrite = true;
+        fixture.ViewModel.RecipientName = "Mia";
+
+        Assert.True(await fixture.ViewModel.CompleteAsync(fixture.CancellationToken));
+        Assert.NotNull(fixture.ViewModel.StartupRegistrationError);
+        Assert.NotNull(fixture.ViewModel.RuntimeApplyError);
+        Assert.True(fixture.StartupSettings.NeedsReconciliation);
+
+        fixture.StartupWriter.FailWrite = false;
+        await fixture.ViewModel.RetryStartupRegistrationAsync(fixture.CancellationToken);
+
+        Assert.Null(fixture.ViewModel.StartupRegistrationError);
+        Assert.NotNull(fixture.ViewModel.RuntimeApplyError);
+        Assert.False(fixture.StartupSettings.NeedsReconciliation);
+    }
+
     private sealed class OnboardingFixture : IAsyncDisposable
     {
         private OnboardingFixture(
@@ -163,10 +184,23 @@ public sealed class OnboardingViewModelTests
             Reminders = new RecordingReminderRepository();
             Events = events ?? [];
             UnitOfWork = new RecordingUnitOfWork(Profiles, Preferences, Placements, Reminders, failCommit, Events);
+            StartupWriter = new RecordingStartupWriter();
             Startup = new StartupRegistrationService(
                 "/opt/dudu/Dudu.exe",
                 Path.Combine(Path.GetTempPath(), "dudu-onboarding-" + Guid.NewGuid().ToString("N")),
-                new RecordingStartupWriter());
+                StartupWriter);
+            StartupSettings = new StartupSettingsService(
+                Startup,
+                Preferences,
+                new Preferences(
+                    AppTheme.System,
+                    new QuietHours(true, new TimeOnly(22, 0), new TimeOnly(7, 0)),
+                    false,
+                    3,
+                    true,
+                    false,
+                    true,
+                    TimeSpan.FromMinutes(15)));
             ViewModel = new OnboardingViewModel(
                 Preferences,
                 Profiles,
@@ -189,7 +223,8 @@ public sealed class OnboardingViewModelTests
                         initialPlacement?.MonitorDeviceName ?? "MONITOR-2",
                         new PixelRect(0, 0, 1920, 1040),
                         96,
-                        true)))));
+                        true)))),
+                startupSettings: StartupSettings);
         }
 
         public RecordingPreferencesRepository Preferences { get; }
@@ -198,6 +233,8 @@ public sealed class OnboardingViewModelTests
         public RecordingReminderRepository Reminders { get; }
         public RecordingUnitOfWork UnitOfWork { get; }
         public StartupRegistrationService Startup { get; }
+        public RecordingStartupWriter StartupWriter { get; }
+        public StartupSettingsService StartupSettings { get; }
         public OnboardingViewModel ViewModel { get; }
         public CancellationToken CancellationToken => TestContext.Current.CancellationToken;
         public Profile? SavedProfile => Profiles.Saved;
@@ -224,9 +261,12 @@ public sealed class OnboardingViewModelTests
 
     private sealed class RecordingStartupWriter : IStartupLinkWriter
     {
+        public bool FailWrite { get; set; }
+
         public Task WriteAtomicAsync(string shortcutPath, string targetPath, string arguments, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (FailWrite) throw new IOException("simulated startup write failure");
             return Task.CompletedTask;
         }
 

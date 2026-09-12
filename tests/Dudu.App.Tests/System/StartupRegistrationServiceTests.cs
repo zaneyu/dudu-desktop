@@ -134,6 +134,66 @@ public sealed class StartupRegistrationServiceTests
         Assert.Single(writer.Deletes);
     }
 
+    [Fact]
+    public async Task Enable_external_failure_keeps_desired_state_and_retry_converges()
+    {
+        var writer = new FakeWriter { FailWrite = true };
+        await using var startup = new StartupRegistrationService(
+            "/opt/Dudu.exe",
+            "/tmp/startup-enable-external-failure-" + Guid.NewGuid().ToString("N"),
+            writer);
+        var repository = new FakePreferencesRepository();
+        var settings = new StartupSettingsService(startup, repository, CreatePreferences(false));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            settings.SetLaunchAtSignInAsync(true, TestContext.Current.CancellationToken));
+
+        Assert.True(settings.Current.LaunchAtSignIn);
+        Assert.True(repository.LastSaved!.LaunchAtSignIn);
+        Assert.True(settings.DesiredLaunchAtSignIn);
+        Assert.True(settings.NeedsReconciliation);
+        Assert.False(startup.IsEnabled);
+
+        writer.FailWrite = false;
+        await settings.RetryStartupRegistrationAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(startup.IsEnabled);
+        Assert.False(settings.NeedsReconciliation);
+        Assert.Null(settings.ReconciliationError);
+        Assert.Single(writer.Writes);
+    }
+
+    [Fact]
+    public async Task Incomplete_profile_disable_failure_is_observable_and_retries_before_completion()
+    {
+        var writer = new FakeWriter();
+        await using var startup = new StartupRegistrationService(
+            "/opt/Dudu.exe",
+            "/tmp/startup-incomplete-disable-" + Guid.NewGuid().ToString("N"),
+            writer);
+        await startup.SetEnabledAsync(true, TestContext.Current.CancellationToken);
+        var settings = new StartupSettingsService(
+            startup,
+            new FakePreferencesRepository(),
+            CreatePreferences(true));
+        writer.FailDelete = true;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            settings.ReconcileExternalAsync(false, TestContext.Current.CancellationToken));
+
+        Assert.True(settings.NeedsReconciliation);
+        Assert.False(settings.DesiredLaunchAtSignIn);
+        Assert.True(settings.Current.LaunchAtSignIn);
+        Assert.True(startup.IsEnabled);
+
+        writer.FailDelete = false;
+        await settings.RetryStartupRegistrationAsync(TestContext.Current.CancellationToken);
+
+        Assert.False(startup.IsEnabled);
+        Assert.False(settings.NeedsReconciliation);
+        Assert.Null(settings.ReconciliationError);
+    }
+
     private static Preferences CreatePreferences(bool launchAtSignIn) => new(
         AppTheme.System,
         new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),

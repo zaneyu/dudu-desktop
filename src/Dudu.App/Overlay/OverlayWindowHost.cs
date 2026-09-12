@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -53,7 +52,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private readonly Action<uint, nint, nint>? _systemMessageHandler;
     private readonly Action<Exception> _diagnostic;
     private readonly IReadOnlyList<PixelRect> _bubbleHitRegions;
-    private readonly ConcurrentQueue<Action> _ownerActions = new();
+    private readonly OwnerActionQueue _ownerActions;
     private readonly TaskCompletionSource<OverlayWindowHost> _created =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource<bool> _stopped =
@@ -102,6 +101,10 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         _bubbleHitRegions = bubbleHitRegions?.ToArray() ?? [];
         _diagnostic = diagnostic ?? ReportDiagnostic;
         _creationCancellation = creationCancellation;
+        _ownerActions = new OwnerActionQueue(
+            () => _ownerThreadId == Environment.CurrentManagedThreadId,
+            PostOwnerSignal,
+            ExecuteOwnerAction);
         _ownerMessageRouter = new OverlayOwnerMessageRouter(
             HostCommandMessage,
             ShutdownCommandMessage,
@@ -198,7 +201,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         {
             _placement = placement;
             ResolveAndMove();
-        });
+        }, cancellationToken);
     }
 
     public void RestorePlacement() => PostToOwner(ResolveAndMove);
@@ -215,46 +218,23 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                 _placement.Scale,
                 _nominalSize,
                 monitors);
-        });
+        }, cancellationToken);
     }
 
-    public Task InvokeOnOwnerAsync(Action action)
+    public Task InvokeOnOwnerAsync(
+        Action action,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(action);
-        var completion = new TaskCompletionSource<bool>(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-        PostToOwner(() =>
-        {
-            try
-            {
-                action();
-                completion.TrySetResult(true);
-            }
-            catch (Exception exception)
-            {
-                completion.TrySetException(exception);
-            }
-        });
-        return completion.Task;
+        return _ownerActions.InvokeAsync(action, cancellationToken);
     }
 
-    public Task<TResult> InvokeOnOwnerAsync<TResult>(Func<TResult> action)
+    public Task<TResult> InvokeOnOwnerAsync<TResult>(
+        Func<TResult> action,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(action);
-        var completion = new TaskCompletionSource<TResult>(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-        PostToOwner(() =>
-        {
-            try
-            {
-                completion.TrySetResult(action());
-            }
-            catch (Exception exception)
-            {
-                completion.TrySetException(exception);
-            }
-        });
-        return completion.Task;
+        return _ownerActions.InvokeAsync(action, cancellationToken);
     }
 
     public void Dispose()
@@ -289,6 +269,8 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         {
             _disposeRequested = true;
         }
+
+        _ownerActions.Close(new ObjectDisposedException(nameof(OverlayWindowHost)));
 
         try
         {
@@ -623,54 +605,53 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private void PostToOwner(Action action)
     {
         ArgumentNullException.ThrowIfNull(action);
-        if (_ownerThreadId == Environment.CurrentManagedThreadId)
-        {
-            if (!_disposeRequested)
-            {
-                ExecuteOwnerAction(action);
-            }
-            return;
-        }
-
-        lock (_stateGate)
-        {
-            if (_disposeRequested)
-            {
-                return;
-            }
-        }
-
-        _ownerActions.Enqueue(action);
-        if (_window.IsNull || !PInvoke.PostMessage(_window, HostCommandMessage, 0, 0))
-        {
-            ReportDiagnostic(LastWin32Error("PostMessage"));
-            CancelStartup();
-        }
+        _ownerActions.Post(action, ReportOwnerPostFailure);
     }
 
     private void DrainOwnerActions()
     {
-        while (_ownerActions.TryDequeue(out var action))
+        _ownerActions.Drain(() => _shutdownIssued);
+        if (_shutdownIssued)
         {
-            ExecuteOwnerAction(action);
-            if (_shutdownIssued)
-            {
-                break;
-            }
+            _ownerActions.Close(new ObjectDisposedException(nameof(OverlayWindowHost)));
         }
     }
 
-    private void ExecuteOwnerAction(Action action)
+    private void ExecuteOwnerAction(OwnerActionQueue.QueuedOwnerAction action)
     {
         try
         {
-            action();
+            action.Run();
         }
         catch (Exception exception)
         {
             FailOnOwnerThread(exception);
         }
     }
+
+    private Exception? PostOwnerSignal()
+    {
+        if (_window.IsNull)
+        {
+            var exception = new InvalidOperationException(
+                "The overlay owner window is not available for an owner action.");
+            ReportDiagnostic(exception);
+            CancelStartup();
+            return exception;
+        }
+
+        if (PInvoke.PostMessage(_window, HostCommandMessage, 0, 0))
+        {
+            return null;
+        }
+
+        var failure = LastWin32Error("PostMessage");
+        ReportDiagnostic(failure);
+        CancelStartup();
+        return failure;
+    }
+
+    private void ReportOwnerPostFailure(Exception exception) => ReportDiagnostic(exception);
 
     private void HandleMessage(uint message, WPARAM wParam, LPARAM lParam)
     {
@@ -800,6 +781,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         }
 
         _shutdownIssued = true;
+        _ownerActions.Close(new ObjectDisposedException(nameof(OverlayWindowHost)));
         ReleasePointerCapture();
         if (!_window.IsNull)
         {

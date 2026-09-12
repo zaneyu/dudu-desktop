@@ -65,6 +65,7 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
     private bool _isComplete;
     private string? _validationMessage;
     private string? _runtimeApplyError;
+    private string? _startupRegistrationError;
 
     public OnboardingViewModel(
         IPreferencesRepository preferencesRepository,
@@ -124,6 +125,8 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
     public bool IsComplete { get => _isComplete; private set => Set(ref _isComplete, value); }
     public string? ValidationMessage { get => _validationMessage; private set => Set(ref _validationMessage, value); }
     public string? RuntimeApplyError { get => _runtimeApplyError; private set => Set(ref _runtimeApplyError, value); }
+    public string? StartupRegistrationError { get => _startupRegistrationError; private set => Set(ref _startupRegistrationError, value); }
+    public StartupSettingsService? StartupSettings => _startupSettings;
     public bool CanGoBack => CurrentStep > OnboardingStep.Recipient && !IsCompleting && !IsComplete;
     public string ProgressText => $"Step {(int)CurrentStep + 1} of {StepCount}";
 
@@ -369,7 +372,6 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
                 ValidationMessage = null;
                 OnPropertyChanged(nameof(CanGoBack));
 
-                var startupRegistrationFailed = false;
                 try
                 {
                     if (_startupSettings is not null)
@@ -384,8 +386,7 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
                 }
                 catch (Exception exception)
                 {
-                    startupRegistrationFailed = true;
-                    RuntimeApplyError = "Dudu saved your setup, but could not register startup. You can retry from Home.";
+                    StartupRegistrationError = "Dudu saved your setup, but could not register startup. You can retry from Home.";
                     Trace.TraceError("Dudu startup registration failed after commit: {0}", exception);
                 }
 
@@ -394,10 +395,7 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
                     try
                     {
                         await _runtimeApplier(preferences, placement, cancellationToken);
-                        if (!startupRegistrationFailed)
-                        {
-                            RuntimeApplyError = null;
-                        }
+                        RuntimeApplyError = null;
                     }
                     catch (Exception exception)
                     {
@@ -418,6 +416,18 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
         {
             _navigationGate.Release();
         }
+    }
+
+    public async Task RetryStartupRegistrationAsync(CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        if (_startupSettings is null)
+        {
+            return;
+        }
+
+        await _startupSettings.RetryStartupRegistrationAsync(cancellationToken);
+        StartupRegistrationError = null;
     }
 
     public ValueTask DisposeAsync()
