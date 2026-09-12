@@ -6,12 +6,40 @@ namespace Dudu.App.Tests.Overlay;
 public sealed class OverlayWindowHostTests
 {
     [Fact]
-    public void Shutdown_message_has_a_dedicated_owner_route()
+    public async Task Shutdown_message_dispatches_on_owner_thread_and_completes_teardown()
     {
-        var message = OverlayWindowHost.ShutdownMessageId;
+        var teardown = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var ownerExited = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var ownerThreadId = 0;
+        var callbackThreadId = 0;
+        var dispatchResult = false;
+        var router = new OverlayOwnerMessageRouter(
+            ownerCommandMessage: OverlayWindowHost.HostCommandMessage,
+            shutdownMessage: OverlayWindowHost.ShutdownCommandMessage,
+            drainOwnerActions: () => throw new InvalidOperationException("Shutdown must not drain owner actions."),
+            shutdown: () =>
+            {
+                callbackThreadId = Environment.CurrentManagedThreadId;
+                teardown.TrySetResult(true);
+            });
+        var ownerThread = new Thread(() =>
+        {
+            try
+            {
+                ownerThreadId = Environment.CurrentManagedThreadId;
+                dispatchResult = router.Dispatch(OverlayWindowHost.ShutdownCommandMessage);
+            }
+            finally
+            {
+                ownerExited.TrySetResult(true);
+            }
+        });
 
-        Assert.True(OverlayWindowHost.IsShutdownMessage(message));
-        Assert.False(OverlayWindowHost.IsShutdownMessage(message - 1));
+        ownerThread.Start();
+        await teardown.Task.WaitAsync(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
+        await ownerExited.Task.WaitAsync(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
+        Assert.True(dispatchResult);
+        Assert.Equal(ownerThreadId, callbackThreadId);
     }
 
     [Fact]

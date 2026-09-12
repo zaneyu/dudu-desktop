@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Dudu.App.Animation;
@@ -17,8 +18,8 @@ namespace Dudu.App.Overlay;
 /// </summary>
 public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAsyncDisposable
 {
-    private const uint HostCommandMessage = PInvoke.WM_APP + 1;
-    private const uint ShutdownCommandMessage = PInvoke.WM_APP + 2;
+    internal const uint HostCommandMessage = PInvoke.WM_APP + 1;
+    internal const uint ShutdownCommandMessage = PInvoke.WM_APP + 2;
     private const uint WmNcHitTest = 0x0084;
     private const uint WmMouseActivate = 0x0021;
     private const uint WmDpiChanged = 0x02E0;
@@ -36,6 +37,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private const nint HTCLIENT = 1;
     private const nint HTTRANSPARENT = -1;
     private const int ErrorAccessDenied = 5;
+    private const uint HResultAccessDenied = 0x80070005;
     private static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(5);
     private static readonly object ClassGate = new();
     private static readonly string ClassName = "Dudu.DesktopCompanion.PetOverlay.v1";
@@ -59,6 +61,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private readonly CancellationTokenSource _startupCancellation = new();
     private readonly object _stateGate = new();
     private readonly CancellationToken _creationCancellation;
+    private readonly OverlayOwnerMessageRouter _ownerMessageRouter;
     private CancellationTokenRegistration _creationRegistration;
     private PetPlacement _placement;
     private PixelRect _windowBounds;
@@ -96,6 +99,11 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         _bubbleHitRegions = bubbleHitRegions?.ToArray() ?? [];
         _diagnostic = diagnostic ?? ReportDiagnostic;
         _creationCancellation = creationCancellation;
+        _ownerMessageRouter = new OverlayOwnerMessageRouter(
+            HostCommandMessage,
+            ShutdownCommandMessage,
+            DrainOwnerActions,
+            ShutdownOnOwnerThread);
         _ownerThread = new Thread(OwnerThreadMain)
         {
             IsBackground = true,
@@ -132,10 +140,6 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     public nint Handle => (nint)_window.Value;
 
     public bool IsVisible { get; private set; }
-
-    public static uint ShutdownMessageId => ShutdownCommandMessage;
-
-    public static bool IsShutdownMessage(uint message) => message == ShutdownCommandMessage;
 
     internal Task<OverlayWindowHost> CreationTask => _created.Task;
 
@@ -203,7 +207,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
 
     internal Task StoppedTask => _stopped.Task;
 
-    internal bool JoinOwnerThread(TimeSpan timeout) => _ownerThread.Join(timeout);
+    internal TimeSpan ShutdownBudget => ShutdownTimeout;
 
     internal void ReportDisposalTimeout(Exception exception) => ReportDiagnostic(exception);
 
@@ -598,14 +602,13 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
 
     private void HandleMessage(uint message, WPARAM wParam, LPARAM lParam)
     {
+        if (_ownerMessageRouter.Dispatch(message))
+        {
+            return;
+        }
+
         switch (message)
         {
-            case ShutdownCommandMessage:
-                ShutdownOnOwnerThread();
-                break;
-            case HostCommandMessage:
-                DrainOwnerActions();
-                break;
             case WmLButtonDown:
                 BeginDrag(lParam);
                 break;
@@ -834,7 +837,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                 MONITOR_DPI_TYPE.MDT_EFFECTIVE_DPI,
                 out dpiX,
                 out dpiY);
-            if (dpiResult.Failed)
+            if (dpiResult.Failed && (uint)dpiResult != HResultAccessDenied)
             {
                 context.Report(new InvalidOperationException(
                     $"GetDpiForMonitor failed for {GetDeviceName(info)} with HRESULT {dpiResult}. Using 96 DPI."));
@@ -888,6 +891,43 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     }
 }
 
+internal sealed class OverlayOwnerMessageRouter
+{
+    private readonly uint _ownerCommandMessage;
+    private readonly uint _shutdownMessage;
+    private readonly Action _drainOwnerActions;
+    private readonly Action _shutdown;
+
+    public OverlayOwnerMessageRouter(
+        uint ownerCommandMessage,
+        uint shutdownMessage,
+        Action drainOwnerActions,
+        Action shutdown)
+    {
+        _ownerCommandMessage = ownerCommandMessage;
+        _shutdownMessage = shutdownMessage;
+        _drainOwnerActions = drainOwnerActions ?? throw new ArgumentNullException(nameof(drainOwnerActions));
+        _shutdown = shutdown ?? throw new ArgumentNullException(nameof(shutdown));
+    }
+
+    public bool Dispatch(uint message)
+    {
+        if (message == _shutdownMessage)
+        {
+            _shutdown();
+            return true;
+        }
+
+        if (message == _ownerCommandMessage)
+        {
+            _drainOwnerActions();
+            return true;
+        }
+
+        return false;
+    }
+}
+
 file static class OverlayWindowHostLifecycle
 {
     public static async ValueTask WaitForStopAsync(OverlayWindowHost host)
@@ -897,16 +937,33 @@ file static class OverlayWindowHostLifecycle
             return;
         }
 
+        var startTimestamp = Stopwatch.GetTimestamp();
         try
         {
-            await host.StoppedTask.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
-            _ = host.JoinOwnerThread(TimeSpan.Zero);
+            await host.StoppedTask.WaitAsync(host.ShutdownBudget).ConfigureAwait(false);
         }
         catch (TimeoutException exception)
         {
             host.ReportDisposalTimeout(new TimeoutException(
                 "Overlay owner thread did not stop before disposal timed out.",
                 exception));
+            return;
+        }
+
+        while (host.OwnerThreadIsAlive)
+        {
+            var remaining = host.ShutdownBudget - Stopwatch.GetElapsedTime(startTimestamp);
+            if (remaining <= TimeSpan.Zero)
+            {
+                host.ReportDisposalTimeout(new TimeoutException(
+                    "Overlay owner thread signaled teardown but remained alive before DisposeAsync timed out."));
+                return;
+            }
+
+            await Task.Delay(
+                remaining < TimeSpan.FromMilliseconds(10)
+                    ? remaining
+                    : TimeSpan.FromMilliseconds(10)).ConfigureAwait(false);
         }
     }
 
