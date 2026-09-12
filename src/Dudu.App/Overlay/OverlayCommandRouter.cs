@@ -8,14 +8,18 @@ namespace Dudu.App.Overlay;
 public sealed class OverlayCommandRouter
 {
     private readonly CompanionFeatureContext _context;
-    private readonly Action<string>? _navigateSettings;
+    private readonly Func<string, CancellationToken, Task>? _navigateSettings;
+    private readonly Func<TimeSpan, CancellationToken, Task> _delayAsync;
+    private CancellationTokenSource? _breathingCancellation;
 
     public OverlayCommandRouter(
         CompanionFeatureContext context,
-        Action<string>? navigateSettings = null)
+        Func<string, CancellationToken, Task>? navigateSettings = null,
+        Func<TimeSpan, CancellationToken, Task>? delayAsync = null)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
         _navigateSettings = navigateSettings;
+        _delayAsync = delayAsync ?? Task.Delay;
     }
 
     public static IReadOnlyList<OverlayAction> PrimaryActions { get; } =
@@ -30,9 +34,11 @@ public sealed class OverlayCommandRouter
 
     public static IReadOnlyList<ComfortAction> ComfortActions => ActionBubbleArrangement.ComfortActions;
 
-    public bool IsReducedMotion => _context.InitialPreferences.ReducedMotion;
+    public bool IsReducedMotion => _context.CurrentPreferences.ReducedMotion;
     public bool IsBreathing { get; private set; }
     public string BreathingInstruction { get; private set; } = "Breathe in for 4, out for 6.";
+    public ComfortPanelState ComfortPanel { get; private set; } = ComfortPanelState.Closed;
+    public event EventHandler? ComfortPanelChanged;
 
     public Task ExecuteAsync(
         OverlayAction action,
@@ -79,7 +85,7 @@ public sealed class OverlayCommandRouter
     {
         var vm = new TasksFocusViewModel(_context);
         await vm.StartFocusAsync(cancellationToken);
-        _navigateSettings?.Invoke("tasks");
+        await NavigateAsync("tasks", cancellationToken);
     }
 
     private Task ExecuteComfortAsync(CancellationToken cancellationToken) =>
@@ -88,8 +94,13 @@ public sealed class OverlayCommandRouter
     private Task NavigateAsync(string destination, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        _navigateSettings?.Invoke(destination);
-        return Task.CompletedTask;
+        if (_navigateSettings is null)
+        {
+            return Task.FromException(new InvalidOperationException(
+                "Dudu could not open the requested settings destination."));
+        }
+
+        return _navigateSettings(destination, cancellationToken);
     }
 
     private Task PresentComfortAsync(CancellationToken cancellationToken) =>
@@ -98,7 +109,7 @@ public sealed class OverlayCommandRouter
     private async Task TakeFiveMinuteBreakAsync(CancellationToken cancellationToken)
     {
         await _context.ApplyPauseAsync(
-            new PauseState(PauseMode.OneHour, _context.Clock.UtcNow.ToUniversalTime().AddMinutes(5)),
+            PausePolicy.ForFiveMinutes(_context.Clock.UtcNow.ToUniversalTime()),
             cancellationToken);
         await PresentComfortAsync(cancellationToken);
     }
@@ -106,7 +117,8 @@ public sealed class OverlayCommandRouter
     private async Task CloseComfortAsync(CancellationToken cancellationToken)
     {
         await PresentAsync(new PetEvent.Dismissed("comfort"), cancellationToken);
-        _navigateSettings?.Invoke("home");
+        SetComfortPanel(ComfortPanelState.Closed);
+        await NavigateAsync("home", cancellationToken);
     }
 
     private async Task BreatheWithMeAsync(CancellationToken cancellationToken)
@@ -115,24 +127,60 @@ public sealed class OverlayCommandRouter
         if (IsReducedMotion)
         {
             BreathingInstruction = "Breathe slowly: in for 4, out for 6.";
+            SetComfortPanel(new ComfortPanelState(true, false, BreathVisualPhase.Static, BreathingInstruction));
             return;
         }
 
+        _breathingCancellation?.Cancel();
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _breathingCancellation = linked;
         IsBreathing = true;
         try
         {
             for (var cycle = 0; cycle < 6; cycle++)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
+                SetComfortPanel(new ComfortPanelState(true, true, BreathVisualPhase.Inhale, "Breathe in for 4."));
+                await _delayAsync(TimeSpan.FromSeconds(4), linked.Token);
+                SetComfortPanel(new ComfortPanelState(true, true, BreathVisualPhase.Exhale, "Breathe out for 6."));
+                await _delayAsync(TimeSpan.FromSeconds(6), linked.Token);
             }
         }
         finally
         {
             IsBreathing = false;
+            if (ReferenceEquals(_breathingCancellation, linked)) _breathingCancellation = null;
+            SetComfortPanel(linked.IsCancellationRequested
+                ? new ComfortPanelState(true, false, BreathVisualPhase.Idle, "Breathing exercise cancelled.")
+                : new ComfortPanelState(true, false, BreathVisualPhase.Complete, "Nice job. You took a minute for yourself."));
         }
+    }
+
+    public void OpenComfortPanel() => SetComfortPanel(new ComfortPanelState(true, false, BreathVisualPhase.Idle, "Choose a gentle next step."));
+
+    public void CancelBreathing()
+    {
+        _breathingCancellation?.Cancel();
+        _breathingCancellation = null;
+        IsBreathing = false;
+        SetComfortPanel(new ComfortPanelState(true, false, BreathVisualPhase.Idle, "Breathing exercise cancelled."));
+    }
+
+    private void SetComfortPanel(ComfortPanelState state)
+    {
+        ComfortPanel = state;
+        BreathingInstruction = state.Instruction;
+        ComfortPanelChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private Task PresentAsync(PetEvent petEvent, CancellationToken cancellationToken) =>
         _context.PresentPetAsync(petEvent, cancellationToken);
+}
+
+public enum BreathVisualPhase { Idle, Inhale, Exhale, Static, Complete }
+
+/// <summary>Application contract for slice 3's comfort surface. It contains no
+/// mood deduction or recording; all transitions are user initiated.</summary>
+public sealed record ComfortPanelState(bool IsOpen, bool IsBreathing, BreathVisualPhase Phase, string Instruction)
+{
+    public static ComfortPanelState Closed { get; } = new(false, false, BreathVisualPhase.Idle, string.Empty);
 }

@@ -29,7 +29,7 @@ public sealed class ReminderRepository : SqliteRepository, IReminderRepository, 
         var result = new List<Reminder>();
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = Select + " WHERE enabled = 1 AND next_due_utc <= $now ORDER BY next_due_utc;";
+        command.CommandText = Select + " WHERE enabled = 1 AND next_due_utc <= $now AND (snoozed_until_utc IS NULL OR snoozed_until_utc <= $now) ORDER BY next_due_utc;";
         Add(command, "$now", Utc(utcNow));
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken)) result.Add(Read(reader));

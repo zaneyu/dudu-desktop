@@ -544,6 +544,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         ArgumentNullException.ThrowIfNull(preferences);
         ArgumentNullException.ThrowIfNull(placement);
         await _lifecycle.UpdatePreferencesAsync(preferences, cancellationToken);
+        await _overlay.SetAlwaysOnTopAsync(preferences.AlwaysOnTop, cancellationToken);
         if (_onPreferencesChanged is not null)
         {
             await _onPreferencesChanged(preferences, cancellationToken);
@@ -559,6 +560,13 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
     public Task<MonitorPlacementSnapshot> CapturePlacementSnapshotAsync(
         CancellationToken cancellationToken = default) =>
         _overlay.CapturePlacementSnapshotAsync(cancellationToken);
+
+    public Task SetGlobalShortcutAsync(string shortcut, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var gesture = HotkeyGesture.Parse(shortcut);
+        return _overlay.InvokeOnOwnerAsync(() => _hotkey.SetGesture(gesture), cancellationToken);
+    }
 
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {

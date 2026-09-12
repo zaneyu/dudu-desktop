@@ -43,6 +43,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private static readonly string ClassName = WindowClassName;
     private static readonly ConcurrentDictionary<nint, OverlayWindowHost> Hosts = new();
     private static readonly HWND TopmostWindow = new((void*)(-1));
+    private static readonly HWND NotTopmostWindow = new((void*)(-2));
     private static readonly WNDPROC WindowProcedure = WindowProc;
     private static readonly MONITORENUMPROC MonitorProcedure = MonitorCallback;
 
@@ -53,6 +54,8 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private readonly Action<uint, nint, nint>? _systemMessageHandler;
     private readonly Action<Exception> _diagnostic;
     private readonly IReadOnlyList<PixelRect> _bubbleHitRegions;
+    private OverlayActionSurfaceController? _actionSurface;
+    private bool _alwaysOnTop = true;
     private readonly OwnerActionQueue _ownerActions;
     private readonly TaskCompletionSource<OverlayWindowHost> _created =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -67,6 +70,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private PixelRect _windowBounds;
     private HWND _window;
     private bool _dragging;
+    private bool _actionSurfacePointerArmed;
     private int _dragOriginX;
     private int _dragOriginY;
     private PixelRect _dragStartBounds;
@@ -202,6 +206,24 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             ResolveAndMove();
         }, cancellationToken);
     }
+
+    /// <summary>Installs the application-layer action contract used by the
+    /// native no-activate hit-test path. Rendering is intentionally deferred
+    /// to the WinUI slice.</summary>
+    public Task SetActionSurfaceAsync(
+        OverlayActionSurfaceController actionSurface,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(actionSurface);
+        return InvokeOnOwnerAsync(() => _actionSurface = actionSurface, cancellationToken);
+    }
+
+    public Task SetAlwaysOnTopAsync(bool alwaysOnTop, CancellationToken cancellationToken = default) =>
+        InvokeOnOwnerAsync(() =>
+        {
+            _alwaysOnTop = alwaysOnTop;
+            SetNativeWindowState(_windowBounds);
+        }, cancellationToken);
 
     public void RestorePlacement() => PostToOwner(ResolveAndMove);
 
@@ -555,7 +577,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
 
         if (!PInvoke.SetWindowPos(
                 _window,
-                TopmostWindow,
+                _alwaysOnTop ? TopmostWindow : NotTopmostWindow,
                 bounds.X,
                 bounds.Y,
                 bounds.Width,
@@ -659,6 +681,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         switch (message)
         {
             case WmLButtonDown:
+                if (TryArmActionSurfacePointer(lParam)) break;
                 BeginDrag(lParam);
                 break;
             case WmMouseMove:
@@ -666,6 +689,11 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                 break;
             case WmLButtonUp:
                 ReleasePointerCapture();
+                if (_actionSurfacePointerArmed)
+                {
+                    _actionSurfacePointerArmed = false;
+                    _ = TryHandleActionSurfacePointer(lParam);
+                }
                 break;
             case WmLButtonDoubleClick:
                 ReleasePointerCapture();
@@ -686,6 +714,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             case WmCancelMode:
             case WmCaptureChanged:
                 ReleasePointerCapture();
+                _actionSurfacePointerArmed = false;
                 break;
             case WmDestroy:
                 ReleasePointerCapture();
@@ -703,7 +732,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     {
         var point = GetClientPoint(lParam);
         if (_presenter is not LayeredFramePresenter layered
-            || !layered.IsInteractiveAt(point.X, point.Y, _bubbleHitRegions))
+            || !layered.IsInteractiveAt(point.X, point.Y, CurrentBubbleHitRegions()))
         {
             return;
         }
@@ -834,7 +863,28 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
 
     private bool IsInteractive(int x, int y) =>
         _presenter is LayeredFramePresenter layered
-        && layered.IsInteractiveAt(x, y, _bubbleHitRegions);
+        && layered.IsInteractiveAt(x, y, CurrentBubbleHitRegions());
+
+    private IReadOnlyList<PixelRect> CurrentBubbleHitRegions() =>
+        _actionSurface?.HitRegions ?? _bubbleHitRegions;
+
+    private bool TryArmActionSurfacePointer(LPARAM lParam)
+    {
+        if (_actionSurface is null) return false;
+        var point = GetClientPoint(lParam);
+        if (!_actionSurface.Contains(new PixelPoint(point.X, point.Y))) return false;
+        _actionSurfacePointerArmed = true;
+        return true;
+    }
+
+    private bool TryHandleActionSurfacePointer(LPARAM lParam)
+    {
+        if (_actionSurface is null) return false;
+        var point = GetClientPoint(lParam);
+        if (!_actionSurface.Contains(new PixelPoint(point.X, point.Y))) return false;
+        _ = OverlayActionSurfaceObserver.ObserveAsync(_actionSurface, new PixelPoint(point.X, point.Y), ReportDiagnostic);
+        return true;
+    }
 
     public static bool TryConfirmPointerCapture(
         nint hwnd,

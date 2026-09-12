@@ -22,6 +22,14 @@ public sealed record PairingCodeResult(
 /// </summary>
 public sealed record PairingSessionSummary(string SessionId);
 
+/// <summary>Result returned by a destructive relay operation. A completed
+/// task is not success when the configured relay cannot perform it.</summary>
+public sealed record PairingOperationResult(bool Completed, string? ErrorMessage = null)
+{
+    public static PairingOperationResult Unavailable(string message) => new(false, message);
+    public static PairingOperationResult Success { get; } = new(true);
+}
+
 public interface IPairingService
 {
     Task<PairingAvailability> GetStateAsync(CancellationToken cancellationToken = default);
@@ -51,4 +59,29 @@ public interface IPairingService
     Task DeleteRemoteDeviceAsync(
         string? deviceId = null,
         CancellationToken cancellationToken = default);
+
+    async Task<PairingOperationResult> RevokeSessionsWithResultAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (await GetStateAsync(cancellationToken) == PairingAvailability.Offline)
+        {
+            return PairingOperationResult.Unavailable("Pairing is unavailable while the relay is offline.");
+        }
+
+        await DisconnectSenderSessionsAsync(cancellationToken);
+        return PairingOperationResult.Success;
+    }
+
+    async Task<PairingOperationResult> DeleteRemoteDeviceWithResultAsync(
+        string? deviceId = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (await GetStateAsync(cancellationToken) == PairingAvailability.Offline)
+        {
+            return PairingOperationResult.Unavailable("Remote-device deletion is unavailable while the relay is offline.");
+        }
+
+        await DeleteRemoteDeviceAsync(deviceId, cancellationToken);
+        return PairingOperationResult.Success;
+    }
 }

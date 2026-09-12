@@ -43,6 +43,14 @@ public sealed partial class SettingsWindow : UserControl
 
     public FrameworkElement TitleBarElement => AppTitleBar;
 
+    /// <summary>Production overlay/tray route for feature destinations. The
+    /// feature page markup itself remains owned by the following UI slice.</summary>
+    public void NavigateTo(string destination)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(destination);
+        ShowDestination(destination);
+    }
+
     private async void OnLoaded(object sender, RoutedEventArgs args)
     {
         if (_initialized) return;

@@ -58,12 +58,18 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
             Availability = result.Availability;
             PairingCode = result.Code;
             CodeExpiresUtc = result.ExpiresUtc;
+            if (result.Availability != PairingAvailability.Available ||
+                string.IsNullOrWhiteSpace(result.Code) || result.ExpiresUtc is null)
+            {
+                throw new NotSupportedException("Pairing is unavailable while the relay is offline.");
+            }
         }, "Pairing code ready for ten minutes.");
 
     public Task RevokeSessionsAsync(CancellationToken cancellationToken = default) =>
         RunAsync(async () =>
         {
-            await _context.Pairing.DisconnectSenderSessionsAsync(cancellationToken);
+            var result = await _context.Pairing.RevokeSessionsWithResultAsync(cancellationToken);
+            if (!result.Completed) throw new NotSupportedException(result.ErrorMessage ?? "Sender-session revocation is unavailable.");
             Sessions.Clear();
             SessionCount = 0;
             OnPropertyChanged(nameof(IsPaired));
@@ -72,7 +78,8 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
     public Task DeleteRemoteDeviceAsync(CancellationToken cancellationToken = default) =>
         RunAsync(async () =>
         {
-            await _context.Pairing.DeleteRemoteDeviceAsync(cancellationToken: cancellationToken);
+            var result = await _context.Pairing.DeleteRemoteDeviceWithResultAsync(cancellationToken: cancellationToken);
+            if (!result.Completed) throw new NotSupportedException(result.ErrorMessage ?? "Remote-device deletion is unavailable.");
             PairingCode = null;
             CodeExpiresUtc = null;
             Sessions.Clear();

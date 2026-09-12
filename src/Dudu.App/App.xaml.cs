@@ -59,7 +59,8 @@ public sealed partial class App : Application
             OpenHome,
             OpenSettings,
             ExitApplication,
-            ConfigureSettings);
+            ConfigureSettings,
+            NavigateSettingsDestination);
         _bootstrapFactory = static (arguments, cancellationToken) =>
             Task.FromResult(
                 WindowsCompanionProductionComposition.CreateBootstrap(
@@ -124,6 +125,16 @@ public sealed partial class App : Application
         }
 
         _settingsWindow.Activate();
+    }
+
+    private void NavigateSettingsDestination(string destination)
+    {
+        OpenSettings(_settingsContext?.StartupSettings
+            ?? throw new InvalidOperationException("Settings context is not ready."));
+        if (_settingsWindow?.Content is SettingsWindow settings)
+        {
+            settings.NavigateTo(destination);
+        }
     }
 
     private static void ReportStartupFailure(Exception exception) =>

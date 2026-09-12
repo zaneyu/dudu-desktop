@@ -30,6 +30,30 @@ public sealed class RemoteEnvelopeRepository : SqliteRepository, IRemoteEnvelope
     public async Task<bool> TryMarkProcessedAsync(string messageId, DateTimeOffset processedUtc, CancellationToken cancellationToken)
     { ValidateMessageId(messageId); await using var connection=await OpenAsync(cancellationToken); await using var command=connection.CreateCommand(); command.CommandText="INSERT INTO processed_remote_messages (message_id,processed_utc) SELECT $id,$processed WHERE EXISTS (SELECT 1 FROM remote_envelopes WHERE message_id=$id) ON CONFLICT(message_id) DO NOTHING;"; Add(command,"$id",messageId); Add(command,"$processed",Utc(processedUtc)); return await command.ExecuteNonQueryAsync(cancellationToken)==1; }
 
+    public async Task<bool> TryConsumeAsync(string messageId, DateTimeOffset processedUtc, CancellationToken cancellationToken)
+    {
+        ValidateMessageId(messageId);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            await using var mark = connection.CreateCommand(); mark.Transaction = transaction;
+            mark.CommandText = "INSERT INTO processed_remote_messages (message_id,processed_utc) SELECT $id,$processed WHERE EXISTS (SELECT 1 FROM remote_envelopes WHERE message_id=$id) ON CONFLICT(message_id) DO NOTHING;";
+            Add(mark, "$id", messageId); Add(mark, "$processed", Utc(processedUtc));
+            if (await mark.ExecuteNonQueryAsync(cancellationToken) != 1)
+            {
+                await transaction.RollbackAsync(CancellationToken.None);
+                return false;
+            }
+            await using var delete = connection.CreateCommand(); delete.Transaction = transaction;
+            delete.CommandText = "DELETE FROM remote_envelopes WHERE message_id=$id;"; Add(delete, "$id", messageId);
+            await delete.ExecuteNonQueryAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return true;
+        }
+        catch { await transaction.RollbackAsync(CancellationToken.None); throw; }
+    }
+
     public async Task<bool> TryInsertAndMarkProcessedAsync(RemoteEnvelope envelope, DateTimeOffset processedUtc, CancellationToken cancellationToken)
     {
         Validate(envelope);

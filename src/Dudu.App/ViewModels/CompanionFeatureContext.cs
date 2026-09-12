@@ -16,6 +16,8 @@ namespace Dudu.App.ViewModels;
 /// </summary>
 public sealed class CompanionFeatureContext
 {
+    private readonly SemaphoreSlim _preferencesGate = new(1, 1);
+    private Preferences _currentPreferences;
     public CompanionFeatureContext(
         IClock clock,
         Preferences initialPreferences,
@@ -51,7 +53,7 @@ public sealed class CompanionFeatureContext
         Func<string, CancellationToken, Task>? setGlobalShortcutAsync = null)
     {
         Clock = clock ?? throw new ArgumentNullException(nameof(clock));
-        InitialPreferences = initialPreferences ?? throw new ArgumentNullException(nameof(initialPreferences));
+        _currentPreferences = initialPreferences ?? throw new ArgumentNullException(nameof(initialPreferences));
         Preferences = preferences ?? throw new ArgumentNullException(nameof(preferences));
         Profiles = profiles ?? throw new ArgumentNullException(nameof(profiles));
         PetPlacements = petPlacements ?? throw new ArgumentNullException(nameof(petPlacements));
@@ -90,12 +92,16 @@ public sealed class CompanionFeatureContext
             new NotSupportedException("Local data deletion is not available yet.")));
         DeleteRemoteDataAsync = deleteRemoteDataAsync ?? ((_) => Task.FromException(
             new NotSupportedException("Remote data deletion is not available yet.")));
-        ApplyOutfitAsync = applyOutfitAsync ?? ((_, _) => Task.CompletedTask);
-        SetGlobalShortcutAsync = setGlobalShortcutAsync ?? ((_, _) => Task.CompletedTask);
+        ApplyOutfitAsync = applyOutfitAsync ?? ((_, _) => Task.FromException(
+            new NotSupportedException("Outfits are not available in this companion runtime.")));
+        SetGlobalShortcutAsync = setGlobalShortcutAsync ?? ((_, _) => Task.FromException(
+            new NotSupportedException("Global shortcuts are not available in this companion runtime.")));
     }
 
     public IClock Clock { get; }
-    public Preferences InitialPreferences { get; }
+    [Obsolete("Use CurrentPreferences or UpdatePreferencesAsync so concurrent pages do not overwrite each other.")]
+    public Preferences InitialPreferences => CurrentPreferences;
+    public Preferences CurrentPreferences => Volatile.Read(ref _currentPreferences);
     public IPreferencesRepository Preferences { get; }
     public IProfileRepository Profiles { get; }
     public IPetPlacementRepository PetPlacements { get; }
@@ -126,6 +132,29 @@ public sealed class CompanionFeatureContext
     public Func<CancellationToken, Task> DeleteRemoteDataAsync { get; }
     public Func<string?, CancellationToken, Task> ApplyOutfitAsync { get; }
     public Func<string, CancellationToken, Task> SetGlobalShortcutAsync { get; }
+
+    /// <summary>Serializes preference read/modify/write operations across
+    /// feature pages. The shared current snapshot changes only after the
+    /// repository write has succeeded.</summary>
+    public async Task<Preferences> UpdatePreferencesAsync(
+        Func<Preferences, Preferences> update,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(update);
+        await _preferencesGate.WaitAsync(cancellationToken);
+        try
+        {
+            var updated = update(_currentPreferences);
+            await Preferences.SaveAsync(updated, cancellationToken);
+            Volatile.Write(ref _currentPreferences, updated);
+            await ApplyPreferencesAsync(updated, cancellationToken);
+            return updated;
+        }
+        finally
+        {
+            _preferencesGate.Release();
+        }
+    }
 }
 
 public abstract class FeatureViewModelBase : CommunityToolkit.Mvvm.ComponentModel.ObservableObject

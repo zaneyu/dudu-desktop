@@ -15,6 +15,16 @@ public interface IRemoteEnvelopeRepository
 
     Task<bool> TryMarkProcessedAsync(string messageId, DateTimeOffset processedUtc, CancellationToken cancellationToken);
 
+    async Task<bool> TryConsumeAsync(
+        string messageId,
+        DateTimeOffset processedUtc,
+        CancellationToken cancellationToken)
+    {
+        if (!await TryMarkProcessedAsync(messageId, processedUtc, cancellationToken)) return false;
+        await DeleteAsync(messageId, cancellationToken);
+        return true;
+    }
+
     Task<bool> TryInsertAndMarkProcessedAsync(RemoteEnvelope envelope, DateTimeOffset processedUtc, CancellationToken cancellationToken);
 
     Task DeleteAsync(string messageId, CancellationToken cancellationToken);

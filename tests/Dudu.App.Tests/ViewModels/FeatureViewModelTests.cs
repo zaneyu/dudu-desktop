@@ -44,6 +44,7 @@ public sealed class FeatureViewModelTests
         await viewModel.SaveOpenedNoteCommand.ExecuteAsync(null);
 
         Assert.Equal("You can do it", Assert.Single(fixture.LocalNotes.Notes).Text);
+        Assert.Empty(fixture.RemoteNotes.Pending);
         Assert.Contains("pet.dismiss", fixture.Events);
     }
 
@@ -59,6 +60,84 @@ public sealed class FeatureViewModelTests
                 ComfortAction.Close,
             ],
             OverlayCommandRouter.ComfortActions);
+    }
+
+    [Fact]
+    public async Task Router_fails_explicitly_when_a_settings_destination_is_not_wired()
+    {
+        var fixture = FeatureFixture.Create();
+        var router = new OverlayCommandRouter(fixture.Context);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            router.ExecuteAsync(OverlayAction.Tasks, TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task Breathing_publishes_a_finite_cycle_and_five_minute_pause()
+    {
+        var fixture = FeatureFixture.Create();
+        var phases = new List<BreathVisualPhase>();
+        var router = new OverlayCommandRouter(
+            fixture.Context,
+            (_, _) => Task.CompletedTask,
+            (_, _) => Task.CompletedTask);
+        router.ComfortPanelChanged += (_, _) => phases.Add(router.ComfortPanel.Phase);
+
+        await router.ExecuteComfortAsync(ComfortAction.BreatheWithMe, TestContext.Current.CancellationToken);
+        await router.ExecuteComfortAsync(ComfortAction.TakeAFiveMinuteBreak, TestContext.Current.CancellationToken);
+
+        Assert.False(router.IsBreathing);
+        Assert.Equal(BreathVisualPhase.Complete, router.ComfortPanel.Phase);
+        Assert.Contains(BreathVisualPhase.Inhale, phases);
+        Assert.Contains(BreathVisualPhase.Exhale, phases);
+        Assert.Equal(PauseMode.FiveMinutes, fixture.Context.GetPauseState().Mode);
+    }
+
+    [Fact]
+    public async Task Breathing_cancellation_returns_the_comfort_surface_to_idle()
+    {
+        var fixture = FeatureFixture.Create();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var router = new OverlayCommandRouter(
+            fixture.Context,
+            (_, _) => Task.CompletedTask,
+            async (_, token) =>
+            {
+                started.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            });
+        using var cancellation = new CancellationTokenSource();
+        var breathing = router.ExecuteComfortAsync(ComfortAction.BreatheWithMe, cancellation.Token);
+        await started.Task.WaitAsync(TestContext.Current.CancellationToken);
+
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => breathing);
+
+        Assert.False(router.IsBreathing);
+        Assert.Equal(BreathVisualPhase.Idle, router.ComfortPanel.Phase);
+    }
+
+    [Fact]
+    public async Task Offline_pairing_never_reports_a_code_as_ready()
+    {
+        var fixture = FeatureFixture.Create();
+        var viewModel = new ConnectionViewModel(fixture.Context);
+
+        await viewModel.CreateCodeAsync(TestContext.Current.CancellationToken);
+
+        Assert.NotNull(viewModel.ErrorMessage);
+        Assert.Null(viewModel.PairingCode);
+    }
+
+    [Fact]
+    public async Task Preference_updates_merge_against_the_shared_current_snapshot()
+    {
+        var fixture = FeatureFixture.Create();
+        await fixture.Context.UpdatePreferencesAsync(current => current with { Theme = AppTheme.Dark }, TestContext.Current.CancellationToken);
+        await fixture.Context.UpdatePreferencesAsync(current => current with { ReducedMotion = true }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(AppTheme.Dark, fixture.Context.CurrentPreferences.Theme);
+        Assert.True(fixture.Context.CurrentPreferences.ReducedMotion);
     }
 
     private sealed class FeatureFixture
@@ -123,6 +202,7 @@ public sealed class FeatureViewModelTests
             var focusService = new FocusService(focusSessions, tasks, clock);
             var checkInService = new CheckInService(checkIns, clock);
             var noteSelector = new LocalNoteSelector(localNotes, clock, new FixedRandom(), preferences);
+            var pause = PauseState.None;
             var context = new CompanionFeatureContext(
                 clock,
                 preferences,
@@ -143,6 +223,12 @@ public sealed class FeatureViewModelTests
                 noteSelector,
                 new FakePairing(),
                 PetStateMachine.CreateIdle(),
+                getPauseState: () => pause,
+                applyPauseAsync: (state, _) =>
+                {
+                    pause = state;
+                    return Task.CompletedTask;
+                },
                 presentPetAsync: (petEvent, _) =>
                 {
                     events.Add(petEvent is PetEvent.Dismissed ? "pet.dismiss" : "pet.present");

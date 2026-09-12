@@ -4,6 +4,7 @@ public enum PauseMode
 {
     None,
     OneHour,
+    FiveMinutes,
     UntilTomorrowAtSeven,
     UntilFullscreenEnds,
     Indefinite,
@@ -26,7 +27,7 @@ public static class PausePolicy
         return state.Mode switch
         {
             PauseMode.None => false,
-            PauseMode.OneHour or PauseMode.UntilTomorrowAtSeven =>
+            PauseMode.OneHour or PauseMode.FiveMinutes or PauseMode.UntilTomorrowAtSeven =>
                 state.ExpiresAtUtc is { } expiry && now < expiry,
             PauseMode.UntilFullscreenEnds => fullscreen,
             PauseMode.Indefinite => true,
@@ -37,7 +38,7 @@ public static class PausePolicy
     public static PauseState ExpireIfNeeded(PauseState state, DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(state);
-        return state.Mode is PauseMode.OneHour or PauseMode.UntilTomorrowAtSeven
+        return state.Mode is PauseMode.OneHour or PauseMode.FiveMinutes or PauseMode.UntilTomorrowAtSeven
             && (state.ExpiresAtUtc is null || now >= state.ExpiresAtUtc)
             ? PauseState.None
             : state;
@@ -45,6 +46,9 @@ public static class PausePolicy
 
     public static PauseState ForOneHour(DateTimeOffset now) =>
         new(PauseMode.OneHour, now.AddHours(1));
+
+    public static PauseState ForFiveMinutes(DateTimeOffset now) =>
+        new(PauseMode.FiveMinutes, now.AddMinutes(5));
 
     public static PauseState UntilTomorrowAtSeven(
         DateTimeOffset now,

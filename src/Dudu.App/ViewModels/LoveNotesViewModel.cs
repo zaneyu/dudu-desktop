@@ -40,7 +40,7 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
     public string? OpenedRemoteNoteText { get => _openedRemoteNoteText; private set => SetProperty(ref _openedRemoteNoteText, value); }
     public string DraftText { get => _draftText; set => SetProperty(ref _draftText, value); }
     public bool DraftEnabled { get => _draftEnabled; set => SetProperty(ref _draftEnabled, value); }
-    public int DailyLocalNoteLimit => _context.InitialPreferences.LocalNoteDailyLimit;
+    public int DailyLocalNoteLimit => _context.CurrentPreferences.LocalNoteDailyLimit;
     public int UnopenedRemoteNoteCount => PendingRemoteNotes.Count;
     public bool HasOpenedRemoteNote => !string.IsNullOrWhiteSpace(OpenedRemoteNoteText);
 
@@ -100,6 +100,13 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
             var note = new LocalLoveNote($"remote-{envelope.MessageId}", text);
             await _context.LocalNotes.SaveToJarAsync(note, cancellationToken);
             Replace(note);
+            if (!await _context.RemoteEnvelopes.TryConsumeAsync(
+                envelope.MessageId,
+                _context.Clock.UtcNow.ToUniversalTime(),
+                cancellationToken))
+            {
+                throw new InvalidOperationException("That remote note was already consumed or is no longer available.");
+            }
             await _context.PresentPetAsync(new PetEvent.Dismissed(envelope.MessageId), cancellationToken);
             PendingRemoteNotes.Remove(envelope);
             OpenedRemoteEnvelope = null;

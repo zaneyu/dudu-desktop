@@ -26,12 +26,14 @@ public sealed class CompanionUiActions
         Action openHome,
         Action<StartupSettingsService> openSettings,
         Action exit,
-        Action<CompanionSettingsContext>? configureSettings = null)
+        Action<CompanionSettingsContext>? configureSettings = null,
+        Action<string>? navigateSettingsDestination = null)
     {
         OpenHome = openHome ?? throw new ArgumentNullException(nameof(openHome));
         OpenSettings = openSettings ?? throw new ArgumentNullException(nameof(openSettings));
         Exit = exit ?? throw new ArgumentNullException(nameof(exit));
         ConfigureSettings = configureSettings;
+        NavigateSettingsDestination = navigateSettingsDestination;
     }
 
     public Action OpenHome { get; }
@@ -41,6 +43,7 @@ public sealed class CompanionUiActions
     public Action Exit { get; }
 
     public Action<CompanionSettingsContext>? ConfigureSettings { get; }
+    public Action<string>? NavigateSettingsDestination { get; }
 }
 
 public sealed record CompanionSettingsContext(
@@ -60,6 +63,8 @@ public sealed record CompanionSettingsContext(
     Func<bool, CancellationToken, Task> SetUserVisibleAsync)
 {
     public CompanionFeatureContext? Features { get; init; }
+    public OverlayActionSurfaceController? ActionSurface { get; init; }
+    public OverlayCommandRouter? OverlayCommands { get; init; }
 }
 
 public sealed record CompanionLaunchOptions(bool Background)
@@ -134,6 +139,7 @@ public static class WindowsCompanionProductionComposition
         var presenter = default(LayeredFramePresenter);
         AnimationEngine? animationEngine = null;
         StartupRegistrationService? startup = null;
+        var actionSurface = new OverlayActionSurfaceController();
 
         try
         {
@@ -221,6 +227,10 @@ public static class WindowsCompanionProductionComposition
                                 ? AnimationOptions.ReducedMotion
                                 : AnimationOptions.Default,
                             cancellationToken));
+                    await overlay.SetActionSurfaceAsync(actionSurface, cancellationToken);
+                    actionSurface.Open(
+                        new PixelRect(0, 0, animation.NominalSize.Width, animation.NominalSize.Height),
+                        new PixelPoint(animation.NominalSize.Width / 2, animation.NominalSize.Height / 2));
                 },
                 initialUserVisible: showOverlay,
                 isQuietHours: () => QuietHoursPolicy.IsQuiet(
@@ -276,7 +286,6 @@ public static class WindowsCompanionProductionComposition
                 pet,
                 applyPreferencesAsync: async (updated, token) =>
                 {
-                    await preferencesRepository.SaveAsync(updated, token);
                     await runtime.ApplySettingsAsync(updated, currentMonitorPlacement, token);
                 },
                 applyPlacementAsync: runtime.ApplyPlacementAsync,
@@ -287,34 +296,62 @@ public static class WindowsCompanionProductionComposition
                     pause.Set(state);
                     await runtime.SetUserVisibleAsync(state.Mode == PauseMode.None, token);
                 },
-                presentPetAsync: async (petEvent, token) =>
+                presentPetAsync: (petEvent, token) =>
                 {
                     pet.Handle(petEvent);
                     if (animationEngine is not null)
                     {
-                        await animationEngine.PlayAsync(
+                        _ = StartAnimationPlayback(animationEngine.PlayAsync(
                             pet.Current,
                             new AnimationOptions
                             {
                                 ReducedMotionEnabled = runtimePreferences.Current.ReducedMotion,
                             },
-                            token);
+                            token));
                     }
+                    return Task.CompletedTask;
                 },
-                applyOutfitAsync: async (outfit, token) =>
+                applyOutfitAsync: (outfit, token) =>
                 {
-                    if (animationEngine is not null)
+                    if (animationEngine is null)
                     {
-                        await animationEngine.PlayAsync(
-                            pet.Current,
-                            new AnimationOptions
-                            {
-                                ReducedMotionEnabled = runtimePreferences.Current.ReducedMotion,
-                                OutfitKey = outfit,
-                            },
-                            token);
+                        throw new NotSupportedException("Outfits are not available in this companion runtime.");
+                    }
+                    _ = StartAnimationPlayback(animationEngine.PlayAsync(
+                        pet.Current,
+                        new AnimationOptions
+                        {
+                            ReducedMotionEnabled = runtimePreferences.Current.ReducedMotion,
+                            OutfitKey = outfit,
+                        }, token));
+                    return Task.CompletedTask;
+                },
+                setGlobalShortcutAsync: runtime.SetGlobalShortcutAsync,
+                deleteRemoteDataAsync: async token =>
+                {
+                    var result = await services.GetRequiredService<IPairingService>()
+                        .DeleteRemoteDeviceWithResultAsync(cancellationToken: token);
+                    if (!result.Completed)
+                    {
+                        throw new NotSupportedException(result.ErrorMessage ?? "Remote-device deletion is unavailable.");
                     }
                 });
+            var overlayRouter = new OverlayCommandRouter(
+                featureContext,
+                (destination, token) =>
+                {
+                    token.ThrowIfCancellationRequested();
+                    if (actions.NavigateSettingsDestination is not null)
+                    {
+                        actions.NavigateSettingsDestination(destination);
+                    }
+                    else
+                    {
+                        actions.OpenSettings(startupSettings);
+                    }
+                    return Task.CompletedTask;
+                });
+            actionSurface.Bind(overlayRouter);
             actions.ConfigureSettings?.Invoke(new CompanionSettingsContext(
                 startupSettings,
                 startup,
@@ -332,6 +369,8 @@ public static class WindowsCompanionProductionComposition
                 runtime.SetUserVisibleAsync)
             {
                 Features = featureContext,
+                ActionSurface = actionSurface,
+                OverlayCommands = overlayRouter,
             });
             return new ComposedPrimaryRuntime(runtime, animationEngine!, presenter, startup, services);
         }

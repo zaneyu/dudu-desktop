@@ -20,7 +20,7 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
     public AppearanceViewModel(CompanionFeatureContext context)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
-        var preferences = context.InitialPreferences;
+        var preferences = context.CurrentPreferences;
         _theme = preferences.Theme;
         _reducedMotion = preferences.ReducedMotion;
         _alwaysOnTop = preferences.AlwaysOnTop;
@@ -39,6 +39,11 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
     public IAsyncRelayCommand SaveShortcutCommand { get; }
     public ObservableCollection<string> OutfitOptions { get; } = ["Automatic", "Base"];
     public ObservableCollection<string> MonitorOptions { get; } = [];
+    // Preferences has no outfit/seasonal fields yet. Slice 3 must disable
+    // persistent controls rather than presenting a saved value that vanishes.
+    public bool CanPersistOutfit => false;
+    public bool CanConfigureSeasonalMode => false;
+    public string OutfitAvailabilityMessage => "Outfit choices apply for this session only.";
 
     public AppTheme Theme { get => _theme; set => SetProperty(ref _theme, value); }
     public bool ReducedMotion { get => _reducedMotion; set => SetProperty(ref _reducedMotion, value); }
@@ -64,16 +69,13 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
     public Task SaveAsync(CancellationToken cancellationToken = default) =>
         RunAsync(async () =>
         {
-            var current = _context.InitialPreferences;
-            var updated = current with
+            await _context.UpdatePreferencesAsync(current => current with
             {
                 Theme = Theme,
                 ReducedMotion = ReducedMotion,
                 AlwaysOnTop = AlwaysOnTop,
                 HidePetDuringFullscreen = HideDuringFullscreen,
-            };
-            await _context.Preferences.SaveAsync(updated, cancellationToken);
-            await _context.ApplyPreferencesAsync(updated, cancellationToken);
+            }, cancellationToken);
         }, "Appearance saved.");
 
     public Task SavePlacementAsync(CancellationToken cancellationToken = default) =>
@@ -88,13 +90,13 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
 
     public Task ApplyOutfitAsync(CancellationToken cancellationToken = default) =>
         RunAsync(async () => await _context.ApplyOutfitAsync(
-            OutfitKey is "Automatic" ? null : OutfitKey,
-            cancellationToken), "Outfit updated.");
+            AutomaticSeasonalMode || OutfitKey is "Automatic" ? null : OutfitKey,
+            cancellationToken), "Outfit applied for this session.");
 
     public Task SaveShortcutAsync(CancellationToken cancellationToken = default) =>
         RunAsync(async () =>
         {
             if (string.IsNullOrWhiteSpace(GlobalShortcut)) throw new ArgumentException("Enter a shortcut.", nameof(GlobalShortcut));
             await _context.SetGlobalShortcutAsync(GlobalShortcut.Trim(), cancellationToken);
-        }, "Shortcut saved.");
+        }, "Shortcut active for this session.");
 }

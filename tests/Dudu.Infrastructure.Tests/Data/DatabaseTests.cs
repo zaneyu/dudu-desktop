@@ -157,6 +157,37 @@ public sealed class DatabaseTests
     }
 
     [Fact]
+    public async Task Snoozed_due_reminder_is_not_selected_until_its_persisted_snooze_expires()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var repository = new ReminderRepository(fixture.Database);
+        var reminder = new Reminder("snoozed", "Snoozed", null, true, new RecurrenceRule.Once(), "UTC",
+            QuietHoursBehavior.DeliverImmediately, MissedOccurrencePolicy.LatestOnly,
+            DateTimeOffset.Parse("2026-09-12T09:00:00Z"),
+            DateTimeOffset.Parse("2026-09-12T10:15:00Z"));
+        await repository.SaveAsync(reminder, cancellationToken);
+
+        Assert.Empty(await repository.LoadDueAsync(DateTimeOffset.Parse("2026-09-12T10:00:00Z"), cancellationToken));
+        Assert.Equal([reminder.Id], (await repository.LoadDueAsync(
+            DateTimeOffset.Parse("2026-09-12T10:15:00Z"), cancellationToken)).Select(item => item.Id));
+    }
+
+    [Fact]
+    public async Task Consuming_a_remote_envelope_marks_and_removes_it_so_refresh_cannot_resurrect_it()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var repository = new RemoteEnvelopeRepository(fixture.Database);
+        var envelope = new RemoteEnvelope("consume-me", [1, 2, 3], DateTimeOffset.Parse("2026-09-12T10:00:00Z"));
+        Assert.True(await repository.TryInsertAsync(envelope, cancellationToken));
+
+        Assert.True(await repository.TryConsumeAsync(envelope.MessageId, DateTimeOffset.Parse("2026-09-12T10:01:00Z"), cancellationToken));
+        Assert.Empty(await repository.ListPendingAsync(cancellationToken));
+        Assert.True(await repository.IsProcessedAsync(envelope.MessageId, cancellationToken));
+    }
+
+    [Fact]
     public async Task Repositories_round_trip_utc_and_optional_values()
     {
         await using var fixture = await DatabaseFixture.CreateAsync();

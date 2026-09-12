@@ -31,8 +31,8 @@ public sealed class RemindersViewModel : FeatureViewModelBase
     public RemindersViewModel(CompanionFeatureContext context)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
-        _hydrationEnabled = context.InitialPreferences.HydrationRemindersEnabled;
-        _breakEnabled = context.InitialPreferences.BreakRemindersEnabled;
+        _hydrationEnabled = context.CurrentPreferences.HydrationRemindersEnabled;
+        _breakEnabled = context.CurrentPreferences.BreakRemindersEnabled;
         RefreshCommand = new AsyncRelayCommand(() => RefreshAsync(CancellationToken.None));
         SaveCommand = new AsyncRelayCommand(() => SaveAsync(CancellationToken.None));
         CompleteCommand = new AsyncRelayCommand<Reminder>(CompleteAsync);
@@ -117,7 +117,7 @@ public sealed class RemindersViewModel : FeatureViewModelBase
             var reminder = SelectedReminder is null
                 ? new Reminder(Guid.NewGuid().ToString("N"), title, Normalize(Details), Enabled, rule,
                     TimeZoneInfo.Local.Id, QuietHoursBehavior, MissedOccurrencePolicy.LatestOnly, nextDue,
-                    QuietHours: _context.InitialPreferences.QuietHours)
+                    QuietHours: _context.CurrentPreferences.QuietHours)
                 : SelectedReminder with
                 {
                     Title = title,
@@ -126,7 +126,7 @@ public sealed class RemindersViewModel : FeatureViewModelBase
                     Rule = rule,
                     QuietHoursBehavior = QuietHoursBehavior,
                     NextDueUtc = nextDue,
-                    QuietHours = _context.InitialPreferences.QuietHours,
+                    QuietHours = _context.CurrentPreferences.QuietHours,
                 };
             await _context.ReminderWriter.SaveAsync(reminder, cancellationToken);
             Replace(reminder);
@@ -162,14 +162,22 @@ public sealed class RemindersViewModel : FeatureViewModelBase
     public Task SaveReminderPreferencesAsync(CancellationToken cancellationToken = default) =>
         RunAsync(async () =>
         {
-            var current = _context.InitialPreferences;
-            var updated = current with
+            var updated = await _context.UpdatePreferencesAsync(current => current with
             {
                 HydrationRemindersEnabled = HydrationRemindersEnabled,
                 BreakRemindersEnabled = BreakRemindersEnabled,
-            };
-            await _context.Preferences.SaveAsync(updated, cancellationToken);
-            await _context.ApplyPreferencesAsync(updated, cancellationToken);
+            }, cancellationToken);
+
+            // These stable IDs make toggle changes an upsert, not a duplicate
+            // or a stale disabled default left behind by initial hydration.
+            foreach (var reminder in LocalReminderDefaults.Create(
+                updated,
+                _context.Clock.UtcNow.ToUniversalTime(),
+                TimeZoneInfo.Local))
+            {
+                await _context.ReminderWriter.SaveAsync(reminder, cancellationToken);
+                Replace(reminder);
+            }
         }, "Reminder preferences saved.");
 
     private RecurrenceRule BuildRule() => ScheduleKind switch

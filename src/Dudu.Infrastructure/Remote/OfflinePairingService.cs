@@ -51,4 +51,18 @@ public sealed class OfflinePairingService : IPairingService
         cancellationToken.ThrowIfCancellationRequested();
         return Task.CompletedTask;
     }
+
+    public Task<PairingOperationResult> RevokeSessionsWithResultAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(PairingOperationResult.Unavailable("Pairing is unavailable while the relay is offline."));
+    }
+
+    public Task<PairingOperationResult> DeleteRemoteDeviceWithResultAsync(
+        string? deviceId = null,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(PairingOperationResult.Unavailable("Remote-device deletion is unavailable while the relay is offline."));
+    }
 }
