@@ -344,6 +344,72 @@ public sealed class DatabaseTests
     }
 
     [Fact]
+    public async Task Sidecar_staging_failure_restores_current_database()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var profiles = new ProfileRepository(fixture.Database);
+        await profiles.SaveAsync(new Profile("Current", true), TestContext.Current.CancellationToken);
+        var backup = await fixture.Backups.CreatePreMigrationBackupAsync(TestContext.Current.CancellationToken);
+        await profiles.SaveAsync(new Profile("Still current", true), TestContext.Current.CancellationToken);
+
+        var sidecarPath = fixture.Options.DatabasePath + "-shm";
+        var failingBackups = new DatabaseBackupService(
+            fixture.Options,
+            moveFile: (source, destination) =>
+            {
+                if (source == sidecarPath)
+                {
+                    throw new IOException("injected sidecar staging failure");
+                }
+
+                File.Move(source, destination);
+            },
+            beforeStaging: () => File.WriteAllBytes(sidecarPath, new byte[32 * 1024]));
+
+        var result = await failingBackups.TryRestoreAsync(backup!, TestContext.Current.CancellationToken);
+
+        Assert.False(result.Restored);
+        Assert.Equal(RestoreFailure.RestoreFailed, result.Failure);
+        Assert.Equal("Still current", (await profiles.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
+        Assert.True(File.Exists(sidecarPath));
+    }
+
+    [Fact]
+    public async Task Sidecar_cleanup_failure_does_not_report_failed_restore_or_leave_canonical_sidecar()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var profiles = new ProfileRepository(fixture.Database);
+        await profiles.SaveAsync(new Profile("Before", true), TestContext.Current.CancellationToken);
+        var backup = await fixture.Backups.CreatePreMigrationBackupAsync(TestContext.Current.CancellationToken);
+        await profiles.SaveAsync(new Profile("After", true), TestContext.Current.CancellationToken);
+
+        var sidecarPath = fixture.Options.DatabasePath + "-shm";
+        var cleanupAttempted = false;
+        var failingCleanup = new DatabaseBackupService(
+            fixture.Options,
+            moveFile: (source, destination) => File.Move(source, destination),
+            deleteFile: path =>
+            {
+                if (path.EndsWith("-shm", StringComparison.Ordinal))
+                {
+                    cleanupAttempted = true;
+                    throw new IOException("injected sidecar cleanup failure");
+                }
+
+                File.Delete(path);
+            },
+            beforeStaging: () => File.WriteAllBytes(sidecarPath, new byte[32 * 1024]));
+
+        var result = await failingCleanup.TryRestoreAsync(backup!, TestContext.Current.CancellationToken);
+
+        Assert.True(result.Restored);
+        Assert.Equal(RestoreFailure.None, result.Failure);
+        Assert.True(cleanupAttempted);
+        Assert.False(File.Exists(sidecarPath));
+        Assert.Equal("Before", (await profiles.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
+    }
+
+    [Fact]
     public async Task Public_connection_and_supplied_migration_paths_configure_pragmas()
     {
         await using var fixture = await DatabaseFixture.CreateAsync();

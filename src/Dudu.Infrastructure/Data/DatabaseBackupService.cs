@@ -20,7 +20,9 @@ public sealed class DatabaseBackupService
 {
     private readonly DatabaseOptions _options;
     private readonly Database _database;
-    private readonly Action<string, string> _replaceDatabase;
+    private readonly Action<string, string> _moveFile;
+    private readonly Action<string> _deleteFile;
+    private readonly Action? _beforeStaging;
 
     public DatabaseBackupService(DatabaseOptions options)
         : this(options, null)
@@ -29,12 +31,16 @@ public sealed class DatabaseBackupService
 
     public DatabaseBackupService(
         DatabaseOptions options,
-        Action<string, string>? replaceDatabase)
+        Action<string, string>? moveFile,
+        Action<string>? deleteFile = null,
+        Action? beforeStaging = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _database = new Database(_options);
-        _replaceDatabase = replaceDatabase ?? ((source, destination) =>
+        _moveFile = moveFile ?? ((source, destination) =>
             File.Move(source, destination, overwrite: true));
+        _deleteFile = deleteFile ?? File.Delete;
+        _beforeStaging = beforeStaging;
     }
 
     public DatabaseBackupService(string databasePath, string? backupDirectory = null)
@@ -171,18 +177,57 @@ public sealed class DatabaseBackupService
                 ?? throw new InvalidOperationException("The database path has no directory."));
             await CheckpointCurrentDatabaseAsync(cancellationToken);
             var temporaryPath = _options.DatabasePath + ".restore-" + Guid.NewGuid().ToString("N");
+            var stagedMainPath = _options.DatabasePath + ".restore-old-" + Guid.NewGuid().ToString("N");
+            var stagedWalPath = stagedMainPath + "-wal";
+            var stagedShmPath = stagedMainPath + "-shm";
+            var stagedFiles = new List<(string CanonicalPath, string StagedPath)>();
+            var installAttempted = false;
             try
             {
+                _beforeStaging?.Invoke();
                 File.Copy(backupPath, temporaryPath, overwrite: false);
-                _replaceDatabase(temporaryPath, _options.DatabasePath);
-                DeleteSidecars();
+                StageFile(_options.DatabasePath, stagedMainPath, stagedFiles);
+                StageFile(_options.DatabasePath + "-wal", stagedWalPath, stagedFiles);
+                StageFile(_options.DatabasePath + "-shm", stagedShmPath, stagedFiles);
+
+                installAttempted = true;
+                _moveFile(temporaryPath, _options.DatabasePath);
+                CleanupStagedFiles(stagedFiles);
                 return new RestoreResult(true, RestoreFailure.None, backupPath);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                Exception resultException = exception;
+                try
+                {
+                    if (installAttempted && File.Exists(_options.DatabasePath))
+                    {
+                        File.Move(
+                            _options.DatabasePath,
+                            _options.DatabasePath + ".restore-failed-" + Guid.NewGuid().ToString("N"));
+                    }
+
+                    foreach (var (_, stagedPath) in stagedFiles.AsEnumerable().Reverse())
+                    {
+                        if (File.Exists(stagedPath))
+                        {
+                            var canonicalPath = stagedFiles.First(item => item.StagedPath == stagedPath).CanonicalPath;
+                            File.Move(stagedPath, canonicalPath);
+                        }
+                    }
+                }
+                catch (Exception rollbackException) when (rollbackException is IOException or UnauthorizedAccessException)
+                {
+                    resultException = new AggregateException(exception, rollbackException);
+                }
+
+                return new RestoreResult(false, RestoreFailure.RestoreFailed, backupPath, resultException);
             }
             finally
             {
                 if (File.Exists(temporaryPath))
                 {
-                    File.Delete(temporaryPath);
+                    TryDelete(temporaryPath);
                 }
             }
         }
@@ -214,12 +259,41 @@ public sealed class DatabaseBackupService
         _options.BackupDirectory,
         $"{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}.db");
 
-    private void DeleteSidecars()
+    private void StageFile(
+        string canonicalPath,
+        string stagedPath,
+        ICollection<(string CanonicalPath, string StagedPath)> stagedFiles)
     {
-        foreach (var suffix in new[] { "-wal", "-shm" })
+        if (!File.Exists(canonicalPath))
         {
-            var path = _options.DatabasePath + suffix;
-            if (File.Exists(path)) File.Delete(path);
+            return;
+        }
+
+        stagedFiles.Add((canonicalPath, stagedPath));
+        _moveFile(canonicalPath, stagedPath);
+    }
+
+    private void CleanupStagedFiles(
+        IEnumerable<(string CanonicalPath, string StagedPath)> stagedFiles)
+    {
+        foreach (var (_, stagedPath) in stagedFiles)
+        {
+            TryDelete(stagedPath);
+        }
+    }
+
+    private void TryDelete(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                _deleteFile(path);
+            }
+        }
+        catch (Exception)
+        {
+            // Cleanup is intentionally best effort after the new database is canonical.
         }
     }
 
