@@ -1,4 +1,5 @@
 using Dudu.App.System;
+using Dudu.App.Hosting;
 using Xunit;
 
 namespace Dudu.App.Tests.System;
@@ -46,5 +47,16 @@ public sealed class PausePolicyTests
         Assert.Equal(now.Date.AddDays(1), localResume.Date);
         Assert.Equal(new TimeOnly(7, 0), TimeOnly.FromDateTime(localResume.DateTime));
         Assert.False(PausePolicy.IsSuppressed(state, state.ExpiresAtUtc.Value, fullscreen: false));
+    }
+
+    [Fact]
+    public void Pause_state_store_clears_expired_suppression_when_read()
+    {
+        var now = new DateTimeOffset(2026, 9, 11, 10, 0, 0, TimeSpan.Zero);
+        var store = new PauseStateStore();
+        store.Set(PausePolicy.ForOneHour(now.AddHours(-2)));
+
+        Assert.Equal(PauseMode.None, store.GetEffective(now).Mode);
+        Assert.Equal(PauseMode.None, store.Current.Mode);
     }
 }

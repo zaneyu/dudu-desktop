@@ -92,6 +92,54 @@ public sealed class AppLifecycleCoordinatorTests
         Assert.Equal(0, overlay.ShowCount);
     }
 
+    [Fact]
+    public async Task Fullscreen_end_does_not_show_a_pet_that_was_hidden_before_fullscreen()
+    {
+        var overlay = new FakeOverlay();
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)));
+
+        await lifecycle.OnUserShowOrHideAsync(TestContext.Current.CancellationToken);
+        await lifecycle.OnFullscreenChangedAsync(true, TestContext.Current.CancellationToken);
+        await lifecycle.OnFullscreenChangedAsync(false, TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, overlay.HideCount);
+        Assert.Equal(1, overlay.RestoreCount);
+        Assert.Equal(0, overlay.ShowCount);
+    }
+
+    [Fact]
+    public async Task Open_home_callback_is_outside_lifecycle_gate()
+    {
+        AppLifecycleCoordinator? lifecycle = null;
+        var callbackCompleted = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            new FakeOverlay(),
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            openHome: () =>
+            {
+                lifecycle!.OnUserShowOrHideAsync().GetAwaiter().GetResult();
+                callbackCompleted.TrySetResult(true);
+            });
+        await using (lifecycle)
+        {
+            await lifecycle.OnHotkeyAsync(TestContext.Current.CancellationToken);
+            await callbackCompleted.Task.WaitAsync(TestContext.Current.CancellationToken);
+        }
+    }
+
     private sealed class FakeHost : IAppHostLifecycle
     {
         public Task ResumeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;

@@ -1,4 +1,7 @@
 using Dudu.App.System;
+using Dudu.App.Hosting;
+using Dudu.Core.Abstractions;
+using Dudu.Core.Models;
 using Xunit;
 
 namespace Dudu.App.Tests.System;
@@ -40,6 +43,28 @@ public sealed class StartupRegistrationServiceTests
         Assert.False(service.IsEnabled);
     }
 
+    [Fact]
+    public async Task Settings_service_persists_startup_setting_after_registration()
+    {
+        var writer = new FakeWriter();
+        await using var startup = new StartupRegistrationService(
+            "/opt/Dudu.exe",
+            "/tmp/startup-" + Guid.NewGuid().ToString("N"),
+            writer);
+        var repository = new FakePreferencesRepository();
+        var preferences = new Preferences(
+            AppTheme.System,
+            new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+            false, 3, false, false, true, TimeSpan.FromMinutes(15));
+        var settings = new StartupSettingsService(startup, repository, preferences);
+
+        await settings.SetLaunchAtSignInAsync(true, TestContext.Current.CancellationToken);
+
+        Assert.True(settings.Current.LaunchAtSignIn);
+        Assert.True(repository.LastSaved!.LaunchAtSignIn);
+        Assert.Single(writer.Writes);
+    }
+
     private sealed class FakeWriter : IStartupLinkWriter
     {
         public List<(string Path, string Target, string Arguments)> Writes { get; } = [];
@@ -56,6 +81,19 @@ public sealed class StartupRegistrationServiceTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             Deletes.Add(shortcutPath);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FakePreferencesRepository : IPreferencesRepository
+    {
+        public Preferences? LastSaved { get; private set; }
+        public Task<Preferences?> GetAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<Preferences?>(LastSaved);
+
+        public Task SaveAsync(Preferences preferences, CancellationToken cancellationToken)
+        {
+            LastSaved = preferences;
             return Task.CompletedTask;
         }
     }

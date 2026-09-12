@@ -49,7 +49,8 @@ public sealed class TrayIconService : IDisposable
         string tooltip = "Dudu")
     {
         _native = native ?? new WindowsTrayNativeApi();
-        _commandHandler = commandHandler ?? (_ => { });
+        _commandHandler = commandHandler
+            ?? throw new ArgumentNullException(nameof(commandHandler));
         _tooltip = tooltip;
     }
 
@@ -86,16 +87,17 @@ public sealed class TrayIconService : IDisposable
     public bool HandleWindowMessage(uint message, nint wParam, nint lParam)
     {
         TrayCommand? command = null;
+        var recreate = false;
+        nint ownerWindow = 0;
+        IReadOnlyList<TrayCommand>? commands = null;
         lock (_gate)
         {
             if (_disposed) return false;
             if (message == TaskbarCreatedFallbackMessage || message == TaskbarCreatedMessage)
             {
-                RecreateOnOwnerThread();
-                return true;
+                recreate = true;
             }
-
-            if (message == 0x0111 /* WM_COMMAND */)
+            else if (message == 0x0111 /* WM_COMMAND */)
             {
                 var commandIndex = (int)(unchecked((nuint)wParam) & 0xffff);
                 if (commandIndex is > 0 and <= 7)
@@ -105,12 +107,26 @@ public sealed class TrayIconService : IDisposable
                 else return false;
             }
             else if (message != CallbackMessage) return false;
-            var notification = unchecked((uint)lParam);
-            if (message == CallbackMessage && notification == 0x0205 /* WM_RBUTTONUP */)
+            if (message == CallbackMessage
+                && unchecked((uint)lParam) == 0x0205 /* WM_RBUTTONUP */)
             {
-                command = _native.TrackPopupMenu(_ownerWindow, Commands);
+                ownerWindow = _ownerWindow;
+                commands = Commands.ToArray();
             }
             else if (message == CallbackMessage) return false;
+        }
+
+        if (recreate)
+        {
+            Recreate();
+            return true;
+        }
+
+        if (commands is not null)
+        {
+            // TrackPopupMenuEx runs a nested native message loop. Never hold
+            // the service lock while Windows or the command callback runs.
+            command = _native.TrackPopupMenu(ownerWindow, commands);
         }
 
         if (command is { } selected)

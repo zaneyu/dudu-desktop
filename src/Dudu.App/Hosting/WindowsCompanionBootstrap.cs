@@ -24,8 +24,11 @@ public sealed class WindowsCompanionBootstrap : IAsyncDisposable
 {
     private readonly SingleInstanceCoordinator _singleInstance;
     private readonly Func<CancellationToken, Task<IPrimaryAppRuntime>> _runtimeFactory;
+    private readonly object _activationGate = new();
+    private readonly Queue<AppActivation> _pendingActivations = new();
     private IPrimaryAppRuntime? _runtime;
     private bool _started;
+    private bool _runtimeReady;
     private bool _disposed;
 
     public WindowsCompanionBootstrap(
@@ -53,9 +56,37 @@ public sealed class WindowsCompanionBootstrap : IAsyncDisposable
 
         try
         {
-            _runtime = await _runtimeFactory(cancellationToken);
-            await _runtime.StartAsync(cancellationToken);
-            _started = true;
+            var runtime = await _runtimeFactory(cancellationToken);
+            lock (_activationGate)
+            {
+                _runtime = runtime ?? throw new InvalidOperationException(
+                    "The primary runtime factory returned null.");
+            }
+
+            await runtime.StartAsync(cancellationToken);
+            AppActivation[] pending;
+            lock (_activationGate)
+            {
+                _runtimeReady = true;
+                pending = _pendingActivations.ToArray();
+                _pendingActivations.Clear();
+                _started = true;
+            }
+
+            foreach (var activation in pending)
+            {
+                try
+                {
+                    await runtime.ActivateAsync(activation, cancellationToken);
+                }
+                catch (Exception exception)
+                {
+                    global::System.Diagnostics.Trace.TraceError(
+                        "Queued Dudu activation failed: {0}",
+                        exception);
+                }
+            }
+
             return true;
         }
         catch
@@ -64,6 +95,13 @@ public sealed class WindowsCompanionBootstrap : IAsyncDisposable
             {
                 await _runtime.DisposeAsync();
                 _runtime = null;
+            }
+
+            lock (_activationGate)
+            {
+                _runtime = null;
+                _runtimeReady = false;
+                _pendingActivations.Clear();
             }
 
             await _singleInstance.DisposeAsync();
@@ -81,15 +119,30 @@ public sealed class WindowsCompanionBootstrap : IAsyncDisposable
             _runtime = null;
         }
 
+        lock (_activationGate)
+        {
+            _runtimeReady = false;
+            _pendingActivations.Clear();
+        }
+
         await _singleInstance.DisposeAsync();
     }
 
     private Task RouteActivationAsync(AppActivation activation)
     {
-        var runtime = _runtime;
-        return runtime is null
-            ? Task.CompletedTask
-            : runtime.ActivateAsync(activation);
+        IPrimaryAppRuntime? runtime;
+        lock (_activationGate)
+        {
+            if (!_runtimeReady || _runtime is null)
+            {
+                _pendingActivations.Enqueue(activation);
+                return Task.CompletedTask;
+            }
+
+            runtime = _runtime;
+        }
+
+        return runtime.ActivateAsync(activation);
     }
 }
 
@@ -327,12 +380,23 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         Func<DateTimeOffset>? clock = null,
         Action? openHome = null,
         Action<TrayCommand>? trayCommandHandler = null,
+        Func<AppLifecycleCoordinator, Action<TrayCommand>>? trayCommandHandlerFactory = null,
+        Func<OverlayWindowHost, Task>? initializeOverlay = null,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(openHome);
+        if (trayCommandHandler is null && trayCommandHandlerFactory is null)
+        {
+            throw new ArgumentException(
+                "A tray command handler or handler factory is required.",
+                nameof(trayCommandHandler));
+        }
         var events = new WindowsCompanionEventSource();
+        OverlayWindowHost? overlay = null;
+        AppLifecycleCoordinator? lifecycle = null;
         try
         {
-            var overlay = await OverlayWindowHost.CreateAsync(
+            overlay = await OverlayWindowHost.CreateAsync(
                 presenter,
                 placement,
                 nominalSize,
@@ -342,9 +406,12 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                     _ = events.HandleWindowMessage(message, wParam, lParam);
                 },
                 cancellationToken: cancellationToken);
-            var tray = new TrayIconService(commandHandler: trayCommandHandler);
+            var handler = trayCommandHandler
+                ?? (command => trayCommandHandlerFactory!(lifecycle
+                    ?? throw new InvalidOperationException("Lifecycle is not composed."))(command));
+            var tray = new TrayIconService(commandHandler: handler);
             var hotkey = new GlobalHotkeyService();
-            var lifecycle = new AppLifecycleCoordinator(
+            lifecycle = new AppLifecycleCoordinator(
                 host,
                 new OverlayLifecycleAdapter(overlay),
                 pet,
@@ -354,11 +421,25 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                 isFullscreen,
                 clock,
                 tray,
-                openHome);
-            return new WindowsCompanionRuntime(host, overlay, lifecycle, tray, hotkey, events);
+                openHome,
+                initialUserVisible: true);
+            if (initializeOverlay is not null)
+            {
+                await initializeOverlay(overlay);
+            }
+            return new WindowsCompanionRuntime(host, overlay, lifecycle!, tray, hotkey, events);
         }
         catch
         {
+            if (lifecycle is not null)
+            {
+                await lifecycle.DisposeAsync();
+            }
+            else if (overlay is not null)
+            {
+                await overlay.DisposeAsync();
+            }
+
             await events.DisposeAsync();
             throw;
         }
@@ -383,7 +464,8 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         catch
         {
             _hotkey.Triggered -= OnHotkeyTriggered;
-            await _host.StopAsync();
+            await _events.DisposeAsync();
+            await _lifecycle.DisposeAsync();
             throw;
         }
     }

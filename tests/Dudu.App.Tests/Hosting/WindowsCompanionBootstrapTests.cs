@@ -38,6 +38,39 @@ public sealed class WindowsCompanionBootstrapTests
         Assert.Equal(1, primaryRuntime.Starts);
     }
 
+    [Fact]
+    public async Task Fast_secondary_activation_is_queued_until_runtime_is_ready_once()
+    {
+        var shared = new SharedTransportState();
+        var factoryEntered = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFactory = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var runtime = new FakeRuntime();
+        await using var primary = new WindowsCompanionBootstrap(
+            async cancellationToken =>
+            {
+                factoryEntered.TrySetResult(true);
+                await releaseFactory.Task.WaitAsync(cancellationToken);
+                return runtime;
+            },
+            new FakeTransport(shared));
+        await using var secondary = new WindowsCompanionBootstrap(
+            _ => throw new Xunit.Sdk.XunitException("Secondary created a runtime."),
+            new FakeTransport(shared));
+
+        var primaryStart = primary.StartAsync(TestContext.Current.CancellationToken);
+        await factoryEntered.Task.WaitAsync(TestContext.Current.CancellationToken);
+
+        Assert.False(await secondary.StartAsync(TestContext.Current.CancellationToken));
+        Assert.False(runtime.Activation.Task.IsCompleted);
+
+        releaseFactory.TrySetResult(true);
+        Assert.True(await primaryStart);
+        await runtime.Activation.Task.WaitAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(1, runtime.Activations);
+    }
+
     private sealed class FakeRuntime : IPrimaryAppRuntime
     {
         public TaskCompletionSource<bool> Activation { get; } = new(
