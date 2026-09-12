@@ -60,7 +60,6 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Thread _ownerThread;
     private readonly CancellationTokenSource _startupCancellation = new();
-    private readonly object _stateGate = new();
     private readonly CancellationToken _creationCancellation;
     private readonly OverlayOwnerMessageRouter _ownerMessageRouter;
     private CancellationTokenRegistration _creationRegistration;
@@ -71,7 +70,6 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private int _dragOriginX;
     private int _dragOriginY;
     private PixelRect _dragStartBounds;
-    private bool _disposeRequested;
     private bool _shutdownIssued;
     private int _shutdownRequestPosted;
     private int _ownerThreadId;
@@ -266,11 +264,6 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
 
     private void CancelStartup()
     {
-        lock (_stateGate)
-        {
-            _disposeRequested = true;
-        }
-
         _ownerActions.Close(new ObjectDisposedException(nameof(OverlayWindowHost)));
 
         try

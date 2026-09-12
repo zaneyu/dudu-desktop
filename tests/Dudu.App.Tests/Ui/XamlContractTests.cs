@@ -11,11 +11,14 @@ public sealed class XamlContractTests
         var onboarding = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "OnboardingPage.xaml"));
         var controls = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Themes", "Controls.xaml"));
         var colors = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Themes", "Colors.xaml"));
+        var stubs = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "XamlCompileStubs.cs"));
 
         Assert.Contains("SmallChange=\"0.1\"", onboarding);
         Assert.DoesNotContain("StepFrequency=", onboarding);
         Assert.Contains("Foreground=\"{ThemeResource PrimaryButtonForegroundBrush}\"", controls);
         Assert.Contains("SystemColorHighlightTextColor", colors);
+        Assert.Contains("private StackPanel StartupRecoveryPanel", stubs);
+        Assert.Contains("private TextBlock StartupRecoveryMessage", stubs);
     }
 
     private static string FindRepositoryRoot()

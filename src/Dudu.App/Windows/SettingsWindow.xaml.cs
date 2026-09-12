@@ -61,7 +61,7 @@ public sealed partial class SettingsWindow : UserControl
                 ContentFrame.Content = new OnboardingPage(
                     _onboarding,
                     OnboardingCompleted,
-                    context.SetUserVisibleAsync);
+                    _context.SetUserVisibleAsync);
             }
         }
         catch (Exception exception)

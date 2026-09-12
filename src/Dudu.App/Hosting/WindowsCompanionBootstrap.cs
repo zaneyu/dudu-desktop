@@ -422,6 +422,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
     private readonly TrayIconService _tray;
     private readonly GlobalHotkeyService _hotkey;
     private readonly ICompanionEventSource _events;
+    private readonly bool _initialUserVisible;
     private readonly Func<Preferences, CancellationToken, Task>? _onPreferencesChanged;
     private bool _started;
 
@@ -432,6 +433,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         TrayIconService tray,
         GlobalHotkeyService hotkey,
         ICompanionEventSource events,
+        bool initialUserVisible,
         Func<Preferences, CancellationToken, Task>? onPreferencesChanged)
     {
         _host = host ?? throw new ArgumentNullException(nameof(host));
@@ -440,6 +442,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         _tray = tray ?? throw new ArgumentNullException(nameof(tray));
         _hotkey = hotkey ?? throw new ArgumentNullException(nameof(hotkey));
         _events = events ?? throw new ArgumentNullException(nameof(events));
+        _initialUserVisible = initialUserVisible;
         _onPreferencesChanged = onPreferencesChanged;
     }
 
@@ -469,7 +472,9 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                 "A tray command handler or handler factory is required.",
                 nameof(trayCommandHandler));
         }
-        var events = new WindowsCompanionEventSource();
+        var fullscreen = new FullscreenDetector();
+        isFullscreen ??= fullscreen.IsForegroundFullscreen;
+        var events = new WindowsCompanionEventSource(fullscreen);
         OverlayWindowHost? overlay = null;
         AppLifecycleCoordinator? lifecycle = null;
         try
@@ -512,6 +517,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                 tray,
                 hotkey,
                 events,
+                initialUserVisible,
                 onPreferencesChanged);
         }
         catch
@@ -565,9 +571,15 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
             {
                 _hotkey.AttachOwnerWindow(_overlay.Handle);
                 _hotkey.SetGesture(HotkeyGesture.Default);
-                _tray.Attach(_overlay.Handle, _overlay.InvokeOnOwnerAsync);
+                _tray.Attach(
+                    _overlay.Handle,
+                    action => _overlay.InvokeOnOwnerAsync(action));
             });
-            await _events.StartAsync(_overlay.Handle, this, cancellationToken);
+            await StartupVisibilityGate.ApplyAsync(
+                token => _events.StartAsync(_overlay.Handle, this, token),
+                _lifecycle.SetUserVisibleAsync,
+                _initialUserVisible,
+                cancellationToken);
             _started = true;
         }
         catch
@@ -642,5 +654,21 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
     {
         try { await task; }
         catch { }
+    }
+}
+
+internal static class StartupVisibilityGate
+{
+    public static async Task ApplyAsync(
+        Func<CancellationToken, Task> sampleFullscreenAsync,
+        Func<bool, CancellationToken, Task> setUserVisibleAsync,
+        bool desiredVisible,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(sampleFullscreenAsync);
+        ArgumentNullException.ThrowIfNull(setUserVisibleAsync);
+
+        await sampleFullscreenAsync(cancellationToken);
+        await setUserVisibleAsync(desiredVisible, cancellationToken);
     }
 }

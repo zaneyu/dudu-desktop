@@ -60,6 +60,8 @@ namespace Dudu.App.Pages
         private Slider PlacementScaleSlider = null!;
         private CheckBox HideFullscreenBox = null!;
         private CheckBox LaunchAtSignInBox = null!;
+        private StackPanel StartupRecoveryPanel = null!;
+        private TextBlock StartupRecoveryMessage = null!;
         private TextBlock PairingStatus = null!;
         private Button PairingCheckButton = null!;
         private Button SkipPairingButton = null!;
@@ -91,6 +93,8 @@ namespace Dudu.App.Pages
             PlacementScaleSlider = new Slider { Minimum = 0.5, Maximum = 2, Value = 1 };
             HideFullscreenBox = new CheckBox();
             LaunchAtSignInBox = new CheckBox();
+            StartupRecoveryPanel = new StackPanel();
+            StartupRecoveryMessage = new TextBlock();
             PairingStatus = new TextBlock();
             PairingCheckButton = new Button();
             SkipPairingButton = new Button();

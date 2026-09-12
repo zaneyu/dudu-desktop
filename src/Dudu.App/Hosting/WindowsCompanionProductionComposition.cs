@@ -216,10 +216,6 @@ public static class WindowsCompanionProductionComposition
                                 ? AnimationOptions.ReducedMotion
                                 : AnimationOptions.Default,
                             cancellationToken));
-                    if (showOverlay)
-                    {
-                        overlay.Show();
-                    }
                 },
                 initialUserVisible: showOverlay,
                 isQuietHours: () => QuietHoursPolicy.IsQuiet(
