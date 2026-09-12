@@ -1,0 +1,47 @@
+<Page
+    x:Class="Dudu.App.Pages.PrivacyDataPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:viewModels="using:Dudu.App.ViewModels"
+    Background="{ThemeResource WindowSurfaceBrush}">
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+        <StackPanel MaxWidth="880" Padding="32" Spacing="24">
+            <StackPanel Spacing="8">
+                <TextBlock Text="Privacy and Data" Style="{StaticResource PageTitleStyle}" />
+                <TextBlock Text="Understand what Dudu stores and choose how to keep or remove it." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+            </StackPanel>
+
+            <StackPanel Spacing="12">
+                <TextBlock Text="Stored on this PC" Style="{StaticResource SectionHeadingStyle}" />
+                <ItemsControl ItemsSource="{x:Bind ViewModel.StoredFields, Mode=OneWay}" AutomationProperties.AutomationId="PrivacyStoredFields">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="viewModels:StoredFieldDescription">
+                            <StackPanel Padding="0,8" Spacing="2">
+                                <TextBlock Text="{x:Bind Name}" FontWeight="SemiBold" />
+                                <TextBlock Text="{x:Bind Description}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+
+            <StackPanel Spacing="12">
+                <TextBlock Text="Your data" Style="{StaticResource SectionHeadingStyle}" />
+                <TextBlock Text="Backups and restores stay on this PC. Remote deletion requires an available pairing relay." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Content="Create backup" Command="{x:Bind ViewModel.BackupCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="PrivacyBackup" />
+                    <Button Content="Restore backup" Command="{x:Bind ViewModel.RestoreCommand}" AutomationProperties.AutomationId="PrivacyRestore" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Content="Delete local data" Command="{x:Bind ViewModel.DeleteLocalDataCommand}" AutomationProperties.AutomationId="PrivacyDeleteLocal" />
+                    <Button Content="Delete remote device data" Command="{x:Bind ViewModel.DeleteRemoteDataCommand}" AutomationProperties.AutomationId="PrivacyDeleteRemote" />
+                </StackPanel>
+            </StackPanel>
+
+            <StackPanel Spacing="4" AutomationProperties.LiveSetting="Polite">
+                <TextBlock Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" Foreground="{ThemeResource SuccessBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="PrivacyStatusMessage" />
+                <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" Foreground="{ThemeResource ErrorBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="PrivacyErrorMessage" />
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

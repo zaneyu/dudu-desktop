@@ -90,8 +90,13 @@ public sealed class OverlayCommandRouter
 
     private async Task ExecuteStartFocusAsync(CancellationToken cancellationToken)
     {
-        var vm = new TasksFocusViewModel(_context);
-        await vm.StartFocusOrThrowAsync(cancellationToken);
+        var snapshot = await _context.FocusService.StartAsync(
+            taskId: null,
+            duration: TimeSpan.FromMinutes(25),
+            cancellationToken: cancellationToken);
+        await _context.PresentPetAsync(
+            new PetEvent.FocusStarted(snapshot.Id.ToString("D")),
+            cancellationToken);
         await NavigateAsync("tasks", cancellationToken);
     }
 

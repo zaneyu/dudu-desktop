@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Runtime.InteropServices;
+using Dudu.App.Overlay;
 using Dudu.Core.Assets;
 using SkiaSharp;
 
@@ -22,6 +23,7 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
     private SKPaint? _paint;
     private byte[]? _reusableBuffer;
     private AssetPack? _pack;
+    private OverlayActionSurfaceController? _actionSurface;
     private long _decodedBitmapBytes;
     private int _disposeCount;
     private bool _disposed;
@@ -60,6 +62,16 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
     }
 
     public int DisposeCount => Volatile.Read(ref _disposeCount);
+
+    public void SetActionSurface(OverlayActionSurfaceController actionSurface)
+    {
+        ArgumentNullException.ThrowIfNull(actionSurface);
+        lock (_gate)
+        {
+            ThrowIfDisposed();
+            _actionSurface = actionSurface;
+        }
+    }
 
     public void SetPack(AssetPack pack)
     {
@@ -109,6 +121,10 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
             _paint!.Color = new SKColor(255, 255, 255, (byte)Math.Round(opacity * byte.MaxValue));
             var destination = new SKRect(0, 0, dimensions.Width, dimensions.Height);
             _canvas.DrawBitmap(bitmap, destination, SamplingOptions, _paint);
+            if (_actionSurface is not null)
+            {
+                OverlaySurfaceRenderer.Draw(_canvas, _actionSurface.CreateRenderSnapshot());
+            }
 
             var stride = output.RowBytes;
             var byteCount = checked(stride * dimensions.Height);

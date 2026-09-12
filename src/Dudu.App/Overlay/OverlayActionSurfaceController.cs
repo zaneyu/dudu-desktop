@@ -22,6 +22,24 @@ public sealed class OverlayActionSurfaceController
     public string? ErrorMessage { get; private set; }
     public event EventHandler? Changed;
 
+    public OverlaySurfaceSnapshot CreateRenderSnapshot()
+    {
+        var actions = Arrangement?.PrimaryActions
+            .Select(item => new OverlaySurfaceAction(ActionBubbleLayout.Label(item.Action), item.HitRegion))
+            .ToArray() ?? [];
+        var comfortActions = ComfortArrangement?.Actions
+            .Select(item => new OverlaySurfaceAction(ActionBubbleLayout.ComfortLabel(item.Action), item.HitRegion))
+            .ToArray() ?? [];
+        var panel = _router?.ComfortPanel ?? ComfortPanelState.Closed;
+        return new OverlaySurfaceSnapshot(
+            Kind,
+            Kind == OverlayActionSurfaceKind.Primary ? Arrangement?.Bounds : ComfortArrangement?.Bounds,
+            Kind == OverlayActionSurfaceKind.Primary ? actions : comfortActions,
+            panel,
+            _router?.IsReducedMotion ?? false,
+            ErrorMessage);
+    }
+
     public void Bind(OverlayCommandRouter router)
     {
         if (_router is not null) _router.ComfortPanelChanged -= OnComfortPanelChanged;
@@ -147,3 +165,13 @@ internal static class OverlayActionSurfaceObserver
         catch (Exception exception) { report(exception); }
     }
 }
+
+public sealed record OverlaySurfaceSnapshot(
+    OverlayActionSurfaceKind Kind,
+    PixelRect? Bounds,
+    IReadOnlyList<OverlaySurfaceAction> Actions,
+    ComfortPanelState ComfortPanel,
+    bool IsReducedMotion,
+    string? ErrorMessage);
+
+public sealed record OverlaySurfaceAction(string Label, PixelRect HitRegion);

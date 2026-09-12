@@ -1,0 +1,53 @@
+<Page
+    x:Class="Dudu.App.Pages.LoveNotesPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:models="using:Dudu.Core.Models"
+    Background="{ThemeResource WindowSurfaceBrush}">
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+        <StackPanel MaxWidth="880" Padding="32" Spacing="24">
+            <StackPanel Spacing="8">
+                <TextBlock Text="Love Notes" Style="{StaticResource PageTitleStyle}" />
+                <TextBlock Text="Keep local notes here, or open an encrypted note when one arrives." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+            </StackPanel>
+
+            <StackPanel Spacing="12">
+                <TextBlock Text="Local note jar" Style="{StaticResource SectionHeadingStyle}" />
+                <TextBlock Text="{x:Bind ViewModel.DailyLocalNoteLimitText, Mode=OneWay}" AutomationProperties.AutomationId="LoveNotesDailyLimit" />
+                <ListView ItemsSource="{x:Bind ViewModel.LocalNotes, Mode=OneWay}" SelectionChanged="LocalNoteList_SelectionChanged" MaxHeight="220" AutomationProperties.AutomationId="LoveNotesLocalList">
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="models:LocalLoveNote">
+                            <TextBlock Text="{x:Bind Text}" TextWrapping="Wrap" Padding="4" />
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+                <TextBox Header="Note" Text="{x:Bind ViewModel.DraftText, Mode=TwoWay}" TextWrapping="Wrap" AcceptsReturn="True" AutomationProperties.AutomationId="LoveNotesDraft" />
+                <CheckBox Content="Include this note in Dudu's local choices" IsChecked="{x:Bind ViewModel.DraftEnabled, Mode=TwoWay}" AutomationProperties.AutomationId="LoveNotesDraftEnabled" />
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Content="Save note" Command="{x:Bind ViewModel.SaveLocalNoteCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="LoveNotesSave" />
+                    <Button Content="Delete selected" Command="{x:Bind ViewModel.DeleteLocalNoteCommand}" CommandParameter="{x:Bind ViewModel.SelectedNote}" AutomationProperties.AutomationId="LoveNotesDelete" />
+                    <Button Content="Let Dudu choose" Command="{x:Bind ViewModel.ShowLocalNoteCommand}" AutomationProperties.AutomationId="LoveNotesChoose" />
+                </StackPanel>
+            </StackPanel>
+
+            <StackPanel Spacing="12">
+                <TextBlock Text="Incoming notes" Style="{StaticResource SectionHeadingStyle}" />
+                <TextBlock Text="{x:Bind ViewModel.UnopenedRemoteNoteCountText, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.AutomationId="LoveNotesPendingCount" />
+                <ListView ItemsSource="{x:Bind ViewModel.PendingRemoteNotes, Mode=OneWay}" SelectionChanged="RemoteNoteList_SelectionChanged" MaxHeight="180" AutomationProperties.AutomationId="LoveNotesRemoteList">
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="models:RemoteEnvelope">
+                            <TextBlock Text="Encrypted note received" Padding="4" />
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+                <TextBox Header="Opened note" Text="{x:Bind ViewModel.OpenedRemoteNoteText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" AutomationProperties.AutomationId="LoveNotesOpened" />
+                <Button Content="Save opened note to local jar" Command="{x:Bind ViewModel.SaveOpenedNoteCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="LoveNotesSaveOpened" HorizontalAlignment="Left" />
+            </StackPanel>
+
+            <StackPanel Spacing="4" AutomationProperties.LiveSetting="Polite">
+                <TextBlock Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" Foreground="{ThemeResource SuccessBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="LoveNotesStatusMessage" />
+                <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" Foreground="{ThemeResource ErrorBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="LoveNotesErrorMessage" />
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

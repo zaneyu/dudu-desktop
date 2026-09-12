@@ -66,11 +66,19 @@ public sealed class HomeViewModel : FeatureViewModelBase
         private set => SetProperty(ref _nextReminder, value);
     }
 
+    public string NextReminderText => NextReminder is null
+        ? "No upcoming reminders."
+        : $"Next reminder: {NextReminder.Title} at {NextReminder.NextDueUtc.ToLocalTime():g}.";
+
     public FocusSnapshot? ActiveFocus
     {
         get => _activeFocus;
         private set => SetProperty(ref _activeFocus, value);
     }
+
+    public string ActiveFocusText => ActiveFocus is null
+        ? "No focus session in progress."
+        : $"Focus is {ActiveFocus.Status.ToString().ToLowerInvariant()} with {FormatDuration(ActiveFocus.Remaining)} remaining.";
 
     public Countdown? SelectedCountdown
     {
@@ -81,8 +89,15 @@ public sealed class HomeViewModel : FeatureViewModelBase
     public CheckInSummary? CheckInSummary
     {
         get => _checkInSummary;
-        private set => SetProperty(ref _checkInSummary, value);
+        private set
+        {
+            if (SetProperty(ref _checkInSummary, value)) OnPropertyChanged(nameof(CheckInSummaryText));
+        }
     }
+
+    public string CheckInSummaryText => CheckInSummary is null
+        ? "No check-ins recorded in the past seven days."
+        : $"{CheckInSummary.Recent.Count} check-in{(CheckInSummary.Recent.Count == 1 ? string.Empty : "s")} in the past seven days.";
 
     public string CountdownTitle
     {
@@ -93,7 +108,20 @@ public sealed class HomeViewModel : FeatureViewModelBase
     public DateTimeOffset? CountdownTargetUtc
     {
         get => _countdownTargetUtc;
-        set => SetProperty(ref _countdownTargetUtc, value);
+        set
+        {
+            if (SetProperty(ref _countdownTargetUtc, value?.ToUniversalTime())) OnPropertyChanged(nameof(CountdownTargetText));
+        }
+    }
+
+    public string CountdownTargetText
+    {
+        get => CountdownTargetUtc?.ToLocalTime().ToString("g") ?? string.Empty;
+        set
+        {
+            if (string.IsNullOrWhiteSpace(value)) CountdownTargetUtc = null;
+            else if (DateTimeOffset.TryParse(value, out var parsed)) CountdownTargetUtc = parsed;
+        }
     }
 
     public MoodChoice SelectedMood
@@ -128,6 +156,8 @@ public sealed class HomeViewModel : FeatureViewModelBase
             CheckInSummary = await _context.CheckInService.SummarizeAsync(7, cancellationToken);
             OnPropertyChanged(nameof(IsPaused));
             OnPropertyChanged(nameof(PauseDescription));
+            OnPropertyChanged(nameof(NextReminderText));
+            OnPropertyChanged(nameof(ActiveFocusText));
         });
     }
 
@@ -209,4 +239,10 @@ public sealed class HomeViewModel : FeatureViewModelBase
             CheckInSummary = await _context.CheckInService.SummarizeAsync(7, cancellationToken);
             CheckInNote = null;
         }, "Check-in saved on this PC.");
+
+    private static string FormatDuration(TimeSpan duration)
+    {
+        var roundedMinutes = Math.Max(0, (int)Math.Ceiling(duration.TotalMinutes));
+        return roundedMinutes == 1 ? "1 minute" : $"{roundedMinutes} minutes";
+    }
 }

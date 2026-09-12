@@ -49,9 +49,28 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
 
     public TaskItem? SelectedTask { get => _selectedTask; set => SetProperty(ref _selectedTask, value); }
     public FocusSnapshot? ActiveFocus { get => _activeFocus; private set => SetProperty(ref _activeFocus, value); }
+    public string ActiveFocusText => ActiveFocus is null
+        ? "No focus session is active."
+        : $"Focus is {ActiveFocus.Status.ToString().ToLowerInvariant()} with {FormatDuration(ActiveFocus.Remaining)} remaining.";
     public string Title { get => _title; set => SetProperty(ref _title, value); }
     public string? Notes { get => _notes; set => SetProperty(ref _notes, value); }
-    public DateTimeOffset? DueUtc { get => _dueUtc; set => SetProperty(ref _dueUtc, value?.ToUniversalTime()); }
+    public DateTimeOffset? DueUtc
+    {
+        get => _dueUtc;
+        set
+        {
+            if (SetProperty(ref _dueUtc, value?.ToUniversalTime())) OnPropertyChanged(nameof(DueText));
+        }
+    }
+    public string DueText
+    {
+        get => DueUtc?.ToLocalTime().ToString("g") ?? string.Empty;
+        set
+        {
+            if (string.IsNullOrWhiteSpace(value)) DueUtc = null;
+            else if (DateTimeOffset.TryParse(value, out var parsed)) DueUtc = parsed;
+        }
+    }
     public int SelectedDurationMinutes { get => _selectedDurationMinutes; set => SetProperty(ref _selectedDurationMinutes, value); }
     public int CustomDurationMinutes { get => _customDurationMinutes; set => SetProperty(ref _customDurationMinutes, Math.Clamp(value, 1, 240)); }
     public bool IsFocusActive => ActiveFocus is { Status: FocusStatus.Running or FocusStatus.Paused };
@@ -68,6 +87,7 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
             FocusHistory.Clear();
             foreach (var session in await _context.FocusSessions.ListHistoryAsync(cancellationToken)) FocusHistory.Add(session);
             OnPropertyChanged(nameof(IsFocusActive));
+            OnPropertyChanged(nameof(ActiveFocusText));
         });
     }
 
@@ -136,6 +156,7 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
         ActiveFocus = snapshot;
         await _context.PresentPetAsync(new PetEvent.FocusStarted(snapshot.Id.ToString("D")), cancellationToken);
         OnPropertyChanged(nameof(IsFocusActive));
+        OnPropertyChanged(nameof(ActiveFocusText));
         return snapshot;
     }
 
@@ -161,6 +182,7 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
                 "focus-end",
                 cancellationToken);
             OnPropertyChanged(nameof(IsFocusActive));
+            OnPropertyChanged(nameof(ActiveFocusText));
         }, "Focus ended.");
 
     private Task RunFocusTransitionAsync(
@@ -172,6 +194,7 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
             var focus = ActiveFocus ?? throw new InvalidOperationException("There is no active focus session.");
             ActiveFocus = await transition(focus.Id, cancellationToken);
             OnPropertyChanged(nameof(IsFocusActive));
+            OnPropertyChanged(nameof(ActiveFocusText));
         }, successMessage);
 
     private void ReplaceTask(TaskItem task)
@@ -182,4 +205,10 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
     }
 
     private static string? Normalize(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static string FormatDuration(TimeSpan duration)
+    {
+        var roundedMinutes = Math.Max(0, (int)Math.Ceiling(duration.TotalMinutes));
+        return roundedMinutes == 1 ? "1 minute" : $"{roundedMinutes} minutes";
+    }
 }

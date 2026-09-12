@@ -41,7 +41,11 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
     public string DraftText { get => _draftText; set => SetProperty(ref _draftText, value); }
     public bool DraftEnabled { get => _draftEnabled; set => SetProperty(ref _draftEnabled, value); }
     public int DailyLocalNoteLimit => _context.CurrentPreferences.LocalNoteDailyLimit;
+    public string DailyLocalNoteLimitText => $"Up to {DailyLocalNoteLimit} local notes per day.";
     public int UnopenedRemoteNoteCount => PendingRemoteNotes.Count;
+    public string UnopenedRemoteNoteCountText => UnopenedRemoteNoteCount == 1
+        ? "1 unopened encrypted note."
+        : $"{UnopenedRemoteNoteCount} unopened encrypted notes.";
     public bool HasOpenedRemoteNote => !string.IsNullOrWhiteSpace(OpenedRemoteNoteText);
 
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
@@ -53,6 +57,7 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
             PendingRemoteNotes.Clear();
             foreach (var envelope in await _context.RemoteEnvelopes.ListPendingAsync(cancellationToken)) PendingRemoteNotes.Add(envelope);
             OnPropertyChanged(nameof(UnopenedRemoteNoteCount));
+            OnPropertyChanged(nameof(UnopenedRemoteNoteCountText));
         });
     }
 
@@ -109,6 +114,7 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
             OpenedRemoteNoteText = null;
             OnPropertyChanged(nameof(HasOpenedRemoteNote));
             OnPropertyChanged(nameof(UnopenedRemoteNoteCount));
+            OnPropertyChanged(nameof(UnopenedRemoteNoteCountText));
             await _context.PresentPetAsync(new PetEvent.Dismissed(envelope.MessageId), cancellationToken);
         }, "Saved to the local note jar.");
 

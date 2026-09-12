@@ -37,6 +37,50 @@ namespace Dudu.App.Windows
 
 namespace Dudu.App.Pages
 {
+    public sealed partial class HomePage
+    {
+        private StackPanel StartupRecoveryPanel = null!;
+        private TextBlock StartupRecoveryMessage = null!;
+        private Button RetryStartupButton = null!;
+
+        private void InitializeComponent()
+        {
+            StartupRecoveryPanel = new StackPanel { Visibility = Visibility.Collapsed };
+            StartupRecoveryMessage = new TextBlock();
+            RetryStartupButton = new Button();
+        }
+    }
+
+    public sealed partial class RemindersPage
+    {
+        private void InitializeComponent() { }
+    }
+
+    public sealed partial class TasksFocusPage
+    {
+        private void InitializeComponent() { }
+    }
+
+    public sealed partial class LoveNotesPage
+    {
+        private void InitializeComponent() { }
+    }
+
+    public sealed partial class AppearancePage
+    {
+        private void InitializeComponent() { }
+    }
+
+    public sealed partial class ConnectionPage
+    {
+        private void InitializeComponent() { }
+    }
+
+    public sealed partial class PrivacyDataPage
+    {
+        private void InitializeComponent() { }
+    }
+
     public sealed partial class OnboardingPage
     {
         private TextBlock OnboardingProgress = null!;

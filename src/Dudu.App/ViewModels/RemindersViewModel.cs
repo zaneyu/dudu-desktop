@@ -83,8 +83,38 @@ public sealed class RemindersViewModel : FeatureViewModelBase
 
     public string Title { get => _title; set => SetProperty(ref _title, value); }
     public string? Details { get => _details; set => SetProperty(ref _details, value); }
-    public ReminderScheduleKind ScheduleKind { get => _scheduleKind; set => SetProperty(ref _scheduleKind, value); }
-    public TimeOnly LocalTime { get => _localTime; set => SetProperty(ref _localTime, value); }
+    public ReminderScheduleKind ScheduleKind
+    {
+        get => _scheduleKind;
+        set
+        {
+            if (SetProperty(ref _scheduleKind, value)) OnPropertyChanged(nameof(ScheduleIndex));
+        }
+    }
+    public int ScheduleIndex
+    {
+        get => (int)ScheduleKind;
+        set
+        {
+            if (Enum.IsDefined((ReminderScheduleKind)value)) ScheduleKind = (ReminderScheduleKind)value;
+        }
+    }
+    public TimeOnly LocalTime
+    {
+        get => _localTime;
+        set
+        {
+            if (SetProperty(ref _localTime, value)) OnPropertyChanged(nameof(LocalTimeText));
+        }
+    }
+    public string LocalTimeText
+    {
+        get => LocalTime.ToString("HH:mm");
+        set
+        {
+            if (TimeOnly.TryParse(value, out var parsed)) LocalTime = parsed;
+        }
+    }
     public int IntervalMinutes { get => _intervalMinutes; set => SetProperty(ref _intervalMinutes, Math.Clamp(value, 1, 10080)); }
     public bool Enabled { get => _enabled; set => SetProperty(ref _enabled, value); }
     public QuietHoursBehavior QuietHoursBehavior { get => _quietHoursBehavior; set => SetProperty(ref _quietHoursBehavior, value); }

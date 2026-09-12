@@ -45,7 +45,22 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
     public bool CanConfigureSeasonalMode => false;
     public string OutfitAvailabilityMessage => "Outfit choices apply for this session only.";
 
-    public AppTheme Theme { get => _theme; set => SetProperty(ref _theme, value); }
+    public AppTheme Theme
+    {
+        get => _theme;
+        set
+        {
+            if (SetProperty(ref _theme, value)) OnPropertyChanged(nameof(ThemeIndex));
+        }
+    }
+    public int ThemeIndex
+    {
+        get => (int)Theme;
+        set
+        {
+            if (value is >= (int)AppTheme.System and <= (int)AppTheme.Dark) Theme = (AppTheme)value;
+        }
+    }
     public bool ReducedMotion { get => _reducedMotion; set => SetProperty(ref _reducedMotion, value); }
     public double PetScale { get => _petScale; set => SetProperty(ref _petScale, Math.Clamp(value, 0.5, 2)); }
     public string MonitorDeviceName { get => _monitorDeviceName; set => SetProperty(ref _monitorDeviceName, value); }

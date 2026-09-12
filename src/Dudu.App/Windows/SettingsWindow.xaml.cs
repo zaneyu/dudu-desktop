@@ -3,9 +3,7 @@ using Dudu.App.Hosting;
 using Dudu.App.ViewModels;
 using Dudu.Core.Models;
 using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Media;
 
 namespace Dudu.App.Windows;
 
@@ -14,6 +12,13 @@ public sealed partial class SettingsWindow : UserControl
     private readonly CompanionSettingsContext _context;
     private readonly SettingsShellViewModel _shell;
     private readonly OnboardingViewModel _onboarding;
+    private readonly HomePage _homePage;
+    private readonly RemindersPage _remindersPage;
+    private readonly TasksFocusPage _tasksFocusPage;
+    private readonly LoveNotesPage _loveNotesPage;
+    private readonly AppearancePage _appearancePage;
+    private readonly ConnectionPage _connectionPage;
+    private readonly PrivacyDataPage _privacyDataPage;
     private bool _initialized;
 
     public SettingsWindow(CompanionSettingsContext context)
@@ -34,6 +39,15 @@ public sealed partial class SettingsWindow : UserControl
             },
             placementCapture: context.CapturePlacementAsync,
             placementPreviewer: context.ApplyPlacementAsync);
+        var features = context.Features
+            ?? throw new InvalidOperationException("Feature settings are not available.");
+        _homePage = new HomePage(new HomeViewModel(features), context.StartupSettings);
+        _remindersPage = new RemindersPage(new RemindersViewModel(features));
+        _tasksFocusPage = new TasksFocusPage(new TasksFocusViewModel(features));
+        _loveNotesPage = new LoveNotesPage(new LoveNotesViewModel(features));
+        _appearancePage = new AppearancePage(new AppearanceViewModel(features));
+        _connectionPage = new ConnectionPage(new ConnectionViewModel(features));
+        _privacyDataPage = new PrivacyDataPage(new PrivacyDataViewModel(features));
         InitializeComponent();
         RootNavigation.SelectedItem = RootNavigation.MenuItems[0];
         Loaded += OnLoaded;
@@ -41,8 +55,7 @@ public sealed partial class SettingsWindow : UserControl
 
     public FrameworkElement TitleBarElement => AppTitleBar;
 
-    /// <summary>Production overlay/tray route for feature destinations. The
-    /// feature page markup itself remains owned by the following UI slice.</summary>
+    /// <summary>Production overlay/tray route for feature destinations.</summary>
     public void NavigateTo(string destination)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(destination);
@@ -101,134 +114,16 @@ public sealed partial class SettingsWindow : UserControl
 
         ContentFrame.Content = tag switch
         {
-            "home" => CreateHomePage(),
-            "appearance" => CreateAppearancePage(),
-            "connection" => CreateStatusPage("Connection", "Pairing is optional. Dudu stays useful offline."),
-            "privacy" => CreateStatusPage("Privacy and data", "Your local notes and settings stay on this device."),
-            "reminders" => CreateStatusPage("Reminders", "Set gentle reminders when you are ready."),
-            "tasks" => CreateStatusPage("Tasks and focus", "Keep one small next step in view."),
-            "notes" => CreateStatusPage("Love notes", "Read or add a local note whenever it helps."),
-            _ => CreateHomePage(),
+            "home" => _homePage,
+            "reminders" => _remindersPage,
+            "tasks" => _tasksFocusPage,
+            "notes" => _loveNotesPage,
+            "appearance" => _appearancePage,
+            "connection" => _connectionPage,
+            "privacy" => _privacyDataPage,
+            _ => _homePage,
         };
     }
-
-    private FrameworkElement CreateHomePage() => new StackPanel
-    {
-        Spacing = 16,
-        Padding = new Thickness(32),
-        Children =
-        {
-            new TextBlock { Text = "Home", Style = (Style)Application.Current.Resources["PageTitleStyle"] },
-            new TextBlock
-            {
-                Text = $"Dudu is ready for {(_onboarding.RecipientName.Length == 0 ? "you" : _onboarding.RecipientName)}.",
-                FontSize = 16,
-                TextWrapping = TextWrapping.Wrap,
-            },
-            new TextBlock
-            {
-                Text = _onboarding.RuntimeApplyError ?? string.Empty,
-                Visibility = string.IsNullOrWhiteSpace(_onboarding.RuntimeApplyError)
-                    ? Visibility.Collapsed
-                    : Visibility.Visible,
-                Foreground = (Brush)Application.Current.Resources["WarningBrush"],
-                TextWrapping = TextWrapping.Wrap,
-            },
-            new Border
-            {
-                Background = (Brush)Application.Current.Resources["BlushSurfaceBrush"],
-                CornerRadius = new CornerRadius(12),
-                Padding = new Thickness(16),
-                Child = new TextBlock
-                {
-                    Text = "Small, quiet support for the day ahead.",
-                    TextWrapping = TextWrapping.Wrap,
-                },
-            },
-            CreateStartupToggle(),
-        },
-    };
-
-    private FrameworkElement CreateStartupToggle()
-    {
-        var toggle = new CheckBox
-        {
-            Content = "Launch Dudu when I sign in",
-            IsChecked = _context.StartupSettings.Current.LaunchAtSignIn,
-        };
-        AutomationProperties.SetAutomationId(toggle, "SettingsLaunchAtSignIn");
-        toggle.Checked += StartupToggle_Changed;
-        toggle.Unchecked += StartupToggle_Changed;
-        var panel = new StackPanel { Spacing = 8, Children = { toggle } };
-        if (_context.StartupSettings.NeedsReconciliation)
-        {
-            panel.Children.Add(new TextBlock
-            {
-                Text = _context.StartupSettings.ReconciliationError,
-                Foreground = (Brush)Application.Current.Resources["WarningBrush"],
-                TextWrapping = TextWrapping.Wrap,
-            });
-            var retry = new Button { Content = "Retry startup registration" };
-            AutomationProperties.SetAutomationId(retry, "SettingsRetryStartupRegistration");
-            retry.Click += RetryStartupRegistration_Click;
-            panel.Children.Add(retry);
-        }
-
-        return panel;
-    }
-
-    private async void StartupToggle_Changed(object sender, RoutedEventArgs args)
-    {
-        if (sender is not CheckBox toggle || toggle.IsChecked is not bool enabled) return;
-        try
-        {
-            await _context.StartupSettings.SetLaunchAtSignInAsync(enabled);
-            ShowDestination("home");
-        }
-        catch (Exception exception)
-        {
-            toggle.IsChecked = _context.StartupSettings.Current.LaunchAtSignIn;
-            ShowDestination("home");
-            global::System.Diagnostics.Trace.TraceError("Dudu startup setting failed: {0}", exception);
-        }
-    }
-
-    private async void RetryStartupRegistration_Click(object sender, RoutedEventArgs args)
-    {
-        try
-        {
-            await _onboarding.RetryStartupRegistrationAsync();
-        }
-        catch (Exception exception)
-        {
-            global::System.Diagnostics.Trace.TraceError("Dudu startup retry failed: {0}", exception);
-        }
-
-        ShowDestination("home");
-    }
-
-    private FrameworkElement CreateAppearancePage() => new StackPanel
-    {
-        Spacing = 16,
-        Padding = new Thickness(32),
-        Children =
-        {
-            new TextBlock { Text = "Appearance", Style = (Style)Application.Current.Resources["PageTitleStyle"] },
-            new TextBlock { Text = "Appearance follows your onboarding choices for now." },
-            new TextBlock { Text = $"Theme: {_onboarding.Theme}; reduced motion: {(_onboarding.ReducedMotion ? "on" : "off")}." },
-        },
-    };
-
-    private static FrameworkElement CreateStatusPage(string title, string message) => new StackPanel
-    {
-        Spacing = 16,
-        Padding = new Thickness(32),
-        Children =
-        {
-            new TextBlock { Text = title, Style = (Style)Application.Current.Resources["PageTitleStyle"] },
-            new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap },
-        },
-    };
 
     private void OnboardingCompleted()
     {

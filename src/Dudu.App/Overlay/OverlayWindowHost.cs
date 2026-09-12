@@ -208,9 +208,8 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         }, cancellationToken);
     }
 
-    /// <summary>Installs the application-layer action contract used by the
-    /// native no-activate hit-test path. Rendering is intentionally deferred
-    /// to the WinUI slice.</summary>
+    /// <summary>Installs the application-layer action contract used by both
+    /// the native no-activate hit-test path and the frame renderer.</summary>
     public Task SetActionSurfaceAsync(
         OverlayActionSurfaceController actionSurface,
         CancellationToken cancellationToken = default)

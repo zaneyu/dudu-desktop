@@ -171,6 +171,7 @@ public static class WindowsCompanionProductionComposition
                 DateOnly.FromDateTime(DateTime.Now),
                 SeasonalDates.Empty);
             composer = new SkiaFrameComposer(pack);
+            composer.SetActionSurface(actionSurface);
             presenter = new LayeredFramePresenter();
             startup = new StartupRegistrationService();
             WindowsCompanionRuntime? activeRuntime = null;

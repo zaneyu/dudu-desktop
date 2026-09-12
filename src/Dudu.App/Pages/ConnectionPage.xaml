@@ -1,0 +1,44 @@
+<Page
+    x:Class="Dudu.App.Pages.ConnectionPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:models="using:Dudu.Core.Abstractions"
+    Background="{ThemeResource WindowSurfaceBrush}">
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+        <StackPanel MaxWidth="880" Padding="32" Spacing="24">
+            <StackPanel Spacing="8">
+                <TextBlock Text="Connection" Style="{StaticResource PageTitleStyle}" />
+                <TextBlock Text="Pairing is optional. Dudu stays useful offline." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+            </StackPanel>
+
+            <StackPanel Spacing="12">
+                <TextBlock Text="Pairing status" Style="{StaticResource SectionHeadingStyle}" />
+                <TextBlock Text="{x:Bind ViewModel.AvailabilityText, Mode=OneWay}" AutomationProperties.AutomationId="ConnectionAvailability" />
+                <TextBlock Text="{x:Bind ViewModel.PairingCodeText, Mode=OneWay}" AutomationProperties.AutomationId="ConnectionPairingCode" />
+                <TextBlock Text="{x:Bind ViewModel.CodeExpiryText, Mode=OneWay}" AutomationProperties.AutomationId="ConnectionCodeExpiry" />
+                <Button Content="Create ten-minute pairing code" Command="{x:Bind ViewModel.CreateCodeCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="ConnectionCreateCode" HorizontalAlignment="Left" />
+            </StackPanel>
+
+            <StackPanel Spacing="12">
+                <TextBlock Text="Paired sessions" Style="{StaticResource SectionHeadingStyle}" />
+                <TextBlock Text="{x:Bind ViewModel.SessionCountText, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionSessionCount" />
+                <ListView ItemsSource="{x:Bind ViewModel.Sessions, Mode=OneWay}" MaxHeight="180" AutomationProperties.AutomationId="ConnectionSessionsList">
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="models:PairingSessionSummary">
+                            <TextBlock Text="Paired sender session" Padding="4" />
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Content="Revoke sender sessions" Command="{x:Bind ViewModel.RevokeSessionsCommand}" AutomationProperties.AutomationId="ConnectionRevokeSessions" />
+                    <Button Content="Delete remote device data" Command="{x:Bind ViewModel.DeleteRemoteDeviceCommand}" AutomationProperties.AutomationId="ConnectionDeleteRemote" />
+                </StackPanel>
+            </StackPanel>
+
+            <StackPanel Spacing="4" AutomationProperties.LiveSetting="Polite">
+                <TextBlock Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" Foreground="{ThemeResource SuccessBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionStatusMessage" />
+                <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" Foreground="{ThemeResource ErrorBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionErrorMessage" />
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
+</Page>
