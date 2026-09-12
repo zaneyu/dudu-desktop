@@ -25,8 +25,16 @@ public sealed class SkiaFrameComposerTests
         Assert.Equal(0.5f, frame.Opacity);
         Assert.Equal("fixture/red.png", frame.Source);
         Assert.Equal(frame.Stride * frame.Height, frame.Bytes.Length);
-        Assert.Equal(128, frame.Bytes.Span[0]);
-        Assert.Equal(128, frame.Bytes.Span[3]);
+        Assert.Equal(0, frame.Bytes.Span[0]);
+        Assert.Equal(0, frame.Bytes.Span[1]);
+        Assert.InRange(frame.Bytes.Span[2], 127, 128);
+        Assert.InRange(frame.Bytes.Span[3], 127, 128);
+
+        using var fullOpacity = fixture.Composer.Compose(fixture.Pack, fixture.Animation, 0);
+        Assert.Equal(0, fullOpacity.Bytes.Span[0]);
+        Assert.Equal(0, fullOpacity.Bytes.Span[1]);
+        Assert.Equal(255, fullOpacity.Bytes.Span[2]);
+        Assert.Equal(255, fullOpacity.Bytes.Span[3]);
     }
 
     [Fact]
@@ -59,25 +67,15 @@ public sealed class SkiaFrameComposerTests
     }
 
     [Fact]
-    public async Task Repeated_cached_frames_allocate_less_than_fifty_kib()
+    public void Invalid_frame_input_does_not_leak_a_rented_buffer()
     {
         using var fixture = ComposerFixture.Create();
-        using (fixture.Composer.Compose(fixture.Pack, fixture.Animation, 0))
-        {
-        }
 
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        GC.Collect();
-        var before = GC.GetAllocatedBytesForCurrentThread();
-        for (var index = 0; index < 300; index++)
-        {
-            using var frame = fixture.Composer.Compose(fixture.Pack, fixture.Animation, 0);
-        }
-
-        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-        Assert.InRange(allocated, 0, 50 * 1024);
-        await Task.CompletedTask;
+        var invalid = new AssetFrame { File = "../unsafe.png", DurationMs = 100 };
+        Assert.Throws<AssetManifestException>(() => fixture.Composer.Compose(
+            fixture.Pack,
+            fixture.Animation,
+            invalid));
     }
 
     private sealed class ComposerFixture : IDisposable

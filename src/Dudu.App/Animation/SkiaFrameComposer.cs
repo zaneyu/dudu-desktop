@@ -9,6 +9,8 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
 {
     private const int BytesPerPixel = 4;
     private const int MaxDimension = 4096;
+    private const int MaxDecodedBitmapCount = 512;
+    private const long MaxDecodedBitmapBytes = 64L * 1024 * 1024;
 
     private readonly object _gate = new();
     private static readonly SKSamplingOptions SamplingOptions = new(SKFilterMode.Nearest);
@@ -20,6 +22,7 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
     private SKPaint? _paint;
     private byte[]? _reusableBuffer;
     private AssetPack? _pack;
+    private long _decodedBitmapBytes;
     private bool _disposed;
 
     public SkiaFrameComposer()
@@ -29,6 +32,7 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
     public SkiaFrameComposer(AssetPack pack)
     {
         ArgumentNullException.ThrowIfNull(pack);
+        ValidatePackLimits(pack);
         _pack = pack;
     }
 
@@ -39,6 +43,17 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
             lock (_gate)
             {
                 return _pack;
+            }
+        }
+    }
+
+    public bool IsDisposed
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _disposed;
             }
         }
     }
@@ -54,6 +69,7 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
                 return;
             }
 
+            ValidatePackLimits(pack);
             DisposeDecodedBitmaps();
             DisposeSurface();
             ReturnReusableBuffer();
@@ -74,6 +90,7 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
         ArgumentNullException.ThrowIfNull(animation);
         ArgumentNullException.ThrowIfNull(frame);
         ArgumentException.ThrowIfNullOrWhiteSpace(frame.File);
+        ValidateCompositionInputs(pack, animation, frame, scale, opacity, semanticDuration, frameDuration);
 
         lock (_gate)
         {
@@ -93,18 +110,26 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
             var stride = output.RowBytes;
             var byteCount = checked(stride * dimensions.Height);
             var buffer = RentBuffer(byteCount);
-            Marshal.Copy(output.GetPixels(), buffer, 0, byteCount);
-            return new RenderedFrame(
-                buffer,
-                byteCount,
-                dimensions.Width,
-                dimensions.Height,
-                stride,
-                opacity,
-                source,
-                semanticDuration,
-                frameDuration,
-                this);
+            try
+            {
+                Marshal.Copy(output.GetPixels(), buffer, 0, byteCount);
+                return new RenderedFrame(
+                    buffer,
+                    byteCount,
+                    dimensions.Width,
+                    dimensions.Height,
+                    stride,
+                    opacity,
+                    source,
+                    semanticDuration,
+                    frameDuration,
+                    this);
+            }
+            catch
+            {
+                Release(buffer);
+                throw;
+            }
         }
     }
 
@@ -191,6 +216,7 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
             return;
         }
 
+        ValidatePackLimits(pack);
         DisposeDecodedBitmaps();
         DisposeSurface();
         ReturnReusableBuffer();
@@ -218,14 +244,30 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
 
         var decoded = SKBitmap.Decode(fullPath)
             ?? throw new AssetManifestException($"Animation frame could not be decoded: {relativePath}");
-        if (decoded.Width <= 0 || decoded.Height <= 0)
+        try
+        {
+            if (decoded.Width <= 0 || decoded.Height <= 0)
+            {
+                throw new AssetManifestException($"Animation frame has invalid dimensions: {relativePath}");
+            }
+
+            var decodedBytes = checked((long)decoded.RowBytes * decoded.Height);
+            if (_bitmapCache.Count >= MaxDecodedBitmapCount
+                || decodedBytes > MaxDecodedBitmapBytes - _decodedBitmapBytes)
+            {
+                throw new AssetManifestException(
+                    $"Asset pack exceeds decoded animation cache limits ({MaxDecodedBitmapCount} frames or {MaxDecodedBitmapBytes} bytes).");
+            }
+
+            _bitmapCache.Add(cacheKey, decoded);
+            _decodedBitmapBytes += decodedBytes;
+            return decoded;
+        }
+        catch
         {
             decoded.Dispose();
-            throw new AssetManifestException($"Animation frame has invalid dimensions: {relativePath}");
+            throw;
         }
-
-        _bitmapCache.Add(cacheKey, decoded);
-        return decoded;
     }
 
     private void EnsureSurface(int width, int height)
@@ -265,6 +307,7 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
         _bitmapCache.Clear();
         _fullPathCache.Clear();
         _sourceCache.Clear();
+        _decodedBitmapBytes = 0;
     }
 
     private void DisposeSurface()
@@ -312,6 +355,94 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
 
         _ = checked(width * height * BytesPerPixel);
         return (width, height);
+    }
+
+    private static void ValidateCompositionInputs(
+        AssetPack pack,
+        AssetAnimation animation,
+        AssetFrame frame,
+        double scale,
+        float opacity,
+        TimeSpan semanticDuration,
+        TimeSpan frameDuration)
+    {
+        ArgumentNullException.ThrowIfNull(pack);
+        ArgumentNullException.ThrowIfNull(animation);
+        ArgumentNullException.ThrowIfNull(frame);
+        if (!AssetManifestContract.IsSafeRelativePath(frame.File))
+        {
+            throw new AssetManifestException($"Animation frame path is unsafe: {frame.File}");
+        }
+
+        if (frame.DurationMs <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(frame), "Frame duration must be positive.");
+        }
+
+        _ = ValidateDimensions(animation.NominalSize, scale);
+        if (float.IsNaN(opacity) || float.IsInfinity(opacity) || opacity is < 0 or > 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(opacity));
+        }
+
+        if (semanticDuration < TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(semanticDuration));
+        }
+
+        if (frameDuration < TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(frameDuration));
+        }
+    }
+
+    private static void ValidatePackLimits(AssetPack pack)
+    {
+        var uniquePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var outfit in pack.Manifest.Outfits.Values)
+        {
+            foreach (var animation in outfit.Animations.Values)
+            {
+                foreach (var frame in animation.Frames)
+                {
+                    if (frame is not null)
+                    {
+                        uniquePaths.Add(frame.File);
+                    }
+                }
+
+                if (animation.ReducedMotion is not null)
+                {
+                    uniquePaths.Add(animation.ReducedMotion);
+                }
+            }
+        }
+
+        if (uniquePaths.Count > MaxDecodedBitmapCount)
+        {
+            throw new AssetManifestException(
+                $"Asset pack declares {uniquePaths.Count} decoded frames; the limit is {MaxDecodedBitmapCount}.");
+        }
+
+        long encodedBytes = 0;
+        foreach (var relativePath in uniquePaths)
+        {
+            if (!AssetManifestContract.IsSafeRelativePath(relativePath))
+            {
+                continue;
+            }
+
+            var fullPath = Path.GetFullPath(Path.Combine(pack.RootDirectory, relativePath));
+            if (File.Exists(fullPath))
+            {
+                encodedBytes = checked(encodedBytes + new FileInfo(fullPath).Length);
+                if (encodedBytes > MaxDecodedBitmapBytes)
+                {
+                    throw new AssetManifestException(
+                        $"Asset pack encoded animation data exceeds {MaxDecodedBitmapBytes} bytes.");
+                }
+            }
+        }
     }
 
     private string GetSource(AssetPack pack, string relativePath)

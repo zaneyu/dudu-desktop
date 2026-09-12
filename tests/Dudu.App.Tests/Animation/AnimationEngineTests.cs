@@ -74,6 +74,7 @@ public sealed class AnimationEngineTests
         Assert.Equal(TimeSpan.FromMilliseconds(200), fixture.Presenter.SemanticDuration);
         Assert.Equal(0f, fixture.Presenter.Frames[0].Opacity);
         Assert.Equal(1f, fixture.Presenter.Frames[^1].Opacity);
+        Assert.Contains(fixture.Presenter.Frames, frame => frame.Opacity > 0f && frame.Opacity < 1f);
     }
 
     [Fact]
@@ -83,6 +84,104 @@ public sealed class AnimationEngineTests
 
         await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
             () => fixture.Engine.PlayAsync(TestPresentation("idle"), AnimationOptions.Default with { Scale = 0 }, TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task Cached_engine_presentations_measure_300_same_thread_frames_under_fifty_kib()
+    {
+        using var fixture = AnimationFixture.Create([1], loop: "loop", animationKey: "idle", immediateClock: true);
+        using (fixture.Composer.Compose(fixture.Pack, fixture.Animation, 0))
+        {
+        }
+
+        fixture.Presenter.Frames.Clear();
+        using var cancellation = new CancellationTokenSource();
+        fixture.Presenter.OnPresented = count =>
+        {
+            if (count == 300)
+            {
+                cancellation.Cancel();
+            }
+        };
+
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        var before = GC.GetAllocatedBytesForCurrentThread();
+        var play = fixture.Engine.PlayAsync(TestPresentation("idle"), AnimationOptions.Default, cancellation.Token);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => play);
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+        Assert.Equal(300, fixture.Presenter.Frames.Count);
+        Assert.InRange(allocated, 0, 50 * 1024);
+    }
+
+    [Fact]
+    public async Task Replace_pack_serializes_against_concurrent_play_creation()
+    {
+        using var source = AnimationFixture.Create([100], loop: "loop", animationKey: "idle", packId: "source");
+        using var replacement = AnimationFixture.Create([100], loop: "loop", animationKey: "idle", packId: "replacement");
+        var presenter = new BlockingFramePresenter();
+        using var engine = new AnimationEngine(source.Pack, presenter, source.Clock, new SkiaFrameComposer(source.Pack));
+
+        var first = engine.PlayAsync(TestPresentation("idle"), AnimationOptions.Default, TestContext.Current.CancellationToken);
+        await presenter.FirstPresentation.Task.WaitAsync(TestContext.Current.CancellationToken);
+
+        var replace = Task.Run(() => engine.ReplacePack(replacement.Pack), TestContext.Current.CancellationToken);
+        await presenter.CancellationObserved.Task.WaitAsync(TestContext.Current.CancellationToken);
+        var second = Task.Run(
+            async () => await engine.PlayAsync(
+                TestPresentation("unknown"),
+                AnimationOptions.ReducedMotion,
+                TestContext.Current.CancellationToken),
+            TestContext.Current.CancellationToken);
+
+        presenter.ReleaseCancellation.TrySetResult(true);
+        await replace;
+        await presenter.SecondPresentation.Task.WaitAsync(TestContext.Current.CancellationToken);
+        source.Clock.AdvanceBy(100);
+        await second;
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
+
+        Assert.Equal("replacement/idle.png", presenter.Sources[^1]);
+    }
+
+    [Fact]
+    public async Task Async_presenter_must_finish_borrowed_byte_use_before_completion()
+    {
+        using var fixture = AnimationFixture.Create([100], loop: "once", animationKey: "idle");
+        var presenter = new DeferredFramePresenter();
+        using var engine = new AnimationEngine(fixture.Pack, presenter, fixture.Clock, fixture.Composer);
+        var play = engine.PlayAsync(TestPresentation("idle"), AnimationOptions.ReducedMotion, TestContext.Current.CancellationToken);
+
+        await presenter.Started.Task.WaitAsync(TestContext.Current.CancellationToken);
+        presenter.Release.TrySetResult(true);
+        fixture.Clock.AdvanceBy(100);
+        await play;
+
+        Assert.Equal(presenter.ByteBeforeCompletion, presenter.ByteAfterDeferredRead);
+        Assert.NotNull(presenter.Frame);
+        Assert.True(presenter.Frame!.IsDisposed);
+    }
+
+    [Fact]
+    public async Task Presenter_fault_disposes_rendering_resources_and_preserves_the_original_exception()
+    {
+        using var fixture = AnimationFixture.Create([100], loop: "once", animationKey: "idle");
+        var composer = fixture.Composer;
+        using var engine = new AnimationEngine(
+            fixture.Pack,
+            new FaultingFramePresenter(),
+            fixture.Clock,
+            composer);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => engine.PlayAsync(
+            TestPresentation("idle"),
+            AnimationOptions.Default,
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal("presenter failed", exception.Message);
+        Assert.True(composer.IsDisposed);
     }
 
     private static PetPresentation TestPresentation(string key) =>
@@ -118,11 +217,14 @@ public sealed class AnimationEngineTests
 
         public AssetPack Pack { get; }
 
+        public AssetAnimation Animation => Pack.Manifest.Outfits["base"].Animations["idle"];
+
         public static AnimationFixture Create(
             IReadOnlyList<int> durations,
             string loop,
             string animationKey,
-            string packId = "fixture")
+            string packId = "fixture",
+            bool immediateClock = false)
         {
             var root = Path.Combine(Path.GetTempPath(), "dudu-animation-tests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
@@ -181,7 +283,7 @@ public sealed class AnimationEngineTests
             };
             var pack = new AssetPack(Path.Combine(root, "manifest.json"), manifest);
             var presenter = new RecordingFramePresenter();
-            var clock = new ManualAnimationClock();
+            var clock = new ManualAnimationClock(immediateClock);
             var composer = new SkiaFrameComposer(pack);
             return new AnimationFixture(root, new AnimationEngine(pack, presenter, clock, composer), presenter, clock, composer, pack);
         }
@@ -200,6 +302,8 @@ public sealed class AnimationEngineTests
     {
         public List<PresentedFrame> Frames { get; } = [];
 
+        public Action<int>? OnPresented { get; set; }
+
         public TimeSpan SemanticDuration => Frames.Count == 0 ? TimeSpan.Zero : Frames[0].SemanticDuration;
 
         public PresentedFrame Single => Assert.Single(Frames);
@@ -208,17 +312,98 @@ public sealed class AnimationEngineTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             Frames.Add(new PresentedFrame(frame.Source, frame.Opacity, frame.SemanticDuration));
+            OnPresented?.Invoke(Frames.Count);
             return ValueTask.CompletedTask;
         }
+    }
+
+    private sealed class BlockingFramePresenter : IFramePresenter
+    {
+        public TaskCompletionSource<bool> FirstPresentation { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource<bool> CancellationObserved { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource<bool> ReleaseCancellation { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource<bool> SecondPresentation { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public List<string> Sources { get; } = [];
+
+        private int _count;
+
+        public async ValueTask PresentAsync(RenderedFrame frame, CancellationToken cancellationToken)
+        {
+            Sources.Add(frame.Source);
+            var count = Interlocked.Increment(ref _count);
+            if (count == 1)
+            {
+                FirstPresentation.TrySetResult(true);
+                try
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    CancellationObserved.TrySetResult(true);
+                    await ReleaseCancellation.Task;
+                    throw;
+                }
+            }
+            else
+            {
+                SecondPresentation.TrySetResult(true);
+            }
+        }
+    }
+
+    private sealed class DeferredFramePresenter : IFramePresenter
+    {
+        public TaskCompletionSource<bool> Started { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource<bool> Release { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public RenderedFrame? Frame { get; private set; }
+
+        public byte ByteBeforeCompletion { get; private set; }
+
+        public byte ByteAfterDeferredRead { get; private set; }
+
+        public async ValueTask PresentAsync(RenderedFrame frame, CancellationToken cancellationToken)
+        {
+            Frame = frame;
+            cancellationToken.ThrowIfCancellationRequested();
+            ByteBeforeCompletion = frame.Bytes.Span[0];
+            Started.TrySetResult(true);
+            await Release.Task.WaitAsync(cancellationToken);
+            ByteAfterDeferredRead = frame.Bytes.Span[0];
+        }
+    }
+
+    private sealed class FaultingFramePresenter : IFramePresenter
+    {
+        public ValueTask PresentAsync(RenderedFrame frame, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("presenter failed");
     }
 
     private readonly record struct PresentedFrame(string Source, float Opacity, TimeSpan SemanticDuration);
 
     private sealed class ManualAnimationClock : IAnimationClock
     {
+        private readonly bool _advanceOnWait;
         private readonly object _gate = new();
         private readonly List<(long Deadline, TaskCompletionSource<bool> Completion)> _waiters = [];
         private long _timestamp;
+
+        public ManualAnimationClock(bool advanceOnWait = false)
+        {
+            _advanceOnWait = advanceOnWait;
+        }
 
         public long Timestamp => Interlocked.Read(ref _timestamp);
 
@@ -229,6 +414,12 @@ public sealed class AnimationEngineTests
             cancellationToken.ThrowIfCancellationRequested();
             lock (_gate)
             {
+                if (_advanceOnWait && Timestamp < deadline)
+                {
+                    Interlocked.Exchange(ref _timestamp, deadline);
+                    return ValueTask.CompletedTask;
+                }
+
                 if (Timestamp >= deadline)
                 {
                     return ValueTask.CompletedTask;

@@ -1,5 +1,10 @@
 namespace Dudu.App.Animation;
 
+/// <summary>
+/// A composed premultiplied-BGRA frame whose bytes are borrowed until the presenter
+/// operation that received it completes. Dispose returns the pooled buffer and makes
+/// subsequent byte access fail; metadata remains available for diagnostics.
+/// </summary>
 public sealed class RenderedFrame : IDisposable
 {
     private readonly IFrameBufferReleaser? _releaser;
