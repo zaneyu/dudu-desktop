@@ -1,0 +1,189 @@
+{
+  "schemaVersion": 1,
+  "packId": "fallback",
+  "version": "1.0.0",
+  "privateUseOnly": false,
+  "attribution": {
+    "creator": "Dudu Desktop original fallback",
+    "sourceUrls": [],
+    "rightsNote": "Original neutral bear silhouette generated for local fallback use; not copied from Dudu artwork."
+  },
+  "outfits": {
+    "base": {
+      "displayName": "Neutral bear",
+      "animations": {
+        "idle": {
+          "frames": [
+            {
+              "file": "idle.png",
+              "durationMs": 1000,
+              "sha256": "20d2ede4face1e4636e0386773a9a205686fbbdb55ece27ef32fdfa09e192b01"
+            }
+          ],
+          "loop": "loop",
+          "anchor": {
+            "x": 64,
+            "y": 112
+          },
+          "nominalSize": {
+            "width": 128,
+            "height": 128
+          },
+          "reducedMotion": "idle.png"
+        },
+        "blink": {
+          "frames": [
+            {
+              "file": "idle.png",
+              "durationMs": 450,
+              "sha256": "20d2ede4face1e4636e0386773a9a205686fbbdb55ece27ef32fdfa09e192b01"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 64,
+            "y": 112
+          },
+          "nominalSize": {
+            "width": 128,
+            "height": 128
+          },
+          "reducedMotion": "idle.png"
+        },
+        "greeting": {
+          "frames": [
+            {
+              "file": "idle.png",
+              "durationMs": 450,
+              "sha256": "20d2ede4face1e4636e0386773a9a205686fbbdb55ece27ef32fdfa09e192b01"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 64,
+            "y": 112
+          },
+          "nominalSize": {
+            "width": 128,
+            "height": 128
+          },
+          "reducedMotion": "idle.png"
+        },
+        "sleep": {
+          "frames": [
+            {
+              "file": "idle.png",
+              "durationMs": 450,
+              "sha256": "20d2ede4face1e4636e0386773a9a205686fbbdb55ece27ef32fdfa09e192b01"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 64,
+            "y": 112
+          },
+          "nominalSize": {
+            "width": 128,
+            "height": 128
+          },
+          "reducedMotion": "idle.png"
+        },
+        "drink": {
+          "frames": [
+            {
+              "file": "idle.png",
+              "durationMs": 450,
+              "sha256": "20d2ede4face1e4636e0386773a9a205686fbbdb55ece27ef32fdfa09e192b01"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 64,
+            "y": 112
+          },
+          "nominalSize": {
+            "width": 128,
+            "height": 128
+          },
+          "reducedMotion": "idle.png"
+        },
+        "focus": {
+          "frames": [
+            {
+              "file": "idle.png",
+              "durationMs": 450,
+              "sha256": "20d2ede4face1e4636e0386773a9a205686fbbdb55ece27ef32fdfa09e192b01"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 64,
+            "y": 112
+          },
+          "nominalSize": {
+            "width": 128,
+            "height": 128
+          },
+          "reducedMotion": "idle.png"
+        },
+        "celebrate": {
+          "frames": [
+            {
+              "file": "idle.png",
+              "durationMs": 450,
+              "sha256": "20d2ede4face1e4636e0386773a9a205686fbbdb55ece27ef32fdfa09e192b01"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 64,
+            "y": 112
+          },
+          "nominalSize": {
+            "width": 128,
+            "height": 128
+          },
+          "reducedMotion": "idle.png"
+        },
+        "comfort-hug": {
+          "frames": [
+            {
+              "file": "idle.png",
+              "durationMs": 450,
+              "sha256": "20d2ede4face1e4636e0386773a9a205686fbbdb55ece27ef32fdfa09e192b01"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 64,
+            "y": 112
+          },
+          "nominalSize": {
+            "width": 128,
+            "height": 128
+          },
+          "reducedMotion": "idle.png"
+        },
+        "note-arrival": {
+          "frames": [
+            {
+              "file": "idle.png",
+              "durationMs": 450,
+              "sha256": "20d2ede4face1e4636e0386773a9a205686fbbdb55ece27ef32fdfa09e192b01"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 64,
+            "y": 112
+          },
+          "nominalSize": {
+            "width": 128,
+            "height": 128
+          },
+          "reducedMotion": "idle.png"
+        }
+      }
+    }
+  }
+}

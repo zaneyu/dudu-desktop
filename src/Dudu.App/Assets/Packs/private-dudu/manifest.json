@@ -1,0 +1,196 @@
+{
+  "schemaVersion": 1,
+  "packId": "private-dudu",
+  "version": "1.0.0",
+  "privateUseOnly": true,
+  "attribution": {
+    "creator": "Huang Xiao B",
+    "sourceUrls": [
+      "https://huangxiaob.com/",
+      "https://tenor.com/view/dudu-cute-smile-photo-gif-3117522263724372729",
+      "https://tenor.com/view/bubu-dudu-gif-25349847",
+      "https://tenor.com/view/dudu-waiting-dudu-cute-in-love-gif-14672583372493863103",
+      "https://tenor.com/view/bubu-dudu-gif-13961388528266603475",
+      "https://getstickerpack.com/stickers/xiao-xiong-yi-er-he-bu-bu-credits-to-huang-xiaob"
+    ],
+    "rightsNote": "Private local use only. Discovery pages may not establish redistribution rights; do not publish or distribute this pack."
+  },
+  "outfits": {
+    "base": {
+      "displayName": "Private Dudu",
+      "animations": {
+        "idle": {
+          "frames": [
+            {
+              "file": "frames/base/idle/0000-536e8919d09d.png",
+              "durationMs": 180,
+              "sha256": "536e8919d09d113d5ac393a68a9024d085a34806b2dad06c6c4fc5387be60821"
+            }
+          ],
+          "loop": "loop",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/idle/0000-536e8919d09d.png"
+        },
+        "blink": {
+          "frames": [
+            {
+              "file": "frames/base/blink/0000-536e8919d09d.png",
+              "durationMs": 180,
+              "sha256": "536e8919d09d113d5ac393a68a9024d085a34806b2dad06c6c4fc5387be60821"
+            }
+          ],
+          "loop": "loop",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/blink/0000-536e8919d09d.png"
+        },
+        "greeting": {
+          "frames": [
+            {
+              "file": "frames/base/greeting/0000-e6f1623b17a7.png",
+              "durationMs": 180,
+              "sha256": "e6f1623b17a78f168b727317d38398b4d4b6c73b498f61dd612fd3545a41e70c"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/greeting/0000-e6f1623b17a7.png"
+        },
+        "sleep": {
+          "frames": [
+            {
+              "file": "frames/base/sleep/0000-3a706be53ec5.png",
+              "durationMs": 180,
+              "sha256": "3a706be53ec5bb82fdf49daf7bb6d65deb945f6d4076f2900de430df55ec7884"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/sleep/0000-3a706be53ec5.png"
+        },
+        "drink": {
+          "frames": [
+            {
+              "file": "frames/base/drink/0000-abf8d07d32ac.png",
+              "durationMs": 180,
+              "sha256": "abf8d07d32ac9abb1fc58b193d0a29a3a4461d3cb00362422d9d06d651db60f3"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/drink/0000-abf8d07d32ac.png"
+        },
+        "focus": {
+          "frames": [
+            {
+              "file": "frames/base/focus/0000-3a706be53ec5.png",
+              "durationMs": 180,
+              "sha256": "3a706be53ec5bb82fdf49daf7bb6d65deb945f6d4076f2900de430df55ec7884"
+            }
+          ],
+          "loop": "loop",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/focus/0000-3a706be53ec5.png"
+        },
+        "celebrate": {
+          "frames": [
+            {
+              "file": "frames/base/celebrate/0000-259f506ec3e8.png",
+              "durationMs": 180,
+              "sha256": "259f506ec3e88319d3b147f7ca1a45e0f5378971802b828eb6d75aed1bac7d28"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/celebrate/0000-259f506ec3e8.png"
+        },
+        "comfort-hug": {
+          "frames": [
+            {
+              "file": "frames/base/comfort-hug/0000-de026940bb85.png",
+              "durationMs": 180,
+              "sha256": "de026940bb85742968aebdce81b1f050004cc7cfeb152fecd151b642d63e220f"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/comfort-hug/0000-de026940bb85.png"
+        },
+        "note-arrival": {
+          "frames": [
+            {
+              "file": "frames/base/note-arrival/0000-de026940bb85.png",
+              "durationMs": 180,
+              "sha256": "de026940bb85742968aebdce81b1f050004cc7cfeb152fecd151b642d63e220f"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/note-arrival/0000-de026940bb85.png"
+        }
+      }
+    }
+  }
+}
