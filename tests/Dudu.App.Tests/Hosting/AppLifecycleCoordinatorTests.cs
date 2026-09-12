@@ -172,8 +172,13 @@ public sealed class AppLifecycleCoordinatorTests
             clock: () => now);
 
         await lifecycle.OnFullscreenChangedAsync(true, TestContext.Current.CancellationToken);
-        var restore = lifecycle.OnFullscreenChangedAsync(
-            false,
+        // The pause policy is deliberately a synchronous production seam.
+        // Run the lifecycle operation on a worker so its first policy read can
+        // wait on the barrier without blocking this test's observer.
+        var restore = Task.Run(
+            () => lifecycle.OnFullscreenChangedAsync(
+                false,
+                TestContext.Current.CancellationToken),
             TestContext.Current.CancellationToken);
         await firstGateCheck.Task.WaitAsync(TestContext.Current.CancellationToken);
         pause = PausePolicy.ForOneHour(now);
