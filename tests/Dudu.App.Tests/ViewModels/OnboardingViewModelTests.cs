@@ -193,6 +193,53 @@ public sealed class OnboardingViewModelTests
         Assert.NotNull(fixture.ViewModel.RuntimeApplyError);
     }
 
+    [Fact]
+    public async Task Onboarding_true_replaces_failed_precompletion_false_reconciliation_target()
+    {
+        await using var fixture = OnboardingFixture.Create();
+        await fixture.Startup.SetEnabledAsync(true, fixture.CancellationToken);
+        fixture.StartupWriter.FailDelete = true;
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            fixture.StartupSettings.ReconcileExternalAsync(false, fixture.CancellationToken));
+        Assert.False(fixture.StartupSettings.DesiredLaunchAtSignIn);
+        fixture.StartupWriter.FailDelete = false;
+        fixture.ViewModel.RecipientName = "Mia";
+        fixture.ViewModel.LaunchAtSignIn = true;
+
+        Assert.True(await fixture.ViewModel.CompleteAsync(fixture.CancellationToken));
+
+        Assert.True(fixture.Startup.IsEnabled);
+        Assert.True(fixture.StartupSettings.Current.LaunchAtSignIn);
+        Assert.True(fixture.SavedPreferences!.LaunchAtSignIn);
+        Assert.Equal(fixture.StartupSettings.Current, fixture.SavedPreferences);
+        Assert.False(fixture.StartupSettings.NeedsReconciliation);
+        Assert.Null(fixture.StartupSettings.ReconciliationError);
+        Assert.Null(fixture.ViewModel.StartupRegistrationError);
+    }
+
+    [Fact]
+    public async Task Onboarding_false_replaces_failed_precompletion_true_reconciliation_target()
+    {
+        await using var fixture = OnboardingFixture.Create();
+        fixture.StartupWriter.FailWrite = true;
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            fixture.StartupSettings.ReconcileExternalAsync(true, fixture.CancellationToken));
+        Assert.True(fixture.StartupSettings.DesiredLaunchAtSignIn);
+        fixture.StartupWriter.FailWrite = false;
+        fixture.ViewModel.RecipientName = "Mia";
+        fixture.ViewModel.LaunchAtSignIn = false;
+
+        Assert.True(await fixture.ViewModel.CompleteAsync(fixture.CancellationToken));
+
+        Assert.False(fixture.Startup.IsEnabled);
+        Assert.False(fixture.StartupSettings.Current.LaunchAtSignIn);
+        Assert.False(fixture.SavedPreferences!.LaunchAtSignIn);
+        Assert.Equal(fixture.StartupSettings.Current, fixture.SavedPreferences);
+        Assert.False(fixture.StartupSettings.NeedsReconciliation);
+        Assert.Null(fixture.StartupSettings.ReconciliationError);
+        Assert.Null(fixture.ViewModel.StartupRegistrationError);
+    }
+
     private sealed class OnboardingFixture : IAsyncDisposable
     {
         private OnboardingFixture(
@@ -288,6 +335,7 @@ public sealed class OnboardingViewModelTests
     private sealed class RecordingStartupWriter : IStartupLinkWriter
     {
         public bool FailWrite { get; set; }
+        public bool FailDelete { get; set; }
 
         public Task WriteAtomicAsync(string shortcutPath, string targetPath, string arguments, CancellationToken cancellationToken)
         {
@@ -299,6 +347,7 @@ public sealed class OnboardingViewModelTests
         public Task DeleteAsync(string shortcutPath, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (FailDelete) throw new IOException("simulated startup delete failure");
             return Task.CompletedTask;
         }
     }

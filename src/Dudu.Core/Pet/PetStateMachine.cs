@@ -65,10 +65,22 @@ public sealed class PetStateMachine
                 _welcomeBackPending = true;
                 break;
 
+            case PetEvent.WelcomeBackDismissed:
+                _welcomeBackPending = false;
+                break;
+
             case PetEvent.AmbientRequested ambient:
                 if (!_paused && !IsFocusActive() && IsAllowedAmbientAnimation(ambient.AnimationKey))
                 {
                     _ambientAnimation = ambient.AnimationKey;
+                }
+
+                break;
+
+            case PetEvent.AmbientDismissed ambient:
+                if (string.Equals(_ambientAnimation, ambient.AnimationKey, StringComparison.Ordinal))
+                {
+                    _ambientAnimation = null;
                 }
 
                 break;
@@ -171,8 +183,7 @@ public sealed class PetStateMachine
             return;
         }
 
-        if (string.Equals(itemId, "welcome-back", StringComparison.Ordinal)
-            || string.Equals(itemId, "greeting", StringComparison.Ordinal))
+        if (string.Equals(itemId, "welcome-back", StringComparison.Ordinal))
         {
             _welcomeBackPending = false;
 

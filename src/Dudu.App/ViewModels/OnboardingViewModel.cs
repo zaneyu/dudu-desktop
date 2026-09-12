@@ -373,7 +373,8 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
 
                 try
                 {
-                    await _startupSettings.RetryStartupRegistrationAsync(cancellationToken);
+                    await _startupSettings.ReconcileAuthoritativeAsync(cancellationToken);
+                    StartupRegistrationError = null;
                 }
                 catch (Exception exception)
                 {

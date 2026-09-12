@@ -39,6 +39,7 @@ public sealed class PetPresentationCoordinator
     {
         ArgumentNullException.ThrowIfNull(petEvent);
         ArgumentException.ThrowIfNullOrWhiteSpace(dismissalId);
+        var completionEvent = PetEvent.CompletionForOneShot(petEvent, dismissalId);
         await _gate.WaitAsync(cancellationToken);
         try
         {
@@ -64,7 +65,7 @@ public sealed class PetPresentationCoordinator
             finally
             {
                 _pet.Handle(new PetEvent.PresentationAcknowledged());
-                _pet.Handle(new PetEvent.Dismissed(dismissalId));
+                _pet.Handle(completionEvent);
                 _ = ObserveAmbientAsync(_playAsync(
                     _pet.Current,
                     _options(),

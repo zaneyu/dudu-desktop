@@ -75,6 +75,21 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Router_pet_greeting_restores_the_next_durable_pet_state()
+    {
+        var fixture = FeatureFixture.Create();
+        fixture.Context.Pet.Handle(new PetEvent.ReminderDue("next-reminder"));
+        var router = new OverlayCommandRouter(fixture.Context);
+
+        await router.ExecuteAsync(OverlayAction.Pet, TestContext.Current.CancellationToken);
+
+        Assert.Equal(PetState.Reminder, fixture.Context.Pet.Current.State);
+        Assert.Equal(
+            PetState.Idle,
+            fixture.Context.Pet.Handle(new PetEvent.Dismissed("next-reminder")).State);
+    }
+
+    [Fact]
     public async Task Breathing_publishes_a_finite_cycle_and_five_minute_pause()
     {
         var fixture = FeatureFixture.Create();

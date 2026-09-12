@@ -166,6 +166,23 @@ public sealed class StartupSettingsService
         }
     }
 
+    /// <summary>Replaces any provisional reconciliation target with the
+    /// preference snapshot that is authoritative after onboarding commits.</summary>
+    public async Task ReconcileAuthoritativeAsync(
+        CancellationToken cancellationToken = default)
+    {
+        await _operationGate.WaitAsync(cancellationToken);
+        try
+        {
+            _reconciliationDesiredState = null;
+            await ReconcileCoreAsync(Current.LaunchAtSignIn, cancellationToken);
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+    }
+
     public async Task ReconcileExternalAsync(
         bool desiredLaunchAtSignIn,
         CancellationToken cancellationToken = default)

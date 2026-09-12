@@ -83,7 +83,7 @@ public sealed class CompanionFeatureContext
         {
             await PresentPetAsync(petEvent, token);
             Pet.Handle(new PetEvent.PresentationAcknowledged());
-            Pet.Handle(new PetEvent.Dismissed(dismissalId));
+            Pet.Handle(PetEvent.CompletionForOneShot(petEvent, dismissalId));
         });
         RevealRemoteNoteAsync = revealRemoteNoteAsync ?? ((_, _) =>
             Task.FromException<string>(new NotSupportedException(

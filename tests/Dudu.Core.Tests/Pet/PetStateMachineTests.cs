@@ -84,4 +84,19 @@ public sealed class PetStateMachineTests
         Assert.Equal(PetState.WelcomeBack, result.State);
         Assert.Equal("greeting", result.AnimationKey);
     }
+
+    [Fact]
+    public void Ambient_greeting_and_welcome_back_have_distinct_dismissal_transitions()
+    {
+        var machine = PetStateMachine.CreateIdle();
+        machine.Handle(new PetEvent.WelcomeBackRequested());
+        machine.Handle(new PetEvent.AmbientRequested("greeting"));
+
+        var afterAmbientDismissal = machine.Handle(new PetEvent.AmbientDismissed("greeting"));
+
+        Assert.Equal(PetState.WelcomeBack, afterAmbientDismissal.State);
+        Assert.Equal(
+            PetState.Idle,
+            machine.Handle(new PetEvent.WelcomeBackDismissed()).State);
+    }
 }

@@ -61,4 +61,28 @@ public sealed class PetPresentationCoordinatorTests
         Assert.Equal(PetState.Idle, presentations[^1].State);
         Assert.Equal(PetState.Idle, pet.Current.State);
     }
+
+    [Fact]
+    public async Task Greeting_one_shot_dismisses_ambient_without_consuming_welcome_back()
+    {
+        var pet = PetStateMachine.CreateIdle();
+        pet.Handle(new PetEvent.WelcomeBackRequested());
+        var presentations = new List<PetPresentation>();
+        var coordinator = new PetPresentationCoordinator(
+            pet,
+            (presentation, _, _) =>
+            {
+                presentations.Add(presentation);
+                return Task.CompletedTask;
+            });
+
+        await coordinator.PresentOneShotAsync(
+            new PetEvent.AmbientRequested("greeting"),
+            "greeting",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(PetState.WelcomeBack, pet.Current.State);
+        Assert.Equal(PetState.WelcomeBack, presentations[^1].State);
+        Assert.Equal(PetState.Idle, pet.Handle(new PetEvent.WelcomeBackDismissed()).State);
+    }
 }

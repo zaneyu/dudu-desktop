@@ -46,6 +46,8 @@ public abstract record PetEvent
 
     public sealed record WelcomeBackRequested : PetEvent;
 
+    public sealed record WelcomeBackDismissed : PetEvent;
+
     public sealed record AmbientRequested : PetEvent
     {
         public string AnimationKey { get; }
@@ -54,11 +56,15 @@ public abstract record PetEvent
         {
             AnimationKey = RequireAnimation(animationKey);
         }
+    }
 
-        private static string RequireAnimation(string animationKey)
+    public sealed record AmbientDismissed : PetEvent
+    {
+        public string AnimationKey { get; }
+
+        public AmbientDismissed(string animationKey)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(animationKey);
-            return animationKey;
+            AnimationKey = RequireAnimation(animationKey);
         }
     }
 
@@ -78,9 +84,26 @@ public abstract record PetEvent
 
     public sealed record PresentationAcknowledged : PetEvent;
 
+    public static PetEvent CompletionForOneShot(PetEvent presentationEvent, string fallbackItemId)
+    {
+        ArgumentNullException.ThrowIfNull(presentationEvent);
+        return presentationEvent switch
+        {
+            AmbientRequested ambient => new AmbientDismissed(ambient.AnimationKey),
+            WelcomeBackRequested => new WelcomeBackDismissed(),
+            _ => new Dismissed(fallbackItemId),
+        };
+    }
+
     private static string RequireId(string value, string parameterName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(value, parameterName);
         return value;
+    }
+
+    private static string RequireAnimation(string animationKey)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(animationKey);
+        return animationKey;
     }
 }
