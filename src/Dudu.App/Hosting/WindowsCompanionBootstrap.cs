@@ -146,6 +146,79 @@ public sealed class WindowsCompanionBootstrap : IAsyncDisposable
     }
 }
 
+/// <summary>
+/// Observes application bootstrap from the UI entry point. It owns partial
+/// bootstrap disposal and turns factory/start failures into a diagnostic plus
+/// one controlled process exit instead of an unobserved task exception.
+/// </summary>
+public sealed class CompanionStartupRunner
+{
+    private readonly Func<string, CancellationToken, Task<WindowsCompanionBootstrap>> _factory;
+    private readonly Action<Exception> _report;
+    private readonly Action _exit;
+    private int _exitRequested;
+
+    public CompanionStartupRunner(
+        Func<string, CancellationToken, Task<WindowsCompanionBootstrap>> factory,
+        Action<Exception> report,
+        Action exit)
+    {
+        _factory = factory ?? throw new ArgumentNullException(nameof(factory));
+        _report = report ?? throw new ArgumentNullException(nameof(report));
+        _exit = exit ?? throw new ArgumentNullException(nameof(exit));
+    }
+
+    public WindowsCompanionBootstrap? Bootstrap { get; private set; }
+
+    public async Task RunAsync(
+        string arguments,
+        CancellationToken cancellationToken = default)
+    {
+        WindowsCompanionBootstrap? bootstrap = null;
+        try
+        {
+            bootstrap = await _factory(arguments, cancellationToken);
+            if (bootstrap is null)
+            {
+                throw new InvalidOperationException("The bootstrap factory returned null.");
+            }
+
+            if (!await bootstrap.StartAsync(cancellationToken))
+            {
+                await bootstrap.DisposeAsync();
+                RequestExit();
+                return;
+            }
+
+            Bootstrap = bootstrap;
+        }
+        catch (Exception exception)
+        {
+            Report(exception);
+            if (bootstrap is not null)
+            {
+                try { await bootstrap.DisposeAsync(); }
+                catch (Exception disposeException) { Report(disposeException); }
+            }
+
+            RequestExit();
+        }
+    }
+
+    private void Report(Exception exception)
+    {
+        try { _report(exception); }
+        catch { }
+    }
+
+    private void RequestExit()
+    {
+        if (Interlocked.Exchange(ref _exitRequested, 1) != 0) return;
+        try { _exit(); }
+        catch (Exception exception) { Report(exception); }
+    }
+}
+
 public interface ICompanionEventSink
 {
     Task OnSessionLockedAsync(CancellationToken cancellationToken = default);
@@ -382,6 +455,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         Action<TrayCommand>? trayCommandHandler = null,
         Func<AppLifecycleCoordinator, Action<TrayCommand>>? trayCommandHandlerFactory = null,
         Func<OverlayWindowHost, Task>? initializeOverlay = null,
+        bool initialUserVisible = true,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(openHome);
@@ -422,7 +496,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                 clock,
                 tray,
                 openHome,
-                initialUserVisible: true);
+                initialUserVisible: initialUserVisible);
             if (initializeOverlay is not null)
             {
                 await initializeOverlay(overlay);

@@ -34,19 +34,54 @@ public sealed class CompanionUiActions
     public Action Exit { get; }
 }
 
+public sealed record CompanionLaunchOptions(bool Background)
+{
+    public static CompanionLaunchOptions Parse(string? arguments)
+    {
+        var background = (arguments ?? string.Empty)
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+            .Any(argument => string.Equals(
+                argument,
+                "--background",
+                StringComparison.OrdinalIgnoreCase));
+        return new CompanionLaunchOptions(background);
+    }
+
+    /// <summary>
+    /// LaunchAtSignIn is the persisted policy for a startup/background launch.
+    /// A normal foreground launch always shows the companion; a background
+    /// launch only does so when that persisted policy has been disabled.
+    /// </summary>
+    public bool ShouldShowOverlay(Preferences preferences)
+    {
+        ArgumentNullException.ThrowIfNull(preferences);
+        return !Background || !preferences.LaunchAtSignIn;
+    }
+}
+
 public static class WindowsCompanionProductionComposition
 {
     public static WindowsCompanionBootstrap CreateBootstrap(
         CompanionUiActions actions,
         IActivationTransport? transport = null)
+        => CreateBootstrap(string.Empty, actions, transport);
+
+    public static WindowsCompanionBootstrap CreateBootstrap(
+        string launchArguments,
+        CompanionUiActions actions,
+        IActivationTransport? transport = null)
     {
         ArgumentNullException.ThrowIfNull(actions);
         return new WindowsCompanionBootstrap(
-            cancellationToken => CreateRuntimeAsync(actions, cancellationToken),
+            cancellationToken => CreateRuntimeAsync(
+                CompanionLaunchOptions.Parse(launchArguments),
+                actions,
+                cancellationToken),
             transport);
     }
 
     private static async Task<IPrimaryAppRuntime> CreateRuntimeAsync(
+        CompanionLaunchOptions launchOptions,
         CompanionUiActions actions,
         CancellationToken cancellationToken)
     {
@@ -67,7 +102,11 @@ public static class WindowsCompanionProductionComposition
 
         try
         {
-            var preferences = services.GetRequiredService<Preferences>();
+            var database = services.GetRequiredService<Database>();
+            await database.InitializeAsync(cancellationToken);
+            var preferencesRepository = services.GetRequiredService<IPreferencesRepository>();
+            var preferences = await preferencesRepository.GetAsync(cancellationToken)
+                ?? services.GetRequiredService<Preferences>();
             var pet = services.GetRequiredService<PetStateMachine>();
             var manifestPath = Path.Combine(
                 AppContext.BaseDirectory,
@@ -83,9 +122,10 @@ public static class WindowsCompanionProductionComposition
             composer = new SkiaFrameComposer(pack);
             presenter = new LayeredFramePresenter();
             startup = new StartupRegistrationService();
+            await startup.SetEnabledAsync(preferences.LaunchAtSignIn, cancellationToken);
             var startupSettings = new StartupSettingsService(
                 startup,
-                services.GetRequiredService<IPreferencesRepository>(),
+                preferencesRepository,
                 preferences);
             var pause = new PauseStateStore();
 
@@ -108,8 +148,12 @@ public static class WindowsCompanionProductionComposition
                 {
                     using var frame = composer.Compose(pack, animation, 0);
                     await overlay.PresentAsync(frame, cancellationToken);
-                    overlay.Show();
+                    if (launchOptions.ShouldShowOverlay(preferences))
+                    {
+                        overlay.Show();
+                    }
                 },
+                initialUserVisible: launchOptions.ShouldShowOverlay(preferences),
                 cancellationToken: cancellationToken);
             return new ComposedPrimaryRuntime(runtime, composer, presenter, startup, services);
         }

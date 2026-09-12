@@ -71,16 +71,58 @@ public sealed class WindowsCompanionBootstrapTests
         Assert.Equal(1, runtime.Activations);
     }
 
+    [Fact]
+    public async Task Startup_runner_observes_factory_failure_and_exits_once()
+    {
+        var reported = 0;
+        var exits = 0;
+        var runner = new CompanionStartupRunner(
+            (_, _) => Task.FromException<WindowsCompanionBootstrap>(
+                new InvalidOperationException("factory failed")),
+            _ => reported++,
+            () => exits++);
+
+        await runner.RunAsync("--background", TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, reported);
+        Assert.Equal(1, exits);
+        Assert.Null(runner.Bootstrap);
+    }
+
+    [Fact]
+    public async Task Startup_runner_disposes_partial_bootstrap_when_start_fails()
+    {
+        var shared = new SharedTransportState();
+        var runtime = new FakeRuntime { StartFailure = new InvalidOperationException("start failed") };
+        var reported = 0;
+        var exits = 0;
+        var runner = new CompanionStartupRunner(
+            (_, _) => Task.FromResult(new WindowsCompanionBootstrap(
+                _ => Task.FromResult<IPrimaryAppRuntime>(runtime),
+                new FakeTransport(shared))),
+            _ => reported++,
+            () => exits++);
+
+        await runner.RunAsync(string.Empty, TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, reported);
+        Assert.Equal(1, exits);
+        Assert.Equal(1, runtime.Disposals);
+    }
+
     private sealed class FakeRuntime : IPrimaryAppRuntime
     {
         public TaskCompletionSource<bool> Activation { get; } = new(
             TaskCreationOptions.RunContinuationsAsynchronously);
         public int Activations { get; private set; }
         public int Starts { get; private set; }
+        public int Disposals { get; private set; }
+        public Exception? StartFailure { get; init; }
 
         public Task StartAsync(CancellationToken cancellationToken = default)
         {
             Starts++;
+            if (StartFailure is not null) return Task.FromException(StartFailure);
             return Task.CompletedTask;
         }
 
@@ -92,7 +134,11 @@ public sealed class WindowsCompanionBootstrapTests
             return Task.CompletedTask;
         }
 
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        public ValueTask DisposeAsync()
+        {
+            Disposals++;
+            return ValueTask.CompletedTask;
+        }
     }
 
     private sealed class SharedTransportState

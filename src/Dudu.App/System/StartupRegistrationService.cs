@@ -42,6 +42,7 @@ public sealed class StartupRegistrationService : IAsyncDisposable
 
         _shortcutPath = Path.Combine(startup, ShortcutFileName);
         _writer = writer ?? new WindowsStartupLinkWriter();
+        _enabled = File.Exists(_shortcutPath);
     }
 
     public string ShortcutPath => _shortcutPath;

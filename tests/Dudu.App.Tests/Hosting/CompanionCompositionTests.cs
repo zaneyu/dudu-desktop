@@ -9,6 +9,31 @@ namespace Dudu.App.Tests.Hosting;
 
 public sealed class CompanionCompositionTests
 {
+    [Theory]
+    [InlineData("--background", true)]
+    [InlineData("--background --other", true)]
+    [InlineData("--other", false)]
+    [InlineData("", false)]
+    public void Launch_arguments_parse_background_mode(string arguments, bool expected)
+    {
+        Assert.Equal(expected, CompanionLaunchOptions.Parse(arguments).Background);
+    }
+
+    [Fact]
+    public void Background_launch_uses_persisted_startup_policy_for_overlay_visibility()
+    {
+        var background = CompanionLaunchOptions.Parse("--background");
+        var startupEnabled = new Preferences(
+            AppTheme.System,
+            new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+            false, 3, true, false, true, TimeSpan.FromMinutes(15));
+        var startupDisabled = startupEnabled with { LaunchAtSignIn = false };
+
+        Assert.False(background.ShouldShowOverlay(startupEnabled));
+        Assert.True(background.ShouldShowOverlay(startupDisabled));
+        Assert.True(new CompanionLaunchOptions(false).ShouldShowOverlay(startupEnabled));
+    }
+
     [Fact]
     public void Production_ui_actions_require_every_external_callback()
     {

@@ -140,6 +140,49 @@ public sealed class AppLifecycleCoordinatorTests
         }
     }
 
+    [Fact]
+    public async Task Fullscreen_restore_rechecks_pause_before_showing()
+    {
+        var overlay = new FakeOverlay();
+        var firstGateCheck = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstCheck = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var pause = PauseState.None;
+        var calls = 0;
+        var now = new DateTimeOffset(2026, 9, 11, 10, 0, 0, TimeSpan.Zero);
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            pauseState: () =>
+            {
+                if (Interlocked.Increment(ref calls) == 1)
+                {
+                    firstGateCheck.TrySetResult(true);
+                    releaseFirstCheck.Task.GetAwaiter().GetResult();
+                }
+
+                return pause;
+            },
+            clock: () => now);
+
+        await lifecycle.OnFullscreenChangedAsync(true, TestContext.Current.CancellationToken);
+        var restore = lifecycle.OnFullscreenChangedAsync(
+            false,
+            TestContext.Current.CancellationToken);
+        await firstGateCheck.Task.WaitAsync(TestContext.Current.CancellationToken);
+        pause = PausePolicy.ForOneHour(now);
+        releaseFirstCheck.TrySetResult(true);
+        await restore;
+
+        Assert.Equal(0, overlay.ShowCount);
+    }
+
     private sealed class FakeHost : IAppHostLifecycle
     {
         public Task ResumeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;

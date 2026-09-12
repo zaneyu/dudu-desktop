@@ -35,6 +35,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
     private readonly Action<Exception>? _diagnostic;
     private readonly TrayIconService? _tray;
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly SemaphoreSlim _visibilityGate = new(1, 1);
     private readonly object _disposeSync = new();
     private bool _locked;
     private bool _suspended;
@@ -82,7 +83,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         }
         finally { _gate.Release(); }
 
-        InvokeSafely(_overlay.Hide, "session-lock-hide");
+        await InvokeVisualSafelyAsync(_overlay.Hide, "session-lock-hide", cancellationToken);
     }
 
     public Task OnSessionUnlockedAsync(CancellationToken cancellationToken = default) =>
@@ -98,7 +99,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         }
         finally { _gate.Release(); }
 
-        InvokeSafely(_overlay.Hide, "suspend-hide");
+        await InvokeVisualSafelyAsync(_overlay.Hide, "suspend-hide", cancellationToken);
     }
 
     public Task OnResumeAsync(CancellationToken cancellationToken = default) =>
@@ -129,7 +130,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         finally { _gate.Release(); }
 
         InvokeSafely(_openHome, "open-home");
-        InvokeSafely(_overlay.Show, "hotkey-show");
+        await InvokeVisualSafelyAsync(_overlay.Show, "hotkey-show", cancellationToken);
     }
 
     public async Task OnUserShowOrHideAsync(CancellationToken cancellationToken = default)
@@ -145,7 +146,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
             }
             finally { _gate.Release(); }
 
-            InvokeSafely(_overlay.Hide, "user-hide");
+            await InvokeVisualSafelyAsync(_overlay.Hide, "user-hide", cancellationToken);
             return;
         }
 
@@ -170,13 +171,13 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         }
         finally { _gate.Release(); }
 
-        InvokeSafely(_overlay.Show, "user-show");
+        await InvokeVisualSafelyAsync(_overlay.Show, "user-show", cancellationToken);
     }
 
     public async Task OnDisplayChangedAsync(CancellationToken cancellationToken = default)
     {
         await CaptureAsync(cancellationToken);
-        InvokeSafely(_overlay.RestorePlacement, "display-placement");
+        await InvokeVisualSafelyAsync(_overlay.RestorePlacement, "display-placement", cancellationToken);
     }
 
     public async Task OnFullscreenChangedAsync(
@@ -217,32 +218,53 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
 
         if (hide)
         {
-            InvokeSafely(_overlay.Hide, "fullscreen-hide");
+            await InvokeVisualSafelyAsync(_overlay.Hide, "fullscreen-hide", cancellationToken);
             return;
         }
 
         if (!restore) return;
-        InvokeSafely(_overlay.RestorePlacement, "fullscreen-placement");
-        if (!restoreVisible
-            || !TryCanShow(false, snapshot.Locked, snapshot.Suspended, "fullscreen-restore-gate"))
-        {
-            return;
-        }
-
-        await _gate.WaitAsync(cancellationToken);
+        await _visibilityGate.WaitAsync(cancellationToken);
         try
         {
-            ThrowIfDisposed();
-            if (_fullscreenHidden
-                || _locked != snapshot.Locked
-                || _suspended != snapshot.Suspended)
+            InvokeSafely(_overlay.RestorePlacement, "fullscreen-placement");
+            if (!restoreVisible
+                || !TryCanShow(
+                    TryReadFullscreen("fullscreen-restore-fullscreen"),
+                    snapshot.Locked,
+                    snapshot.Suspended,
+                    "fullscreen-restore-gate"))
             {
                 return;
             }
-        }
-        finally { _gate.Release(); }
 
-        InvokeSafely(_overlay.Show, "fullscreen-restore-show");
+            await _gate.WaitAsync(cancellationToken);
+            try
+            {
+                ThrowIfDisposed();
+                if (_fullscreenHidden
+                    || _locked != snapshot.Locked
+                    || _suspended != snapshot.Suspended)
+                {
+                    return;
+                }
+            }
+            finally { _gate.Release(); }
+
+            var latest = await CaptureAsync(cancellationToken);
+            if (!latest.UserVisible
+                || latest.FullscreenHidden
+                || !TryCanShow(
+                    TryReadFullscreen("fullscreen-restore-final-fullscreen"),
+                    latest.Locked,
+                    latest.Suspended,
+                    "fullscreen-restore-final-gate"))
+            {
+                return;
+            }
+
+            InvokeSafely(_overlay.Show, "fullscreen-restore-show");
+        }
+        finally { _visibilityGate.Release(); }
     }
 
     public async Task OnTaskbarCreatedAsync(CancellationToken cancellationToken = default)
@@ -254,17 +276,26 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
 
     public async Task OnPauseStateChangedAsync(CancellationToken cancellationToken = default)
     {
-        var snapshot = await CaptureAsync(cancellationToken);
-        var fullscreen = TryReadFullscreen("pause-fullscreen");
-        var canShow = TryCanShow(fullscreen, snapshot.Locked, snapshot.Suspended, "pause-state-gate");
-        if (snapshot.UserVisible && canShow && !snapshot.FullscreenHidden)
+        await _visibilityGate.WaitAsync(cancellationToken);
+        try
         {
-            InvokeSafely(_overlay.Show, "pause-state-show");
+            var snapshot = await CaptureAsync(cancellationToken);
+            var fullscreen = TryReadFullscreen("pause-fullscreen");
+            var canShow = TryCanShow(
+                fullscreen,
+                snapshot.Locked,
+                snapshot.Suspended,
+                "pause-state-gate");
+            if (snapshot.UserVisible && canShow && !snapshot.FullscreenHidden)
+            {
+                InvokeSafely(_overlay.Show, "pause-state-show");
+            }
+            else if (!canShow)
+            {
+                InvokeSafely(_overlay.Hide, "pause-state-hide");
+            }
         }
-        else if (!canShow)
-        {
-            InvokeSafely(_overlay.Hide, "pause-state-hide");
-        }
+        finally { _visibilityGate.Release(); }
     }
 
     public ValueTask DisposeAsync()
@@ -286,12 +317,13 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         }
         finally { _gate.Release(); }
 
-        InvokeSafely(_overlay.Hide, "shutdown-hide");
+        await InvokeVisualSafelyAsync(_overlay.Hide, "shutdown-hide", CancellationToken.None);
         try { _tray?.Dispose(); }
         catch (Exception exception) { ReportFailure("shutdown-tray", exception); }
         await _host.StopAsync();
         await _overlay.DisposeAsync();
         _gate.Dispose();
+        _visibilityGate.Dispose();
     }
 
     private async Task<GateSnapshot> CaptureAsync(CancellationToken cancellationToken)
@@ -350,7 +382,10 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         finally { _gate.Release(); }
 
         if (welcome) _pet.Handle(new PetEvent.WelcomeBackRequested());
-        if (show) InvokeSafely(_overlay.Show, "resume-show");
+        if (show)
+        {
+            await InvokeVisualSafelyAsync(_overlay.Show, "resume-show", cancellationToken);
+        }
     }
 
     private bool TryCanShow(bool fullscreen, bool locked, bool suspended, string operation)
@@ -387,6 +422,16 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         if (callback is null) return;
         try { callback(); }
         catch (Exception exception) { ReportFailure(operation, exception); }
+    }
+
+    private async Task InvokeVisualSafelyAsync(
+        Action callback,
+        string operation,
+        CancellationToken cancellationToken)
+    {
+        await _visibilityGate.WaitAsync(cancellationToken);
+        try { InvokeSafely(callback, operation); }
+        finally { _visibilityGate.Release(); }
     }
 
     private void ReportFailure(string operation, Exception exception)
