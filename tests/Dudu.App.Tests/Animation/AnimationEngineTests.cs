@@ -214,31 +214,60 @@ public sealed class AnimationEngineTests
     public async Task Concurrent_async_disposal_is_single_flight_while_playback_is_canceled()
     {
         using var fixture = AnimationFixture.Create([100], loop: "loop", animationKey: "idle");
-        var play = fixture.Engine.PlayAsync(
+        var presenter = new BlockingFramePresenter();
+        var composer = new SkiaFrameComposer(fixture.Pack);
+        using var engine = new AnimationEngine(
+            fixture.Pack,
+            presenter,
+            fixture.Clock,
+            composer);
+        var play = engine.PlayAsync(
             TestPresentation("idle"),
             AnimationOptions.Default,
             TestContext.Current.CancellationToken);
+        await presenter.FirstPresentation.Task.WaitAsync(TestContext.Current.CancellationToken);
 
-        var disposals = Enumerable.Range(0, 8)
-            .Select(_ => fixture.Engine.DisposeAsync().AsTask())
-            .ToArray();
-        await Task.WhenAll(disposals);
+        var firstDispose = engine.DisposeAsync().AsTask();
+        await presenter.CancellationObserved.Task.WaitAsync(TestContext.Current.CancellationToken);
+        var secondDispose = engine.DisposeAsync().AsTask();
+
+        Assert.False(firstDispose.IsCompleted);
+        Assert.False(secondDispose.IsCompleted);
+        presenter.ReleaseCancellation.TrySetResult(true);
+        await Task.WhenAll(firstDispose, secondDispose);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => play);
 
-        Assert.Equal(1, fixture.Composer.DisposeCount);
+        Assert.Equal(1, composer.DisposeCount);
     }
 
     [Fact]
     public async Task Synchronous_and_async_disposal_interleave_without_races()
     {
         using var fixture = AnimationFixture.Create([100], loop: "once", animationKey: "idle");
+        var presenter = new BlockingFramePresenter();
+        var composer = new SkiaFrameComposer(fixture.Pack);
+        using var engine = new AnimationEngine(
+            fixture.Pack,
+            presenter,
+            fixture.Clock,
+            composer);
+        var play = engine.PlayAsync(
+            TestPresentation("idle"),
+            AnimationOptions.Default,
+            TestContext.Current.CancellationToken);
+        await presenter.FirstPresentation.Task.WaitAsync(TestContext.Current.CancellationToken);
 
-        var synchronous = Task.Run(fixture.Engine.Dispose, TestContext.Current.CancellationToken);
-        var asynchronous = fixture.Engine.DisposeAsync().AsTask();
+        var synchronous = Task.Run(engine.Dispose, TestContext.Current.CancellationToken);
+        await presenter.CancellationObserved.Task.WaitAsync(TestContext.Current.CancellationToken);
+        var asynchronous = engine.DisposeAsync().AsTask();
 
+        Assert.False(synchronous.IsCompleted);
+        Assert.False(asynchronous.IsCompleted);
+        presenter.ReleaseCancellation.TrySetResult(true);
         await Task.WhenAll(synchronous, asynchronous);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => play);
 
-        Assert.Equal(1, fixture.Composer.DisposeCount);
+        Assert.Equal(1, composer.DisposeCount);
     }
 
     private static PetPresentation TestPresentation(string key) =>
