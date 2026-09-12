@@ -43,7 +43,7 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
     // persistent controls rather than presenting a saved value that vanishes.
     public bool CanPersistOutfit => false;
     public bool CanConfigureSeasonalMode => false;
-    public string OutfitAvailabilityMessage => "Outfit choices apply for this session only.";
+    public string OutfitAvailabilityMessage => "Outfit selection is unavailable until Dudu can save outfit choices. The current look will stay unchanged.";
 
     public AppTheme Theme
     {
@@ -58,7 +58,7 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
         get => (int)Theme;
         set
         {
-            if (value is >= (int)AppTheme.System and <= (int)AppTheme.Dark) Theme = (AppTheme)value;
+            if (Enum.IsDefined((AppTheme)value)) Theme = (AppTheme)value;
         }
     }
     public bool ReducedMotion { get => _reducedMotion; set => SetProperty(ref _reducedMotion, value); }
@@ -74,10 +74,23 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
     {
         await RunAsync(async () =>
         {
+            // Cached Settings pages are created after onboarding.  Rehydrate
+            // from the coordinator each time the page is activated so a later
+            // onboarding/defaults write is the single source of truth.
+            var preferences = _context.CurrentPreferences;
+            Theme = preferences.Theme;
+            ReducedMotion = preferences.ReducedMotion;
+            AlwaysOnTop = preferences.AlwaysOnTop;
+            HideDuringFullscreen = preferences.HidePetDuringFullscreen;
+            var placements = await _context.PetPlacements.ListAsync(cancellationToken);
             MonitorOptions.Clear();
-            foreach (var placement in await _context.PetPlacements.ListAsync(cancellationToken)) MonitorOptions.Add(placement.MonitorDeviceName);
+            foreach (var placement in placements) MonitorOptions.Add(placement.MonitorDeviceName);
             if (MonitorOptions.Count == 0) MonitorOptions.Add(MonitorDeviceName);
-            MonitorDeviceName = MonitorOptions[0];
+            var selectedPlacement = placements.FirstOrDefault(item =>
+                string.Equals(item.MonitorDeviceName, MonitorDeviceName, StringComparison.Ordinal))
+                ?? placements.FirstOrDefault();
+            MonitorDeviceName = selectedPlacement?.MonitorDeviceName ?? MonitorOptions[0];
+            if (selectedPlacement is not null) PetScale = selectedPlacement.Scale;
         });
     }
 
@@ -104,9 +117,8 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
         }, "Pet placement saved.");
 
     public Task ApplyOutfitAsync(CancellationToken cancellationToken = default) =>
-        RunAsync(async () => await _context.ApplyOutfitAsync(
-            AutomaticSeasonalMode || OutfitKey is "Automatic" ? null : OutfitKey,
-            cancellationToken), "Outfit applied for this session.");
+        RunAsync(() => Task.FromException(new NotSupportedException(
+            "Outfit selection is unavailable until Dudu can save outfit choices.")));
 
     public Task SaveShortcutAsync(CancellationToken cancellationToken = default) =>
         RunAsync(async () =>

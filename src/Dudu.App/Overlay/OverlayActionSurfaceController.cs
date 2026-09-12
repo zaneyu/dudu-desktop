@@ -1,9 +1,12 @@
+using System.Diagnostics;
+using Dudu.App.Animation;
 using Dudu.Core.Assets;
+using Dudu.Core.Models;
 
 namespace Dudu.App.Overlay;
 
 /// <summary>State, geometry, and dispatch contract for the no-activate overlay.</summary>
-public sealed class OverlayActionSurfaceController
+public sealed class OverlayActionSurfaceController : IDisposable
 {
     private OverlayCommandRouter? _router;
     private PixelRect _workArea;
@@ -22,24 +25,6 @@ public sealed class OverlayActionSurfaceController
     public string? ErrorMessage { get; private set; }
     public event EventHandler? Changed;
 
-    public OverlaySurfaceSnapshot CreateRenderSnapshot()
-    {
-        var actions = Arrangement?.PrimaryActions
-            .Select(item => new OverlaySurfaceAction(ActionBubbleLayout.Label(item.Action), item.HitRegion))
-            .ToArray() ?? [];
-        var comfortActions = ComfortArrangement?.Actions
-            .Select(item => new OverlaySurfaceAction(ActionBubbleLayout.ComfortLabel(item.Action), item.HitRegion))
-            .ToArray() ?? [];
-        var panel = _router?.ComfortPanel ?? ComfortPanelState.Closed;
-        return new OverlaySurfaceSnapshot(
-            Kind,
-            Kind == OverlayActionSurfaceKind.Primary ? Arrangement?.Bounds : ComfortArrangement?.Bounds,
-            Kind == OverlayActionSurfaceKind.Primary ? actions : comfortActions,
-            panel,
-            _router?.IsReducedMotion ?? false,
-            ErrorMessage);
-    }
-
     public void Bind(OverlayCommandRouter router)
     {
         if (_router is not null) _router.ComfortPanelChanged -= OnComfortPanelChanged;
@@ -57,11 +42,20 @@ public sealed class OverlayActionSurfaceController
     {
         _workArea = workArea;
         _petAnchor = petAnchor;
-        Arrangement = ActionBubbleLayout.TryArrange(OverlayCommandRouter.PrimaryActions, workArea, petAnchor);
+        try
+        {
+            Arrangement = ActionBubbleLayout.TryArrange(OverlayCommandRouter.PrimaryActions, workArea, petAnchor);
+        }
+        catch (ArgumentException)
+        {
+            Arrangement = null;
+        }
         ComfortArrangement = null;
-        Kind = Arrangement is null ? OverlayActionSurfaceKind.Closed : OverlayActionSurfaceKind.Primary;
-        ErrorMessage = Arrangement is null ? "There is not enough room to show Dudu's actions." : null;
-        Changed?.Invoke(this, EventArgs.Empty);
+        Kind = Arrangement is null ? OverlayActionSurfaceKind.Status : OverlayActionSurfaceKind.Primary;
+        ErrorMessage = Arrangement is null
+            ? "There is not enough room to show Dudu's actions. Open Settings to use them."
+            : null;
+        RaiseChanged();
     }
 
     public void Close()
@@ -70,7 +64,51 @@ public sealed class OverlayActionSurfaceController
         Arrangement = null;
         ComfortArrangement = null;
         Kind = OverlayActionSurfaceKind.Closed;
-        Changed?.Invoke(this, EventArgs.Empty);
+        RaiseChanged();
+    }
+
+    /// <summary>Returns the complete visual and automation contract for the
+    /// current native surface.  The same labels and destination routes are
+    /// exposed by Home, so the overlay never becomes a mouse-only feature.</summary>
+    public OverlaySurfaceSnapshot CreateRenderSnapshot()
+    {
+        var actions = Kind switch
+        {
+            OverlayActionSurfaceKind.Primary => Arrangement?.PrimaryActions
+                .Select(item => new OverlaySurfaceAction(
+                    ActionBubbleLayout.Label(item.Action),
+                    ActionBubbleLayout.AutomationId(item.Action),
+                    item.HitRegion,
+                    OverlayCommandRouter.EquivalentSettingsDestination(item.Action)))
+                .ToArray() ?? [],
+            OverlayActionSurfaceKind.Comfort => ComfortArrangement?.Actions
+                .Select(item => new OverlaySurfaceAction(
+                    ActionBubbleLayout.ComfortLabel(item.Action),
+                    ActionBubbleLayout.ComfortAutomationId(item.Action),
+                    item.HitRegion,
+                    OverlayCommandRouter.EquivalentSettingsDestination(item.Action)))
+                .ToArray() ?? [],
+            _ => [],
+        };
+
+        return new OverlaySurfaceSnapshot(
+            Kind,
+            Arrangement?.Bounds ?? ComfortArrangement?.Bounds ?? (_workArea.IsValid ? _workArea : null),
+            actions,
+            _router?.ComfortPanel ?? ComfortPanelState.Closed,
+            _router?.IsReducedMotion ?? false,
+            ErrorMessage)
+        {
+            Theme = _router?.Theme ?? AppTheme.System,
+            IsHighContrast = OverlaySurfaceRenderer.IsHighContrastEnabled(),
+        };
+    }
+
+    public void Dispose()
+    {
+        if (_router is not null) _router.ComfortPanelChanged -= OnComfortPanelChanged;
+        _router = null;
+        Changed = null;
     }
 
     public bool Contains(PixelPoint point) => HitRegions.Any(region => region.Contains(point.X, point.Y));
@@ -127,7 +165,7 @@ public sealed class OverlayActionSurfaceController
             SetError(exception.Message);
             return;
         }
-        Changed?.Invoke(this, EventArgs.Empty);
+        RaiseChanged();
     }
 
     private async Task DispatchComfortAsync(ComfortAction action, CancellationToken cancellationToken)
@@ -144,16 +182,39 @@ public sealed class OverlayActionSurfaceController
             SetError(exception.Message);
             return;
         }
-        Changed?.Invoke(this, EventArgs.Empty);
+        RaiseChanged();
     }
 
     private void SetError(string message)
     {
         ErrorMessage = message;
-        Changed?.Invoke(this, EventArgs.Empty);
+        if (Kind == OverlayActionSurfaceKind.Closed && _workArea.IsValid)
+        {
+            Kind = OverlayActionSurfaceKind.Status;
+        }
+
+        RaiseChanged();
     }
 
-    private void OnComfortPanelChanged(object? sender, EventArgs args) => Changed?.Invoke(this, EventArgs.Empty);
+    private void OnComfortPanelChanged(object? sender, EventArgs args) => RaiseChanged();
+
+    private void RaiseChanged()
+    {
+        var handlers = Changed;
+        if (handlers is null) return;
+
+        foreach (var handler in handlers.GetInvocationList().OfType<EventHandler>())
+        {
+            try
+            {
+                handler(this, EventArgs.Empty);
+            }
+            catch (Exception exception)
+            {
+                Trace.TraceError("Dudu overlay change listener failed: {0}", exception);
+            }
+        }
+    }
 }
 
 internal static class OverlayActionSurfaceObserver
@@ -165,13 +226,3 @@ internal static class OverlayActionSurfaceObserver
         catch (Exception exception) { report(exception); }
     }
 }
-
-public sealed record OverlaySurfaceSnapshot(
-    OverlayActionSurfaceKind Kind,
-    PixelRect? Bounds,
-    IReadOnlyList<OverlaySurfaceAction> Actions,
-    ComfortPanelState ComfortPanel,
-    bool IsReducedMotion,
-    string? ErrorMessage);
-
-public sealed record OverlaySurfaceAction(string Label, PixelRect HitRegion);

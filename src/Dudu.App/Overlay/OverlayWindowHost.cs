@@ -208,8 +208,9 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         }, cancellationToken);
     }
 
-    /// <summary>Installs the application-layer action contract used by both
-    /// the native no-activate hit-test path and the frame renderer.</summary>
+    /// <summary>Installs the shared action contract used by native no-activate
+    /// hit testing and layered-frame rendering. The separate Settings controls
+    /// remain the keyboard and UIA route for the same actions.</summary>
     public Task SetActionSurfaceAsync(
         OverlayActionSurfaceController actionSurface,
         CancellationToken cancellationToken = default)

@@ -11,4 +11,21 @@ public sealed class OverlayCommandRouterTests
         Assert.All(OverlayCommandRouter.PrimaryActions, action =>
             Assert.False(string.IsNullOrWhiteSpace(OverlayCommandRouter.EquivalentSettingsDestination(action))));
     }
+
+    [Fact]
+    public void All_primary_and_comfort_actions_publish_unique_keyboard_metadata()
+    {
+        Assert.Equal(OverlayCommandRouter.PrimaryActions.Count, OverlayCommandRouter.AccessiblePrimaryActions.Count);
+        Assert.Equal(ActionBubbleLayout.ComfortActions.Count, OverlayCommandRouter.AccessibleComfortActions.Count);
+        Assert.All(OverlayCommandRouter.AccessiblePrimaryActions, action =>
+        {
+            Assert.False(string.IsNullOrWhiteSpace(action.AutomationId));
+            Assert.Equal(OverlayCommandRouter.EquivalentSettingsDestination(action.Action), action.SettingsDestination);
+        });
+        Assert.All(OverlayCommandRouter.AccessibleComfortActions, action =>
+        {
+            Assert.False(string.IsNullOrWhiteSpace(action.AutomationId));
+            Assert.Equal(OverlayCommandRouter.EquivalentSettingsDestination(action.Action), action.SettingsDestination);
+        });
+    }
 }

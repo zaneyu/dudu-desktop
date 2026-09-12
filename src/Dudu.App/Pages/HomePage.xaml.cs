@@ -1,4 +1,5 @@
 using Dudu.App.Hosting;
+using Dudu.App.Overlay;
 using Dudu.App.ViewModels;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -7,10 +8,16 @@ namespace Dudu.App.Pages;
 
 public sealed partial class HomePage : Page
 {
-    public HomePage(HomeViewModel viewModel, StartupSettingsService startup)
+    private readonly OverlayCommandRouter? _overlayCommands;
+
+    public HomePage(
+        HomeViewModel viewModel,
+        StartupSettingsService startup,
+        OverlayCommandRouter? overlayCommands = null)
     {
         ViewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         Startup = startup ?? throw new ArgumentNullException(nameof(startup));
+        _overlayCommands = overlayCommands;
         InitializeComponent();
         DataContext = ViewModel;
         Loaded += Page_Loaded;
@@ -53,7 +60,34 @@ public sealed partial class HomePage : Page
         if (sender is ListView list)
         {
             ViewModel.SelectCountdownCommand.Execute(list.SelectedItem as Dudu.Core.Models.Countdown);
+            CountdownTargetBox.Text = ViewModel.CountdownTargetUtc?.ToLocalTime().ToString("g") ?? string.Empty;
         }
+    }
+
+    private void CountdownTarget_Changed(object sender, TextChangedEventArgs args)
+    {
+        if (sender is not TextBox box) return;
+        if (string.IsNullOrWhiteSpace(box.Text))
+        {
+            ViewModel.CountdownTargetUtc = null;
+            SetCountdownTargetValidation(true, null);
+        }
+        else if (DateTimeOffset.TryParse(box.Text, out var target))
+        {
+            ViewModel.CountdownTargetUtc = target;
+            SetCountdownTargetValidation(true, null);
+        }
+        else
+        {
+            SetCountdownTargetValidation(false, "Use a date and time such as 12/31/2026 5:00 PM, or leave this blank.");
+        }
+    }
+
+    private void SetCountdownTargetValidation(bool isValid, string? message)
+    {
+        HomeSaveCountdownButton.IsEnabled = isValid;
+        CountdownTargetValidation.Text = message ?? string.Empty;
+        CountdownTargetValidation.Visibility = isValid ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void MoodBox_SelectionChanged(object sender, SelectionChangedEventArgs args)
@@ -63,6 +97,44 @@ public sealed partial class HomePage : Page
             && Enum.TryParse<Dudu.Core.Models.MoodChoice>(item.Tag as string, out var mood))
         {
             ViewModel.SelectedMood = mood;
+        }
+    }
+
+    private async void OverlayAction_Click(object sender, RoutedEventArgs args)
+    {
+        if (sender is not Button button
+            || !Enum.TryParse<OverlayAction>(button.Tag as string, out var action)) return;
+
+        try
+        {
+            var commands = _overlayCommands ?? throw new InvalidOperationException(
+                "Dudu's action controls are not ready yet.");
+            await commands.ExecuteAccessibleAsync(action);
+            HomeActionStatus.Text = $"{ActionBubbleLayout.Label(action)} is ready.";
+        }
+        catch (Exception exception)
+        {
+            HomeActionStatus.Text = exception.Message;
+            global::System.Diagnostics.Trace.TraceError("Dudu action failed: {0}", exception);
+        }
+    }
+
+    private async void ComfortAction_Click(object sender, RoutedEventArgs args)
+    {
+        if (sender is not Button button
+            || !Enum.TryParse<ComfortAction>(button.Tag as string, out var action)) return;
+
+        try
+        {
+            var commands = _overlayCommands ?? throw new InvalidOperationException(
+                "Dudu's comfort controls are not ready yet.");
+            await commands.ExecuteComfortAccessibleAsync(action);
+            HomeActionStatus.Text = $"{ActionBubbleLayout.ComfortLabel(action)} is ready.";
+        }
+        catch (Exception exception)
+        {
+            HomeActionStatus.Text = exception.Message;
+            global::System.Diagnostics.Trace.TraceError("Dudu comfort action failed: {0}", exception);
         }
     }
 
@@ -79,4 +151,5 @@ public sealed partial class HomePage : Page
             global::System.Diagnostics.Trace.TraceError("Dudu startup setting failed: {0}", exception);
         }
     }
+
 }

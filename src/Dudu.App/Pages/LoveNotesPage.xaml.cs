@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using Dudu.App.ViewModels;
 using Dudu.Core.Models;
 using Microsoft.UI.Xaml;
@@ -12,6 +13,7 @@ public sealed partial class LoveNotesPage : Page
         ViewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         InitializeComponent();
         DataContext = ViewModel;
+        ViewModel.PropertyChanged += ViewModel_PropertyChanged;
         Loaded += Page_Loaded;
     }
 
@@ -20,6 +22,30 @@ public sealed partial class LoveNotesPage : Page
     private async void Page_Loaded(object sender, RoutedEventArgs args)
     {
         await ViewModel.RefreshAsync();
+        RefreshCountText();
+    }
+
+    private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName is nameof(LoveNotesViewModel.UnopenedRemoteNoteCount)
+            or nameof(LoveNotesViewModel.DailyLocalNoteLimit))
+        {
+            RefreshCountText();
+        }
+    }
+
+    private void RefreshCountText()
+    {
+        var dailyLimit = ViewModel.DailyLocalNoteLimit;
+        LoveNotesDailyLimit.Text = $"Dudu can show up to {dailyLimit} local note{(dailyLimit == 1 ? string.Empty : "s")} each day.";
+
+        var unopened = ViewModel.UnopenedRemoteNoteCount;
+        LoveNotesPendingCount.Text = unopened switch
+        {
+            0 => "No unopened remote notes.",
+            1 => "1 unopened remote note.",
+            _ => $"{unopened} unopened remote notes.",
+        };
     }
 
     private void LocalNoteList_SelectionChanged(object sender, SelectionChangedEventArgs args)

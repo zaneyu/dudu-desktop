@@ -4,10 +4,10 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:models="using:Dudu.Core.Models"
     Background="{ThemeResource WindowSurfaceBrush}">
-    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
-        <StackPanel MaxWidth="880" Padding="32" Spacing="24">
+    <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+        <StackPanel MaxWidth="880" Margin="32" Spacing="24">
             <StackPanel Spacing="8">
-                <TextBlock Text="Home" Style="{StaticResource PageTitleStyle}" />
+                <TextBlock Text="Home" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="HomePageTitle" />
                 <TextBlock Text="A quiet view of Dudu and the next useful thing." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
             </StackPanel>
 
@@ -15,10 +15,12 @@
                 <StackPanel Spacing="12">
                     <TextBlock Text="Dudu's status" Style="{StaticResource SectionHeadingStyle}" />
                     <TextBlock Text="{x:Bind ViewModel.PauseDescription, Mode=OneWay}" TextWrapping="Wrap" />
-                    <TextBlock Text="{x:Bind ViewModel.NextReminderText, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.AutomationId="HomeNextReminder" />
-                    <TextBlock Text="{x:Bind ViewModel.ActiveFocusText, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.AutomationId="HomeActiveFocus" />
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <Button Content="Pet Dudu" Command="{x:Bind ViewModel.PetCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="HomePet" />
+                    <TextBlock x:Name="HomeNextReminder" Text="{x:Bind ViewModel.NextReminderText, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.AutomationId="HomeNextReminder" />
+                    <TextBlock x:Name="HomeActiveFocus" Text="{x:Bind ViewModel.ActiveFocusText, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.AutomationId="HomeActiveFocus" />
+                    <TextBlock x:Name="HomePetState" Text="{x:Bind ViewModel.PetStateText, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.AutomationId="HomePetState" />
+                    <TextBlock x:Name="HomePetAnimation" Text="{x:Bind ViewModel.PetAnimationText, Mode=OneWay}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="HomePetAnimation" />
+                    <StackPanel Spacing="8">
+                        <Button Content="Pet Dudu" Command="{x:Bind ViewModel.PetCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="OverlayActionPet" />
                         <Button Content="Pause for one hour" Command="{x:Bind ViewModel.PauseForOneHourCommand}" AutomationProperties.AutomationId="HomePause" />
                         <Button Content="Resume" Command="{x:Bind ViewModel.ResumeCommand}" AutomationProperties.AutomationId="HomeResume" />
                     </StackPanel>
@@ -26,28 +28,45 @@
             </Border>
 
             <StackPanel Spacing="12">
+                <TextBlock Text="Dudu actions" Style="{StaticResource SectionHeadingStyle}" />
+                <TextBlock Text="These keyboard-accessible controls are the Settings equivalents of Dudu's action bubble." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <StackPanel Spacing="8">
+                    <Button Content="Drink water" Tag="DrinkWater" Click="OverlayAction_Click" AutomationProperties.AutomationId="OverlayActionDrinkWater" />
+                    <Button Content="Start focus" Tag="StartFocus" Click="OverlayAction_Click" AutomationProperties.AutomationId="OverlayActionStartFocus" />
+                    <Button Content="Open tasks" Tag="Tasks" Click="OverlayAction_Click" AutomationProperties.AutomationId="OverlayActionTasks" />
+                    <Button Content="Open love notes" Tag="LoveNote" Click="OverlayAction_Click" AutomationProperties.AutomationId="OverlayActionLoveNote" />
+                    <Button Content="Comfort me" Tag="ComfortMe" Click="OverlayAction_Click" AutomationProperties.AutomationId="OverlayActionComfortMe" />
+                </StackPanel>
+                <TextBlock x:Name="HomeActionStatus" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" AutomationProperties.AutomationId="HomeActionStatus" />
+            </StackPanel>
+
+            <StackPanel Spacing="12">
+                <TextBlock Text="Comfort actions" Style="{StaticResource SectionHeadingStyle}" />
+                <TextBlock Text="Choose a gentle action without relying on the overlay. Nothing here records or infers a mood." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <StackPanel Spacing="8">
+                    <Button Content="Breathe with me" Tag="BreatheWithMe" Click="ComfortAction_Click" AutomationProperties.AutomationId="OverlayComfortActionBreatheWithMe" />
+                    <Button Content="Tiny hug" Tag="TinyHug" Click="ComfortAction_Click" AutomationProperties.AutomationId="OverlayComfortActionTinyHug" />
+                    <Button Content="Read a love note" Tag="ReadALoveNote" Click="ComfortAction_Click" AutomationProperties.AutomationId="OverlayComfortActionReadALoveNote" />
+                    <Button Content="Take a five-minute break" Tag="TakeAFiveMinuteBreak" Click="ComfortAction_Click" AutomationProperties.AutomationId="OverlayComfortActionTakeAFiveMinuteBreak" />
+                    <Button Content="Close comfort" Tag="Close" Click="ComfortAction_Click" AutomationProperties.AutomationId="OverlayComfortActionClose" />
+                </StackPanel>
+            </StackPanel>
+
+            <StackPanel Spacing="12">
                 <TextBlock Text="Countdowns" Style="{StaticResource SectionHeadingStyle}" />
                 <TextBlock Text="Keep one meaningful date in view. Leave the target blank to use tomorrow." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
-                <Grid ColumnSpacing="12">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="2*" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <TextBox Header="Title" Text="{x:Bind ViewModel.CountdownTitle, Mode=TwoWay}" PlaceholderText="For example, next visit" AutomationProperties.AutomationId="HomeCountdownTitle" Grid.Column="0" />
-                    <TextBox Header="Target" Text="{x:Bind ViewModel.CountdownTargetText, Mode=TwoWay}" PlaceholderText="Optional" AutomationProperties.AutomationId="HomeCountdownTarget" Grid.Column="1" />
-                    <Button Content="Save" Command="{x:Bind ViewModel.CreateCountdownCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="HomeSaveCountdown" Grid.Column="2" VerticalAlignment="Bottom" />
-                </Grid>
+                <StackPanel Spacing="8">
+                    <TextBox Header="Title" Text="{x:Bind ViewModel.CountdownTitle, Mode=TwoWay}" PlaceholderText="For example, next visit" AutomationProperties.AutomationId="HomeCountdownTitle" />
+                    <TextBox x:Name="CountdownTargetBox" Header="Target" PlaceholderText="Optional" TextChanged="CountdownTarget_Changed" AutomationProperties.AutomationId="HomeCountdownTarget" />
+                    <TextBlock x:Name="CountdownTargetValidation" TextWrapping="Wrap" Foreground="{ThemeResource ErrorBrush}" Visibility="Collapsed" AutomationProperties.AutomationId="HomeCountdownTargetValidation" />
+                    <Button x:Name="HomeSaveCountdownButton" Content="Save" Command="{x:Bind ViewModel.CreateCountdownCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="HomeSaveCountdown" />
+                </StackPanel>
                 <ListView ItemsSource="{x:Bind ViewModel.Countdowns, Mode=OneWay}" SelectionChanged="CountdownList_SelectionChanged" MaxHeight="220" AutomationProperties.AutomationId="HomeCountdownList">
                     <ListView.ItemTemplate>
-                        <DataTemplate x:DataType="models:Countdown">
-                            <StackPanel Orientation="Horizontal" Spacing="12" Padding="4">
-                                <TextBlock Text="{x:Bind Title}" />
-                            </StackPanel>
-                        </DataTemplate>
+                        <DataTemplate x:DataType="models:Countdown"><TextBlock Text="{x:Bind Title}" Margin="4" TextWrapping="Wrap" /></DataTemplate>
                     </ListView.ItemTemplate>
                 </ListView>
-                <Button Content="Delete selected countdown" Command="{x:Bind ViewModel.DeleteCountdownCommand}" CommandParameter="{x:Bind ViewModel.SelectedCountdown}" AutomationProperties.AutomationId="HomeDeleteCountdown" HorizontalAlignment="Left" />
+                <Button Content="Delete selected countdown" Command="{x:Bind ViewModel.DeleteCountdownCommand}" CommandParameter="{x:Bind ViewModel.SelectedCountdown}" AutomationProperties.AutomationId="HomeDeleteCountdown" />
             </StackPanel>
 
             <StackPanel Spacing="12">
@@ -60,8 +79,19 @@
                     <ComboBoxItem Content="Rough" Tag="Rough" />
                 </ComboBox>
                 <TextBox Header="Note" Text="{x:Bind ViewModel.CheckInNote, Mode=TwoWay}" TextWrapping="Wrap" AcceptsReturn="True" AutomationProperties.AutomationId="HomeCheckInNote" />
-                <Button Content="Save check-in" Command="{x:Bind ViewModel.RecordCheckInCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="HomeSaveCheckIn" HorizontalAlignment="Left" />
-                <TextBlock Text="{x:Bind ViewModel.CheckInSummaryText, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.AutomationId="HomeCheckInSummary" />
+                <Button Content="Save check-in" Command="{x:Bind ViewModel.RecordCheckInCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="HomeSaveCheckIn" />
+                <TextBlock x:Name="HomeCheckInSummary" Text="{x:Bind ViewModel.CheckInSummaryText, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.AutomationId="HomeCheckInSummary" />
+                <ItemsControl x:Name="HomeCheckInHistory" AutomationProperties.AutomationId="HomeCheckInHistory">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="models:MoodCheckIn">
+                            <StackPanel Margin="0,4" Spacing="2">
+                                <TextBlock Text="{x:Bind Choice}" />
+                                <TextBlock Text="{x:Bind CreatedUtc}" Foreground="{ThemeResource TextSecondaryBrush}" />
+                                <TextBlock Text="{x:Bind Note}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
             </StackPanel>
 
             <StackPanel Spacing="8">
@@ -69,7 +99,7 @@
                 <TextBlock Text="Startup registration is managed locally on this PC." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                 <StackPanel x:Name="StartupRecoveryPanel" Spacing="8" Visibility="Collapsed">
                     <TextBlock x:Name="StartupRecoveryMessage" AutomationProperties.AutomationId="HomeStartupRecoveryMessage" Foreground="{ThemeResource WarningBrush}" TextWrapping="Wrap" />
-                    <Button x:Name="RetryStartupButton" Content="Retry startup registration" AutomationProperties.AutomationId="HomeRetryStartupRegistration" Click="RetryStartupButton_Click" HorizontalAlignment="Left" />
+                    <Button x:Name="RetryStartupButton" Content="Retry startup registration" AutomationProperties.AutomationId="HomeRetryStartupRegistration" Click="RetryStartupButton_Click" />
                 </StackPanel>
             </StackPanel>
 

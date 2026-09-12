@@ -4,26 +4,26 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:models="using:Dudu.Core.Models"
     Background="{ThemeResource WindowSurfaceBrush}">
-    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
-        <StackPanel MaxWidth="880" Padding="32" Spacing="24">
+    <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+        <StackPanel MaxWidth="880" Margin="32" Spacing="24">
             <StackPanel Spacing="8">
-                <TextBlock Text="Love Notes" Style="{StaticResource PageTitleStyle}" />
+                <TextBlock Text="Love Notes" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="LoveNotesPageTitle" />
                 <TextBlock Text="Keep local notes here, or open an encrypted note when one arrives." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
             </StackPanel>
 
             <StackPanel Spacing="12">
                 <TextBlock Text="Local note jar" Style="{StaticResource SectionHeadingStyle}" />
-                <TextBlock Text="{x:Bind ViewModel.DailyLocalNoteLimitText, Mode=OneWay}" AutomationProperties.AutomationId="LoveNotesDailyLimit" />
+                <TextBlock x:Name="LoveNotesDailyLimit" TextWrapping="Wrap" AutomationProperties.AutomationId="LoveNotesDailyLimit" />
                 <ListView ItemsSource="{x:Bind ViewModel.LocalNotes, Mode=OneWay}" SelectionChanged="LocalNoteList_SelectionChanged" MaxHeight="220" AutomationProperties.AutomationId="LoveNotesLocalList">
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="models:LocalLoveNote">
-                            <TextBlock Text="{x:Bind Text}" TextWrapping="Wrap" Padding="4" />
+                            <TextBlock Text="{x:Bind Text}" TextWrapping="Wrap" Margin="4" />
                         </DataTemplate>
                     </ListView.ItemTemplate>
                 </ListView>
                 <TextBox Header="Note" Text="{x:Bind ViewModel.DraftText, Mode=TwoWay}" TextWrapping="Wrap" AcceptsReturn="True" AutomationProperties.AutomationId="LoveNotesDraft" />
                 <CheckBox Content="Include this note in Dudu's local choices" IsChecked="{x:Bind ViewModel.DraftEnabled, Mode=TwoWay}" AutomationProperties.AutomationId="LoveNotesDraftEnabled" />
-                <StackPanel Orientation="Horizontal" Spacing="8">
+                <StackPanel Spacing="8">
                     <Button Content="Save note" Command="{x:Bind ViewModel.SaveLocalNoteCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="LoveNotesSave" />
                     <Button Content="Delete selected" Command="{x:Bind ViewModel.DeleteLocalNoteCommand}" CommandParameter="{x:Bind ViewModel.SelectedNote}" AutomationProperties.AutomationId="LoveNotesDelete" />
                     <Button Content="Let Dudu choose" Command="{x:Bind ViewModel.ShowLocalNoteCommand}" AutomationProperties.AutomationId="LoveNotesChoose" />
@@ -32,11 +32,11 @@
 
             <StackPanel Spacing="12">
                 <TextBlock Text="Incoming notes" Style="{StaticResource SectionHeadingStyle}" />
-                <TextBlock Text="{x:Bind ViewModel.UnopenedRemoteNoteCountText, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.AutomationId="LoveNotesPendingCount" />
+                <TextBlock x:Name="LoveNotesPendingCount" TextWrapping="Wrap" AutomationProperties.AutomationId="LoveNotesPendingCount" />
                 <ListView ItemsSource="{x:Bind ViewModel.PendingRemoteNotes, Mode=OneWay}" SelectionChanged="RemoteNoteList_SelectionChanged" MaxHeight="180" AutomationProperties.AutomationId="LoveNotesRemoteList">
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="models:RemoteEnvelope">
-                            <TextBlock Text="Encrypted note received" Padding="4" />
+                            <TextBlock Text="Encrypted note received" Margin="4" />
                         </DataTemplate>
                     </ListView.ItemTemplate>
                 </ListView>

@@ -4,10 +4,10 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:models="using:Dudu.Core.Models"
     Background="{ThemeResource WindowSurfaceBrush}">
-    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
-        <StackPanel MaxWidth="880" Padding="32" Spacing="24">
+    <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+        <StackPanel MaxWidth="880" Margin="32" Spacing="24">
             <StackPanel Spacing="8">
-                <TextBlock Text="Tasks and Focus" Style="{StaticResource PageTitleStyle}" />
+                <TextBlock Text="Tasks and Focus" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="TasksPageTitle" />
                 <TextBlock Text="Choose one small next step, then give it a protected block of time." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
             </StackPanel>
 
@@ -16,13 +16,13 @@
                 <ListView ItemsSource="{x:Bind ViewModel.ActiveTasks, Mode=OneWay}" SelectionChanged="TaskList_SelectionChanged" MaxHeight="260" AutomationProperties.AutomationId="TasksActiveList">
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="models:TaskItem">
-                            <StackPanel Padding="4" Spacing="2">
+                            <StackPanel Margin="4" Spacing="2">
                                 <TextBlock Text="{x:Bind Title}" />
                             </StackPanel>
                         </DataTemplate>
                     </ListView.ItemTemplate>
                 </ListView>
-                <StackPanel Orientation="Horizontal" Spacing="8">
+                <StackPanel Spacing="8">
                     <Button Content="Complete selected" Command="{x:Bind ViewModel.CompleteTaskCommand}" CommandParameter="{x:Bind ViewModel.SelectedTask}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="TasksComplete" />
                     <Button Content="Delete selected" Command="{x:Bind ViewModel.DeleteTaskCommand}" CommandParameter="{x:Bind ViewModel.SelectedTask}" AutomationProperties.AutomationId="TasksDelete" />
                 </StackPanel>
@@ -32,13 +32,14 @@
                 <TextBlock Text="Task details" Style="{StaticResource SectionHeadingStyle}" />
                 <TextBox Header="Title" Text="{x:Bind ViewModel.Title, Mode=TwoWay}" PlaceholderText="What is the next step?" AutomationProperties.AutomationId="TasksTitle" />
                 <TextBox Header="Notes" Text="{x:Bind ViewModel.Notes, Mode=TwoWay}" TextWrapping="Wrap" AcceptsReturn="True" AutomationProperties.AutomationId="TasksNotes" />
-                <TextBox Header="Due date and time" Text="{x:Bind ViewModel.DueText, Mode=TwoWay}" PlaceholderText="Optional" AutomationProperties.AutomationId="TasksDue" />
-                <Button Content="Save task" Command="{x:Bind ViewModel.SaveTaskCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="TasksSave" HorizontalAlignment="Left" />
+                <TextBox x:Name="TaskDueBox" Header="Due date and time" TextChanged="TaskDueBox_TextChanged" PlaceholderText="Optional" AutomationProperties.AutomationId="TasksDue" />
+                <TextBlock x:Name="TaskDueValidation" TextWrapping="Wrap" Foreground="{ThemeResource ErrorBrush}" Visibility="Collapsed" AutomationProperties.AutomationId="TasksDueValidation" />
+                <Button x:Name="SaveTaskButton" Content="Save task" Command="{x:Bind ViewModel.SaveTaskCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="TasksSave" HorizontalAlignment="Left" />
             </StackPanel>
 
             <StackPanel Spacing="12">
                 <TextBlock Text="Focus" Style="{StaticResource SectionHeadingStyle}" />
-                <TextBlock Text="{x:Bind ViewModel.ActiveFocusText, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.AutomationId="FocusCurrent" />
+                <TextBlock x:Name="FocusCurrent" TextWrapping="Wrap" AutomationProperties.AutomationId="FocusCurrent" />
                 <ComboBox Header="Focus length" SelectedIndex="1" SelectionChanged="FocusPresetBox_SelectionChanged" AutomationProperties.AutomationId="FocusPreset">
                     <ComboBoxItem Content="15 minutes" Tag="15" />
                     <ComboBoxItem Content="25 minutes" Tag="25" />
@@ -47,13 +48,38 @@
                     <ComboBoxItem Content="Custom" Tag="0" />
                 </ComboBox>
                 <NumberBox Header="Custom minutes" Value="30" Minimum="1" Maximum="240" SpinButtonPlacementMode="Compact" ValueChanged="CustomDurationBox_ValueChanged" AutomationProperties.AutomationId="FocusCustomDuration" />
-                <StackPanel Orientation="Horizontal" Spacing="8">
+                <StackPanel Spacing="8">
                     <Button Content="Start focus" Command="{x:Bind ViewModel.StartFocusCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="FocusStart" />
                     <Button Content="Pause" Command="{x:Bind ViewModel.PauseFocusCommand}" AutomationProperties.AutomationId="FocusPause" />
                     <Button Content="Resume" Command="{x:Bind ViewModel.ResumeFocusCommand}" AutomationProperties.AutomationId="FocusResume" />
                     <Button Content="Extend 5 minutes" Command="{x:Bind ViewModel.ExtendFocusCommand}" AutomationProperties.AutomationId="FocusExtend" />
                     <Button Content="End focus" Command="{x:Bind ViewModel.EndFocusCommand}" AutomationProperties.AutomationId="FocusEnd" />
                 </StackPanel>
+            </StackPanel>
+
+            <StackPanel Spacing="12">
+                <TextBlock Text="Completed tasks" Style="{StaticResource SectionHeadingStyle}" />
+                <ListView ItemsSource="{x:Bind ViewModel.CompletedTasks, Mode=OneWay}" MaxHeight="180" AutomationProperties.AutomationId="TasksCompletedList">
+                    <ListView.ItemTemplate>
+                        <DataTemplate x:DataType="models:TaskItem">
+                            <TextBlock Text="{x:Bind Title}" TextWrapping="Wrap" Margin="4" />
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+            </StackPanel>
+
+            <StackPanel Spacing="12">
+                <TextBlock Text="Focus history" Style="{StaticResource SectionHeadingStyle}" />
+                <ItemsControl ItemsSource="{x:Bind ViewModel.FocusHistory, Mode=OneWay}" AutomationProperties.AutomationId="FocusHistoryList">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="models:FocusSession">
+                            <StackPanel Margin="4" Spacing="2">
+                                <TextBlock Text="{x:Bind Status}" />
+                                <TextBlock Text="{x:Bind StartedUtc}" Foreground="{ThemeResource TextSecondaryBrush}" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
             </StackPanel>
 
             <StackPanel Spacing="4" AutomationProperties.LiveSetting="Polite">

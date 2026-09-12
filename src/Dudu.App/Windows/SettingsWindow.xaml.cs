@@ -1,8 +1,9 @@
-using Dudu.App.Pages;
 using Dudu.App.Hosting;
+using Dudu.App.Pages;
 using Dudu.App.ViewModels;
 using Dudu.Core.Models;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 
 namespace Dudu.App.Windows;
@@ -12,13 +13,15 @@ public sealed partial class SettingsWindow : UserControl
     private readonly CompanionSettingsContext _context;
     private readonly SettingsShellViewModel _shell;
     private readonly OnboardingViewModel _onboarding;
-    private readonly HomePage _homePage;
-    private readonly RemindersPage _remindersPage;
-    private readonly TasksFocusPage _tasksFocusPage;
-    private readonly LoveNotesPage _loveNotesPage;
-    private readonly AppearancePage _appearancePage;
-    private readonly ConnectionPage _connectionPage;
-    private readonly PrivacyDataPage _privacyDataPage;
+    private HomePage? _homePage;
+    private RemindersPage? _remindersPage;
+    private TasksFocusPage? _tasksFocusPage;
+    private LoveNotesPage? _loveNotesPage;
+    private AppearancePage? _appearancePage;
+    private ConnectionPage? _connectionPage;
+    private PrivacyDataPage? _privacyDataPage;
+    private string? _pendingDestination;
+    private bool _featurePagesInitialized;
     private bool _initialized;
 
     public SettingsWindow(CompanionSettingsContext context)
@@ -33,21 +36,10 @@ public sealed partial class SettingsWindow : UserControl
             context.StartupSettings,
             context.Pairing,
             initialPlacement: context.PlacementSnapshot.Placement,
-            runtimeApplier: async (preferences, placement, cancellationToken) =>
-            {
-                await context.ApplyRuntimeAsync(preferences, placement, cancellationToken);
-            },
+            runtimeApplier: (preferences, placement, cancellationToken) =>
+                context.ApplyRuntimeAsync(preferences, placement, cancellationToken),
             placementCapture: context.CapturePlacementAsync,
             placementPreviewer: context.ApplyPlacementAsync);
-        var features = context.Features
-            ?? throw new InvalidOperationException("Feature settings are not available.");
-        _homePage = new HomePage(new HomeViewModel(features), context.StartupSettings);
-        _remindersPage = new RemindersPage(new RemindersViewModel(features));
-        _tasksFocusPage = new TasksFocusPage(new TasksFocusViewModel(features));
-        _loveNotesPage = new LoveNotesPage(new LoveNotesViewModel(features));
-        _appearancePage = new AppearancePage(new AppearanceViewModel(features));
-        _connectionPage = new ConnectionPage(new ConnectionViewModel(features));
-        _privacyDataPage = new PrivacyDataPage(new PrivacyDataViewModel(features));
         InitializeComponent();
         RootNavigation.SelectedItem = RootNavigation.MenuItems[0];
         Loaded += OnLoaded;
@@ -55,10 +47,18 @@ public sealed partial class SettingsWindow : UserControl
 
     public FrameworkElement TitleBarElement => AppTitleBar;
 
-    /// <summary>Production overlay/tray route for feature destinations.</summary>
+    /// <summary>Production route for overlay and tray actions. Before
+    /// onboarding completes, retain the request rather than constructing pages
+    /// against preferences the user has not accepted yet.</summary>
     public void NavigateTo(string destination)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(destination);
+        if (!_featurePagesInitialized)
+        {
+            _pendingDestination = destination;
+            return;
+        }
+
         ShowDestination(destination);
     }
 
@@ -72,7 +72,8 @@ public sealed partial class SettingsWindow : UserControl
             ApplyRequestedTheme();
             if (_onboarding.IsComplete)
             {
-                ShowDestination("home");
+                EnsureFeaturePages();
+                ShowDestination(_pendingDestination ?? "home");
             }
             else
             {
@@ -85,12 +86,15 @@ public sealed partial class SettingsWindow : UserControl
         }
         catch (Exception exception)
         {
-            ContentFrame.Content = new TextBlock
+            var error = new TextBlock
             {
                 Text = "Dudu could not load settings. Try opening settings again.",
                 Margin = new Thickness(32),
                 TextWrapping = TextWrapping.Wrap,
             };
+            AutomationProperties.SetAutomationId(error, "SettingsLoadError");
+            AutomationProperties.SetLiveSetting(error, AutomationLiveSetting.Assertive);
+            ContentFrame.Content = error;
             global::System.Diagnostics.Trace.TraceError("Dudu settings load failed: {0}", exception);
         }
     }
@@ -101,12 +105,37 @@ public sealed partial class SettingsWindow : UserControl
     {
         if (args.SelectedItem is NavigationViewItem item && item.Tag is string tag)
         {
-            ShowDestination(tag);
+            NavigateTo(tag);
         }
+    }
+
+    private void EnsureFeaturePages()
+    {
+        if (_featurePagesInitialized) return;
+        var features = _context.Features
+            ?? throw new InvalidOperationException("Feature settings are not available.");
+
+        _homePage = new HomePage(
+            new HomeViewModel(features),
+            _context.StartupSettings,
+            _context.OverlayCommands);
+        _remindersPage = new RemindersPage(new RemindersViewModel(features));
+        _tasksFocusPage = new TasksFocusPage(new TasksFocusViewModel(features));
+        _loveNotesPage = new LoveNotesPage(new LoveNotesViewModel(features));
+        _appearancePage = new AppearancePage(new AppearanceViewModel(features));
+        _connectionPage = new ConnectionPage(new ConnectionViewModel(features));
+        _privacyDataPage = new PrivacyDataPage(new PrivacyDataViewModel(features));
+        _featurePagesInitialized = true;
     }
 
     private void ShowDestination(string tag)
     {
+        if (!_featurePagesInitialized)
+        {
+            _pendingDestination = tag;
+            return;
+        }
+
         if (!_shell.Navigate(tag)) return;
         RootNavigation.SelectedItem = RootNavigation.MenuItems
             .OfType<NavigationViewItem>()
@@ -128,8 +157,9 @@ public sealed partial class SettingsWindow : UserControl
     private void OnboardingCompleted()
     {
         ApplyRequestedTheme();
+        EnsureFeaturePages();
         RootNavigation.Visibility = Visibility.Visible;
-        ShowDestination("home");
+        ShowDestination(_pendingDestination ?? "home");
     }
 
     private void ApplyRequestedTheme()

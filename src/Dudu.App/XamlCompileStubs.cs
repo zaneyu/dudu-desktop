@@ -7,12 +7,14 @@ namespace Dudu.App.Windows
 {
     public sealed partial class SettingsWindow
     {
+        private Grid RootGrid = null!;
         private Grid AppTitleBar = null!;
         private NavigationView RootNavigation = null!;
         private Frame ContentFrame = null!;
 
         private void InitializeComponent()
         {
+            RootGrid = new Grid();
             AppTitleBar = new Grid();
             RootNavigation = new NavigationView();
             ContentFrame = new Frame();
@@ -39,12 +41,32 @@ namespace Dudu.App.Pages
 {
     public sealed partial class HomePage
     {
+        private TextBlock HomeNextReminder = null!;
+        private TextBlock HomeActiveFocus = null!;
+        private TextBlock HomePetState = null!;
+        private TextBlock HomePetAnimation = null!;
+        private TextBlock HomeActionStatus = null!;
+        private TextBox CountdownTargetBox = null!;
+        private TextBlock CountdownTargetValidation = null!;
+        private Button HomeSaveCountdownButton = null!;
+        private TextBlock HomeCheckInSummary = null!;
+        private ItemsControl HomeCheckInHistory = null!;
         private StackPanel StartupRecoveryPanel = null!;
         private TextBlock StartupRecoveryMessage = null!;
         private Button RetryStartupButton = null!;
 
         private void InitializeComponent()
         {
+            HomeNextReminder = new TextBlock();
+            HomeActiveFocus = new TextBlock();
+            HomePetState = new TextBlock();
+            HomePetAnimation = new TextBlock();
+            HomeActionStatus = new TextBlock();
+            CountdownTargetBox = new TextBox();
+            CountdownTargetValidation = new TextBlock();
+            HomeSaveCountdownButton = new Button();
+            HomeCheckInSummary = new TextBlock();
+            HomeCheckInHistory = new ItemsControl();
             StartupRecoveryPanel = new StackPanel { Visibility = Visibility.Collapsed };
             StartupRecoveryMessage = new TextBlock();
             RetryStartupButton = new Button();
@@ -53,27 +75,90 @@ namespace Dudu.App.Pages
 
     public sealed partial class RemindersPage
     {
-        private void InitializeComponent() { }
+        private ComboBox ScheduleBox = null!;
+        private TextBox LocalTimeBox = null!;
+        private TextBlock RemindersLocalTimeValidation = null!;
+        private CheckBox SundayBox = null!;
+        private CheckBox MondayBox = null!;
+        private CheckBox TuesdayBox = null!;
+        private CheckBox WednesdayBox = null!;
+        private CheckBox ThursdayBox = null!;
+        private CheckBox FridayBox = null!;
+        private CheckBox SaturdayBox = null!;
+        private NumberBox IntervalBox = null!;
+        private ComboBox QuietHoursBox = null!;
+        private Button SaveReminderButton = null!;
+
+        private void InitializeComponent()
+        {
+            ScheduleBox = new ComboBox();
+            LocalTimeBox = new TextBox();
+            RemindersLocalTimeValidation = new TextBlock();
+            SundayBox = new CheckBox();
+            MondayBox = new CheckBox();
+            TuesdayBox = new CheckBox();
+            WednesdayBox = new CheckBox();
+            ThursdayBox = new CheckBox();
+            FridayBox = new CheckBox();
+            SaturdayBox = new CheckBox();
+            IntervalBox = new NumberBox();
+            QuietHoursBox = new ComboBox();
+            SaveReminderButton = new Button();
+        }
     }
 
     public sealed partial class TasksFocusPage
     {
-        private void InitializeComponent() { }
+        private TextBox TaskDueBox = null!;
+        private TextBlock TaskDueValidation = null!;
+        private Button SaveTaskButton = null!;
+        private TextBlock FocusCurrent = null!;
+
+        private void InitializeComponent()
+        {
+            TaskDueBox = new TextBox();
+            TaskDueValidation = new TextBlock();
+            SaveTaskButton = new Button();
+            FocusCurrent = new TextBlock();
+        }
     }
 
     public sealed partial class LoveNotesPage
     {
-        private void InitializeComponent() { }
+        private TextBlock LoveNotesDailyLimit = null!;
+        private TextBlock LoveNotesPendingCount = null!;
+
+        private void InitializeComponent()
+        {
+            LoveNotesDailyLimit = new TextBlock();
+            LoveNotesPendingCount = new TextBlock();
+        }
     }
 
     public sealed partial class AppearancePage
     {
-        private void InitializeComponent() { }
+        private ComboBox ThemeBox = null!;
+
+        private void InitializeComponent()
+        {
+            ThemeBox = new ComboBox();
+        }
     }
 
     public sealed partial class ConnectionPage
     {
-        private void InitializeComponent() { }
+        private TextBlock ConnectionAvailability = null!;
+        private TextBlock ConnectionPairingCode = null!;
+        private TextBlock ConnectionCodeExpiry = null!;
+        private TextBlock ConnectionSessionCount = null!;
+
+        private void InitializeComponent()
+        {
+            ConnectionAvailability = new TextBlock();
+            ConnectionPairingCode = new TextBlock();
+            ConnectionCodeExpiry = new TextBlock();
+            ConnectionSessionCount = new TextBlock();
+        }
     }
 
     public sealed partial class PrivacyDataPage

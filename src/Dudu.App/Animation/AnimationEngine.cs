@@ -89,6 +89,7 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
         _presenter = presenter ?? throw new ArgumentNullException(nameof(presenter));
         _clock = clock ?? new StopwatchAnimationClock();
         _composer = composer ?? new SkiaFrameComposer(pack);
+        _composer.RepaintRequested += OnComposerRepaintRequested;
         _localDate = localDate ?? DateOnly.FromDateTime(DateTime.Now);
         _seasonalDates = seasonalDates ?? SeasonalDates.Empty;
     }
@@ -449,6 +450,69 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
         await _presenter.PresentAsync(rendered, cancellationToken).ConfigureAwait(false);
     }
 
+    private void OnComposerRepaintRequested(object? sender, EventArgs args)
+    {
+        // A surface click can change labels, breathing guidance, or an error
+        // while the current animation is waiting.  Recompose only the current
+        // frame: do not cancel/restart an approved one-shot transaction.
+        _ = ObserveRepaintAsync();
+    }
+
+    private async Task ObserveRepaintAsync()
+    {
+        try
+        {
+            await RepaintCurrentAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            // A repaint is advisory. Do not turn a transient device/window
+            // failure on the fire-and-forget event path into an unobserved
+            // process-level task exception.
+            Trace.TraceError("Dudu overlay repaint failed: {0}", exception);
+        }
+    }
+
+    private async Task RepaintCurrentAsync()
+    {
+        try
+        {
+            AssetPack pack;
+            PetPresentation? presentation;
+            AnimationOptions options;
+            lock (_stateGate)
+            {
+                if (_disposed || _resourcesDisposed) return;
+                pack = _pack;
+                presentation = _currentPresentation;
+                options = _currentOptions;
+            }
+
+            if (presentation is null) return;
+            var resolved = ResolveAnimation(pack, presentation.AnimationKey, options.OutfitKey);
+            var animation = resolved.Animation;
+            var sourceFrame = animation.Frames[0];
+            var frame = options.ReducedMotionEnabled && animation.ReducedMotion is { } reducedPath
+                && !string.Equals(reducedPath, sourceFrame.File, StringComparison.Ordinal)
+                    ? new AssetFrame { File = reducedPath, DurationMs = sourceFrame.DurationMs }
+                    : sourceFrame;
+            var semanticDuration = GetSemanticDuration(animation);
+            await PresentAsync(
+                pack,
+                animation,
+                frame,
+                TimeSpan.FromMilliseconds(frame.DurationMs),
+                semanticDuration,
+                options.Scale,
+                1f,
+                CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is ObjectDisposedException or OperationCanceledException)
+        {
+            // Shutdown can win the race with an interaction repaint.
+        }
+    }
+
     private async ValueTask WaitUntilAsync(long deadline, CancellationToken cancellationToken)
     {
         while (_clock.Timestamp < deadline)
@@ -770,6 +834,7 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
 
         try
         {
+            _composer.RepaintRequested -= OnComposerRepaintRequested;
             _composer.Dispose();
         }
         catch

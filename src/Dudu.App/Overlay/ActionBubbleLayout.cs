@@ -6,7 +6,7 @@ public enum OverlayAction { Pet, DrinkWater, StartFocus, Tasks, LoveNote, Comfor
 
 public enum ComfortAction { BreatheWithMe, TinyHug, ReadALoveNote, TakeAFiveMinuteBreak, Close }
 
-public enum OverlayActionSurfaceKind { Closed, Primary, Comfort }
+public enum OverlayActionSurfaceKind { Closed, Primary, Comfort, Status }
 
 public sealed record OverlayActionPlacement(OverlayAction Action, PixelRect HitRegion);
 
@@ -92,8 +92,18 @@ public static class ActionBubbleLayout
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown overlay action."),
     };
 
-    public static string AutomationId(OverlayAction action) =>
-        $"OverlayAction{Label(action).Replace(" ", string.Empty, StringComparison.Ordinal)}";
+    /// <summary>Stable UI Automation identifier shared by the painted action
+    /// and its keyboard-accessible Settings equivalent.</summary>
+    public static string AutomationId(OverlayAction action) => action switch
+    {
+        OverlayAction.Pet => "OverlayActionPet",
+        OverlayAction.DrinkWater => "OverlayActionDrinkWater",
+        OverlayAction.StartFocus => "OverlayActionStartFocus",
+        OverlayAction.Tasks => "OverlayActionTasks",
+        OverlayAction.LoveNote => "OverlayActionLoveNote",
+        OverlayAction.ComfortMe => "OverlayActionComfortMe",
+        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown overlay action."),
+    };
 
     public static string ComfortLabel(ComfortAction action) => action switch
     {
@@ -102,6 +112,18 @@ public static class ActionBubbleLayout
         ComfortAction.ReadALoveNote => "Read a love note",
         ComfortAction.TakeAFiveMinuteBreak => "Take a five-minute break",
         ComfortAction.Close => "Close",
+        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown comfort action."),
+    };
+
+    /// <summary>Stable UI Automation identifier for the normal-control route
+    /// to a comfort action. The native overlay remains pointer-only.</summary>
+    public static string ComfortAutomationId(ComfortAction action) => action switch
+    {
+        ComfortAction.BreatheWithMe => "OverlayComfortActionBreatheWithMe",
+        ComfortAction.TinyHug => "OverlayComfortActionTinyHug",
+        ComfortAction.ReadALoveNote => "OverlayComfortActionReadALoveNote",
+        ComfortAction.TakeAFiveMinuteBreak => "OverlayComfortActionTakeAFiveMinuteBreak",
+        ComfortAction.Close => "OverlayComfortActionClose",
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown comfort action."),
     };
 

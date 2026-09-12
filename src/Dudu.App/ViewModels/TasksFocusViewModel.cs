@@ -48,7 +48,14 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
     public IReadOnlyList<int> FocusPresets { get; } = [15, 25, 45, 60];
 
     public TaskItem? SelectedTask { get => _selectedTask; set => SetProperty(ref _selectedTask, value); }
-    public FocusSnapshot? ActiveFocus { get => _activeFocus; private set => SetProperty(ref _activeFocus, value); }
+    public FocusSnapshot? ActiveFocus
+    {
+        get => _activeFocus;
+        private set
+        {
+            if (SetProperty(ref _activeFocus, value)) OnPropertyChanged(nameof(ActiveFocusText));
+        }
+    }
     public string ActiveFocusText => ActiveFocus is null
         ? "No focus session is active."
         : $"Focus is {ActiveFocus.Status.ToString().ToLowerInvariant()} with {FormatDuration(ActiveFocus.Remaining)} remaining.";
@@ -87,7 +94,6 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
             FocusHistory.Clear();
             foreach (var session in await _context.FocusSessions.ListHistoryAsync(cancellationToken)) FocusHistory.Add(session);
             OnPropertyChanged(nameof(IsFocusActive));
-            OnPropertyChanged(nameof(ActiveFocusText));
         });
     }
 
@@ -156,7 +162,6 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
         ActiveFocus = snapshot;
         await _context.PresentPetAsync(new PetEvent.FocusStarted(snapshot.Id.ToString("D")), cancellationToken);
         OnPropertyChanged(nameof(IsFocusActive));
-        OnPropertyChanged(nameof(ActiveFocusText));
         return snapshot;
     }
 
@@ -182,7 +187,6 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
                 "focus-end",
                 cancellationToken);
             OnPropertyChanged(nameof(IsFocusActive));
-            OnPropertyChanged(nameof(ActiveFocusText));
         }, "Focus ended.");
 
     private Task RunFocusTransitionAsync(
@@ -194,7 +198,6 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
             var focus = ActiveFocus ?? throw new InvalidOperationException("There is no active focus session.");
             ActiveFocus = await transition(focus.Id, cancellationToken);
             OnPropertyChanged(nameof(IsFocusActive));
-            OnPropertyChanged(nameof(ActiveFocusText));
         }, successMessage);
 
     private void ReplaceTask(TaskItem task)

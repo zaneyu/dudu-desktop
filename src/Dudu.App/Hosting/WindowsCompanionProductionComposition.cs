@@ -172,6 +172,9 @@ public static class WindowsCompanionProductionComposition
                 SeasonalDates.Empty);
             composer = new SkiaFrameComposer(pack);
             composer.SetActionSurface(actionSurface);
+            composer.SetOverlayPalette(OverlaySurfacePalette.For(
+                preferences.Theme,
+                OverlaySurfaceRenderer.IsHighContrastEnabled()));
             presenter = new LayeredFramePresenter();
             startup = new StartupRegistrationService();
             WindowsCompanionRuntime? activeRuntime = null;
@@ -258,6 +261,9 @@ public static class WindowsCompanionProductionComposition
                 onPreferencesChanged: (updated, token) =>
                 {
                     runtimePreferences.Set(updated);
+                    composer.SetOverlayPalette(OverlaySurfacePalette.For(
+                        updated.Theme,
+                        OverlaySurfaceRenderer.IsHighContrastEnabled()));
                     if (animationEngine is null)
                     {
                         return Task.CompletedTask;

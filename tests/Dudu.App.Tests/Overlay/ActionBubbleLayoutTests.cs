@@ -64,6 +64,19 @@ public sealed class ActionBubbleLayoutTests
     }
 
     [Fact]
+    public void Geometry_failure_keeps_a_status_surface_and_an_accessible_settings_message()
+    {
+        using var surface = new OverlayActionSurfaceController();
+
+        surface.Open(new PixelRect(0, 0, 15, 15), new PixelPoint(4, 4));
+
+        var snapshot = surface.CreateRenderSnapshot();
+        Assert.Equal(OverlayActionSurfaceKind.Status, snapshot.Kind);
+        Assert.Empty(snapshot.Actions);
+        Assert.Contains("Open Settings", snapshot.ErrorMessage);
+    }
+
+    [Fact]
     public void Comfort_surface_is_absent_at_exactly_24_by_18()
     {
         var workArea = new PixelRect(9, 11, 24, 18);

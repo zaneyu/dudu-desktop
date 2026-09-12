@@ -46,6 +46,7 @@ public sealed class HomeViewModel : FeatureViewModelBase
     public IAsyncRelayCommand RecordCheckInCommand { get; }
 
     public ObservableCollection<Countdown> Countdowns { get; } = [];
+    public ObservableCollection<MoodCheckIn> RecentCheckIns { get; } = [];
 
     public PetPresentation PetPresentation => _context.Pet.Current;
 
@@ -63,22 +64,20 @@ public sealed class HomeViewModel : FeatureViewModelBase
     public Reminder? NextReminder
     {
         get => _nextReminder;
-        private set => SetProperty(ref _nextReminder, value);
+        private set
+        {
+            if (SetProperty(ref _nextReminder, value)) OnPropertyChanged(nameof(NextReminderText));
+        }
     }
-
-    public string NextReminderText => NextReminder is null
-        ? "No upcoming reminders."
-        : $"Next reminder: {NextReminder.Title} at {NextReminder.NextDueUtc.ToLocalTime():g}.";
 
     public FocusSnapshot? ActiveFocus
     {
         get => _activeFocus;
-        private set => SetProperty(ref _activeFocus, value);
+        private set
+        {
+            if (SetProperty(ref _activeFocus, value)) OnPropertyChanged(nameof(ActiveFocusText));
+        }
     }
-
-    public string ActiveFocusText => ActiveFocus is null
-        ? "No focus session in progress."
-        : $"Focus is {ActiveFocus.Status.ToString().ToLowerInvariant()} with {FormatDuration(ActiveFocus.Remaining)} remaining.";
 
     public Countdown? SelectedCountdown
     {
@@ -95,9 +94,23 @@ public sealed class HomeViewModel : FeatureViewModelBase
         }
     }
 
+    public string NextReminderText => NextReminder is null
+        ? "No upcoming reminders."
+        : $"Next reminder: {NextReminder.Title} at {NextReminder.NextDueUtc.ToLocalTime():g}.";
+
+    public string ActiveFocusText => ActiveFocus is null
+        ? "No focus session is active."
+        : $"Focus is {ActiveFocus.Status.ToString().ToLowerInvariant()} with {Math.Max(0, (int)Math.Ceiling(ActiveFocus.Remaining.TotalMinutes))} minutes remaining.";
+
+    public string PetStateText => IsPaused
+        ? "Dudu is paused."
+        : $"Dudu is {PetPresentation.State.ToString().ToLowerInvariant()}.";
+
+    public string PetAnimationText => $"Current animation: {PetPresentation.AnimationKey}.";
+
     public string CheckInSummaryText => CheckInSummary is null
-        ? "No check-ins recorded in the past seven days."
-        : $"{CheckInSummary.Recent.Count} check-in{(CheckInSummary.Recent.Count == 1 ? string.Empty : "s")} in the past seven days.";
+        ? "No recent check-ins."
+        : $"{CheckInSummary.Recent.Count} optional check-in{(CheckInSummary.Recent.Count == 1 ? string.Empty : "s")} in the last 7 days.";
 
     public string CountdownTitle
     {
@@ -110,7 +123,10 @@ public sealed class HomeViewModel : FeatureViewModelBase
         get => _countdownTargetUtc;
         set
         {
-            if (SetProperty(ref _countdownTargetUtc, value?.ToUniversalTime())) OnPropertyChanged(nameof(CountdownTargetText));
+            if (SetProperty(ref _countdownTargetUtc, value?.ToUniversalTime()))
+            {
+                OnPropertyChanged(nameof(CountdownTargetText));
+            }
         }
     }
 
@@ -154,10 +170,13 @@ public sealed class HomeViewModel : FeatureViewModelBase
             }
 
             CheckInSummary = await _context.CheckInService.SummarizeAsync(7, cancellationToken);
+            RecentCheckIns.Clear();
+            foreach (var checkIn in CheckInSummary.Recent) RecentCheckIns.Add(checkIn);
             OnPropertyChanged(nameof(IsPaused));
             OnPropertyChanged(nameof(PauseDescription));
-            OnPropertyChanged(nameof(NextReminderText));
-            OnPropertyChanged(nameof(ActiveFocusText));
+            OnPropertyChanged(nameof(PetStateText));
+            OnPropertyChanged(nameof(PetAnimationText));
+            OnPropertyChanged(nameof(CheckInSummaryText));
         });
     }
 
@@ -169,6 +188,8 @@ public sealed class HomeViewModel : FeatureViewModelBase
                 "greeting",
                 cancellationToken);
             OnPropertyChanged(nameof(PetPresentation));
+            OnPropertyChanged(nameof(PetStateText));
+            OnPropertyChanged(nameof(PetAnimationText));
         });
 
     public Task SetPauseAsync(
@@ -179,6 +200,7 @@ public sealed class HomeViewModel : FeatureViewModelBase
             await _context.ApplyPauseAsync(state, cancellationToken);
             OnPropertyChanged(nameof(IsPaused));
             OnPropertyChanged(nameof(PauseDescription));
+            OnPropertyChanged(nameof(PetStateText));
         });
 
     public void SelectCountdown(Countdown? countdown)
@@ -237,12 +259,9 @@ public sealed class HomeViewModel : FeatureViewModelBase
                 CheckInNote,
                 cancellationToken);
             CheckInSummary = await _context.CheckInService.SummarizeAsync(7, cancellationToken);
+            RecentCheckIns.Clear();
+            foreach (var checkIn in CheckInSummary.Recent) RecentCheckIns.Add(checkIn);
             CheckInNote = null;
+            OnPropertyChanged(nameof(CheckInSummaryText));
         }, "Check-in saved on this PC.");
-
-    private static string FormatDuration(TimeSpan duration)
-    {
-        var roundedMinutes = Math.Max(0, (int)Math.Ceiling(duration.TotalMinutes));
-        return roundedMinutes == 1 ? "1 minute" : $"{roundedMinutes} minutes";
-    }
 }

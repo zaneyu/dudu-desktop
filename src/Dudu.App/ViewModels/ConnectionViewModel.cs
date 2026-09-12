@@ -26,10 +26,46 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
     public IAsyncRelayCommand RevokeSessionsCommand { get; }
     public IAsyncRelayCommand DeleteRemoteDeviceCommand { get; }
     public ObservableCollection<PairingSessionSummary> Sessions { get; } = [];
-    public PairingAvailability Availability { get => _availability; private set => SetProperty(ref _availability, value); }
-    public string? PairingCode { get => _pairingCode; private set => SetProperty(ref _pairingCode, value); }
-    public DateTimeOffset? CodeExpiresUtc { get => _codeExpiresUtc; private set => SetProperty(ref _codeExpiresUtc, value); }
-    public int SessionCount { get => _sessionCount; private set => SetProperty(ref _sessionCount, value); }
+    public PairingAvailability Availability
+    {
+        get => _availability;
+        private set
+        {
+            if (SetProperty(ref _availability, value))
+            {
+                OnPropertyChanged(nameof(IsPaired));
+                OnPropertyChanged(nameof(AvailabilityText));
+            }
+        }
+    }
+    public string? PairingCode
+    {
+        get => _pairingCode;
+        private set
+        {
+            if (SetProperty(ref _pairingCode, value)) OnPropertyChanged(nameof(PairingCodeText));
+        }
+    }
+    public DateTimeOffset? CodeExpiresUtc
+    {
+        get => _codeExpiresUtc;
+        private set
+        {
+            if (SetProperty(ref _codeExpiresUtc, value)) OnPropertyChanged(nameof(CodeExpiryText));
+        }
+    }
+    public int SessionCount
+    {
+        get => _sessionCount;
+        private set
+        {
+            if (SetProperty(ref _sessionCount, value))
+            {
+                OnPropertyChanged(nameof(IsPaired));
+                OnPropertyChanged(nameof(SessionCountText));
+            }
+        }
+    }
     public bool IsPaired => Availability == PairingAvailability.Available && SessionCount > 0;
     public string AvailabilityText => Availability switch
     {
@@ -37,9 +73,18 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
         PairingAvailability.NeedsRepair => "Pairing needs attention before it can be used.",
         _ => "Pairing is offline. Dudu remains available on this PC.",
     };
-    public string PairingCodeText => string.IsNullOrWhiteSpace(PairingCode) ? "No pairing code is active." : $"Pairing code: {PairingCode}";
-    public string CodeExpiryText => CodeExpiresUtc is null ? string.Empty : $"Code expires {CodeExpiresUtc.Value.ToLocalTime():g}.";
-    public string SessionCountText => SessionCount == 1 ? "1 paired sender session." : $"{SessionCount} paired sender sessions.";
+    public string PairingCodeText => string.IsNullOrWhiteSpace(PairingCode)
+        ? "No pairing code is active."
+        : $"Pairing code: {PairingCode}";
+    public string CodeExpiryText => CodeExpiresUtc is null
+        ? "No active pairing code expiry."
+        : $"Code expires {CodeExpiresUtc.Value.ToLocalTime():g}.";
+    public string SessionCountText => SessionCount switch
+    {
+        0 => "No paired sender sessions.",
+        1 => "1 paired sender session.",
+        _ => $"{SessionCount} paired sender sessions.",
+    };
 
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
     {
@@ -57,8 +102,6 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
                 SessionCount = 0;
             }
             OnPropertyChanged(nameof(IsPaired));
-            OnPropertyChanged(nameof(AvailabilityText));
-            OnPropertyChanged(nameof(SessionCountText));
         });
     }
 
@@ -74,9 +117,6 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
             {
                 throw new NotSupportedException("Pairing is unavailable while the relay is offline.");
             }
-            OnPropertyChanged(nameof(AvailabilityText));
-            OnPropertyChanged(nameof(PairingCodeText));
-            OnPropertyChanged(nameof(CodeExpiryText));
         }, "Pairing code ready for ten minutes.");
 
     public Task RevokeSessionsAsync(CancellationToken cancellationToken = default) =>
@@ -87,7 +127,6 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
             Sessions.Clear();
             SessionCount = 0;
             OnPropertyChanged(nameof(IsPaired));
-            OnPropertyChanged(nameof(SessionCountText));
         }, "Sender sessions revoked.");
 
     public Task DeleteRemoteDeviceAsync(CancellationToken cancellationToken = default) =>
@@ -101,9 +140,5 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
             SessionCount = 0;
             Availability = PairingAvailability.Offline;
             OnPropertyChanged(nameof(IsPaired));
-            OnPropertyChanged(nameof(AvailabilityText));
-            OnPropertyChanged(nameof(PairingCodeText));
-            OnPropertyChanged(nameof(CodeExpiryText));
-            OnPropertyChanged(nameof(SessionCountText));
         }, "Remote device data deleted.");
 }

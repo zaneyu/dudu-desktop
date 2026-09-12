@@ -35,7 +35,26 @@ public sealed class OverlayCommandRouter
 
     public static IReadOnlyList<ComfortAction> ComfortActions => ActionBubbleLayout.ComfortActions;
 
+    public static IReadOnlyList<OverlayActionAccessibility> AccessiblePrimaryActions { get; } =
+        PrimaryActions
+            .Select(action => new OverlayActionAccessibility(
+                action,
+                ActionBubbleLayout.Label(action),
+                ActionBubbleLayout.AutomationId(action),
+                EquivalentSettingsDestination(action)))
+            .ToArray();
+
+    public static IReadOnlyList<ComfortActionAccessibility> AccessibleComfortActions { get; } =
+        ComfortActions
+            .Select(action => new ComfortActionAccessibility(
+                action,
+                ActionBubbleLayout.ComfortLabel(action),
+                ActionBubbleLayout.ComfortAutomationId(action),
+                EquivalentSettingsDestination(action)))
+            .ToArray();
+
     public bool IsReducedMotion => _context.CurrentPreferences.ReducedMotion;
+    public AppTheme Theme => _context.CurrentPreferences.Theme;
     public bool IsBreathing { get; private set; }
     public string BreathingInstruction { get; private set; } = "Breathe in for 4, out for 6.";
     public ComfortPanelState ComfortPanel { get; private set; } = ComfortPanelState.Closed;
@@ -66,6 +85,55 @@ public sealed class OverlayCommandRouter
             _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown comfort action."),
         };
 
+    /// <summary>Runs the same operation exposed by the pointer-only overlay
+    /// from an ordinary keyboard/UIA Settings control. The destination is a
+    /// real navigation callback, not just descriptive text.</summary>
+    public async Task ExecuteAccessibleAsync(
+        OverlayAction action,
+        CancellationToken cancellationToken = default)
+    {
+        switch (action)
+        {
+            case OverlayAction.Pet:
+                await ExecutePetAsync(cancellationToken);
+                break;
+            case OverlayAction.DrinkWater:
+                await ExecuteDrinkWaterAsync(cancellationToken);
+                break;
+            case OverlayAction.StartFocus:
+                await ExecuteStartFocusAsync(cancellationToken);
+                return;
+            case OverlayAction.Tasks:
+                await NavigateAsync("tasks", cancellationToken);
+                return;
+            case OverlayAction.LoveNote:
+                await NavigateAsync("notes", cancellationToken);
+                return;
+            case OverlayAction.ComfortMe:
+                await ExecuteComfortAsync(cancellationToken);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown overlay action.");
+        }
+
+        await NavigateAsync(EquivalentSettingsDestination(action), cancellationToken);
+    }
+
+    /// <summary>Keyboard/UIA execution path for every comfort-panel choice.</summary>
+    public async Task ExecuteComfortAccessibleAsync(
+        ComfortAction action,
+        CancellationToken cancellationToken = default)
+    {
+        if (action == ComfortAction.ReadALoveNote)
+        {
+            await NavigateAsync("notes", cancellationToken);
+            return;
+        }
+
+        await ExecuteComfortAsync(action, cancellationToken);
+        await NavigateAsync(EquivalentSettingsDestination(action), cancellationToken);
+    }
+
     public static string EquivalentSettingsDestination(OverlayAction action) => action switch
     {
         OverlayAction.Pet => "home",
@@ -74,6 +142,14 @@ public sealed class OverlayCommandRouter
         OverlayAction.LoveNote => "notes",
         OverlayAction.ComfortMe => "home",
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown overlay action."),
+    };
+
+    public static string EquivalentSettingsDestination(ComfortAction action) => action switch
+    {
+        ComfortAction.BreatheWithMe or ComfortAction.TinyHug
+            or ComfortAction.TakeAFiveMinuteBreak or ComfortAction.Close => "home",
+        ComfortAction.ReadALoveNote => "notes",
+        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown comfort action."),
     };
 
     private Task ExecutePetAsync(CancellationToken cancellationToken) =>
@@ -90,13 +166,8 @@ public sealed class OverlayCommandRouter
 
     private async Task ExecuteStartFocusAsync(CancellationToken cancellationToken)
     {
-        var snapshot = await _context.FocusService.StartAsync(
-            taskId: null,
-            duration: TimeSpan.FromMinutes(25),
-            cancellationToken: cancellationToken);
-        await _context.PresentPetAsync(
-            new PetEvent.FocusStarted(snapshot.Id.ToString("D")),
-            cancellationToken);
+        var vm = new TasksFocusViewModel(_context);
+        await vm.StartFocusOrThrowAsync(cancellationToken);
         await NavigateAsync("tasks", cancellationToken);
     }
 
@@ -199,7 +270,19 @@ public sealed class OverlayCommandRouter
     {
         ComfortPanel = state;
         BreathingInstruction = state.Instruction;
-        ComfortPanelChanged?.Invoke(this, EventArgs.Empty);
+        var handlers = ComfortPanelChanged;
+        if (handlers is null) return;
+        foreach (var handler in handlers.GetInvocationList().OfType<EventHandler>())
+        {
+            try
+            {
+                handler(this, EventArgs.Empty);
+            }
+            catch (Exception exception)
+            {
+                global::System.Diagnostics.Trace.TraceError("Dudu comfort panel listener failed: {0}", exception);
+            }
+        }
     }
 
     private Task PresentAsync(PetEvent petEvent, CancellationToken cancellationToken) =>
@@ -214,3 +297,15 @@ public sealed record ComfortPanelState(bool IsOpen, bool IsBreathing, BreathVisu
 {
     public static ComfortPanelState Closed { get; } = new(false, false, BreathVisualPhase.Idle, string.Empty);
 }
+
+public sealed record OverlayActionAccessibility(
+    OverlayAction Action,
+    string Label,
+    string AutomationId,
+    string SettingsDestination);
+
+public sealed record ComfortActionAccessibility(
+    ComfortAction Action,
+    string Label,
+    string AutomationId,
+    string SettingsDestination);

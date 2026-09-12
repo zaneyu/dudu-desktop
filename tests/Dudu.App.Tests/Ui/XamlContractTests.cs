@@ -23,47 +23,6 @@ public sealed class XamlContractTests
     }
 
     [Fact]
-    public void Settings_shell_maps_exactly_seven_native_destinations()
-    {
-        var root = FindRepositoryRoot();
-        var settings = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Windows", "SettingsWindow.xaml"));
-        var code = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Windows", "SettingsWindow.xaml.cs"));
-
-        Assert.Equal(7, Regex.Matches(settings, "<NavigationViewItem ").Count);
-        foreach (var item in new[]
-        {
-            ("Home", "home", "NavHome"),
-            ("Reminders", "reminders", "NavReminders"),
-            ("Tasks and Focus", "tasks", "NavTasksFocus"),
-            ("Love Notes", "notes", "NavLoveNotes"),
-            ("Appearance", "appearance", "NavAppearance"),
-            ("Connection", "connection", "NavConnection"),
-            ("Privacy and Data", "privacy", "NavPrivacy"),
-        })
-        {
-            Assert.Contains($"Content=\"{item.Item1}\" Tag=\"{item.Item2}\" AutomationProperties.AutomationId=\"{item.Item3}\"", settings);
-        }
-
-        foreach (var pageType in new[]
-        {
-            "HomePage", "RemindersPage", "TasksFocusPage", "LoveNotesPage",
-            "AppearancePage", "ConnectionPage", "PrivacyDataPage",
-        })
-        {
-            Assert.Contains($"private readonly {pageType} _", code);
-            Assert.Contains($"new {pageType}", code);
-        }
-
-        Assert.Contains("\"home\" => _homePage", code);
-        Assert.Contains("\"reminders\" => _remindersPage", code);
-        Assert.Contains("\"tasks\" => _tasksFocusPage", code);
-        Assert.Contains("\"notes\" => _loveNotesPage", code);
-        Assert.Contains("\"appearance\" => _appearancePage", code);
-        Assert.Contains("\"connection\" => _connectionPage", code);
-        Assert.Contains("\"privacy\" => _privacyDataPage", code);
-    }
-
-    [Fact]
     public void Settings_pages_keep_accessible_controls_and_banned_patterns_out()
     {
         var root = FindRepositoryRoot();
@@ -90,6 +49,21 @@ public sealed class XamlContractTests
             ["ConnectionPage"] = "ConnectionViewModel",
             ["PrivacyDataPage"] = "PrivacyDataViewModel",
         };
+        var expectedNamedElements = new Dictionary<string, string[]>(StringComparer.Ordinal)
+        {
+            ["HomePage"] = ["HomeNextReminder", "HomeActiveFocus", "HomePetState", "HomePetAnimation", "HomeActionStatus", "CountdownTargetBox", "CountdownTargetValidation", "HomeSaveCountdownButton", "HomeCheckInSummary", "HomeCheckInHistory", "StartupRecoveryPanel", "StartupRecoveryMessage", "RetryStartupButton"],
+            ["RemindersPage"] = ["ScheduleBox", "LocalTimeBox", "RemindersLocalTimeValidation", "SundayBox", "MondayBox", "TuesdayBox", "WednesdayBox", "ThursdayBox", "FridayBox", "SaturdayBox", "IntervalBox", "QuietHoursBox", "SaveReminderButton"],
+            ["TasksFocusPage"] = ["TaskDueBox", "TaskDueValidation", "SaveTaskButton", "FocusCurrent"],
+            ["LoveNotesPage"] = ["LoveNotesDailyLimit", "LoveNotesPendingCount"],
+            ["AppearancePage"] = ["ThemeBox"],
+            ["ConnectionPage"] = ["ConnectionAvailability", "ConnectionPairingCode", "ConnectionCodeExpiry", "ConnectionSessionCount"],
+            ["PrivacyDataPage"] = [],
+        };
+        var viewModelSources = pageContracts.ToDictionary(
+            pair => pair.Key,
+            pair => File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "ViewModels", $"{pair.Value}.cs")),
+            StringComparer.Ordinal);
+        var baseViewModelSource = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "ViewModels", "CompanionFeatureContext.cs"));
         foreach (var (page, viewModel) in pageContracts)
         {
             var xaml = File.ReadAllText(Path.Combine(pagesDirectory, $"{page}.xaml"));
@@ -99,19 +73,23 @@ public sealed class XamlContractTests
             Assert.Contains($"public {viewModel} ViewModel {{ get; }}", code);
             Assert.Contains("InitializeComponent();", code);
             Assert.Contains("DataContext = ViewModel;", code);
-            Assert.Contains($"public sealed partial class {page}", stubs);
-            if (page == "HomePage")
+            var namedElements = Regex.Matches(xaml, "x:Name=\"([^\"]+)\"")
+                .Select(match => match.Groups[1].Value)
+                .ToArray();
+            Assert.Equal(expectedNamedElements[page], namedElements);
+            var stubBody = ExtractClassBody(stubs, page);
+            var stubFields = Regex.Matches(stubBody, @"private\s+\w+\s+(\w+)\s*=\s*null!;")
+                .Select(match => match.Groups[1].Value)
+                .ToArray();
+            Assert.Equal(namedElements, stubFields);
+            foreach (var element in namedElements)
             {
-                Assert.Contains("x:Name=\"StartupRecoveryPanel\"", xaml);
-                Assert.Contains("x:Name=\"StartupRecoveryMessage\"", xaml);
-                Assert.Contains("x:Name=\"RetryStartupButton\"", xaml);
-                Assert.Contains("private StackPanel StartupRecoveryPanel", stubs);
-                Assert.Contains("private TextBlock StartupRecoveryMessage", stubs);
-                Assert.Contains("private Button RetryStartupButton", stubs);
+                Assert.Contains($"{element} = new", stubBody);
             }
-            else
+            var apiNames = ExtractPublicMemberNames(viewModelSources[page] + baseViewModelSource);
+            foreach (Match binding in Regex.Matches(xaml, @"ViewModel\.([A-Za-z_]\w*)"))
             {
-                Assert.DoesNotContain("x:Name=\"", xaml, StringComparison.Ordinal);
+                Assert.Contains(binding.Groups[1].Value, apiNames);
             }
             foreach (Match control in Regex.Matches(
                 xaml,
@@ -124,7 +102,7 @@ public sealed class XamlContractTests
 
         foreach (var automationId in new[]
         {
-            "HomePet", "RemindersSave", "TasksSave", "FocusStart", "LoveNotesSave",
+            "OverlayActionPet", "RemindersSave", "TasksSave", "FocusStart", "LoveNotesSave",
             "AppearanceSave", "ConnectionCreateCode", "PrivacyBackup",
             "AppearanceOutfit", "AppearanceSeasonalMode",
         })
@@ -134,7 +112,8 @@ public sealed class XamlContractTests
 
         Assert.Contains("IsEnabled=\"{x:Bind ViewModel.CanPersistOutfit, Mode=OneWay}\"", allPages);
         Assert.Contains("IsEnabled=\"{x:Bind ViewModel.CanConfigureSeasonalMode, Mode=OneWay}\"", allPages);
-        Assert.Contains("Outfit choices apply for this session only.", allPages);
+        Assert.Contains("ViewModel.OutfitAvailabilityMessage", allPages);
+        Assert.Contains("Outfit selection is unavailable", File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "ViewModels", "AppearanceViewModel.cs")));
         Assert.Contains("Automatic seasonal mode is unavailable", allPages);
         var automationIds = Regex.Matches(
                 allPages,
@@ -150,8 +129,6 @@ public sealed class XamlContractTests
             Assert.Contains("TextSecondaryBrush", xaml);
             Assert.Contains("ErrorBrush", xaml);
         }
-        var overlay = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Overlay", "ActionBubbleLayout.cs"));
-        Assert.Contains("Breathe with me", overlay);
         Assert.DoesNotContain("LinearGradientBrush", allPages, StringComparison.Ordinal);
         Assert.DoesNotContain("AcrylicBrush", allPages, StringComparison.Ordinal);
         Assert.DoesNotContain("Color=\"#", allPages, StringComparison.Ordinal);
@@ -175,10 +152,10 @@ public sealed class XamlContractTests
         };
         var expectedBindings = new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
-            ["HomePage.xaml"] = ["ViewModel.PetCommand", "ViewModel.CreateCountdownCommand", "ViewModel.RecordCheckInCommand"],
-            ["RemindersPage.xaml"] = ["ViewModel.SaveCommand", "ViewModel.CompleteCommand", "ViewModel.SaveReminderPreferencesCommand"],
-            ["TasksFocusPage.xaml"] = ["ViewModel.SaveTaskCommand", "ViewModel.StartFocusCommand", "ViewModel.EndFocusCommand"],
-            ["LoveNotesPage.xaml"] = ["ViewModel.SaveLocalNoteCommand", "ViewModel.SaveOpenedNoteCommand"],
+            ["HomePage.xaml"] = ["ViewModel.PauseDescription", "ViewModel.PetCommand", "ViewModel.PauseForOneHourCommand", "ViewModel.ResumeCommand", "ViewModel.CountdownTitle", "ViewModel.Countdowns", "ViewModel.CreateCountdownCommand", "ViewModel.SelectedCountdown", "ViewModel.DeleteCountdownCommand", "ViewModel.CheckInNote", "ViewModel.RecordCheckInCommand", "ViewModel.StatusMessage", "ViewModel.ErrorMessage"],
+            ["RemindersPage.xaml"] = ["ViewModel.Reminders", "ViewModel.SaveCommand", "ViewModel.CompleteCommand", "ViewModel.SnoozeCommand", "ViewModel.SaveReminderPreferencesCommand"],
+            ["TasksFocusPage.xaml"] = ["ViewModel.ActiveTasks", "ViewModel.CompletedTasks", "ViewModel.FocusHistory", "ViewModel.SaveTaskCommand", "ViewModel.StartFocusCommand", "ViewModel.PauseFocusCommand", "ViewModel.ResumeFocusCommand", "ViewModel.ExtendFocusCommand", "ViewModel.EndFocusCommand"],
+            ["LoveNotesPage.xaml"] = ["ViewModel.LocalNotes", "ViewModel.PendingRemoteNotes", "ViewModel.SaveLocalNoteCommand", "ViewModel.DeleteLocalNoteCommand", "ViewModel.ShowLocalNoteCommand", "ViewModel.SaveOpenedNoteCommand"],
             ["AppearancePage.xaml"] = ["ViewModel.SaveCommand", "ViewModel.SavePlacementCommand", "ViewModel.SaveShortcutCommand"],
             ["ConnectionPage.xaml"] = ["ViewModel.CreateCodeCommand", "ViewModel.RevokeSessionsCommand", "ViewModel.DeleteRemoteDeviceCommand"],
             ["PrivacyDataPage.xaml"] = ["ViewModel.BackupCommand", "ViewModel.RestoreCommand", "ViewModel.DeleteLocalDataCommand", "ViewModel.DeleteRemoteDataCommand"],
@@ -188,6 +165,7 @@ public sealed class XamlContractTests
             "Home", "Reminders", "Tasks and Focus", "Love Notes", "Appearance", "Connection", "Privacy and Data",
             "Dudu's status", "Your reminders", "Active tasks", "Task details", "Focus", "Local note jar", "Incoming notes",
             "Look and motion", "Pet options", "Shortcut", "Pairing status", "Paired sessions", "Stored on this PC", "Your data",
+            "Weekdays", "Completed tasks", "Focus history", "Dudu actions", "Comfort actions",
         };
 
         foreach (var (name, page) in pages)
@@ -207,21 +185,22 @@ public sealed class XamlContractTests
     }
 
     [Fact]
-    public void Overlay_renderer_uses_controller_snapshot_and_keeps_surface_closed_by_default()
+    public void Every_painted_overlay_action_has_a_keyboard_accessible_settings_counterpart()
     {
         var root = FindRepositoryRoot();
-        var controller = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Overlay", "OverlayActionSurfaceController.cs"));
-        var renderer = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Animation", "OverlaySurfaceRenderer.cs"));
-        var presenter = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Animation", "SkiaFrameComposer.cs"));
-        var host = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Overlay", "OverlayWindowHost.cs"));
+        var home = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml"));
 
-        Assert.Contains("Kind { get; private set; } = OverlayActionSurfaceKind.Closed", controller);
-        Assert.Contains("CreateRenderSnapshot", controller);
-        Assert.Contains("OverlaySurfaceRenderer.Draw", presenter);
-        Assert.Contains("Breathe with me", controller + renderer);
-        Assert.Contains("Reduced motion", renderer);
-        Assert.Contains("WS_EX_NOACTIVATE", host);
-        Assert.Contains("SW_SHOWNOACTIVATE", host);
+        foreach (var action in Dudu.App.Overlay.OverlayCommandRouter.AccessiblePrimaryActions)
+        {
+            Assert.Contains($"AutomationProperties.AutomationId=\"{action.AutomationId}\"", home);
+            Assert.False(string.IsNullOrWhiteSpace(action.SettingsDestination));
+        }
+
+        foreach (var action in Dudu.App.Overlay.OverlayCommandRouter.AccessibleComfortActions)
+        {
+            Assert.Contains($"AutomationProperties.AutomationId=\"{action.AutomationId}\"", home);
+            Assert.False(string.IsNullOrWhiteSpace(action.SettingsDestination));
+        }
     }
 
     private static string FindRepositoryRoot()
@@ -238,5 +217,31 @@ public sealed class XamlContractTests
         }
 
         throw new DirectoryNotFoundException("Repository root was not found from the test output path.");
+    }
+
+    private static HashSet<string> ExtractPublicMemberNames(string source)
+    {
+        return Regex.Matches(
+                source,
+                @"\bpublic\s+(?:[\w<>,.?\[\]]+\s+)+(?<name>[A-Za-z_]\w*)\s*(?:\{|=>|\()")
+            .Select(match => match.Groups["name"].Value)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    private static string ExtractClassBody(string source, string className)
+    {
+        var marker = $"public sealed partial class {className}";
+        var classStart = source.IndexOf(marker, StringComparison.Ordinal);
+        Assert.True(classStart >= 0, $"The XAML stub for {className} is missing.");
+        var bodyStart = source.IndexOf('{', classStart);
+        Assert.True(bodyStart >= 0, $"The XAML stub for {className} has no body.");
+        var depth = 0;
+        for (var index = bodyStart; index < source.Length; index++)
+        {
+            if (source[index] == '{') depth++;
+            else if (source[index] == '}' && --depth == 0) return source[(bodyStart + 1)..index];
+        }
+
+        throw new InvalidOperationException($"The XAML stub for {className} is not balanced.");
     }
 }

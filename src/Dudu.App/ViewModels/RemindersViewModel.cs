@@ -126,6 +126,9 @@ public sealed class RemindersViewModel : FeatureViewModelBase
     {
         await RunAsync(async () =>
         {
+            var preferences = _context.CurrentPreferences;
+            HydrationRemindersEnabled = preferences.HydrationRemindersEnabled;
+            BreakRemindersEnabled = preferences.BreakRemindersEnabled;
             Reminders.Clear();
             foreach (var reminder in await _context.Reminders.ListAsync(cancellationToken))
             {

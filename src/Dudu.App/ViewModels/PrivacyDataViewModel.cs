@@ -25,13 +25,17 @@ public sealed class PrivacyDataViewModel : FeatureViewModelBase
     public ObservableCollection<StoredFieldDescription> StoredFields { get; } =
     [
         new("Profile", "The name Dudu uses for you and whether setup is complete."),
-        new("Preferences", "Theme, quiet hours, reminders, startup, and privacy choices."),
-        new("Pet placement", "Monitor identity, position, scale, outfit, and layering choice."),
-        new("Reminders", "Titles, schedules, recurrence, and completion occurrences."),
-        new("Tasks and focus", "Task text, due dates, focus timing, and local history."),
+        new("Preferences", "Theme, reduced motion, quiet hours, note limit, startup, layering, fullscreen, and reminder defaults."),
+        new("Pet placement", "Monitor identity, normalized position, and scale for where Dudu sits."),
+        new("Reminders", "Titles, details, schedules, selected weekdays, local time zone, quiet-hours behavior, enabled state, next due time, snooze state, and completion occurrences."),
+        new("Tasks", "Task text, notes, due dates, completion state, and created, updated, and completed times."),
+        new("Focus history", "Task linkage, start and end times, paused remainder, duration, and completion status."),
+        new("Countdowns", "Titles, target date or time, all-day choice, and the local time zone used to display them."),
         new("Local notes", "Notes you choose to keep in the local love-note jar."),
-        new("Remote envelopes", "Encrypted message envelopes while they wait to be opened."),
-        new("Check-ins", "Optional manual check-ins stored only on this PC."),
+        new("Remote envelopes", "Encrypted ciphertext and delivery metadata while a remote note waits to be opened; plaintext is not stored in the envelope."),
+        new("Check-ins", "Optional mood, note, and timestamp that you enter manually; Dudu does not infer a mood."),
+        new("Pairing and sessions", "Opaque pairing, code-expiry, revocation, and sender-session metadata while pairing is enabled; no browser history or identity profile."),
+        new("Notifications", "Reminder delivery preferences, quiet-hours deferrals, next-due and snooze state; Dudu does not collect unrelated notification content or analytics."),
     ];
 
     public Task BackupAsync(CancellationToken cancellationToken = default) =>

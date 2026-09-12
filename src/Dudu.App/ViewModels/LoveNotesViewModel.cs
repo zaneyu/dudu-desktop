@@ -58,6 +58,8 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
             foreach (var envelope in await _context.RemoteEnvelopes.ListPendingAsync(cancellationToken)) PendingRemoteNotes.Add(envelope);
             OnPropertyChanged(nameof(UnopenedRemoteNoteCount));
             OnPropertyChanged(nameof(UnopenedRemoteNoteCountText));
+            OnPropertyChanged(nameof(DailyLocalNoteLimit));
+            OnPropertyChanged(nameof(DailyLocalNoteLimitText));
         });
     }
 

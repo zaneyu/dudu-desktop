@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Dudu.App.Overlay;
 using Dudu.Core.Assets;
@@ -24,6 +25,7 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
     private byte[]? _reusableBuffer;
     private AssetPack? _pack;
     private OverlayActionSurfaceController? _actionSurface;
+    private OverlaySurfacePalette? _overlayPalette;
     private long _decodedBitmapBytes;
     private int _disposeCount;
     private bool _disposed;
@@ -63,14 +65,35 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
 
     public int DisposeCount => Volatile.Read(ref _disposeCount);
 
-    public void SetActionSurface(OverlayActionSurfaceController actionSurface)
+    /// <summary>Raised whenever an overlay interaction changes without a new
+    /// animation frame.  The engine uses it to repaint the existing pet frame
+    /// immediately, including reduced-motion instructions and errors.</summary>
+    public event EventHandler? RepaintRequested;
+
+    public void SetActionSurface(OverlayActionSurfaceController? actionSurface)
     {
-        ArgumentNullException.ThrowIfNull(actionSurface);
         lock (_gate)
         {
             ThrowIfDisposed();
+            if (ReferenceEquals(_actionSurface, actionSurface)) return;
+            if (_actionSurface is not null) _actionSurface.Changed -= OnActionSurfaceChanged;
             _actionSurface = actionSurface;
+            if (_actionSurface is not null) _actionSurface.Changed += OnActionSurfaceChanged;
         }
+
+        RequestRepaint();
+    }
+
+    public void SetOverlayPalette(OverlaySurfacePalette palette)
+    {
+        ArgumentNullException.ThrowIfNull(palette);
+        lock (_gate)
+        {
+            ThrowIfDisposed();
+            _overlayPalette = palette;
+        }
+
+        RequestRepaint();
     }
 
     public void SetPack(AssetPack pack)
@@ -123,7 +146,10 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
             _canvas.DrawBitmap(bitmap, destination, SamplingOptions, _paint);
             if (_actionSurface is not null)
             {
-                OverlaySurfaceRenderer.Draw(_canvas, _actionSurface.CreateRenderSnapshot());
+                OverlaySurfaceRenderer.Draw(
+                    _canvas,
+                    _actionSurface.CreateRenderSnapshot(),
+                    _overlayPalette);
             }
 
             var stride = output.RowBytes;
@@ -206,6 +232,10 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
 
             _disposed = true;
             _disposeCount++;
+            if (_actionSurface is not null) _actionSurface.Changed -= OnActionSurfaceChanged;
+            _actionSurface = null;
+            _overlayPalette = null;
+            RepaintRequested = null;
             DisposeDecodedBitmaps();
             DisposeSurface();
             ReturnReusableBuffer();
@@ -214,6 +244,36 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
     }
 
     void IFrameBufferReleaser.Release(byte[] buffer) => Release(buffer);
+
+    private void OnActionSurfaceChanged(object? sender, EventArgs args)
+    {
+        lock (_gate)
+        {
+            if (_disposed) return;
+        }
+
+        RequestRepaint();
+    }
+
+    private void RequestRepaint()
+    {
+        var handlers = RepaintRequested;
+        if (handlers is null) return;
+
+        foreach (var handler in handlers.GetInvocationList().OfType<EventHandler>())
+        {
+            try
+            {
+                handler(this, EventArgs.Empty);
+            }
+            catch (Exception exception)
+            {
+                // A repaint request is advisory. One failing listener must
+                // not prevent the overlay or composer from staying usable.
+                Trace.TraceError("Dudu repaint listener failed: {0}", exception);
+            }
+        }
+    }
 
     private void Release(byte[] buffer)
     {
