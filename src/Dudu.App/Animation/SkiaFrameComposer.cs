@@ -23,6 +23,7 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
     private byte[]? _reusableBuffer;
     private AssetPack? _pack;
     private long _decodedBitmapBytes;
+    private int _disposeCount;
     private bool _disposed;
 
     public SkiaFrameComposer()
@@ -57,6 +58,8 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
             }
         }
     }
+
+    public int DisposeCount => Volatile.Read(ref _disposeCount);
 
     public void SetPack(AssetPack pack)
     {
@@ -186,6 +189,7 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
             }
 
             _disposed = true;
+            _disposeCount++;
             DisposeDecodedBitmaps();
             DisposeSurface();
             ReturnReusableBuffer();

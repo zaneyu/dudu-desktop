@@ -67,6 +67,10 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
     private AssetPack _pack;
     private Task? _activeTask;
     private CancellationTokenSource? _activeCancellation;
+    private TaskCompletionSource<object?>? _disposeCompletion;
+    private TaskCompletionSource<object?>? _mutationUsersCompletion;
+    private int _mutationUsers;
+    private bool _mutationDisposeRequested;
     private bool _disposed;
     private bool _resourcesDisposed;
     private bool _mutationGateDisposed;
@@ -107,9 +111,12 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
         options ??= AnimationOptions.Default;
         ValidateOptions(options);
 
-        _mutationGate.Wait();
+        EnterMutation();
+        var gateEntered = false;
         try
         {
+            _mutationGate.Wait();
+            gateEntered = true;
             Task? previous;
             CancellationTokenSource operationCancellation;
             lock (_stateGate)
@@ -126,16 +133,24 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
         }
         finally
         {
-            _mutationGate.Release();
+            if (gateEntered)
+            {
+                _mutationGate.Release();
+            }
+
+            ExitMutation();
         }
     }
 
     public void ReplacePack(AssetPack pack)
     {
         ArgumentNullException.ThrowIfNull(pack);
-        _mutationGate.Wait();
+        EnterMutation();
+        var gateEntered = false;
         try
         {
+            _mutationGate.Wait();
+            gateEntered = true;
             Task? active;
             lock (_stateGate)
             {
@@ -154,113 +169,37 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
         }
         finally
         {
-            _mutationGate.Release();
+            if (gateEntered)
+            {
+                _mutationGate.Release();
+            }
+
+            ExitMutation();
         }
     }
 
     public void Dispose()
     {
-        lock (_stateGate)
+        var start = BeginDispose();
+        if (!start.IsOwner)
         {
-            if (_mutationGateDisposed)
-            {
-                return;
-            }
+            start.Completion.Task.GetAwaiter().GetResult();
+            return;
         }
 
-        _mutationGate.Wait();
-        Exception? failure = null;
-        try
-        {
-            Task? active = null;
-            lock (_stateGate)
-            {
-                if (!_disposed)
-                {
-                    _disposed = true;
-                    _activeCancellation?.Cancel();
-                    active = _activeTask;
-                }
-            }
-
-            try
-            {
-                WaitForCompletion(active);
-            }
-            catch (Exception exception)
-            {
-                failure = exception;
-            }
-        }
-        finally
-        {
-            DisposeResources();
-            _mutationGate.Release();
-            lock (_stateGate)
-            {
-                _mutationGateDisposed = true;
-            }
-            _mutationGate.Dispose();
-        }
-
-        if (failure is not null)
-        {
-            ExceptionDispatchInfo.Capture(failure).Throw();
-        }
+        DisposeCore(start.Active, start.Completion);
     }
 
     public async ValueTask DisposeAsync()
     {
-        lock (_stateGate)
+        var start = BeginDispose();
+        if (!start.IsOwner)
         {
-            if (_mutationGateDisposed)
-            {
-                return;
-            }
+            await start.Completion.Task.ConfigureAwait(false);
+            return;
         }
 
-        await _mutationGate.WaitAsync().ConfigureAwait(false);
-        Exception? failure = null;
-        try
-        {
-            Task? active = null;
-            lock (_stateGate)
-            {
-                if (!_disposed)
-                {
-                    _disposed = true;
-                    _activeCancellation?.Cancel();
-                    active = _activeTask;
-                }
-            }
-
-            if (active is not null)
-            {
-                try
-                {
-                    await active.ConfigureAwait(false);
-                }
-                catch (Exception exception)
-                {
-                    failure = exception is OperationCanceledException ? null : exception;
-                }
-            }
-        }
-        finally
-        {
-            DisposeResources();
-            _mutationGate.Release();
-            lock (_stateGate)
-            {
-                _mutationGateDisposed = true;
-            }
-            _mutationGate.Dispose();
-        }
-
-        if (failure is not null)
-        {
-            ExceptionDispatchInfo.Capture(failure).Throw();
-        }
+        await DisposeCoreAsync(start.Active, start.Completion).ConfigureAwait(false);
     }
 
     private async Task RunReplacementAsync(
@@ -618,6 +557,175 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
             task.GetAwaiter().GetResult();
         }
         catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private void EnterMutation()
+    {
+        lock (_stateGate)
+        {
+            ThrowIfDisposed();
+            checked
+            {
+                _mutationUsers++;
+            }
+        }
+    }
+
+    private void ExitMutation()
+    {
+        lock (_stateGate)
+        {
+            _mutationUsers--;
+            if (_mutationDisposeRequested && _mutationUsers == 0)
+            {
+                _mutationUsersCompletion?.TrySetResult(null);
+            }
+        }
+    }
+
+    private (bool IsOwner, TaskCompletionSource<object?> Completion, Task? Active) BeginDispose()
+    {
+        lock (_stateGate)
+        {
+            if (_disposeCompletion is not null)
+            {
+                return (false, _disposeCompletion, null);
+            }
+
+            _disposed = true;
+            try
+            {
+                _activeCancellation?.Cancel();
+            }
+            catch
+            {
+                // Disposal remains best-effort and must not mask the playback fault.
+            }
+
+            var completion = new TaskCompletionSource<object?>
+                (TaskCreationOptions.RunContinuationsAsynchronously);
+            _disposeCompletion = completion;
+            _mutationDisposeRequested = true;
+            if (_mutationUsers > 0)
+            {
+                _mutationUsersCompletion = new TaskCompletionSource<object?>
+                    (TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+
+            return (true, completion, _activeTask);
+        }
+    }
+
+    private void DisposeCore(Task? active, TaskCompletionSource<object?> completion)
+    {
+        try
+        {
+            WaitForCompletionIgnoringFault(active);
+            WaitForMutationUsersZero();
+            DisposeResources();
+            DisposeMutationGate();
+        }
+        catch
+        {
+            // Teardown is idempotent and non-throwing after a caller has observed a playback fault.
+        }
+        finally
+        {
+            completion.TrySetResult(null);
+        }
+    }
+
+    private async Task DisposeCoreAsync(Task? active, TaskCompletionSource<object?> completion)
+    {
+        try
+        {
+            if (active is not null)
+            {
+                try
+                {
+                    await active.ConfigureAwait(false);
+                }
+                catch
+                {
+                    // The original task remains faulted for its caller; teardown never rethrows it.
+                }
+            }
+
+            await WaitForMutationUsersZeroAsync().ConfigureAwait(false);
+            DisposeResources();
+            DisposeMutationGate();
+        }
+        catch
+        {
+            // Teardown is idempotent and non-throwing after a caller has observed a playback fault.
+        }
+        finally
+        {
+            completion.TrySetResult(null);
+        }
+    }
+
+    private static void WaitForCompletionIgnoringFault(Task? task)
+    {
+        if (task is null)
+        {
+            return;
+        }
+
+        try
+        {
+            task.GetAwaiter().GetResult();
+        }
+        catch
+        {
+            // The active task's original exception is intentionally not propagated by teardown.
+        }
+    }
+
+    private void WaitForMutationUsersZero()
+    {
+        Task? completion;
+        lock (_stateGate)
+        {
+            completion = _mutationUsersCompletion?.Task;
+        }
+
+        completion?.GetAwaiter().GetResult();
+    }
+
+    private async Task WaitForMutationUsersZeroAsync()
+    {
+        Task? completion;
+        lock (_stateGate)
+        {
+            completion = _mutationUsersCompletion?.Task;
+        }
+
+        if (completion is not null)
+        {
+            await completion.ConfigureAwait(false);
+        }
+    }
+
+    private void DisposeMutationGate()
+    {
+        lock (_stateGate)
+        {
+            if (_mutationGateDisposed)
+            {
+                return;
+            }
+
+            _mutationGateDisposed = true;
+        }
+
+        try
+        {
+            _mutationGate.Dispose();
+        }
+        catch
         {
         }
     }
