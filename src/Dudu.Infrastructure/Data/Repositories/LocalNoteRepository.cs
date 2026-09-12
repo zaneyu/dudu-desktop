@@ -3,8 +3,10 @@ using Dudu.Core.Models;
 
 namespace Dudu.Infrastructure.Data.Repositories;
 
-public sealed class LocalNoteRepository(Database database) : SqliteRepository(database), ILocalNoteRepository
+public sealed class LocalNoteRepository : SqliteRepository, ILocalNoteRepository
 {
+    public LocalNoteRepository(Database database) : base(database) { }
+    internal LocalNoteRepository(Database database, SqliteTransactionContext context) : base(database, context) { }
     public async Task<IReadOnlyList<LocalLoveNote>> ListEnabledAsync(CancellationToken cancellationToken)
     {
         var result = new List<LocalLoveNote>();
@@ -32,6 +34,14 @@ public sealed class LocalNoteRepository(Database database) : SqliteRepository(da
 
     public async Task<bool> TryRecordShownAsync(string noteId, DateTimeOffset shownUtc, DateOnly localDate, int dailyLimit, bool unsolicited, CancellationToken cancellationToken)
     {
+        if (IsTransactionBound)
+        {
+            await using var boundConnection = await OpenAsync(cancellationToken);
+            await using var boundCommand = boundConnection.CreateCommand();
+            AddRecordCommand(boundCommand, noteId, shownUtc, localDate, dailyLimit, unsolicited);
+            return await boundCommand.ExecuteNonQueryAsync(cancellationToken) == 1;
+        }
+
         await using var connection = await OpenAsync(cancellationToken); await using var transaction = (Microsoft.Data.Sqlite.SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
         try
         {
@@ -46,5 +56,16 @@ public sealed class LocalNoteRepository(Database database) : SqliteRepository(da
             var count = await command.ExecuteNonQueryAsync(cancellationToken); await transaction.CommitAsync(cancellationToken); return count == 1;
         }
         catch { await transaction.RollbackAsync(CancellationToken.None); throw; }
+    }
+
+    private static void AddRecordCommand(Microsoft.Data.Sqlite.SqliteCommand command, string noteId, DateTimeOffset shownUtc, DateOnly localDate, int dailyLimit, bool unsolicited)
+    {
+        command.CommandText = """
+            INSERT INTO local_note_history (note_id, shown_utc, local_date, unsolicited)
+            SELECT $id, $shown, $date, $unsolicited
+            WHERE EXISTS (SELECT 1 FROM local_notes WHERE id=$id)
+              AND ($unsolicited=0 OR $limit > (SELECT COUNT(*) FROM local_note_history WHERE local_date=$date AND unsolicited=1));
+            """;
+        Add(command,"$id",noteId); Add(command,"$shown",Utc(shownUtc)); Add(command,"$date",Date(localDate)); Add(command,"$unsolicited",unsolicited?1:0); Add(command,"$limit",dailyLimit);
     }
 }

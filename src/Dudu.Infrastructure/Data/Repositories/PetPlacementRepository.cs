@@ -3,8 +3,10 @@ using Dudu.Core.Models;
 
 namespace Dudu.Infrastructure.Data.Repositories;
 
-public sealed class PetPlacementRepository(Database database) : SqliteRepository(database), IPetPlacementRepository
+public sealed class PetPlacementRepository : SqliteRepository, IPetPlacementRepository
 {
+    public PetPlacementRepository(Database database) : base(database) { }
+    internal PetPlacementRepository(Database database, SqliteTransactionContext context) : base(database, context) { }
     public async Task<PetPlacement?> GetAsync(string monitorDeviceName, CancellationToken cancellationToken)
     { await using var connection=await OpenAsync(cancellationToken); await using var command=connection.CreateCommand(); command.CommandText="SELECT monitor_device_name,normalized_x,normalized_y,scale FROM pet_placements WHERE monitor_device_name=$name;"; Add(command,"$name",monitorDeviceName); await using var reader=await command.ExecuteReaderAsync(cancellationToken); return await reader.ReadAsync(cancellationToken)?Read(reader):null; }
 

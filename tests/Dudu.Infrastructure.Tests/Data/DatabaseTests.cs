@@ -169,6 +169,148 @@ public sealed class DatabaseTests
         Assert.Equal(envelope.Ciphertext, loadedEnvelope?.Ciphertext);
     }
 
+    [Fact]
+    public async Task Unit_of_work_rolls_back_and_commits_multiple_repository_writes()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var unitOfWork = new AppUnitOfWork(fixture.Database);
+        var preferences = new Preferences(AppTheme.Dark, new QuietHours(true, new TimeOnly(22), new TimeOnly(7)), false, 3, false, false, true, TimeSpan.FromMinutes(15));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => unitOfWork.ExecuteAsync(async (context, cancellationToken) =>
+        {
+            await context.Profiles.SaveAsync(new Profile("Rollback", true), cancellationToken);
+            await context.Preferences.SaveAsync(preferences, cancellationToken);
+            throw new InvalidOperationException("rollback");
+        }, TestContext.Current.CancellationToken));
+
+        var profileRepository = new ProfileRepository(fixture.Database);
+        var preferencesRepository = new PreferencesRepository(fixture.Database);
+        Assert.Null(await profileRepository.GetAsync(TestContext.Current.CancellationToken));
+        Assert.Null(await preferencesRepository.GetAsync(TestContext.Current.CancellationToken));
+
+        await unitOfWork.ExecuteAsync(async (context, cancellationToken) =>
+        {
+            await context.Profiles.SaveAsync(new Profile("Commit", true), cancellationToken);
+            await context.Preferences.SaveAsync(preferences, cancellationToken);
+        }, TestContext.Current.CancellationToken);
+
+        Assert.Equal("Commit", (await profileRepository.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
+        Assert.Equal(preferences, await preferencesRepository.GetAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task Pending_remote_envelopes_exclude_processed_message_ids()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var repository = new RemoteEnvelopeRepository(fixture.Database);
+        var processed = new RemoteEnvelope("processed", [1], null, null, null, null, DateTimeOffset.UtcNow);
+        var pending = new RemoteEnvelope("pending", [2], null, null, null, null, DateTimeOffset.UtcNow.AddSeconds(1));
+
+        Assert.True(await repository.TryInsertAndMarkProcessedAsync(processed, DateTimeOffset.UtcNow, TestContext.Current.CancellationToken));
+        Assert.True(await repository.TryInsertAsync(pending, TestContext.Current.CancellationToken));
+
+        var result = await repository.ListPendingAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(["pending"], result.Select(envelope => envelope.MessageId));
+    }
+
+    [Fact]
+    public async Task Processed_conflict_rolls_back_new_envelope_insert()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var messageId = "already-processed";
+        await using (var connection = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken))
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "INSERT INTO processed_remote_messages (message_id, processed_utc) VALUES ($id, $processed);";
+            command.Parameters.AddWithValue("$id", messageId);
+            command.Parameters.AddWithValue("$processed", DateTimeOffset.UtcNow.ToString("O"));
+            await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        var repository = new RemoteEnvelopeRepository(fixture.Database);
+        var envelope = new RemoteEnvelope(messageId, [9], null, null, null, null, DateTimeOffset.UtcNow);
+        Assert.False(await repository.TryInsertAndMarkProcessedAsync(envelope, DateTimeOffset.UtcNow, TestContext.Current.CancellationToken));
+        Assert.Null(await repository.GetAsync(messageId, TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task Restore_replaces_database_and_removes_stale_wal_sidecars()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var profiles = new ProfileRepository(fixture.Database);
+        await profiles.SaveAsync(new Profile("Before", true), TestContext.Current.CancellationToken);
+        var backup = await fixture.Backups.CreatePreMigrationBackupAsync(TestContext.Current.CancellationToken);
+        await profiles.SaveAsync(new Profile("After", true), TestContext.Current.CancellationToken);
+
+        await using var activeConnection = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken);
+        await using (var command = activeConnection.CreateCommand())
+        {
+            command.CommandText = "UPDATE profiles SET recipient_name = 'WAL' WHERE id = 1;";
+            await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        var walPath = fixture.Options.DatabasePath + "-wal";
+        var shmPath = fixture.Options.DatabasePath + "-shm";
+        await File.WriteAllBytesAsync(walPath, [1, 2, 3], TestContext.Current.CancellationToken);
+        await File.WriteAllBytesAsync(shmPath, [4, 5, 6], TestContext.Current.CancellationToken);
+
+        var result = await fixture.Backups.TryRestoreAsync(backup!, TestContext.Current.CancellationToken);
+
+        Assert.True(result.Restored);
+        Assert.False(File.Exists(walPath));
+        Assert.False(File.Exists(shmPath));
+        Assert.Equal("Before", (await profiles.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
+    }
+
+    [Fact]
+    public async Task Public_connection_and_supplied_migration_paths_configure_pragmas()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        await using var asyncConnection = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken);
+        await AssertPragmasAsync(asyncConnection, TestContext.Current.CancellationToken);
+
+        using var syncConnection = fixture.Database.CreateConnection();
+        await AssertPragmasAsync(syncConnection, TestContext.Current.CancellationToken);
+
+        var suppliedPath = Path.Combine(Path.GetDirectoryName(fixture.Options.DatabasePath)!, "supplied.db");
+        var supplied = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = suppliedPath, Mode = SqliteOpenMode.ReadWriteCreate }.ToString());
+        await supplied.OpenAsync(TestContext.Current.CancellationToken);
+        await new MigrationRunner(new DatabaseOptions(suppliedPath)).RunAsync(supplied, TestContext.Current.CancellationToken);
+        await AssertPragmasAsync(supplied, TestContext.Current.CancellationToken);
+        await supplied.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Concurrent_first_use_awaits_one_completed_initialization()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "dudu-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var options = new DatabaseOptions(Path.Combine(root, "dudu.db"), Path.Combine(root, "backups"));
+            var database = new Database(options);
+            var connections = await Task.WhenAll(Enumerable.Range(0, 12).Select(_ => database.CreateConnectionAsync(TestContext.Current.CancellationToken)));
+            foreach (var connection in connections) await connection.DisposeAsync();
+            var notes = await new LocalNoteRepository(database).ListEnabledAsync(TestContext.Current.CancellationToken);
+            Assert.Equal(12, notes.Count);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private static async Task AssertPragmasAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA foreign_keys;";
+        Assert.Equal(1L, Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)));
+        command.CommandText = "PRAGMA busy_timeout;";
+        Assert.Equal(5000L, Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken)));
+        command.CommandText = "PRAGMA journal_mode;";
+        Assert.Equal("wal", Convert.ToString(await command.ExecuteScalarAsync(cancellationToken)), ignoreCase: true);
+    }
+
     private sealed class DatabaseFixture : IAsyncDisposable
     {
         private DatabaseFixture(string root, DatabaseOptions options, Database database, DatabaseBackupService backups)

@@ -3,8 +3,10 @@ using Dudu.Core.Models;
 
 namespace Dudu.Infrastructure.Data.Repositories;
 
-public sealed class TaskRepository(Database database) : SqliteRepository(database), ITaskRepository
+public sealed class TaskRepository : SqliteRepository, ITaskRepository
 {
+    public TaskRepository(Database database) : base(database) { }
+    internal TaskRepository(Database database, SqliteTransactionContext context) : base(database, context) { }
     public async Task<TaskItem?> GetAsync(Guid id, CancellationToken cancellationToken)
     {
         await using var connection = await OpenAsync(cancellationToken);

@@ -4,8 +4,10 @@ using Microsoft.Data.Sqlite;
 
 namespace Dudu.Infrastructure.Data.Repositories;
 
-public sealed class ReminderRepository(Database database) : SqliteRepository(database), IReminderRepository
+public sealed class ReminderRepository : SqliteRepository, IReminderRepository
 {
+    public ReminderRepository(Database database) : base(database) { }
+    internal ReminderRepository(Database database, SqliteTransactionContext context) : base(database, context) { }
     public async Task<IReadOnlyList<Reminder>> LoadDueAsync(DateTimeOffset utcNow, CancellationToken cancellationToken)
     {
         var result = new List<Reminder>();
@@ -26,6 +28,24 @@ public sealed class ReminderRepository(Database database) : SqliteRepository(dat
     {
         ArgumentNullException.ThrowIfNull(reminder);
         ArgumentNullException.ThrowIfNull(occurrences);
+        if (IsTransactionBound)
+        {
+            await using var boundConnection = await OpenAsync(cancellationToken);
+            foreach (var occurrence in occurrences)
+            {
+                await using var insert = boundConnection.CreateCommand();
+                insert.CommandText = "INSERT INTO reminder_occurrences (reminder_id, due_utc) VALUES ($id, $due) ON CONFLICT(reminder_id, due_utc) DO NOTHING;";
+                Add(insert, "$id", occurrence.ReminderId); Add(insert, "$due", Utc(occurrence.DueUtc));
+                await insert.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            await using var boundUpdate = boundConnection.CreateCommand();
+            boundUpdate.CommandText = "UPDATE reminders SET next_due_utc=$next, snoozed_until_utc=NULL WHERE id=$id;";
+            Add(boundUpdate, "$next", Utc(nextDueUtc)); Add(boundUpdate, "$id", reminder.Id);
+            await boundUpdate.ExecuteNonQueryAsync(cancellationToken);
+            return;
+        }
+
         await using var connection = await OpenAsync(cancellationToken);
         await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
         try

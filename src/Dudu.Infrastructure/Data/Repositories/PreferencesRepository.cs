@@ -3,8 +3,10 @@ using Dudu.Core.Models;
 
 namespace Dudu.Infrastructure.Data.Repositories;
 
-public sealed class PreferencesRepository(Database database) : SqliteRepository(database), IPreferencesRepository
+public sealed class PreferencesRepository : SqliteRepository, IPreferencesRepository
 {
+    public PreferencesRepository(Database database) : base(database) { }
+    internal PreferencesRepository(Database database, SqliteTransactionContext context) : base(database, context) { }
     public async Task<Preferences?> GetAsync(CancellationToken cancellationToken)
     {
         await using var connection = await OpenAsync(cancellationToken); await using var command = connection.CreateCommand(); command.CommandText = "SELECT theme,quiet_hours_enabled,quiet_hours_start,quiet_hours_end,reduced_motion,local_note_daily_limit,launch_at_sign_in,always_on_top,hide_pet_during_fullscreen,ambient_minimum_interval_ticks FROM preferences WHERE id=1;";

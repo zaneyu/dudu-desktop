@@ -1,15 +1,22 @@
 using Microsoft.Data.Sqlite;
+using System.Collections.Concurrent;
 
 namespace Dudu.Infrastructure.Data;
 
 public sealed class Database : IAsyncDisposable, IDisposable
 {
+    private static readonly ConcurrentDictionary<string, DatabaseAccessCoordinator> Coordinators = new(StringComparer.OrdinalIgnoreCase);
     private readonly DatabaseOptions _options;
-    private int _opened;
+    private readonly DatabaseAccessCoordinator _coordinator;
+    private readonly object _initializationSync = new();
+    private Task? _initializationTask;
 
     public Database(DatabaseOptions options)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
+        _coordinator = Coordinators.GetOrAdd(
+            Path.GetFullPath(_options.DatabasePath),
+            static path => new DatabaseAccessCoordinator(path));
     }
 
     public DatabaseOptions Options => _options;
@@ -36,24 +43,26 @@ public sealed class Database : IAsyncDisposable, IDisposable
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
-        if (Interlocked.Exchange(ref _opened, 1) == 1)
+        Task initialization;
+        lock (_initializationSync)
         {
-            return;
+            _initializationTask ??= InitializeCoreAsync();
+            initialization = _initializationTask;
         }
 
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(_options.DatabasePath)
-                ?? throw new InvalidOperationException("The database path has no directory."));
-            Directory.CreateDirectory(_options.BackupDirectory);
-
-            await using var connection = await OpenConnectionAsync(cancellationToken);
-            await new MigrationRunner(_options).RunAsync(connection, cancellationToken);
-            await SeedData.SeedAsync(connection, cancellationToken);
+            await initialization.WaitAsync(cancellationToken);
         }
         catch
         {
-            Volatile.Write(ref _opened, 0);
+            lock (_initializationSync)
+            {
+                if (_initializationTask is { IsCompleted: true })
+                {
+                    _initializationTask = null;
+                }
+            }
             throw;
         }
     }
@@ -61,25 +70,14 @@ public sealed class Database : IAsyncDisposable, IDisposable
     public async Task<SqliteConnection> CreateConnectionAsync(
         CancellationToken cancellationToken = default)
     {
-        if (Volatile.Read(ref _opened) == 0)
-        {
-            await InitializeAsync(cancellationToken);
-        }
-
+        await InitializeAsync(cancellationToken);
         return await OpenConnectionAsync(cancellationToken);
     }
 
     public SqliteConnection CreateConnection()
     {
-        if (Volatile.Read(ref _opened) == 0)
-        {
-            throw new InvalidOperationException("The database must be opened before creating a connection.");
-        }
-
-        var connection = new SqliteConnection(ConnectionString(_options));
-        connection.Open();
-        ConfigureConnection(connection);
-        return connection;
+        InitializeAsync().GetAwaiter().GetResult();
+        return OpenConnection();
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
@@ -106,17 +104,129 @@ public sealed class Database : IAsyncDisposable, IDisposable
         using var foreignKeys = connection.CreateCommand();
         foreignKeys.CommandText = "PRAGMA foreign_keys=ON;";
         foreignKeys.ExecuteNonQuery();
+
+        using var journalMode = connection.CreateCommand();
+        journalMode.CommandText = "PRAGMA journal_mode=WAL;";
+        journalMode.ExecuteNonQuery();
     }
 
     private async Task<SqliteConnection> OpenConnectionAsync(CancellationToken cancellationToken)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        var connection = new SqliteConnection(ConnectionString(_options));
-        await connection.OpenAsync(cancellationToken);
-        ConfigureConnection(connection);
-        using var journalMode = connection.CreateCommand();
-        journalMode.CommandText = "PRAGMA journal_mode=WAL;";
-        await journalMode.ExecuteNonQueryAsync(cancellationToken);
-        return connection;
+        await _coordinator.Gate.WaitAsync(cancellationToken);
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var connection = new SqliteConnection(ConnectionString(_options));
+            await connection.OpenAsync(cancellationToken);
+            ConfigureConnection(connection);
+            _coordinator.Track(connection);
+            return connection;
+        }
+        finally
+        {
+            _coordinator.Gate.Release();
+        }
+    }
+
+    private SqliteConnection OpenConnection()
+    {
+        _coordinator.Gate.Wait();
+        try
+        {
+            var connection = new SqliteConnection(ConnectionString(_options));
+            connection.Open();
+            ConfigureConnection(connection);
+            _coordinator.Track(connection);
+            return connection;
+        }
+        finally
+        {
+            _coordinator.Gate.Release();
+        }
+    }
+
+    private async Task InitializeCoreAsync()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(_options.DatabasePath)
+            ?? throw new InvalidOperationException("The database path has no directory."));
+        Directory.CreateDirectory(_options.BackupDirectory);
+
+        await using var connection = await OpenConnectionAsync(CancellationToken.None);
+        await new MigrationRunner(_options).RunAsync(connection, CancellationToken.None);
+        await SeedData.SeedAsync(connection, CancellationToken.None);
+    }
+
+    internal Task<IDisposable> EnterMaintenanceAsync(CancellationToken cancellationToken) =>
+        _coordinator.EnterMaintenanceAsync(cancellationToken);
+}
+
+internal sealed class DatabaseAccessCoordinator(string databasePath)
+{
+    private readonly string _databasePath = databasePath;
+    private readonly object _sync = new();
+    private readonly HashSet<SqliteConnection> _connections = [];
+    public SemaphoreSlim Gate { get; } = new(1, 1);
+
+    public void Track(SqliteConnection connection)
+    {
+        lock (_sync)
+        {
+            _connections.Add(connection);
+        }
+
+        connection.StateChange += OnStateChange;
+    }
+
+    public async Task<IDisposable> EnterMaintenanceAsync(CancellationToken cancellationToken)
+    {
+        await Gate.WaitAsync(cancellationToken);
+        try
+        {
+            SqliteConnection[] connections;
+            lock (_sync)
+            {
+                connections = _connections.ToArray();
+                _connections.Clear();
+            }
+
+            foreach (var connection in connections)
+            {
+                await connection.DisposeAsync();
+            }
+
+            SqliteConnection.ClearAllPools();
+
+            return new MaintenanceLease(Gate);
+        }
+        catch
+        {
+            Gate.Release();
+            throw;
+        }
+    }
+
+    private void OnStateChange(object? sender, System.Data.StateChangeEventArgs args)
+    {
+        if (args.CurrentState == System.Data.ConnectionState.Closed && sender is SqliteConnection connection)
+        {
+            lock (_sync)
+            {
+                _connections.Remove(connection);
+            }
+        }
+    }
+
+    private sealed class MaintenanceLease(SemaphoreSlim gate) : IDisposable
+    {
+        private readonly SemaphoreSlim _gate = gate;
+        private int _disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+            {
+                _gate.Release();
+            }
+        }
     }
 }

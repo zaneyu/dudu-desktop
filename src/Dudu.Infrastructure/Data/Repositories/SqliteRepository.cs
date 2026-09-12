@@ -4,12 +4,36 @@ using Microsoft.Data.Sqlite;
 
 namespace Dudu.Infrastructure.Data.Repositories;
 
-public abstract class SqliteRepository(Database database)
+public abstract class SqliteRepository
 {
-    protected Database Database { get; } = database ?? throw new ArgumentNullException(nameof(database));
+    private readonly SqliteTransactionContext? _transactionContext;
 
-    protected Task<SqliteConnection> OpenAsync(CancellationToken cancellationToken) =>
-        Database.CreateConnectionAsync(cancellationToken);
+    protected SqliteRepository(Database database)
+    {
+        Database = database ?? throw new ArgumentNullException(nameof(database));
+    }
+
+    internal SqliteRepository(Database database, SqliteTransactionContext transactionContext)
+        : this(database)
+    {
+        _transactionContext = transactionContext ?? throw new ArgumentNullException(nameof(transactionContext));
+    }
+
+    protected Database Database { get; }
+
+    protected bool IsTransactionBound => _transactionContext is not null;
+
+    protected SqliteTransaction? Transaction => _transactionContext?.Transaction;
+
+    protected async Task<SqliteConnectionLease> OpenAsync(CancellationToken cancellationToken)
+    {
+        if (_transactionContext is not null)
+        {
+            return SqliteConnectionLease.Bound(_transactionContext.Connection, _transactionContext.Transaction);
+        }
+
+        return SqliteConnectionLease.Owned(await Database.CreateConnectionAsync(cancellationToken));
+    }
 
     protected static string Utc(DateTimeOffset value) =>
         value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
@@ -98,4 +122,44 @@ public abstract class SqliteRepository(Database database)
             ReadTime(start!),
             ReadTime(end!));
     }
+}
+
+internal sealed class SqliteTransactionContext(
+    SqliteConnection connection,
+    SqliteTransaction transaction)
+{
+    public SqliteConnection Connection { get; } = connection ?? throw new ArgumentNullException(nameof(connection));
+    public SqliteTransaction Transaction { get; } = transaction ?? throw new ArgumentNullException(nameof(transaction));
+}
+
+public sealed class SqliteConnectionLease : IAsyncDisposable
+{
+    private readonly bool _ownsConnection;
+
+    private SqliteConnectionLease(SqliteConnection connection, bool ownsConnection, SqliteTransaction? transaction = null)
+    {
+        Connection = connection;
+        _ownsConnection = ownsConnection;
+        Transaction = transaction;
+    }
+
+    public SqliteConnection Connection { get; }
+
+    private SqliteTransaction? Transaction { get; }
+
+    public static SqliteConnectionLease Bound(SqliteConnection connection, SqliteTransaction? transaction = null) => new(connection, false, transaction);
+
+    public static SqliteConnectionLease Owned(SqliteConnection connection) => new(connection, true);
+
+    public SqliteCommand CreateCommand()
+    {
+        var command = Connection.CreateCommand();
+        command.Transaction = Transaction;
+        return command;
+    }
+
+    public async Task<SqliteTransaction> BeginTransactionAsync(CancellationToken cancellationToken) =>
+        (SqliteTransaction)await Connection.BeginTransactionAsync(cancellationToken);
+
+    public ValueTask DisposeAsync() => _ownsConnection ? Connection.DisposeAsync() : ValueTask.CompletedTask;
 }

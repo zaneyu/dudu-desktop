@@ -19,10 +19,12 @@ public sealed record RestoreResult(
 public sealed class DatabaseBackupService
 {
     private readonly DatabaseOptions _options;
+    private readonly Database _database;
 
     public DatabaseBackupService(DatabaseOptions options)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
+        _database = new Database(_options);
     }
 
     public DatabaseBackupService(string databasePath, string? backupDirectory = null)
@@ -154,10 +156,12 @@ public sealed class DatabaseBackupService
 
         try
         {
+            using var maintenance = await _database.EnterMaintenanceAsync(cancellationToken);
             Directory.CreateDirectory(Path.GetDirectoryName(_options.DatabasePath)
                 ?? throw new InvalidOperationException("The database path has no directory."));
             var temporaryPath = _options.DatabasePath + ".restore-" + Guid.NewGuid().ToString("N");
             File.Copy(backupPath, temporaryPath, overwrite: false);
+            DeleteSidecars();
             File.Move(temporaryPath, _options.DatabasePath, overwrite: true);
             return new RestoreResult(true, RestoreFailure.None, backupPath);
         }
@@ -188,4 +192,13 @@ public sealed class DatabaseBackupService
     private string NewBackupPath() => Path.Combine(
         _options.BackupDirectory,
         $"{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}.db");
+
+    private void DeleteSidecars()
+    {
+        foreach (var suffix in new[] { "-wal", "-shm" })
+        {
+            var path = _options.DatabasePath + suffix;
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
 }

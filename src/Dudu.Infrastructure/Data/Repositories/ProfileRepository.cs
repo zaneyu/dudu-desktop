@@ -3,8 +3,10 @@ using Dudu.Core.Models;
 
 namespace Dudu.Infrastructure.Data.Repositories;
 
-public sealed class ProfileRepository(Database database) : SqliteRepository(database), IProfileRepository
+public sealed class ProfileRepository : SqliteRepository, IProfileRepository
 {
+    public ProfileRepository(Database database) : base(database) { }
+    internal ProfileRepository(Database database, SqliteTransactionContext context) : base(database, context) { }
     public async Task<Profile?> GetAsync(CancellationToken cancellationToken)
     { await using var connection=await OpenAsync(cancellationToken); await using var command=connection.CreateCommand(); command.CommandText="SELECT recipient_name,onboarding_complete FROM profiles WHERE id=1;"; await using var reader=await command.ExecuteReaderAsync(cancellationToken); return await reader.ReadAsync(cancellationToken)?new(reader.GetString(0),reader.GetInt32(1)!=0):null; }
 

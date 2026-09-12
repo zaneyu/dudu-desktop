@@ -3,8 +3,10 @@ using Dudu.Core.Models;
 
 namespace Dudu.Infrastructure.Data.Repositories;
 
-public sealed class CountdownRepository(Database database) : SqliteRepository(database), ICountdownRepository
+public sealed class CountdownRepository : SqliteRepository, ICountdownRepository
 {
+    public CountdownRepository(Database database) : base(database) { }
+    internal CountdownRepository(Database database, SqliteTransactionContext context) : base(database, context) { }
     public async Task<Countdown?> GetAsync(string id, CancellationToken cancellationToken)
     {
         await using var connection = await OpenAsync(cancellationToken); await using var command = connection.CreateCommand(); command.CommandText = Select + " WHERE id=$id;"; Add(command,"$id",id);

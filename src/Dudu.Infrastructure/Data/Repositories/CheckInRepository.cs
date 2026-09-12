@@ -3,8 +3,10 @@ using Dudu.Core.Models;
 
 namespace Dudu.Infrastructure.Data.Repositories;
 
-public sealed class CheckInRepository(Database database) : SqliteRepository(database), ICheckInRepository
+public sealed class CheckInRepository : SqliteRepository, ICheckInRepository
 {
+    public CheckInRepository(Database database) : base(database) { }
+    internal CheckInRepository(Database database, SqliteTransactionContext context) : base(database, context) { }
     public async Task SaveAsync(MoodCheckIn checkIn, CancellationToken cancellationToken)
     {
         await using var connection = await OpenAsync(cancellationToken); await using var command = connection.CreateCommand();
