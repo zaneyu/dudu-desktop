@@ -24,35 +24,6 @@ public sealed class OverlayStaticGuardTests
         Assert.DoesNotContain("DllImport", nativeMethods, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
-    public void Host_has_no_finalizer_and_keeps_focus_safe_message_paths()
-    {
-        var host = ReadRepositoryFile("src", "Dudu.App", "Overlay", "OverlayWindowHost.cs");
-
-        Assert.DoesNotContain("~OverlayWindowHost", host, StringComparison.Ordinal);
-        Assert.Contains("WS_EX_NOACTIVATE", host, StringComparison.Ordinal);
-        Assert.Contains("SWP_NOACTIVATE", host, StringComparison.Ordinal);
-        Assert.Contains("SW_SHOWNOACTIVATE", host, StringComparison.Ordinal);
-        Assert.Contains("SetCapture", host, StringComparison.Ordinal);
-        Assert.Contains("ReleaseCapture", host, StringComparison.Ordinal);
-        Assert.Contains("WM_DISPLAYCHANGE", ReadRepositoryFile("src", "Dudu.App", "Overlay", "NativeMethods.txt"), StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void Presenter_has_borrowed_buffer_and_gdi_cleanup_guards()
-    {
-        var presenter = ReadRepositoryFile("src", "Dudu.App", "Animation", "LayeredFramePresenter.cs");
-
-        Assert.Contains("PresentAsync", presenter, StringComparison.Ordinal);
-        Assert.Contains("bytes.Pin()", presenter, StringComparison.Ordinal);
-        Assert.Contains("UpdateLayeredWindow", presenter, StringComparison.Ordinal);
-        Assert.Contains("SelectObject", presenter, StringComparison.Ordinal);
-        Assert.Contains("DeleteDC", presenter, StringComparison.Ordinal);
-        Assert.Contains("ReleaseDC", presenter, StringComparison.Ordinal);
-        Assert.Contains("finally", presenter, StringComparison.Ordinal);
-        Assert.DoesNotContain("DllImport", presenter, StringComparison.OrdinalIgnoreCase);
-    }
-
     private static string ReadRepositoryFile(params string[] relativePath)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

@@ -10,11 +10,18 @@ ReleaseDC
 MonitorFromWindow
 GetMonitorInfo
 EnumDisplayMonitors
+MONITORINFOEXW
+MONITORENUMPROC
+GetDpiForMonitor
+MONITOR_DPI_TYPE
 GetDpiForWindow
 SetProcessDpiAwarenessContext
 SetForegroundWindow
+GetForegroundWindow
+GetFocus
 TrackMouseEvent
 SetCapture
+GetCapture
 ReleaseCapture
 CreateCompatibleDC
 DeleteDC
@@ -27,7 +34,7 @@ GetMessage
 TranslateMessage
 DispatchMessage
 PostQuitMessage
-WM_NCCREATE
+WM_APP
 WM_DESTROY
 WM_CANCELMODE
 WM_CAPTURECHANGED

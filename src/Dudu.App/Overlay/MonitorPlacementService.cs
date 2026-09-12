@@ -94,6 +94,67 @@ public static class MonitorPlacementService
             resolution.NormalizedY,
             resolution.Scale);
 
+    public static PetPlacement Capture(
+        PixelRect windowBounds,
+        double scale,
+        PixelSize nominalSize,
+        IEnumerable<MonitorInfo> monitors)
+    {
+        ArgumentNullException.ThrowIfNull(monitors);
+        if (!windowBounds.IsValid)
+        {
+            throw new ArgumentOutOfRangeException(nameof(windowBounds));
+        }
+
+        if (nominalSize.Width <= 0 || nominalSize.Height <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(nominalSize));
+        }
+
+        var usable = monitors
+            .Where(monitor => monitor is not null && monitor.WorkArea.IsValid)
+            .OrderBy(monitor => monitor.DeviceName, StringComparer.Ordinal)
+            .ToArray();
+        if (usable.Length == 0)
+        {
+            throw new InvalidOperationException("No monitor has a valid work area.");
+        }
+
+        var centerX = (long)windowBounds.X + windowBounds.Width / 2L;
+        var centerY = (long)windowBounds.Y + windowBounds.Height / 2L;
+        var selected = usable.FirstOrDefault(monitor =>
+            centerX >= monitor.WorkArea.X
+            && centerX < monitor.WorkArea.Right
+            && centerY >= monitor.WorkArea.Y
+            && centerY < monitor.WorkArea.Bottom)
+            ?? usable
+                .OrderBy(monitor => DistanceSquared(monitor.WorkArea, centerX, centerY))
+                .ThenBy(monitor => monitor.DeviceName, StringComparer.Ordinal)
+                .First();
+
+        var availableWidth = (long)selected.WorkArea.Width - windowBounds.Width;
+        var availableHeight = (long)selected.WorkArea.Height - windowBounds.Height;
+        var normalizedX = availableWidth <= 0
+            ? 0.5
+            : ClampNormalized((windowBounds.X - (double)selected.WorkArea.X) / availableWidth);
+        var normalizedY = availableHeight <= 0
+            ? 0.5
+            : ClampNormalized((windowBounds.Y - (double)selected.WorkArea.Y) / availableHeight);
+
+        return new PetPlacement(
+            selected.DeviceName,
+            normalizedX,
+            normalizedY,
+            ClampScale(scale));
+    }
+
+    private static double DistanceSquared(PixelRect area, long x, long y)
+    {
+        var dx = x < area.X ? area.X - x : x >= area.Right ? x - area.Right + 1 : 0;
+        var dy = y < area.Y ? area.Y - y : y >= area.Bottom ? y - area.Bottom + 1 : 0;
+        return (double)dx * dx + (double)dy * dy;
+    }
+
     private static int ToDimension(int value, double scale) =>
         Math.Max(1, checked((int)Math.Round(value * scale, MidpointRounding.AwayFromZero)));
 

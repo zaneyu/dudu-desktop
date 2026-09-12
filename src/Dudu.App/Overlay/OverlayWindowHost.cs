@@ -13,11 +13,11 @@ using Windows.Win32.UI.WindowsAndMessaging;
 namespace Dudu.App.Overlay;
 
 /// <summary>
-/// Owns a single no-activate popup window and its message thread.
+/// Owns one no-activate popup window and its message thread.
 /// </summary>
 public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
 {
-    private const uint HostCommandMessage = 0x8001;
+    private const uint HostCommandMessage = PInvoke.WM_APP + 1;
     private const uint WmNcHitTest = 0x0084;
     private const uint WmMouseActivate = 0x0021;
     private const uint WmDpiChanged = 0x02E0;
@@ -28,25 +28,25 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
     private const uint WmRButtonUp = 0x0205;
     private const uint WmMouseMove = 0x0200;
     private const uint WmMouseWheel = 0x020A;
-    private const uint WmNcCreate = 0x0081;
     private const uint WmDestroy = 0x0002;
     private const uint WmCancelMode = 0x001F;
     private const uint WmCaptureChanged = 0x0215;
     private const nint MA_NOACTIVATE = 3;
     private const nint HTCLIENT = 1;
     private const nint HTTRANSPARENT = -1;
-    private const int WheelDelta = 120;
+    private const int ErrorAccessDenied = 5;
     private static readonly object ClassGate = new();
     private static readonly string ClassName = "Dudu.DesktopCompanion.PetOverlay.v1";
-    private static OverlayWindowHost? s_creatingHost;
     private static readonly ConcurrentDictionary<nint, OverlayWindowHost> Hosts = new();
     private static readonly HWND TopmostWindow = new((void*)(-1));
-    private static readonly WNDPROC WindowProcedure = WindowProc;
+    private static readonly delegate* unmanaged[Stdcall]<HWND, uint, WPARAM, LPARAM, LRESULT> WindowProcedure = &WindowProc;
+    private static readonly delegate* unmanaged[Stdcall]<HMONITOR, HDC, RECT*, LPARAM, BOOL> MonitorProcedure = &MonitorCallback;
 
     private readonly IFramePresenter _presenter;
     private readonly PixelSize _nominalSize;
     private readonly Action _openHome;
     private readonly Action _showContextMenu;
+    private readonly Action<Exception> _diagnostic;
     private readonly IReadOnlyList<PixelRect> _bubbleHitRegions;
     private readonly ConcurrentQueue<Action> _ownerActions = new();
     private readonly TaskCompletionSource<OverlayWindowHost> _created =
@@ -54,7 +54,10 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
     private readonly TaskCompletionSource<bool> _stopped =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Thread _ownerThread;
+    private readonly CancellationTokenSource _startupCancellation = new();
     private readonly object _stateGate = new();
+    private readonly CancellationToken _creationCancellation;
+    private CancellationTokenRegistration _creationRegistration;
     private PetPlacement _placement;
     private PixelRect _windowBounds;
     private HWND _window;
@@ -63,7 +66,9 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
     private int _dragOriginY;
     private PixelRect _dragStartBounds;
     private bool _disposeRequested;
+    private bool _shutdownIssued;
     private int _ownerThreadId;
+    private int _currentDpi = 96;
 
     private OverlayWindowHost(
         IFramePresenter presenter,
@@ -71,7 +76,9 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
         PixelSize nominalSize,
         Action? openHome,
         Action? showContextMenu,
-        IReadOnlyList<PixelRect>? bubbleHitRegions)
+        IReadOnlyList<PixelRect>? bubbleHitRegions,
+        Action<Exception>? diagnostic,
+        CancellationToken creationCancellation)
     {
         _presenter = presenter ?? throw new ArgumentNullException(nameof(presenter));
         _placement = placement ?? throw new ArgumentNullException(nameof(placement));
@@ -84,6 +91,8 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
         _openHome = openHome ?? (() => { });
         _showContextMenu = showContextMenu ?? (() => { });
         _bubbleHitRegions = bubbleHitRegions?.ToArray() ?? [];
+        _diagnostic = diagnostic ?? ReportDiagnostic;
+        _creationCancellation = creationCancellation;
         _ownerThread = new Thread(OwnerThreadMain)
         {
             IsBackground = true,
@@ -98,6 +107,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
         Action? openHome = null,
         Action? showContextMenu = null,
         IReadOnlyList<PixelRect>? bubbleHitRegions = null,
+        Action<Exception>? diagnostic = null,
         CancellationToken cancellationToken = default)
     {
         var host = new OverlayWindowHost(
@@ -106,16 +116,34 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
             nominalSize,
             openHome,
             showContextMenu,
-            bubbleHitRegions);
+            bubbleHitRegions,
+            diagnostic,
+            cancellationToken);
+        host._creationRegistration = cancellationToken.Register(
+            static state => ((OverlayWindowHost)state!).CancelStartup(),
+            host);
         host._ownerThread.Start();
-        return cancellationToken.CanBeCanceled
-            ? host._created.Task.WaitAsync(cancellationToken)
-            : host._created.Task;
+        return OverlayWindowHostLifecycle.WaitForCreationAsync(host, cancellationToken);
     }
 
     public nint Handle => (nint)_window.Value;
 
     public bool IsVisible { get; private set; }
+
+    internal Task<OverlayWindowHost> CreationTask => _created.Task;
+
+    internal void CancelCreation() => CancelStartup();
+
+    internal void JoinAfterCreationFailure() => StopAndJoin();
+
+    public static nint GetForegroundWindowHandle() =>
+        (nint)PInvoke.GetForegroundWindow().Value;
+
+    public static nint GetFocusHandle() =>
+        (nint)PInvoke.GetFocus().Value;
+
+    public static bool TrySetForegroundWindow(nint hwnd) =>
+        hwnd != 0 && PInvoke.SetForegroundWindow(new HWND((void*)hwnd));
 
     public ValueTask PresentAsync(RenderedFrame frame, CancellationToken cancellationToken)
     {
@@ -126,11 +154,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
     public void Show() => PostToOwner(() =>
     {
         IsVisible = true;
-        if (!PInvoke.ShowWindow(_window, SHOW_WINDOW_CMD.SW_SHOWNOACTIVATE))
-        {
-            // ShowWindow returning false means the window was previously hidden; it is
-            // not a Win32 failure and must not be treated as one.
-        }
+        _ = PInvoke.ShowWindow(_window, SHOW_WINDOW_CMD.SW_SHOWNOACTIVATE);
     });
 
     public void Hide() => PostToOwner(() =>
@@ -152,34 +176,60 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
 
     public void Dispose()
     {
+        CancelStartup();
+        StopAndJoin();
+    }
+
+    private void CancelStartup()
+    {
         lock (_stateGate)
         {
-            if (_disposeRequested)
-            {
-                return;
-            }
-
             _disposeRequested = true;
         }
 
-        if (_window.IsNull)
+        try
         {
-            _ownerThread.Join(TimeSpan.FromSeconds(2));
+            _startupCancellation.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // The owner thread has already completed teardown.
+        }
+        if (!_window.IsNull && _ownerThreadId != Environment.CurrentManagedThreadId)
+        {
+            PostShutdownMessage();
+        }
+    }
+
+    private void StopAndJoin()
+    {
+        if (_ownerThreadId == Environment.CurrentManagedThreadId)
+        {
+            ShutdownOnOwnerThread();
             return;
         }
 
-        PostToOwner(() =>
+        if (!_window.IsNull)
         {
-            ReleasePointerCapture();
-            if (!_window.IsNull)
-            {
-                _ = PInvoke.DestroyWindow(_window);
-            }
-            PInvoke.PostQuitMessage(0);
-        });
-        if (_ownerThreadId != Environment.CurrentManagedThreadId)
+            PostShutdownMessage();
+        }
+
+        if (_ownerThread.IsAlive)
         {
-            _stopped.Task.GetAwaiter().GetResult();
+            _ownerThread.Join();
+        }
+    }
+
+    private void PostShutdownMessage()
+    {
+        if (_window.IsNull)
+        {
+            return;
+        }
+
+        if (!PInvoke.PostMessage(_window, HostCommandMessage, 0, 0))
+        {
+            ReportDiagnostic(LastWin32Error("PostMessage(shutdown)"));
         }
     }
 
@@ -188,13 +238,21 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
         _ownerThreadId = Environment.CurrentManagedThreadId;
         try
         {
+            _creationCancellation.ThrowIfCancellationRequested();
+            _startupCancellation.Token.ThrowIfCancellationRequested();
             if (!OperatingSystem.IsWindows())
             {
                 throw new PlatformNotSupportedException("The overlay requires Windows.");
             }
 
-            _ = PInvoke.SetProcessDpiAwarenessContext(new DPI_AWARENESS_CONTEXT((void*)(-4)));
+            if (!PInvoke.SetProcessDpiAwarenessContext(new DPI_AWARENESS_CONTEXT((void*)(-4)))
+                && Marshal.GetLastWin32Error() != ErrorAccessDenied)
+            {
+                throw LastWin32Error("SetProcessDpiAwarenessContext");
+            }
             RegisterWindowClass();
+            _creationCancellation.ThrowIfCancellationRequested();
+            _startupCancellation.Token.ThrowIfCancellationRequested();
 
             var initial = MonitorPlacementService.Resolve(
                 _placement,
@@ -204,33 +262,34 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
 
             lock (ClassGate)
             {
-                s_creatingHost = this;
                 using var module = PInvoke.GetModuleHandle(null);
-                fixed (char* className = ClassName)
-                fixed (char* title = "Dudu")
-                {
-                    _window = PInvoke.CreateWindowEx(
-                        WINDOW_EX_STYLE.WS_EX_LAYERED
-                        | WINDOW_EX_STYLE.WS_EX_TOOLWINDOW
-                        | WINDOW_EX_STYLE.WS_EX_NOACTIVATE,
-                        ClassName,
-                        "Dudu",
-                        WINDOW_STYLE.WS_POPUP,
-                        _windowBounds.X,
-                        _windowBounds.Y,
-                        _windowBounds.Width,
-                        _windowBounds.Height,
-                        HWND.Null,
-                        null,
-                        module,
-                        null);
-                }
-                s_creatingHost = null;
+                _window = PInvoke.CreateWindowEx(
+                    WINDOW_EX_STYLE.WS_EX_LAYERED
+                    | WINDOW_EX_STYLE.WS_EX_TOOLWINDOW
+                    | WINDOW_EX_STYLE.WS_EX_NOACTIVATE
+                    | WINDOW_EX_STYLE.WS_EX_TRANSPARENT,
+                    ClassName,
+                    "Dudu",
+                    WINDOW_STYLE.WS_POPUP,
+                    _windowBounds.X,
+                    _windowBounds.Y,
+                    _windowBounds.Width,
+                    _windowBounds.Height,
+                    HWND.Null,
+                    null,
+                    module,
+                    null);
             }
 
             if (_window.IsNull)
             {
-                ThrowLastWin32Error("CreateWindowEx");
+                throw LastWin32Error("CreateWindowEx");
+            }
+
+            var windowDpi = PInvoke.GetDpiForWindow(_window);
+            if (windowDpi > 0)
+            {
+                _currentDpi = checked((int)windowDpi);
             }
 
             Hosts[(nint)_window.Value] = this;
@@ -238,13 +297,28 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
             {
                 layeredPresenter.Attach((nint)_window.Value);
             }
+            ApplyWindowState(_windowBounds, initial.Scale);
+
+            if (_creationCancellation.IsCancellationRequested || _startupCancellation.IsCancellationRequested)
+            {
+                ShutdownOnOwnerThread();
+                throw new OperationCanceledException(_startupCancellation.Token);
+            }
 
             _created.TrySetResult(this);
+            _creationRegistration.Dispose();
+            _creationRegistration = default;
             RunMessageLoop();
+        }
+        catch (OperationCanceledException exception)
+        {
+            _created.TrySetCanceled(exception.CancellationToken);
         }
         catch (Exception exception)
         {
             _created.TrySetException(exception);
+            ReportDiagnostic(exception);
+            ShutdownOnOwnerThread();
         }
         finally
         {
@@ -255,6 +329,8 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
                 _window = HWND.Null;
             }
 
+            _creationRegistration.Dispose();
+            _startupCancellation.Dispose();
             _stopped.TrySetResult(true);
         }
     }
@@ -262,8 +338,20 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
     private void RunMessageLoop()
     {
         MSG message;
-        while (PInvoke.GetMessage(&message, HWND.Null, 0, 0) > 0)
+        while (!_shutdownIssued)
         {
+            var result = PInvoke.GetMessage(&message, HWND.Null, 0, 0);
+            if (result == 0)
+            {
+                break;
+            }
+
+            if (result < 0)
+            {
+                FailOnOwnerThread(LastWin32Error("GetMessage"));
+                break;
+            }
+
             _ = PInvoke.TranslateMessage(message);
             _ = PInvoke.DispatchMessage(message);
         }
@@ -288,7 +376,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
                 if (PInvoke.RegisterClassEx(windowClass) == 0
                     && Marshal.GetLastWin32Error() != 1410)
                 {
-                    ThrowLastWin32Error("RegisterClassEx");
+                    throw LastWin32Error("RegisterClassEx");
                 }
             }
         }
@@ -300,45 +388,123 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
             _placement,
             _nominalSize,
             EnumerateMonitors());
-        _windowBounds = result.WindowBounds;
+        ApplyWindowState(result.WindowBounds, result.Scale);
+        _placement = MonitorPlacementService.ToPlacement(result);
+    }
+
+    private void ApplyDpiSuggestedRect(LPARAM lParam, WPARAM wParam)
+    {
+        if (lParam.Value == 0)
+        {
+            ResolveAndMove();
+            return;
+        }
+
+        var suggested = *(RECT*)lParam.Value;
+        var bounds = new PixelRect(
+            suggested.left,
+            suggested.top,
+            suggested.right - suggested.left,
+            suggested.bottom - suggested.top);
+        if (!bounds.IsValid)
+        {
+            ResolveAndMove();
+            return;
+        }
+
+        var dpi = (int)((long)wParam.Value & 0xffff);
+        if (dpi > 0)
+        {
+            _currentDpi = dpi;
+        }
+
+        ApplyWindowState(bounds, _placement.Scale);
+        _placement = MonitorPlacementService.Capture(
+            bounds,
+            _placement.Scale,
+            _nominalSize,
+            EnumerateMonitors());
+    }
+
+    private void ApplyWindowState(PixelRect bounds, double scale)
+    {
+        if (!bounds.IsValid)
+        {
+            throw new ArgumentOutOfRangeException(nameof(bounds));
+        }
+
+        var layeredPresenter = _presenter as LayeredFramePresenter;
+        if (layeredPresenter is not null)
+        {
+            if (!new LayeredWindowState(bounds, scale).IsValid)
+            {
+                throw new ArgumentOutOfRangeException(nameof(scale));
+            }
+
+            lock (layeredPresenter.HostUpdateGate)
+            {
+                SetNativeWindowState(bounds);
+                layeredPresenter.SetWindowState(bounds, scale);
+            }
+        }
+        else
+        {
+            SetNativeWindowState(bounds);
+        }
+
+        _windowBounds = bounds;
+    }
+
+    private void SetNativeWindowState(PixelRect bounds)
+    {
+        var flags = SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE
+            | SET_WINDOW_POS_FLAGS.SWP_NOOWNERZORDER;
+        if (IsVisible)
+        {
+            flags |= SET_WINDOW_POS_FLAGS.SWP_SHOWWINDOW;
+        }
+
         if (!PInvoke.SetWindowPos(
                 _window,
                 TopmostWindow,
-                _windowBounds.X,
-                _windowBounds.Y,
-                _windowBounds.Width,
-                _windowBounds.Height,
-                SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE
-                | SET_WINDOW_POS_FLAGS.SWP_NOOWNERZORDER
-                | SET_WINDOW_POS_FLAGS.SWP_SHOWWINDOW))
+                bounds.X,
+                bounds.Y,
+                bounds.Width,
+                bounds.Height,
+                flags))
         {
-            ThrowLastWin32Error("SetWindowPos");
+            throw LastWin32Error("SetWindowPos");
         }
     }
 
     private IReadOnlyList<MonitorInfo> EnumerateMonitors()
     {
-        var monitor = PInvoke.MonitorFromWindow(_window, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTONEAREST);
-        if (monitor.IsNull)
+        var context = new MonitorEnumerationContext();
+        var handle = GCHandle.Alloc(context);
+        try
         {
-            return [new MonitorInfo("CURRENT", new PixelRect(0, 0, 1920, 1040), 96, true)];
-        }
+            var data = new LPARAM(GCHandle.ToIntPtr(handle));
+            if (!PInvoke.EnumDisplayMonitors(HDC.Null, null, MonitorProcedure, data))
+            {
+                throw LastWin32Error("EnumDisplayMonitors");
+            }
 
-        var nativeInfo = new MONITORINFO { cbSize = (uint)Marshal.SizeOf<MONITORINFO>() };
-        if (!PInvoke.GetMonitorInfo(monitor, ref nativeInfo))
+            if (context.Error is not null)
+            {
+                throw context.Error;
+            }
+
+            if (context.Monitors.Count == 0)
+            {
+                throw new InvalidOperationException("EnumDisplayMonitors returned no valid monitors.");
+            }
+
+            return context.Monitors;
+        }
+        finally
         {
-            ThrowLastWin32Error("GetMonitorInfo");
+            handle.Free();
         }
-
-        var work = nativeInfo.rcWork;
-        return
-        [
-            new MonitorInfo(
-                "CURRENT",
-                new PixelRect(work.left, work.top, work.right - work.left, work.bottom - work.top),
-                _window.IsNull ? 96 : (int)PInvoke.GetDpiForWindow(_window),
-                IsPrimary: true),
-        ];
     }
 
     private void PostToOwner(Action action)
@@ -346,22 +512,33 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
         ArgumentNullException.ThrowIfNull(action);
         if (_ownerThreadId == Environment.CurrentManagedThreadId)
         {
-            action();
+            if (!_disposeRequested)
+            {
+                ExecuteOwnerAction(action);
+            }
             return;
         }
 
         lock (_stateGate)
         {
-            if (_disposeRequested && _window.IsNull)
+            if (_disposeRequested)
             {
                 return;
             }
         }
 
         _ownerActions.Enqueue(action);
-        if (!_window.IsNull)
+        if (_window.IsNull || !PInvoke.PostMessage(_window, HostCommandMessage, 0, 0))
         {
-            _ = PInvoke.PostMessage(_window, HostCommandMessage, 0, 0);
+            ReportDiagnostic(LastWin32Error("PostMessage"));
+            try
+            {
+                _startupCancellation.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // The owner thread completed between the queue check and PostMessage.
+            }
         }
     }
 
@@ -369,7 +546,23 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
     {
         while (_ownerActions.TryDequeue(out var action))
         {
+            ExecuteOwnerAction(action);
+            if (_shutdownIssued)
+            {
+                break;
+            }
+        }
+    }
+
+    private void ExecuteOwnerAction(Action action)
+    {
+        try
+        {
             action();
+        }
+        catch (Exception exception)
+        {
+            FailOnOwnerThread(exception);
         }
     }
 
@@ -379,10 +572,6 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
         {
             case HostCommandMessage:
                 DrainOwnerActions();
-                break;
-            case WmMouseActivate:
-                break;
-            case WmNcHitTest:
                 break;
             case WmLButtonDown:
                 BeginDrag(lParam);
@@ -394,6 +583,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
                 ReleasePointerCapture();
                 break;
             case WmLButtonDoubleClick:
+                ReleasePointerCapture();
                 _openHome();
                 break;
             case WmRButtonUp:
@@ -403,6 +593,8 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
                 ChangeScale((short)((long)wParam.Value >> 16));
                 break;
             case WmDpiChanged:
+                ApplyDpiSuggestedRect(lParam, wParam);
+                break;
             case WmDisplayChange:
                 ResolveAndMove();
                 break;
@@ -413,6 +605,11 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
             case WmDestroy:
                 ReleasePointerCapture();
                 Hosts.TryRemove((nint)_window.Value, out _);
+                if (!_shutdownIssued)
+                {
+                    _shutdownIssued = true;
+                    PInvoke.PostQuitMessage(0);
+                }
                 break;
         }
     }
@@ -426,11 +623,18 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
             return;
         }
 
+        var captured = PInvoke.SetCapture(_window);
+        if ((nint)captured.Value != (nint)_window.Value
+            || (nint)PInvoke.GetCapture().Value != (nint)_window.Value)
+        {
+            ReportDiagnostic(LastWin32Error("SetCapture"));
+            return;
+        }
+
         _dragging = true;
         _dragOriginX = point.X;
         _dragOriginY = point.Y;
         _dragStartBounds = _windowBounds;
-        _ = PInvoke.SetCapture(_window);
     }
 
     private void ContinueDrag(LPARAM lParam)
@@ -443,20 +647,13 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
         var point = GetClientPoint(lParam);
         var x = _dragStartBounds.X + point.X - _dragOriginX;
         var y = _dragStartBounds.Y + point.Y - _dragOriginY;
-        _windowBounds = new PixelRect(x, y, _windowBounds.Width, _windowBounds.Height);
-        if (!PInvoke.SetWindowPos(
-                _window,
-                TopmostWindow,
-                x,
-                y,
-                0,
-                0,
-                SET_WINDOW_POS_FLAGS.SWP_NOSIZE
-                | SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE
-                | SET_WINDOW_POS_FLAGS.SWP_NOOWNERZORDER))
-        {
-            ThrowLastWin32Error("SetWindowPos");
-        }
+        var bounds = new PixelRect(x, y, _windowBounds.Width, _windowBounds.Height);
+        ApplyWindowState(bounds, _placement.Scale);
+        _placement = MonitorPlacementService.Capture(
+            bounds,
+            _placement.Scale,
+            _nominalSize,
+            EnumerateMonitors());
     }
 
     private void ChangeScale(short delta)
@@ -483,49 +680,158 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable
         }
     }
 
+    private void ShutdownOnOwnerThread()
+    {
+        if (_shutdownIssued)
+        {
+            return;
+        }
+
+        _shutdownIssued = true;
+        ReleasePointerCapture();
+        if (!_window.IsNull)
+        {
+            if (!PInvoke.DestroyWindow(_window))
+            {
+                ReportDiagnostic(LastWin32Error("DestroyWindow"));
+            }
+        }
+        PInvoke.PostQuitMessage(0);
+    }
+
+    private void FailOnOwnerThread(Exception exception)
+    {
+        ReportDiagnostic(exception);
+        ShutdownOnOwnerThread();
+    }
+
     private static (int X, int Y) GetClientPoint(LPARAM lParam)
     {
         var value = unchecked((long)lParam.Value);
         return ((short)(value & 0xffff), (short)((value >> 16) & 0xffff));
     }
 
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvStdcall)])]
     private static unsafe LRESULT WindowProc(HWND hwnd, uint message, WPARAM wParam, LPARAM lParam)
     {
-        if (message == WmNcCreate && s_creatingHost is { } creating)
-        {
-            Hosts[(nint)hwnd.Value] = creating;
-        }
-
         if (Hosts.TryGetValue((nint)hwnd.Value, out var host))
         {
-            if (message == WmMouseActivate)
+            try
             {
-                return new LRESULT(MA_NOACTIVATE);
-            }
+                if (message == WmMouseActivate)
+                {
+                    return new LRESULT(MA_NOACTIVATE);
+                }
 
-            if (message == WmNcHitTest)
+                if (message == WmNcHitTest)
+                {
+                    var point = GetClientPoint(lParam);
+                    return new LRESULT(host.IsInteractive(
+                        point.X - host._windowBounds.X,
+                        point.Y - host._windowBounds.Y)
+                        ? HTCLIENT
+                        : HTTRANSPARENT);
+                }
+
+                host.HandleMessage(message, wParam, lParam);
+            }
+            catch (Exception exception)
             {
-                var point = GetClientPoint(lParam);
-                return new LRESULT(host.IsInteractive(
-                    point.X - host._windowBounds.X,
-                    point.Y - host._windowBounds.Y)
-                    ? HTCLIENT
-                    : HTTRANSPARENT);
+                host.FailOnOwnerThread(exception);
+                return new LRESULT(0);
             }
-
-            host.HandleMessage(message, wParam, lParam);
         }
 
         return PInvoke.DefWindowProc(hwnd, message, wParam, lParam);
     }
 
-    private bool IsInteractive(int x, int y)
+    private bool IsInteractive(int x, int y) =>
+        _presenter is LayeredFramePresenter layered
+        && layered.IsInteractiveAt(x, y, _bubbleHitRegions);
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvStdcall)])]
+    private static unsafe BOOL MonitorCallback(
+        HMONITOR monitor,
+        HDC _hdc,
+        RECT* _clipRect,
+        LPARAM data)
     {
-        return _presenter is LayeredFramePresenter layered
-            && layered.IsInteractiveAt(x, y, _bubbleHitRegions);
+        var handle = GCHandle.FromIntPtr(data.Value);
+        var context = (MonitorEnumerationContext)handle.Target!;
+        try
+        {
+            var info = new MONITORINFOEXW();
+            info.monitorInfo.cbSize = (uint)Marshal.SizeOf<MONITORINFOEXW>();
+            if (!PInvoke.GetMonitorInfo(monitor, ref info.monitorInfo))
+            {
+                throw LastWin32Error("GetMonitorInfo");
+            }
+
+            var work = info.monitorInfo.rcWork;
+            var dpiX = 96u;
+            var dpiY = 96u;
+            _ = PInvoke.GetDpiForMonitor(
+                monitor,
+                MONITOR_DPI_TYPE.MDT_EFFECTIVE_DPI,
+                out dpiX,
+                out dpiY);
+            context.Monitors.Add(new MonitorInfo(
+                GetDeviceName(info),
+                new PixelRect(work.left, work.top, work.right - work.left, work.bottom - work.top),
+                (int)Math.Max(1, dpiX),
+                (info.monitorInfo.dwFlags & 1) != 0));
+            return true;
+        }
+        catch (Exception exception)
+        {
+            context.Error = exception;
+            return false;
+        }
     }
 
-    private static void ThrowLastWin32Error(string operation) =>
-        throw new InvalidOperationException(
-            $"{operation} failed with Win32 error {Marshal.GetLastWin32Error()}.");
+    private static string GetDeviceName(MONITORINFOEXW info)
+    {
+        return info.szDevice.ToString();
+    }
+
+    private void ReportDiagnostic(Exception exception)
+    {
+        try
+        {
+            _diagnostic(exception);
+        }
+        catch
+        {
+            System.Diagnostics.Debug.WriteLine($"Dudu overlay diagnostic callback failed: {exception}");
+        }
+    }
+
+    private static InvalidOperationException LastWin32Error(string operation) =>
+        new($"{operation} failed with Win32 error {Marshal.GetLastWin32Error()}.");
+
+    private sealed class MonitorEnumerationContext
+    {
+        public List<MonitorInfo> Monitors { get; } = [];
+
+        public Exception? Error { get; set; }
+    }
+}
+
+file static class OverlayWindowHostLifecycle
+{
+    public static async Task<OverlayWindowHost> WaitForCreationAsync(
+        OverlayWindowHost host,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await host.CreationTask.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            host.CancelCreation();
+            host.JoinAfterCreationFailure();
+            throw;
+        }
+    }
 }

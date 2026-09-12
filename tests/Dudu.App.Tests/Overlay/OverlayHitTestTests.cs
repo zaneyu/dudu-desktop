@@ -36,6 +36,48 @@ public sealed class OverlayHitTestTests
         Assert.False(OverlayHitTest.IsInteractive(pixels, 2, 2, 8, 1, 9, 25, regions));
     }
 
+    [Theory]
+    [InlineData(0.5, 1, 1)]
+    [InlineData(2.0, 3, 3)]
+    public void Scaled_client_coordinates_map_to_the_current_source_frame(
+        double scale,
+        int clientX,
+        int clientY)
+    {
+        var pixels = new byte[4 * 4 * 4];
+        var sourceX = clientX == 1 && scale == 0.5 ? 2 : 1;
+        var sourceY = clientY == 1 && scale == 0.5 ? 2 : 1;
+        pixels[sourceY * 16 + sourceX * 4 + 3] = 8;
+
+        Assert.True(OverlayHitTest.IsInteractive(
+            pixels,
+            width: 4,
+            height: 4,
+            stride: 16,
+            clientWidth: scale == 0.5 ? 2 : 8,
+            clientHeight: scale == 0.5 ? 2 : 8,
+            clientX,
+            clientY));
+    }
+
+    [Fact]
+    public void Bubble_regions_are_also_interpreted_in_current_client_coordinates()
+    {
+        var pixels = new byte[4 * 4 * 4];
+        var bubbles = new[] { new PixelRect(6, 8, 4, 4) };
+
+        Assert.True(OverlayHitTest.IsInteractive(
+            pixels,
+            width: 4,
+            height: 4,
+            stride: 16,
+            clientWidth: 8,
+            clientHeight: 8,
+            clientX: 7,
+            clientY: 9,
+            explicitHitRegions: bubbles));
+    }
+
     [Fact]
     public void Invalid_frame_geometry_is_transparent()
     {

@@ -82,4 +82,47 @@ public sealed class MonitorPlacementServiceTests
             new PixelSize(1, 1),
             [new MonitorInfo("DISPLAY1", new PixelRect(0, 0, 0, 0), 96)]));
     }
+
+    [Fact]
+    public void Capture_persists_negative_secondary_monitor_coordinates_after_drag()
+    {
+        var monitors = new[]
+        {
+            new MonitorInfo("PRIMARY", new PixelRect(0, 0, 1920, 1040), 96, true),
+            new MonitorInfo("LEFT", new PixelRect(-1280, 0, 1280, 1024), 144),
+        };
+
+        var placement = MonitorPlacementService.Capture(
+            new PixelRect(-1000, 120, 240, 200),
+            1.25,
+            new PixelSize(240, 200),
+            monitors);
+
+        Assert.Equal("LEFT", placement.MonitorDeviceName);
+        Assert.Equal(1.25, placement.Scale);
+        Assert.InRange(placement.NormalizedX, 0, 1);
+        Assert.InRange(placement.NormalizedY, 0, 1);
+
+        var restored = MonitorPlacementService.Resolve(placement, new PixelSize(240, 200), monitors);
+        Assert.Equal("LEFT", restored.MonitorDeviceName);
+        Assert.True(monitors[1].WorkArea.Contains(restored.WindowBounds));
+    }
+
+    [Fact]
+    public void Capture_uses_deterministic_device_name_order_for_equal_monitor_candidates()
+    {
+        var monitors = new[]
+        {
+            new MonitorInfo("Z", new PixelRect(0, 0, 800, 800), 96),
+            new MonitorInfo("A", new PixelRect(0, 0, 800, 800), 96),
+        };
+
+        var placement = MonitorPlacementService.Capture(
+            new PixelRect(100, 100, 100, 100),
+            1,
+            new PixelSize(100, 100),
+            monitors);
+
+        Assert.Equal("A", placement.MonitorDeviceName);
+    }
 }

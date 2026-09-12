@@ -40,6 +40,37 @@ public static class OverlayHitTest
             && IsInteractive(premultipliedBgra[alphaOffset]);
     }
 
+    public static bool IsInteractive(
+        ReadOnlySpan<byte> premultipliedBgra,
+        int width,
+        int height,
+        int stride,
+        int clientWidth,
+        int clientHeight,
+        int clientX,
+        int clientY,
+        IReadOnlyList<PixelRect>? explicitHitRegions = null)
+    {
+        if (Contains(explicitHitRegions, clientX, clientY))
+        {
+            return true;
+        }
+
+        if (!HasValidGeometry(width, height, stride)
+            || clientWidth <= 0 || clientHeight <= 0
+            || clientX < 0 || clientY < 0
+            || clientX >= clientWidth || clientY >= clientHeight)
+        {
+            return false;
+        }
+
+        var sourceX = (int)((long)clientX * width / clientWidth);
+        var sourceY = (int)((long)clientY * height / clientHeight);
+        var alphaOffset = checked(sourceY * stride + sourceX * 4 + 3);
+        return alphaOffset < premultipliedBgra.Length
+            && IsInteractive(premultipliedBgra[alphaOffset]);
+    }
+
     public static byte AlphaAt(
         ReadOnlySpan<byte> premultipliedBgra,
         int width,

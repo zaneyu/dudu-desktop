@@ -17,6 +17,7 @@ public sealed class LayeredFramePresenter : IFramePresenter, IDisposable
     private const byte AC_SRC_ALPHA = 1;
     private readonly object _gate = new();
     private HWND _window;
+    private LayeredWindowState _windowState;
     private bool _disposed;
     private PresentedFrameInfo? _current;
     private byte[]? _hitTestBuffer;
@@ -65,14 +66,25 @@ public sealed class LayeredFramePresenter : IFramePresenter, IDisposable
                 throw new InvalidOperationException("The presenter is not attached to a window.");
             }
 
-            PresentCore(frame, cancellationToken);
+            if (!_windowState.IsValid)
+            {
+                throw new InvalidOperationException("The presenter has no window placement state.");
+            }
+
+            PresentCore(frame, _windowState, cancellationToken);
             var bytes = frame.PremultipliedBgra.Span;
             if (_hitTestBuffer is null || _hitTestBuffer.Length < bytes.Length)
             {
                 _hitTestBuffer = new byte[bytes.Length];
             }
             bytes.CopyTo(_hitTestBuffer);
-            _current = new PresentedFrameInfo(frame.Width, frame.Height, frame.Stride, frame.Opacity);
+            _current = new PresentedFrameInfo(
+                frame.Width,
+                frame.Height,
+                frame.Stride,
+                frame.Opacity,
+                _windowState.Bounds,
+                _windowState.Scale);
         }
 
         return ValueTask.CompletedTask;
@@ -99,15 +111,71 @@ public sealed class LayeredFramePresenter : IFramePresenter, IDisposable
                     current.Width,
                     current.Height,
                     current.Stride,
-                    1,
+                    current.Bounds.Width,
+                    current.Bounds.Height,
                     windowX,
                     windowY,
                     explicitHitRegions);
         }
     }
 
-    private unsafe void PresentCore(RenderedFrame frame, CancellationToken cancellationToken)
+    public void SetWindowState(PixelRect bounds, double scale)
     {
+        if (!bounds.IsValid)
+        {
+            throw new ArgumentOutOfRangeException(nameof(bounds));
+        }
+
+        if (!double.IsFinite(scale)
+            || scale is < MonitorPlacementService.MinimumScale or > MonitorPlacementService.MaximumScale)
+        {
+            throw new ArgumentOutOfRangeException(nameof(scale));
+        }
+
+        lock (_gate)
+        {
+            ThrowIfDisposed();
+            _windowState = new LayeredWindowState(bounds, scale);
+        }
+    }
+
+    internal object HostUpdateGate => _gate;
+
+    /// <summary>
+    /// Describes the immutable placement inputs used by UpdateLayeredWindow.
+    /// The host owns <see cref="LayeredWindowState.Bounds"/>; presentation may not
+    /// choose a destination or resize the host window independently.
+    /// </summary>
+    public static LayeredFrameUpdate CreateUpdate(
+        LayeredWindowState windowState,
+        int sourceWidth,
+        int sourceHeight)
+    {
+        if (!windowState.IsValid)
+        {
+            throw new ArgumentOutOfRangeException(nameof(windowState));
+        }
+
+        if (sourceWidth <= 0 || sourceHeight <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sourceWidth));
+        }
+
+        return new LayeredFrameUpdate(
+            windowState.Bounds,
+            sourceWidth,
+            sourceHeight,
+            windowState.Bounds.Width,
+            windowState.Bounds.Height,
+            windowState.Scale);
+    }
+
+    private unsafe void PresentCore(
+        RenderedFrame frame,
+        LayeredWindowState windowState,
+        CancellationToken cancellationToken)
+    {
+        var update = CreateUpdate(windowState, frame.Width, frame.Height);
         var screenDc = PInvoke.GetDC(HWND.Null);
         if (screenDc.IsNull)
         {
@@ -131,8 +199,8 @@ public sealed class LayeredFramePresenter : IFramePresenter, IDisposable
                 bmiHeader = new BITMAPINFOHEADER
                 {
                     biSize = (uint)Marshal.SizeOf<BITMAPINFOHEADER>(),
-                    biWidth = frame.Width,
-                    biHeight = -frame.Height,
+                    biWidth = update.DestinationWidth,
+                    biHeight = -update.DestinationHeight,
                     biPlanes = 1,
                     biBitCount = 32,
                     biCompression = (uint)BI_COMPRESSION.BI_RGB,
@@ -164,25 +232,35 @@ public sealed class LayeredFramePresenter : IFramePresenter, IDisposable
             using var pinned = bytes.Pin();
             var source = (byte*)pinned.Pointer;
             var destination = (byte*)dibBits;
-            var rowBytes = checked(frame.Width * 4);
-            for (var row = 0; row < frame.Height; row++)
+            var destinationRowBytes = checked(update.DestinationWidth * 4);
+            for (var row = 0; row < update.DestinationHeight; row++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                Buffer.MemoryCopy(
-                    source + row * frame.Stride,
-                    destination + row * rowBytes,
-                    rowBytes,
-                    rowBytes);
+                var sourceY = (int)((long)row * update.SourceHeight / update.DestinationHeight);
+                var destinationRow = destination + row * destinationRowBytes;
+                var sourceRow = source + sourceY * frame.Stride;
+                for (var column = 0; column < update.DestinationWidth; column++)
+                {
+                    var sourceX = (int)((long)column * update.SourceWidth / update.DestinationWidth);
+                    var sourcePixel = sourceRow + sourceX * 4;
+                    var destinationPixel = destinationRow + column * 4;
+                    destinationPixel[0] = sourcePixel[0];
+                    destinationPixel[1] = sourcePixel[1];
+                    destinationPixel[2] = sourcePixel[2];
+                    destinationPixel[3] = sourcePixel[3];
+                }
             }
 
-            var size = new SIZE { cx = frame.Width, cy = frame.Height };
+            var size = new SIZE { cx = update.DestinationWidth, cy = update.DestinationHeight };
             var sourcePoint = new Point(0, 0);
-            var destinationPoint = new Point(0, 0);
+            var destinationPoint = new Point(update.Bounds.X, update.Bounds.Y);
             var blend = new BLENDFUNCTION
             {
                 BlendOp = 0,
                 BlendFlags = 0,
-                SourceConstantAlpha = 255,
+                SourceConstantAlpha = checked((byte)Math.Round(
+                    frame.Opacity * byte.MaxValue,
+                    MidpointRounding.AwayFromZero)),
                 AlphaFormat = AC_SRC_ALPHA,
             };
 
@@ -234,4 +312,25 @@ public sealed class LayeredFramePresenter : IFramePresenter, IDisposable
     }
 }
 
-public readonly record struct PresentedFrameInfo(int Width, int Height, int Stride, float Opacity);
+public readonly record struct PresentedFrameInfo(
+    int Width,
+    int Height,
+    int Stride,
+    float Opacity,
+    PixelRect Bounds,
+    double Scale);
+
+public readonly record struct LayeredFrameUpdate(
+    PixelRect Bounds,
+    int SourceWidth,
+    int SourceHeight,
+    int DestinationWidth,
+    int DestinationHeight,
+    double Scale);
+
+public readonly record struct LayeredWindowState(PixelRect Bounds, double Scale)
+{
+    public bool IsValid => Bounds.IsValid
+        && double.IsFinite(Scale)
+        && Scale is >= MonitorPlacementService.MinimumScale and <= MonitorPlacementService.MaximumScale;
+}

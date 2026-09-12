@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Dudu.App.Animation;
 using Dudu.App.Overlay;
 using Dudu.Core.Assets;
@@ -18,7 +19,26 @@ if (!OperatingSystem.IsWindows())
 
 var manifestPath = args.Length > 1 && File.Exists(args[1])
     ? args[1]
-    : Path.Combine(Environment.CurrentDirectory, "src", "Dudu.App", "Assets", "Packs", "fallback", "manifest.json");
+    : Path.Combine(
+        AppContext.BaseDirectory,
+        "src",
+        "Dudu.App",
+        "Assets",
+        "Packs",
+        "fallback",
+        "manifest.json");
+
+if (!File.Exists(manifestPath))
+{
+    manifestPath = Path.Combine(
+        Environment.CurrentDirectory,
+        "src",
+        "Dudu.App",
+        "Assets",
+        "Packs",
+        "fallback",
+        "manifest.json");
+}
 
 if (!File.Exists(manifestPath))
 {
@@ -26,21 +46,121 @@ if (!File.Exists(manifestPath))
     return 4;
 }
 
+using var notepad = await FindOrLaunchNotepadAsync();
+if (notepad is null || notepad.MainWindowHandle == IntPtr.Zero)
+{
+    Console.Error.WriteLine("Could not identify a Notepad window. The harness cannot run the cross-process pass-through check.");
+    return 5;
+}
+
+var foregroundBefore = OverlayWindowHost.GetForegroundWindowHandle();
+var focusBefore = OverlayWindowHost.GetFocusHandle();
+Console.WriteLine($"Notepad HWND: 0x{notepad.MainWindowHandle.ToInt64():X}");
+Console.WriteLine($"Foreground before overlay: 0x{foregroundBefore:X}");
+Console.WriteLine($"Focus before overlay:      0x{focusBefore:X}");
+
 var pack = await AssetManifestLoader.LoadAsync(manifestPath, CancellationToken.None);
 using var composer = new SkiaFrameComposer(pack);
 var animation = pack.Manifest.Outfits["base"].Animations["idle"];
 using var presenter = new LayeredFramePresenter();
 using var host = await OverlayWindowHost.CreateAsync(
     presenter,
-    new PetPlacement("CURRENT", 0.8, 0.8, 1),
+    new PetPlacement("MISSING", 0.8, 0.8, 1),
     animation.NominalSize,
-    openHome: () => Console.WriteLine("OpenHome"),
-    showContextMenu: () => Console.WriteLine("Context menu"));
+    openHome: () => Console.WriteLine("OpenHome callback"),
+    showContextMenu: () => Console.WriteLine("Context menu callback"));
 
 using var frame = composer.Compose(pack, animation, 0);
 await presenter.PresentAsync(frame, CancellationToken.None);
 host.Show();
-Console.WriteLine("Layered overlay running. Transparent pixels pass through; Enter exits.");
-Console.ReadLine();
+await Task.Delay(250);
+
+var foregroundAfterShow = OverlayWindowHost.GetForegroundWindowHandle();
+var focusAfterShow = OverlayWindowHost.GetFocusHandle();
+var cornerInteractive = presenter.IsInteractiveAt(1, 1);
+var centerInteractive = presenter.IsInteractiveAt(frame.Width / 2, frame.Height / 2);
+Console.WriteLine($"Foreground after overlay:  0x{foregroundAfterShow:X}");
+Console.WriteLine($"Focus after overlay:        0x{focusAfterShow:X}");
+Console.WriteLine($"Frame: {frame.Width}x{frame.Height}; host HWND: 0x{host.Handle:X}");
+Console.WriteLine($"Programmatic alpha seam: corner interactive={cornerInteractive}; center interactive={centerInteractive}");
+Console.WriteLine();
+Console.WriteLine("Manual checks (the harness does not claim runtime proof on non-Windows hosts):");
+Console.WriteLine("1. Click a transparent corner over Notepad: Notepad must receive the click/focus; overlay must not activate.");
+Console.WriteLine("2. Click a visible pixel: overlay must receive the click without changing the foreground application.");
+Console.WriteLine("3. Drag from a visible pixel across the monitor; release. The pet must stay at the dropped position after a display/DPI refresh.");
+Console.WriteLine("4. Hover the pet and wheel up/down. Scale must change only within 0.5x..2x and the window must remain visible.");
+Console.WriteLine("5. Double-click the visible pet for OpenHome and right-click it for Context menu; neither may activate the overlay.");
+Console.WriteLine();
+Console.Write("Enter PASS or FAIL (include a short reason for FAIL): ");
+var verdict = Console.ReadLine()?.Trim();
+Console.WriteLine($"Harness result: {verdict ?? "NO-VERDICT"}");
 host.Hide();
-return 0;
+
+if (notepad.StartedByHarness)
+{
+    try
+    {
+        if (!notepad.Process.CloseMainWindow())
+        {
+            notepad.Process.Kill(entireProcessTree: true);
+        }
+    }
+    catch (InvalidOperationException)
+    {
+        // Notepad may have exited during manual testing.
+    }
+}
+
+return string.Equals(verdict, "PASS", StringComparison.OrdinalIgnoreCase) ? 0 : 6;
+
+static async Task<NotepadTarget?> FindOrLaunchNotepadAsync()
+{
+    var existing = Process.GetProcessesByName("notepad")
+        .FirstOrDefault(process =>
+        {
+            process.Refresh();
+            return process.MainWindowHandle != IntPtr.Zero;
+        });
+    if (existing is not null)
+    {
+        return new NotepadTarget(existing, false);
+    }
+
+    var started = Process.Start(new ProcessStartInfo("notepad.exe")
+    {
+        UseShellExecute = true,
+    });
+    if (started is null)
+    {
+        return null;
+    }
+
+    for (var attempt = 0; attempt < 50; attempt++)
+    {
+        await Task.Delay(100);
+        started.Refresh();
+        if (started.HasExited)
+        {
+            return null;
+        }
+
+        if (started.MainWindowHandle != IntPtr.Zero)
+        {
+            return new NotepadTarget(started, true);
+        }
+    }
+
+    started.Dispose();
+    return null;
+}
+
+file sealed class NotepadTarget(Process process, bool startedByHarness) : IDisposable
+{
+    public Process Process { get; } = process;
+
+    public bool StartedByHarness { get; } = startedByHarness;
+
+    public IntPtr MainWindowHandle => Process.MainWindowHandle;
+
+    public void Dispose() => Process.Dispose();
+}
