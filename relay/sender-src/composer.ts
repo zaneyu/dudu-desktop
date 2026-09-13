@@ -1,16 +1,27 @@
 /**
  * The paired-state composer: message text, reaction, optional schedule, local preview, and the
- * encrypt-then-send flow. Builds a `RemoteMessagePayloadV1`, encrypts it with Task 16's
- * `encryptPayload`, and posts only the resulting `EncryptedEnvelopeV1` — the plaintext payload
- * bytes never reach `fetch`.
+ * encrypt-then-send flow. Builds a `RemoteMessagePayloadV1`, encodes it to UTF-8 JSON bytes once,
+ * encrypts those exact bytes with Task 16's `encryptPayloadBytes`, and posts only the resulting
+ * `EncryptedEnvelopeV1` — the plaintext payload bytes never reach `fetch`, and the same buffer
+ * that was fed to AES-GCM is zeroed afterward.
  */
 import { ApiHttpError, ApiNetworkError, ApiUnauthorizedError, postMessage } from "./api.js";
-import { encryptPayload, importRecipientPublicKey, zeroPayloadBytes } from "./crypto.js";
+import { encryptPayloadBytes, importRecipientPublicKey, zeroPayloadBytes } from "./crypto.js";
 import { addRecentStatus } from "./status.js";
-import { MESSAGE_RETENTION_DAYS, type Reaction, type RemoteMessagePayloadV1 } from "../src/protocol/types.js";
+import {
+  MAXIMUM_PAYLOAD_UTF8_BYTES,
+  MAXIMUM_TEXT_SCALAR_VALUES,
+  MESSAGE_RETENTION_DAYS,
+  type Reaction,
+  type RemoteMessagePayloadV1,
+} from "../src/protocol/types.js";
 
-const MAX_TEXT_SCALAR_VALUES = 2000;
+const MAX_TEXT_SCALAR_VALUES = MAXIMUM_TEXT_SCALAR_VALUES;
 const MAX_SCHEDULE_AHEAD_MS = MESSAGE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+const TOO_LONG_STATUS = "aiyo too long trim it abit";
+const RATE_LIMITED_STATUS = "wait wait try again ltr";
+const SEND_FAILED_STATUS = "aiyo couldnt send try again";
+const UNEXPECTED_ERROR_STATUS = "aiyo something broke try again";
 
 export interface ComposerElements {
   form: HTMLFormElement;
@@ -35,6 +46,11 @@ export interface ComposerCallbacks {
 
 export class MessageComposer {
   private publicKeyBase64Url: string | null = null;
+  /** Minted once per draft and reused across retries so the relay's same-ID dedup collapses a
+   * retried send onto the original, instead of a `fetch` failure after the relay already queued
+   * the message producing a second, duplicate queued note. Cleared (forcing a fresh id) after a
+   * successful send or whenever the user clears the message text — see `wire()`. */
+  private draftMessageId: string | null = null;
 
   constructor(
     private readonly elements: ComposerElements,
@@ -52,11 +68,19 @@ export class MessageComposer {
     this.elements.textArea.value = "";
     this.elements.sendLaterInput.value = "";
     this.elements.scheduleStatus.textContent = "";
+    this.draftMessageId = null;
     this.updateCounter();
   }
 
   private wire(): void {
-    this.elements.textArea.addEventListener("input", () => this.updateCounter());
+    this.elements.textArea.addEventListener("input", () => {
+      // An emptied textarea means the user has abandoned this draft (or already sent it and
+      // started a new one): the next send should mint a fresh messageId, not reuse a stale one.
+      if (this.elements.textArea.value === "") {
+        this.draftMessageId = null;
+      }
+      this.updateCounter();
+    });
     this.elements.previewButton.addEventListener("click", () => this.showPreview());
     this.elements.previewClose.addEventListener("click", () => this.elements.previewDialog.close());
     this.elements.form.addEventListener("submit", (event) => {
@@ -127,6 +151,19 @@ export class MessageComposer {
     const payload: RemoteMessagePayloadV1 = { kind: "note", text, reaction: this.currentReaction() };
     const payloadBytes = new TextEncoder().encode(JSON.stringify(payload));
 
+    if (payloadBytes.byteLength > MAXIMUM_PAYLOAD_UTF8_BYTES) {
+      this.elements.sendStatus.textContent = TOO_LONG_STATUS;
+      return;
+    }
+
+    // Reused across retries of this same draft; only cleared on success or when the user clears
+    // the text (see `wire()` and `reset()`), so a retried send dedups against the relay's
+    // same-ID-from-same-sender idempotency instead of queuing a duplicate note.
+    if (!this.draftMessageId) {
+      this.draftMessageId = crypto.randomUUID();
+    }
+    const messageId = this.draftMessageId;
+
     this.setBusy(true);
     this.elements.sendStatus.textContent = "sending";
 
@@ -134,8 +171,8 @@ export class MessageComposer {
       const recipientKey = await importRecipientPublicKey(this.publicKeyBase64Url);
       let envelope;
       try {
-        envelope = await encryptPayload(recipientKey, payload, {
-          messageId: crypto.randomUUID(),
+        envelope = await encryptPayloadBytes(recipientKey, payloadBytes, {
+          messageId,
           deliverAfterUtc,
         });
       } finally {
@@ -151,10 +188,14 @@ export class MessageComposer {
         this.callbacks.onUnauthorized();
         return;
       }
-      if (error instanceof ApiNetworkError || error instanceof ApiHttpError) {
-        this.elements.sendStatus.textContent = "aiyo couldnt send try again";
+      if (error instanceof ApiHttpError && error.status === 413) {
+        this.elements.sendStatus.textContent = TOO_LONG_STATUS;
+      } else if (error instanceof ApiHttpError && error.status === 429) {
+        this.elements.sendStatus.textContent = RATE_LIMITED_STATUS;
+      } else if (error instanceof ApiNetworkError || error instanceof ApiHttpError) {
+        this.elements.sendStatus.textContent = SEND_FAILED_STATUS;
       } else {
-        this.elements.sendStatus.textContent = "aiyo something broke try again";
+        this.elements.sendStatus.textContent = UNEXPECTED_ERROR_STATUS;
       }
     } finally {
       this.setBusy(false);

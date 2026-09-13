@@ -73,11 +73,34 @@ export async function importRecipientPublicKey(spkiBase64Url: string): Promise<C
 
 /**
  * Encrypts `payload` for `recipientPublicKey` using a fresh ephemeral key pair, producing a
- * version-one envelope ready to go over the wire.
+ * version-one envelope ready to go over the wire. Thin wrapper over `encryptPayloadBytes` that
+ * encodes `payload` to JSON UTF-8 bytes itself; a caller that needs to zero its own copy of the
+ * plaintext bytes after encryption (so the zeroed buffer is provably the same bytes fed to
+ * AES-GCM, not a separate parallel encoding) should call `encryptPayloadBytes` directly instead.
  */
 export async function encryptPayload(
   recipientPublicKey: CryptoKey,
   payload: RemoteMessagePayloadV1,
+  metadata: EncryptMetadata,
+): Promise<EncryptedEnvelopeV1> {
+  return encryptPayloadBytes(
+    recipientPublicKey,
+    toBytes(new TextEncoder().encode(JSON.stringify(payload))),
+    metadata,
+  );
+}
+
+/**
+ * Same wire behavior as `encryptPayload`, but takes the already UTF-8-encoded JSON payload bytes
+ * directly instead of a `RemoteMessagePayloadV1` object. Added so a caller holding its own
+ * plaintext buffer (e.g. the sender page's composer) can pass those exact bytes through to
+ * AES-GCM and then zero that exact buffer afterward — zeroing a buffer that was never the input
+ * to encryption would give false confidence. Additive: `encryptPayload`'s signature and behavior
+ * are unchanged above.
+ */
+export async function encryptPayloadBytes(
+  recipientPublicKey: CryptoKey,
+  payloadBytes: Uint8Array,
   metadata: EncryptMetadata,
 ): Promise<EncryptedEnvelopeV1> {
   const ephemeralKeyPair = await crypto.subtle.generateKey(
@@ -105,11 +128,10 @@ export async function encryptPayload(
     deliverAfterUtc,
   });
 
-  const payloadBytes = toBytes(new TextEncoder().encode(JSON.stringify(payload)));
   const ciphertextAndTag = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv: nonce, additionalData: aad, tagLength: TAG_LENGTH * 8 },
     aesKey,
-    payloadBytes,
+    toBytes(payloadBytes),
   );
 
   const ephemeralPublicKeySpki = await crypto.subtle.exportKey(

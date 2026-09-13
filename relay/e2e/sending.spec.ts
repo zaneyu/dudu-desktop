@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { mockRelay } from "./mock-relay.js";
+import { openPairedSender } from "./helpers.js";
 
 test("pairs, previews locally, and sends ciphertext without leaking note text", async ({ page }) => {
   const api = await mockRelay(page);
@@ -31,4 +32,32 @@ test("send button has no transition duration when reduced motion is requested", 
   const sendButton = page.getByRole("button", { name: "Send note" });
   const transitionDuration = await sendButton.evaluate((element) => getComputedStyle(element).transitionDuration);
   expect(transitionDuration).toBe("0s");
+});
+
+test("a dropped connection or 5xx keeps the note text and shows a failure status", async ({ page }) => {
+  const api = await openPairedSender(page);
+  await page.getByLabel("Message").fill("still here if it fails");
+
+  api.failNextSend = "abort";
+  await page.getByRole("button", { name: "Send note" }).click();
+  await expect(page.getByTestId("send-status")).toHaveText("aiyo couldnt send try again");
+  await expect(page.getByLabel("Message")).toHaveValue("still here if it fails");
+  await expect(page.getByRole("button", { name: "Send note" })).toBeEnabled();
+
+  api.failNextSend = 500;
+  await page.getByRole("button", { name: "Send note" }).click();
+  await expect(page.getByTestId("send-status")).toHaveText("aiyo couldnt send try again");
+  await expect(page.getByLabel("Message")).toHaveValue("still here if it fails");
+  expect(api.lastDecryptedPayload).toBeNull();
+});
+
+test("a 401 mid-session drops the page back to the unpaired state", async ({ page }) => {
+  const api = await openPairedSender(page);
+  await page.getByLabel("Message").fill("about to lose the session");
+
+  api.failNextSend = 401;
+  await page.getByRole("button", { name: "Send note" }).click();
+
+  await expect(page.getByRole("button", { name: "Pair privately" })).toBeVisible();
+  await expect(page.getByText("phone disconnected pair again")).toBeVisible();
 });

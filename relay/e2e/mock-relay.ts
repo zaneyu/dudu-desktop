@@ -19,6 +19,11 @@ export interface MockRelay {
   paired: boolean;
   /** messageId -> status, seeded by each accepted `POST /v1/messages`. */
   statuses: Map<string, MessageState>;
+  /** When set, the NEXT `POST /v1/messages` fails this way instead of succeeding, then the flag
+   * clears itself: `"abort"` simulates a dropped connection (Playwright `route.abort()`, so the
+   * page's `fetch` rejects and the composer sees `ApiNetworkError`), or an HTTP status number
+   * (e.g. 500, 401, 413, 429) fulfills the response with that status and a generic error body. */
+  failNextSend: "abort" | number | null;
 }
 
 const VALID_PAIRING_CODE = "7K9M2R4X";
@@ -38,6 +43,7 @@ export async function mockRelay(page: Page): Promise<MockRelay> {
     lastDecryptedPayload: null,
     paired: false,
     statuses: new Map(),
+    failNextSend: null,
   };
 
   await page.route("**/v1/**", async (route) => {
@@ -97,6 +103,21 @@ export async function mockRelay(page: Page): Promise<MockRelay> {
     }
 
     if (method === "POST" && url.pathname === "/v1/messages") {
+      if (state.failNextSend !== null) {
+        const failure = state.failNextSend;
+        state.failNextSend = null;
+        if (failure === "abort") {
+          await route.abort("failed");
+        } else {
+          await route.fulfill({
+            status: failure,
+            contentType: "application/json",
+            body: JSON.stringify({ error: "mock_failure", message: "Simulated failure for a test." }),
+          });
+        }
+        return;
+      }
+
       const bodyText = request.postData() ?? "";
       state.lastRequestBody = bodyText;
       let envelope: EncryptedEnvelopeV1 | null = null;
