@@ -7,6 +7,21 @@ namespace Dudu.App.Tests.Hosting;
 public sealed class SingleInstanceCoordinatorTests
 {
     [Fact]
+    public void Test_data_roots_receive_distinct_single_instance_names()
+    {
+        var first = Path.Combine(Path.GetTempPath(), "dudu-a");
+        var second = Path.Combine(Path.GetTempPath(), "dudu-b");
+
+        Assert.NotEqual(
+            SingleInstanceCoordinator.GetMutexName(first),
+            SingleInstanceCoordinator.GetMutexName(second));
+        Assert.NotEqual(
+            SingleInstanceCoordinator.GetPipeName("test-user", first),
+            SingleInstanceCoordinator.GetPipeName("test-user", second));
+        Assert.Equal(SingleInstanceCoordinator.MutexName, SingleInstanceCoordinator.GetMutexName(null));
+    }
+
+    [Fact]
     public async Task Second_instance_sends_one_validated_activation_and_never_starts_host()
     {
         var transport = new InMemoryActivationTransport();

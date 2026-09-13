@@ -62,6 +62,8 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
     private readonly SkiaFrameComposer _composer;
     private readonly SemaphoreSlim _mutationGate = new(1, 1);
     private readonly SemaphoreSlim _runGate = new(1, 1);
+    private readonly SemaphoreSlim _presentationGate = new(1, 1);
+    private readonly object _repaintGate = new();
     private readonly DateOnly _localDate;
     private readonly SeasonalDates _seasonalDates;
     private AssetPack _pack;
@@ -76,6 +78,9 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
     private bool _disposed;
     private bool _resourcesDisposed;
     private bool _mutationGateDisposed;
+    private bool _presentationGateDisposed;
+    private bool _repaintPending;
+    private Task _repaintWorker = Task.CompletedTask;
 
     public AnimationEngine(
         AssetPack pack,
@@ -439,15 +444,23 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
         float opacity,
         CancellationToken cancellationToken)
     {
-        using var rendered = _composer.Compose(
-            pack,
-            animation,
-            frame,
-            scale,
-            opacity,
-            semanticDuration,
-            frameDuration);
-        await _presenter.PresentAsync(rendered, cancellationToken).ConfigureAwait(false);
+        await _presentationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            using var rendered = _composer.Compose(
+                pack,
+                animation,
+                frame,
+                scale,
+                opacity,
+                semanticDuration,
+                frameDuration);
+            await _presenter.PresentAsync(rendered, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _presentationGate.Release();
+        }
     }
 
     private void OnComposerRepaintRequested(object? sender, EventArgs args)
@@ -455,21 +468,38 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
         // A surface click can change labels, breathing guidance, or an error
         // while the current animation is waiting.  Recompose only the current
         // frame: do not cancel/restart an approved one-shot transaction.
-        _ = ObserveRepaintAsync();
+        lock (_stateGate)
+        {
+            if (_disposed || _resourcesDisposed) return;
+        }
+        lock (_repaintGate)
+        {
+            _repaintPending = true;
+            if (_repaintWorker.IsCompleted)
+            {
+                _repaintWorker = Task.Run(ObserveRepaintLoopAsync);
+            }
+        }
     }
 
-    private async Task ObserveRepaintAsync()
+    private async Task ObserveRepaintLoopAsync()
     {
-        try
+        while (true)
         {
-            await RepaintCurrentAsync().ConfigureAwait(false);
-        }
-        catch (Exception exception)
-        {
-            // A repaint is advisory. Do not turn a transient device/window
-            // failure on the fire-and-forget event path into an unobserved
-            // process-level task exception.
-            Trace.TraceError("Dudu overlay repaint failed: {0}", exception);
+            lock (_repaintGate)
+            {
+                if (!_repaintPending) return;
+                _repaintPending = false;
+            }
+            try
+            {
+                await RepaintCurrentAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                // Repaint is advisory, but the owned worker always observes it.
+                Trace.TraceError("Dudu overlay repaint failed: {0}", exception);
+            }
         }
     }
 
@@ -685,6 +715,7 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
             }
 
             _disposed = true;
+            lock (_repaintGate) _repaintPending = false;
             try
             {
                 _activeCancellation?.Cancel();
@@ -713,9 +744,11 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
         try
         {
             WaitForCompletionIgnoringFault(active);
+            WaitForRepaintCompletion();
             WaitForMutationUsersZero();
             DisposeResources();
             DisposeMutationGate();
+            DisposePresentationGate();
         }
         catch
         {
@@ -743,9 +776,11 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
                 }
             }
 
+            await WaitForRepaintCompletionAsync().ConfigureAwait(false);
             await WaitForMutationUsersZeroAsync().ConfigureAwait(false);
             DisposeResources();
             DisposeMutationGate();
+            DisposePresentationGate();
         }
         catch
         {
@@ -818,6 +853,30 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
         catch
         {
         }
+    }
+
+    private void WaitForRepaintCompletion()
+    {
+        Task worker;
+        lock (_repaintGate) worker = _repaintWorker;
+        WaitForCompletionIgnoringFault(worker);
+    }
+
+    private async Task WaitForRepaintCompletionAsync()
+    {
+        Task worker;
+        lock (_repaintGate) worker = _repaintWorker;
+        try { await worker.ConfigureAwait(false); } catch { }
+    }
+
+    private void DisposePresentationGate()
+    {
+        lock (_stateGate)
+        {
+            if (_presentationGateDisposed) return;
+            _presentationGateDisposed = true;
+        }
+        try { _presentationGate.Dispose(); } catch { }
     }
 
     private void DisposeResources()

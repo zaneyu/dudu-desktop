@@ -42,7 +42,8 @@ public sealed class ProductionStartupContractTests
             root, "src", "Dudu.App", "System", "AwaitableUiDispatcher.cs"));
 
         Assert.Contains("ToggleFromPetBody(", host);
-        Assert.Contains("OverlayActionSurfaceObserver.ObserveAsync", host);
+        Assert.Contains("_actionDispatchQueue.Enqueue", host);
+        Assert.DoesNotContain("OverlayActionSurfaceObserver.ObserveAsync", host);
         Assert.Contains("DispatcherQueue.GetForCurrentThread()", app);
         Assert.Contains("_dispatcherQueue.TryEnqueue", app);
         Assert.Contains("_uiDispatcher.InvokeAsync", app);

@@ -90,6 +90,40 @@ public sealed class AnimationEngineTests
     }
 
     [Fact]
+    public async Task Repaint_requests_are_coalesced_and_never_present_concurrently()
+    {
+        using var fixture = AnimationFixture.Create([100], loop: "once", animationKey: "idle", immediateClock: true);
+        var presenter = new ConcurrencyTrackingPresenter();
+        var composer = new SkiaFrameComposer(fixture.Pack);
+        var engine = new AnimationEngine(
+            fixture.Pack,
+            presenter,
+            new ManualAnimationClock(advanceOnWait: true),
+            composer);
+        await engine.PlayAsync(
+            TestPresentation("idle"),
+            AnimationOptions.ReducedMotion,
+            TestContext.Current.CancellationToken);
+
+        presenter.Block = true;
+        for (var index = 0; index < 20; index++)
+        {
+            composer.SetOverlayPalette(OverlaySurfacePalette.For(AppTheme.Light, highContrast: false));
+        }
+        await presenter.RepaintStarted.Task.WaitAsync(TestContext.Current.CancellationToken);
+        for (var index = 0; index < 20; index++)
+        {
+            composer.SetOverlayPalette(OverlaySurfacePalette.For(AppTheme.Dark, highContrast: false));
+        }
+
+        presenter.Release.TrySetResult(true);
+        await engine.DisposeAsync();
+
+        Assert.Equal(1, presenter.MaximumConcurrentPresentations);
+        Assert.InRange(presenter.PresentationCount, 2, 3);
+    }
+
+    [Fact]
     public async Task Invalid_scale_is_rejected_before_playback()
     {
         using var fixture = AnimationFixture.Create([100], loop: "once", animationKey: "idle");
@@ -487,6 +521,52 @@ public sealed class AnimationEngineTests
     {
         public ValueTask PresentAsync(RenderedFrame frame, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("presenter failed");
+    }
+
+    private sealed class ConcurrencyTrackingPresenter : IFramePresenter
+    {
+        private int _active;
+        private int _maximum;
+        private int _count;
+
+        public bool Block { get; set; }
+        public TaskCompletionSource<bool> RepaintStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<bool> Release { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int MaximumConcurrentPresentations => Volatile.Read(ref _maximum);
+        public int PresentationCount => Volatile.Read(ref _count);
+
+        public async ValueTask PresentAsync(RenderedFrame frame, CancellationToken cancellationToken)
+        {
+            var active = Interlocked.Increment(ref _active);
+            Interlocked.Increment(ref _count);
+            UpdateMaximum(active);
+            try
+            {
+                if (Block)
+                {
+                    RepaintStarted.TrySetResult(true);
+                    await Release.Task.WaitAsync(cancellationToken);
+                }
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _active);
+            }
+        }
+
+        private void UpdateMaximum(int value)
+        {
+            while (true)
+            {
+                var current = Volatile.Read(ref _maximum);
+                if (value <= current || Interlocked.CompareExchange(ref _maximum, value, current) == current)
+                {
+                    return;
+                }
+            }
+        }
     }
 
     private readonly record struct PresentedFrame(string Source, float Opacity, TimeSpan SemanticDuration);

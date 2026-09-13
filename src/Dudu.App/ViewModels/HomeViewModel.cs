@@ -55,6 +55,7 @@ public sealed class HomeViewModel : FeatureViewModelBase
     public string PauseDescription => _context.GetPauseState() switch
     {
         { Mode: PauseMode.OneHour } => "Paused for one hour.",
+        { Mode: PauseMode.FiveMinutes } => "Paused for five minutes.",
         { Mode: PauseMode.UntilTomorrowAtSeven } => "Paused until tomorrow morning.",
         { Mode: PauseMode.UntilFullscreenEnds } => "Paused until fullscreen work ends.",
         { Mode: PauseMode.Indefinite } => "Paused until you resume Dudu.",

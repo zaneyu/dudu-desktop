@@ -7,11 +7,15 @@ namespace Dudu.App.Overlay;
 
 public sealed class OverlayCommandRouter
 {
+    private readonly object _gate = new();
     private readonly CompanionFeatureContext _context;
     private readonly Func<string, CancellationToken, Task>? _navigateSettings;
     private readonly Func<TimeSpan, CancellationToken, Task> _delayAsync;
     private CancellationTokenSource? _breathingCancellation;
     private bool _closePanelAfterBreathingCancellation;
+    private bool _isBreathing;
+    private string _breathingInstruction = "Breathe in for 4, out for 6.";
+    private ComfortPanelState _comfortPanel = ComfortPanelState.Closed;
 
     public OverlayCommandRouter(
         CompanionFeatureContext context,
@@ -55,9 +59,9 @@ public sealed class OverlayCommandRouter
 
     public bool IsReducedMotion => _context.CurrentPreferences.ReducedMotion;
     public AppTheme Theme => _context.CurrentPreferences.Theme;
-    public bool IsBreathing { get; private set; }
-    public string BreathingInstruction { get; private set; } = "Breathe in for 4, out for 6.";
-    public ComfortPanelState ComfortPanel { get; private set; } = ComfortPanelState.Closed;
+    public bool IsBreathing { get { lock (_gate) return _isBreathing; } }
+    public string BreathingInstruction { get { lock (_gate) return _breathingInstruction; } }
+    public ComfortPanelState ComfortPanel { get { lock (_gate) return _comfortPanel; } }
     public event EventHandler? ComfortPanelChanged;
 
     public Task ExecuteAsync(
@@ -216,16 +220,19 @@ public sealed class OverlayCommandRouter
         cancellationToken.ThrowIfCancellationRequested();
         if (IsReducedMotion)
         {
-            BreathingInstruction = "Breathe slowly: in for 4, out for 6.";
-            SetComfortPanel(new ComfortPanelState(true, false, BreathVisualPhase.Static, BreathingInstruction));
+            const string instruction = "Breathe slowly: in for 4, out for 6.";
+            SetComfortPanel(new ComfortPanelState(true, false, BreathVisualPhase.Static, instruction));
             return;
         }
 
-        _breathingCancellation?.Cancel();
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        _breathingCancellation = linked;
-        _closePanelAfterBreathingCancellation = false;
-        IsBreathing = true;
+        lock (_gate)
+        {
+            _breathingCancellation?.Cancel();
+            _breathingCancellation = linked;
+            _closePanelAfterBreathingCancellation = false;
+            _isBreathing = true;
+        }
         try
         {
             for (var cycle = 0; cycle < 6; cycle++)
@@ -238,12 +245,16 @@ public sealed class OverlayCommandRouter
         }
         finally
         {
-            IsBreathing = false;
-            var closePanel = _closePanelAfterBreathingCancellation;
-            if (ReferenceEquals(_breathingCancellation, linked))
+            bool closePanel;
+            lock (_gate)
             {
-                _breathingCancellation = null;
-                _closePanelAfterBreathingCancellation = false;
+                _isBreathing = false;
+                closePanel = _closePanelAfterBreathingCancellation;
+                if (ReferenceEquals(_breathingCancellation, linked))
+                {
+                    _breathingCancellation = null;
+                    _closePanelAfterBreathingCancellation = false;
+                }
             }
             SetComfortPanel(closePanel
                 ? ComfortPanelState.Closed
@@ -257,10 +268,13 @@ public sealed class OverlayCommandRouter
 
     public void CancelBreathing(bool closePanel = false)
     {
-        _closePanelAfterBreathingCancellation = closePanel;
-        _breathingCancellation?.Cancel();
-        _breathingCancellation = null;
-        IsBreathing = false;
+        lock (_gate)
+        {
+            _closePanelAfterBreathingCancellation = closePanel;
+            _breathingCancellation?.Cancel();
+            _breathingCancellation = null;
+            _isBreathing = false;
+        }
         SetComfortPanel(closePanel
             ? ComfortPanelState.Closed
             : new ComfortPanelState(true, false, BreathVisualPhase.Idle, "Breathing exercise cancelled."));
@@ -268,8 +282,11 @@ public sealed class OverlayCommandRouter
 
     private void SetComfortPanel(ComfortPanelState state)
     {
-        ComfortPanel = state;
-        BreathingInstruction = state.Instruction;
+        lock (_gate)
+        {
+            _comfortPanel = state;
+            _breathingInstruction = state.Instruction;
+        }
         var handlers = ComfortPanelChanged;
         if (handlers is null) return;
         foreach (var handler in handlers.GetInvocationList().OfType<EventHandler>())

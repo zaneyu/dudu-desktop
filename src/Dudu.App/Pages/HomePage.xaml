@@ -14,7 +14,7 @@
             <Border Background="{ThemeResource BlushSurfaceBrush}" BorderBrush="{ThemeResource LavenderBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="20">
                 <StackPanel Spacing="12">
                     <TextBlock Text="Dudu's status" Style="{StaticResource SectionHeadingStyle}" />
-                    <TextBlock Text="{x:Bind ViewModel.PauseDescription, Mode=OneWay}" TextWrapping="Wrap" />
+                    <TextBlock Text="{x:Bind ViewModel.PauseDescription, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.AutomationId="HomePauseDescription" />
                     <TextBlock x:Name="HomeNextReminder" Text="{x:Bind ViewModel.NextReminderText, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.AutomationId="HomeNextReminder" />
                     <TextBlock x:Name="HomeActiveFocus" Text="{x:Bind ViewModel.ActiveFocusText, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.AutomationId="HomeActiveFocus" />
                     <TextBlock x:Name="HomePetState" Text="{x:Bind ViewModel.PetStateText, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.AutomationId="HomePetState" />

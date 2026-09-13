@@ -38,7 +38,7 @@ public sealed class SingleInstanceCoordinator : IAsyncDisposable
         IActivationTransport? transport = null,
         Func<AppActivation, Task>? activationHandler = null)
     {
-        _transport = transport ?? new WindowsActivationTransport(MutexName, GetPipeName());
+        _transport = transport ?? CreateDefaultTransport();
         _activationHandler = activationHandler ?? (_ => Task.CompletedTask);
     }
 
@@ -130,11 +130,29 @@ public sealed class SingleInstanceCoordinator : IAsyncDisposable
     }
 
     public static string GetPipeName(string? sid = null)
+        => GetPipeName(sid, scope: null);
+
+    internal static string GetPipeName(string? sid, string? scope)
     {
         sid ??= WindowsIdentity.GetCurrent().User?.Value
             ?? Environment.UserName;
-        var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sid)));
+        var identity = string.IsNullOrWhiteSpace(scope) ? sid : $"{sid}|{Path.GetFullPath(scope)}";
+        var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
         return PipePrefix + digest;
+    }
+
+    internal static string GetMutexName(string? scope)
+    {
+        if (string.IsNullOrWhiteSpace(scope)) return MutexName;
+        var digest = Convert.ToHexString(SHA256.HashData(
+            Encoding.UTF8.GetBytes(Path.GetFullPath(scope))));
+        return MutexName + "." + digest;
+    }
+
+    private static IActivationTransport CreateDefaultTransport()
+    {
+        var scope = Environment.GetEnvironmentVariable("DUDU_DATA_ROOT");
+        return new WindowsActivationTransport(GetMutexName(scope), GetPipeName(null, scope));
     }
 
     private async Task ListenUntilDisposedAsync()

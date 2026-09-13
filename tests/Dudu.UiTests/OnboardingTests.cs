@@ -11,6 +11,7 @@ namespace Dudu.UiTests;
 /// executable is supplied by the Windows publish job so this project remains
 /// buildable on non-Windows hosts without weakening the WinUI product target.
 /// </summary>
+[Collection(WindowsUiCollection.Name)]
 public sealed class OnboardingTests
 {
     [Fact]

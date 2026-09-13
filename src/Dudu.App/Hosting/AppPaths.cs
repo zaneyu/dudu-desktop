@@ -9,9 +9,19 @@ public sealed record AppPaths(
 {
     public static AppPaths ForCurrentUser()
     {
-        var root = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "DuduDesktop");
+        var requestedRoot = Environment.GetEnvironmentVariable("DUDU_DATA_ROOT");
+        var root = string.IsNullOrWhiteSpace(requestedRoot)
+            ? Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "DuduDesktop")
+            : requestedRoot;
+        return ForRoot(root);
+    }
+
+    public static AppPaths ForRoot(string root)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(root);
+        root = Path.GetFullPath(root);
         return new AppPaths(
             Root: root,
             Database: Path.Combine(root, "dudu.db"),

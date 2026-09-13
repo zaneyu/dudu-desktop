@@ -14,11 +14,17 @@ public sealed record ComfortActionPlacement(ComfortAction Action, PixelRect HitR
 
 public sealed record ActionBubbleArrangement(
     PixelRect Bounds,
-    IReadOnlyList<OverlayActionPlacement> PrimaryActions);
+    IReadOnlyList<OverlayActionPlacement> PrimaryActions)
+{
+    public PixelRect DetailRegion { get; init; }
+}
 
 public sealed record ComfortBubbleArrangement(
     PixelRect Bounds,
-    IReadOnlyList<ComfortActionPlacement> Actions);
+    IReadOnlyList<ComfortActionPlacement> Actions)
+{
+    public PixelRect DetailRegion { get; init; }
+}
 
 public static class ActionBubbleLayout
 {
@@ -27,6 +33,8 @@ public static class ActionBubbleLayout
     private const int MinimumActionHeight = 16;
     private const int PreferredPadding = 12;
     private const int PreferredGap = 8;
+    private const int DetailGap = 4;
+    private const int DetailHeight = 28;
     private const int MinimumSurfaceWidth = 16;
     private static readonly OverlayAction[] AllowedActions = Enum.GetValues<OverlayAction>();
 
@@ -66,7 +74,10 @@ public static class ActionBubbleLayout
             rows.Value.Bounds,
             selected.Take(rows.Value.Regions.Count)
                 .Select((action, index) => new OverlayActionPlacement(action, rows.Value.Regions[index]))
-                .ToArray());
+                .ToArray())
+        {
+            DetailRegion = rows.Value.DetailRegion,
+        };
     }
 
     public static ComfortBubbleArrangement? ArrangeComfort(PixelRect workArea, PixelPoint petAnchor)
@@ -78,7 +89,10 @@ public static class ActionBubbleLayout
             rows.Value.Bounds,
             ComfortActions
                 .Select((action, index) => new ComfortActionPlacement(action, rows.Value.Regions[index]))
-                .ToArray());
+                .ToArray())
+        {
+            DetailRegion = rows.Value.DetailRegion,
+        };
     }
 
     public static string Label(OverlayAction action) => action switch
@@ -127,28 +141,32 @@ public static class ActionBubbleLayout
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown comfort action."),
     };
 
-    private static (PixelRect Bounds, IReadOnlyList<PixelRect> Regions)? ArrangeRows(
+    private static (PixelRect Bounds, IReadOnlyList<PixelRect> Regions, PixelRect DetailRegion)? ArrangeRows(
         int requestedCount,
         PixelRect workArea,
         PixelPoint petAnchor,
         bool requireAllRows = false)
     {
-        if (workArea.Width < MinimumSurfaceWidth || workArea.Height < MinimumActionHeight) return null;
+        var minimumHeight = MinimumActionHeight + DetailGap + DetailHeight;
+        if (workArea.Width < MinimumSurfaceWidth || workArea.Height < minimumHeight) return null;
 
         var preferredHeight = requestedCount * PreferredActionHeight
             + (requestedCount - 1) * PreferredGap
-            + PreferredPadding * 2;
+            + PreferredPadding * 2
+            + DetailGap
+            + DetailHeight;
         var usePreferredSpacing = workArea.Height >= preferredHeight;
         var padding = usePreferredSpacing ? PreferredPadding : 0;
         var gap = usePreferredSpacing ? PreferredGap : 0;
-        var available = workArea.Height - padding * 2;
+        var available = workArea.Height - padding * 2 - DetailGap - DetailHeight;
         var maximumRows = Math.Max(1, (available + gap) / (MinimumActionHeight + gap));
         if (requireAllRows && maximumRows < requestedCount) return null;
         var count = Math.Min(requestedCount, maximumRows);
         var rowHeight = Math.Min(PreferredActionHeight, (available - gap * (count - 1)) / count);
         if (rowHeight < MinimumActionHeight) return null;
 
-        var height = padding * 2 + rowHeight * count + gap * (count - 1);
+        var actionHeight = rowHeight * count + gap * (count - 1);
+        var height = padding * 2 + actionHeight + DetailGap + DetailHeight;
         var width = Math.Min(BubbleWidth, workArea.Width);
         var x = Math.Clamp(petAnchor.X - width / 2, workArea.X, workArea.Right - width);
         var y = Math.Clamp(petAnchor.Y - height - PreferredGap, workArea.Y, workArea.Bottom - height);
@@ -161,7 +179,12 @@ public static class ActionBubbleLayout
                 bounds.Width - horizontalPadding * 2,
                 rowHeight))
             .ToArray();
-        return (bounds, regions);
+        var detailRegion = new PixelRect(
+            bounds.X + horizontalPadding,
+            bounds.Y + padding + actionHeight + DetailGap,
+            bounds.Width - horizontalPadding * 2,
+            DetailHeight);
+        return (bounds, regions, detailRegion);
     }
 
     private static void ValidateWorkArea(PixelRect workArea)

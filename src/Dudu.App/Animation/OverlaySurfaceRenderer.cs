@@ -85,7 +85,7 @@ internal static class OverlaySurfaceRenderer
                     : snapshot.ComfortPanel.IsBreathing
                         ? $"{snapshot.ComfortPanel.Phase}: {snapshot.ComfortPanel.Instruction}"
                         : snapshot.ComfortPanel.Instruction;
-                DrawDetail(canvas, detail, surface, detailPaint, top: true);
+                DrawDetail(canvas, detail, snapshot.DetailRegion, detailPaint);
             }
 
             if (!string.IsNullOrWhiteSpace(snapshot.ErrorMessage))
@@ -93,7 +93,7 @@ internal static class OverlaySurfaceRenderer
                 // Status surfaces intentionally render without action regions;
                 // the matching Settings/Home route carries the accessible live
                 // error text as well.
-                DrawDetail(canvas, snapshot.ErrorMessage, surface, errorPaint, top: snapshot.Actions.Count == 0);
+                DrawDetail(canvas, snapshot.ErrorMessage, snapshot.DetailRegion, errorPaint);
             }
         }
         finally
@@ -102,11 +102,44 @@ internal static class OverlaySurfaceRenderer
         }
     }
 
-    private static void DrawDetail(SKCanvas canvas, string text, SKRect surface, SKPaint paint, bool top)
+    private static void DrawDetail(SKCanvas canvas, string text, PixelRect? requestedRegion, SKPaint paint)
     {
         if (string.IsNullOrWhiteSpace(text)) return;
-        var y = top ? surface.Top + DetailFont.Size + 10 : surface.Bottom - 8;
-        canvas.DrawText(text, surface.Left + 12, y, SKTextAlign.Left, DetailFont, paint);
+        if (requestedRegion is not { } pixelRegion || !pixelRegion.IsValid) return;
+        var region = ToRect(pixelRegion);
+        canvas.Save();
+        try
+        {
+            canvas.ClipRect(region);
+            var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var line = string.Empty;
+            var baseline = region.Top + DetailFont.Size;
+            var lineHeight = DetailFont.Size + 3;
+            foreach (var word in words)
+            {
+                var candidate = line.Length == 0 ? word : $"{line} {word}";
+                if (line.Length > 0 && DetailFont.MeasureText(candidate, paint) > region.Width)
+                {
+                    canvas.DrawText(line, region.Left, baseline, SKTextAlign.Left, DetailFont, paint);
+                    baseline += lineHeight;
+                    if (baseline > region.Bottom) return;
+                    line = word;
+                }
+                else
+                {
+                    line = candidate;
+                }
+            }
+
+            if (line.Length > 0 && baseline <= region.Bottom)
+            {
+                canvas.DrawText(line, region.Left, baseline, SKTextAlign.Left, DetailFont, paint);
+            }
+        }
+        finally
+        {
+            canvas.Restore();
+        }
     }
 
     private static void DrawCenteredLabel(SKCanvas canvas, string text, SKRect region, SKFont font, SKPaint paint)
@@ -178,6 +211,8 @@ public sealed record OverlaySurfaceSnapshot(
     bool IsReducedMotion,
     string? ErrorMessage)
 {
+    public PixelRect? DetailRegion { get; init; }
+    public long GeometryVersion { get; init; }
     public AppTheme Theme { get; init; } = AppTheme.System;
     public bool IsHighContrast { get; init; }
 

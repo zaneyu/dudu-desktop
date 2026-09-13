@@ -103,6 +103,76 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Native_overlay_dispatch_queue_owns_faults_and_preserves_click_order()
+    {
+        var fixture = FeatureFixture.Create();
+        var firstEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = new List<string>();
+        var firstRouter = new OverlayCommandRouter(fixture.Context, async (_, _) =>
+        {
+            calls.Add("first");
+            firstEntered.TrySetResult();
+            await releaseFirst.Task;
+        });
+        var secondRouter = new OverlayCommandRouter(fixture.Context, (_, _) =>
+        {
+            calls.Add("second");
+            return Task.CompletedTask;
+        });
+        using var first = new OverlayActionSurfaceController();
+        using var second = new OverlayActionSurfaceController();
+        first.Bind(firstRouter);
+        second.Bind(secondRouter);
+        first.Open(new PixelRect(0, 0, 640, 480), new PixelPoint(320, 400));
+        second.Open(new PixelRect(0, 0, 640, 480), new PixelPoint(320, 400));
+        var firstPoint = Center(first.Arrangement!.PrimaryActions.Single(item => item.Action == OverlayAction.Tasks).HitRegion);
+        var secondPoint = Center(second.Arrangement!.PrimaryActions.Single(item => item.Action == OverlayAction.Tasks).HitRegion);
+        var reported = new List<Exception>();
+        using var queue = new OverlayActionDispatchQueue(reported.Add);
+
+        queue.Enqueue(first, firstPoint);
+        await firstEntered.Task.WaitAsync(TestContext.Current.CancellationToken);
+        queue.Enqueue(second, secondPoint);
+        Assert.Equal(["first"], calls);
+        releaseFirst.TrySetResult();
+        await queue.Completion.WaitAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(["first", "second"], calls);
+        Assert.Empty(reported);
+    }
+
+    [Fact]
+    public async Task Stale_pointer_completion_cannot_close_a_newly_reopened_surface()
+    {
+        var fixture = FeatureFixture.Create();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var router = new OverlayCommandRouter(fixture.Context, async (_, _) =>
+        {
+            entered.TrySetResult();
+            await release.Task;
+        });
+        using var surface = new OverlayActionSurfaceController();
+        surface.Bind(router);
+        var viewport = new PixelRect(0, 0, 640, 480);
+        var anchor = new PixelPoint(320, 400);
+        surface.Open(viewport, anchor);
+        var point = Center(surface.Arrangement!.PrimaryActions
+            .Single(item => item.Action == OverlayAction.Tasks).HitRegion);
+
+        var dispatch = surface.HandlePointerAsync(point, TestContext.Current.CancellationToken);
+        await entered.Task.WaitAsync(TestContext.Current.CancellationToken);
+        surface.Close();
+        surface.Open(viewport, anchor);
+        release.TrySetResult();
+        await dispatch;
+
+        Assert.Equal(OverlayActionSurfaceKind.Primary, surface.Kind);
+        Assert.NotNull(surface.Arrangement);
+    }
+
+    [Fact]
     public void Comfort_surface_has_exactly_the_approved_actions()
     {
         Assert.Equal(

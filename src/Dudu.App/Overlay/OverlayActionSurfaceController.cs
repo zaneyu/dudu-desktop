@@ -8,195 +8,404 @@ namespace Dudu.App.Overlay;
 /// <summary>State, geometry, and dispatch contract for the no-activate overlay.</summary>
 public sealed class OverlayActionSurfaceController : IDisposable
 {
+    private readonly object _gate = new();
+    private readonly SemaphoreSlim _dispatchGate = new(1, 1);
     private OverlayCommandRouter? _router;
     private PixelRect _workArea;
     private PixelPoint _petAnchor;
+    private ActionBubbleArrangement? _arrangement;
+    private ComfortBubbleArrangement? _comfortArrangement;
+    private OverlayActionSurfaceKind _kind = OverlayActionSurfaceKind.Closed;
+    private string? _errorMessage;
+    private bool _disposed;
+    private long _version;
 
-    public ActionBubbleArrangement? Arrangement { get; private set; }
-    public ComfortBubbleArrangement? ComfortArrangement { get; private set; }
-    public OverlayActionSurfaceKind Kind { get; private set; } = OverlayActionSurfaceKind.Closed;
-    public bool IsOpen => Kind != OverlayActionSurfaceKind.Closed;
-    public IReadOnlyList<PixelRect> HitRegions => Kind switch
-    {
-        OverlayActionSurfaceKind.Primary => Arrangement?.PrimaryActions.Select(item => item.HitRegion).ToArray() ?? [],
-        OverlayActionSurfaceKind.Comfort => ComfortArrangement?.Actions.Select(item => item.HitRegion).ToArray() ?? [],
-        _ => [],
-    };
-    public string? ErrorMessage { get; private set; }
+    public ActionBubbleArrangement? Arrangement { get { lock (_gate) return _arrangement; } }
+    public ComfortBubbleArrangement? ComfortArrangement { get { lock (_gate) return _comfortArrangement; } }
+    public OverlayActionSurfaceKind Kind { get { lock (_gate) return _kind; } }
+    public bool IsOpen { get { lock (_gate) return _kind != OverlayActionSurfaceKind.Closed; } }
+    public IReadOnlyList<PixelRect> HitRegions { get { lock (_gate) return GetHitRegionsLocked(); } }
+    public string? ErrorMessage { get { lock (_gate) return _errorMessage; } }
     public event EventHandler? Changed;
 
     public void Bind(OverlayCommandRouter router)
     {
-        if (_router is not null) _router.ComfortPanelChanged -= OnComfortPanelChanged;
-        _router = router ?? throw new ArgumentNullException(nameof(router));
-        _router.ComfortPanelChanged += OnComfortPanelChanged;
+        ArgumentNullException.ThrowIfNull(router);
+        OverlayCommandRouter? previous;
+        lock (_gate)
+        {
+            ThrowIfDisposed();
+            previous = _router;
+            _router = router;
+        }
+        if (previous is not null) previous.ComfortPanelChanged -= OnComfortPanelChanged;
+        router.ComfortPanelChanged += OnComfortPanelChanged;
     }
 
     public void ToggleFromPetBody(PixelRect workArea, PixelPoint petAnchor)
     {
-        if (IsOpen) Close();
-        else Open(workArea, petAnchor);
+        bool close;
+        lock (_gate) close = _kind != OverlayActionSurfaceKind.Closed;
+        if (close) Close(); else Open(workArea, petAnchor);
     }
 
     public void Open(PixelRect workArea, PixelPoint petAnchor)
     {
-        _workArea = workArea;
-        _petAnchor = petAnchor;
-        try
+        lock (_gate)
         {
-            Arrangement = ActionBubbleLayout.TryArrange(OverlayCommandRouter.PrimaryActions, workArea, petAnchor);
+            ThrowIfDisposed();
+            _workArea = workArea;
+            _petAnchor = petAnchor;
+            ArrangePrimaryLocked();
+            _version++;
         }
-        catch (ArgumentException)
+        RaiseChanged();
+    }
+
+    /// <summary>Reflows an open surface after a DPI, scale, or monitor-size
+    /// change while preserving the pet anchor's normalized location.</summary>
+    public void UpdateViewport(PixelRect workArea)
+    {
+        if (!workArea.IsValid) throw new ArgumentException("The work area must be valid.", nameof(workArea));
+        lock (_gate)
         {
-            Arrangement = null;
+            ThrowIfDisposed();
+            if (workArea == _workArea) return;
+            if (_kind == OverlayActionSurfaceKind.Closed)
+            {
+                _workArea = workArea;
+                return;
+            }
+
+            var normalizedX = _workArea.IsValid
+                ? (_petAnchor.X - _workArea.X) / (double)_workArea.Width
+                : 0.5;
+            var normalizedY = _workArea.IsValid
+                ? (_petAnchor.Y - _workArea.Y) / (double)_workArea.Height
+                : 0.8;
+            _workArea = workArea;
+            _petAnchor = new PixelPoint(
+                workArea.X + (int)Math.Round(Math.Clamp(normalizedX, 0, 1) * workArea.Width),
+                workArea.Y + (int)Math.Round(Math.Clamp(normalizedY, 0, 1) * workArea.Height));
+            if (_kind == OverlayActionSurfaceKind.Comfort) ArrangeComfortLocked();
+            else ArrangePrimaryLocked();
+            _version++;
         }
-        ComfortArrangement = null;
-        Kind = Arrangement is null ? OverlayActionSurfaceKind.Status : OverlayActionSurfaceKind.Primary;
-        ErrorMessage = Arrangement is null
-            ? "There is not enough room to show Dudu's actions. Open Settings to use them."
-            : null;
         RaiseChanged();
     }
 
     public void Close()
     {
-        _router?.CancelBreathing(closePanel: true);
-        Arrangement = null;
-        ComfortArrangement = null;
-        Kind = OverlayActionSurfaceKind.Closed;
+        OverlayCommandRouter? router;
+        lock (_gate)
+        {
+            router = _router;
+            _arrangement = null;
+            _comfortArrangement = null;
+            _kind = OverlayActionSurfaceKind.Closed;
+            _errorMessage = null;
+            _version++;
+        }
+        router?.CancelBreathing(closePanel: true);
         RaiseChanged();
     }
 
     /// <summary>Returns the complete visual and automation contract for the
     /// current native surface.  The same labels and destination routes are
     /// exposed by Home, so the overlay never becomes a mouse-only feature.</summary>
-    public OverlaySurfaceSnapshot CreateRenderSnapshot()
+    public OverlaySurfaceSnapshot CreateRenderSnapshot() => CreateRenderSnapshot(null);
+
+    public OverlaySurfaceSnapshot CreateRenderSnapshot(PixelSize? renderSize)
     {
-        var actions = Kind switch
+        lock (_gate)
         {
-            OverlayActionSurfaceKind.Primary => Arrangement?.PrimaryActions
+            var actions = _kind switch
+            {
+                OverlayActionSurfaceKind.Primary => _arrangement?.PrimaryActions
                 .Select(item => new OverlaySurfaceAction(
                     ActionBubbleLayout.Label(item.Action),
                     ActionBubbleLayout.AutomationId(item.Action),
                     item.HitRegion,
                     OverlayCommandRouter.EquivalentSettingsDestination(item.Action)))
                 .ToArray() ?? [],
-            OverlayActionSurfaceKind.Comfort => ComfortArrangement?.Actions
+                OverlayActionSurfaceKind.Comfort => _comfortArrangement?.Actions
                 .Select(item => new OverlaySurfaceAction(
                     ActionBubbleLayout.ComfortLabel(item.Action),
                     ActionBubbleLayout.ComfortAutomationId(item.Action),
                     item.HitRegion,
                     OverlayCommandRouter.EquivalentSettingsDestination(item.Action)))
                 .ToArray() ?? [],
-            _ => [],
-        };
+                _ => [],
+            };
+            PixelRect? bounds = _arrangement?.Bounds
+                ?? _comfortArrangement?.Bounds
+                ?? (_workArea.IsValid ? _workArea : null);
+            PixelRect? detailRegion = _arrangement?.DetailRegion
+                ?? _comfortArrangement?.DetailRegion
+                ?? (_workArea.IsValid
+                    ? new PixelRect(_workArea.X + 8, _workArea.Y + 8,
+                        Math.Max(1, _workArea.Width - 16), Math.Max(1, _workArea.Height - 16))
+                    : null);
 
-        return new OverlaySurfaceSnapshot(
-            Kind,
-            Arrangement?.Bounds ?? ComfortArrangement?.Bounds ?? (_workArea.IsValid ? _workArea : null),
-            actions,
-            _router?.ComfortPanel ?? ComfortPanelState.Closed,
-            _router?.IsReducedMotion ?? false,
-            ErrorMessage)
-        {
-            Theme = _router?.Theme ?? AppTheme.System,
-            IsHighContrast = OverlaySurfaceRenderer.IsHighContrastEnabled(),
-        };
+            if (renderSize is { } size && size.Width > 0 && size.Height > 0 && _workArea.IsValid)
+            {
+                bounds = bounds is { } value ? ScaleToRender(value, _workArea, size) : null;
+                detailRegion = detailRegion is { } detail ? ScaleToRender(detail, _workArea, size) : null;
+                actions = actions
+                    .Select(action => action with
+                    {
+                        HitRegion = ScaleToRender(action.HitRegion, _workArea, size),
+                    })
+                    .ToArray();
+            }
+
+            return new OverlaySurfaceSnapshot(
+                _kind,
+                bounds,
+                actions,
+                _router?.ComfortPanel ?? ComfortPanelState.Closed,
+                _router?.IsReducedMotion ?? false,
+                _errorMessage)
+            {
+                DetailRegion = detailRegion,
+                Theme = _router?.Theme ?? AppTheme.System,
+                IsHighContrast = OverlaySurfaceRenderer.IsHighContrastEnabled(),
+                GeometryVersion = _version,
+            };
+        }
     }
 
     public void Dispose()
     {
-        if (_router is not null) _router.ComfortPanelChanged -= OnComfortPanelChanged;
-        _router = null;
-        Changed = null;
+        OverlayCommandRouter? router;
+        lock (_gate)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            router = _router;
+            _router = null;
+            Changed = null;
+        }
+        if (router is not null) router.ComfortPanelChanged -= OnComfortPanelChanged;
     }
 
-    public bool Contains(PixelPoint point) => HitRegions.Any(region => region.Contains(point.X, point.Y));
+    public bool Contains(PixelPoint point)
+    {
+        lock (_gate) return GetHitRegionsLocked().Any(region => region.Contains(point.X, point.Y));
+    }
 
     public async Task<bool> HandlePointerAsync(PixelPoint point, CancellationToken cancellationToken = default)
     {
-        if (_router is null)
+        await _dispatchGate.WaitAsync(cancellationToken);
+        try
         {
-            if (!Contains(point)) return false;
-            SetError("Dudu's action surface is not ready yet.");
-            return true;
-        }
+            OverlayCommandRouter? router;
+            OverlayAction? primary = null;
+            ComfortAction? comfort = null;
+            bool contains;
+            long version;
+            lock (_gate)
+            {
+                ThrowIfDisposed();
+                router = _router;
+                version = _version;
+                contains = GetHitRegionsLocked().Any(region => region.Contains(point.X, point.Y));
+                if (_kind == OverlayActionSurfaceKind.Primary)
+                {
+                    primary = _arrangement?.PrimaryActions
+                        .FirstOrDefault(item => item.HitRegion.Contains(point.X, point.Y))?.Action;
+                }
+                else if (_kind == OverlayActionSurfaceKind.Comfort)
+                {
+                    comfort = _comfortArrangement?.Actions
+                        .FirstOrDefault(item => item.HitRegion.Contains(point.X, point.Y))?.Action;
+                }
+            }
 
-        if (Kind == OverlayActionSurfaceKind.Primary)
+            if (router is null)
+            {
+                if (!contains) return false;
+                SetError("Dudu's action surface is not ready yet.");
+                return true;
+            }
+
+            if (primary is { } primaryAction)
+            {
+                await DispatchPrimaryAsync(router, primaryAction, version, cancellationToken);
+                return true;
+            }
+            if (comfort is { } comfortAction)
+            {
+                await DispatchComfortAsync(router, comfortAction, version, cancellationToken);
+                return true;
+            }
+            return false;
+        }
+        finally
         {
-            var hit = Arrangement?.PrimaryActions.FirstOrDefault(item => item.HitRegion.Contains(point.X, point.Y));
-            if (hit is null) return false;
-            await DispatchPrimaryAsync(hit.Action, cancellationToken);
-            return true;
+            _dispatchGate.Release();
         }
-
-        if (Kind == OverlayActionSurfaceKind.Comfort)
-        {
-            var hit = ComfortArrangement?.Actions.FirstOrDefault(item => item.HitRegion.Contains(point.X, point.Y));
-            if (hit is null) return false;
-            await DispatchComfortAsync(hit.Action, cancellationToken);
-            return true;
-        }
-
-        return false;
     }
 
-    private async Task DispatchPrimaryAsync(OverlayAction action, CancellationToken cancellationToken)
+    private async Task DispatchPrimaryAsync(
+        OverlayCommandRouter router,
+        OverlayAction action,
+        long expectedVersion,
+        CancellationToken cancellationToken)
     {
         try
         {
             if (action == OverlayAction.ComfortMe)
             {
-                await _router!.ExecuteAsync(action, cancellationToken);
-                ComfortArrangement = ActionBubbleLayout.ArrangeComfort(_workArea, _petAnchor);
-                Arrangement = null;
-                Kind = ComfortArrangement is null ? OverlayActionSurfaceKind.Closed : OverlayActionSurfaceKind.Comfort;
+                await router.ExecuteAsync(action, cancellationToken);
+                lock (_gate)
+                {
+                    if (_version != expectedVersion || _kind != OverlayActionSurfaceKind.Primary) return;
+                    ArrangeComfortLocked();
+                    _version++;
+                }
             }
             else
             {
-                await _router!.ExecuteAsync(action, cancellationToken);
-                Close();
+                await router.ExecuteAsync(action, cancellationToken);
+                if (!TryClose(expectedVersion, router)) return;
             }
-            ErrorMessage = null;
+            lock (_gate)
+            {
+                if (_version == expectedVersion || action == OverlayAction.ComfortMe)
+                {
+                    _errorMessage = null;
+                }
+            }
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception exception)
         {
-            SetError(exception.Message);
+            SetError(exception.Message, expectedVersion);
             return;
         }
         RaiseChanged();
     }
 
-    private async Task DispatchComfortAsync(ComfortAction action, CancellationToken cancellationToken)
+    private async Task DispatchComfortAsync(
+        OverlayCommandRouter router,
+        ComfortAction action,
+        long expectedVersion,
+        CancellationToken cancellationToken)
     {
         try
         {
-            await _router!.ExecuteComfortAsync(action, cancellationToken);
-            ErrorMessage = null;
-            if (action is ComfortAction.Close or ComfortAction.ReadALoveNote) Close();
+            await router.ExecuteComfortAsync(action, cancellationToken);
+            lock (_gate)
+            {
+                if (_version != expectedVersion || _kind != OverlayActionSurfaceKind.Comfort) return;
+                _errorMessage = null;
+            }
+            if ((action is ComfortAction.Close or ComfortAction.ReadALoveNote)
+                && !TryClose(expectedVersion, router)) return;
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception exception)
         {
-            SetError(exception.Message);
+            SetError(exception.Message, expectedVersion);
             return;
         }
         RaiseChanged();
     }
 
-    private void SetError(string message)
+    private void SetError(string message, long? expectedVersion = null)
     {
-        ErrorMessage = message;
-        if (Kind == OverlayActionSurfaceKind.Closed && _workArea.IsValid)
+        lock (_gate)
         {
-            Kind = OverlayActionSurfaceKind.Status;
+            if (expectedVersion is { } version && _version != version) return;
+            _errorMessage = message;
+            if (_kind == OverlayActionSurfaceKind.Closed && _workArea.IsValid)
+            {
+                _kind = OverlayActionSurfaceKind.Status;
+            }
+            _version++;
         }
 
         RaiseChanged();
     }
 
     private void OnComfortPanelChanged(object? sender, EventArgs args) => RaiseChanged();
+
+    private void ArrangePrimaryLocked()
+    {
+        try
+        {
+            _arrangement = ActionBubbleLayout.TryArrange(
+                OverlayCommandRouter.PrimaryActions,
+                _workArea,
+                _petAnchor);
+        }
+        catch (ArgumentException)
+        {
+            _arrangement = null;
+        }
+        _comfortArrangement = null;
+        _kind = _arrangement is null ? OverlayActionSurfaceKind.Status : OverlayActionSurfaceKind.Primary;
+        _errorMessage = _arrangement is null
+            ? "There is not enough room to show Dudu's actions. Open Settings to use them."
+            : null;
+    }
+
+    private void ArrangeComfortLocked()
+    {
+        try
+        {
+            _comfortArrangement = ActionBubbleLayout.ArrangeComfort(_workArea, _petAnchor);
+        }
+        catch (ArgumentException)
+        {
+            _comfortArrangement = null;
+        }
+        _arrangement = null;
+        _kind = _comfortArrangement is null ? OverlayActionSurfaceKind.Status : OverlayActionSurfaceKind.Comfort;
+        _errorMessage = _comfortArrangement is null
+            ? "There is not enough room to show Dudu's comfort actions. Open Settings to use them."
+            : null;
+    }
+
+    private bool TryClose(long expectedVersion, OverlayCommandRouter router)
+    {
+        lock (_gate)
+        {
+            if (_version != expectedVersion) return false;
+            _arrangement = null;
+            _comfortArrangement = null;
+            _kind = OverlayActionSurfaceKind.Closed;
+            _errorMessage = null;
+            _version++;
+        }
+        router.CancelBreathing(closePanel: true);
+        RaiseChanged();
+        return true;
+    }
+
+    private IReadOnlyList<PixelRect> GetHitRegionsLocked() => _kind switch
+    {
+        OverlayActionSurfaceKind.Primary => _arrangement?.PrimaryActions
+            .Select(item => item.HitRegion).ToArray() ?? [],
+        OverlayActionSurfaceKind.Comfort => _comfortArrangement?.Actions
+            .Select(item => item.HitRegion).ToArray() ?? [],
+        _ => [],
+    };
+
+    private static PixelRect ScaleToRender(PixelRect value, PixelRect viewport, PixelSize renderSize)
+    {
+        var left = (int)Math.Round((value.X - viewport.X) * renderSize.Width / (double)viewport.Width);
+        var top = (int)Math.Round((value.Y - viewport.Y) * renderSize.Height / (double)viewport.Height);
+        var right = (int)Math.Round((value.Right - viewport.X) * renderSize.Width / (double)viewport.Width);
+        var bottom = (int)Math.Round((value.Bottom - viewport.Y) * renderSize.Height / (double)viewport.Height);
+        return new PixelRect(left, top, Math.Max(1, right - left), Math.Max(1, bottom - top));
+    }
+
+    private void ThrowIfDisposed()
+    {
+        if (_disposed) throw new ObjectDisposedException(nameof(OverlayActionSurfaceController));
+    }
 
     private void RaiseChanged()
     {
@@ -214,15 +423,5 @@ public sealed class OverlayActionSurfaceController : IDisposable
                 Trace.TraceError("Dudu overlay change listener failed: {0}", exception);
             }
         }
-    }
-}
-
-internal static class OverlayActionSurfaceObserver
-{
-    public static async Task ObserveAsync(OverlayActionSurfaceController surface, PixelPoint point, Action<Exception> report)
-    {
-        try { await surface.HandlePointerAsync(point); }
-        catch (OperationCanceledException) { }
-        catch (Exception exception) { report(exception); }
     }
 }

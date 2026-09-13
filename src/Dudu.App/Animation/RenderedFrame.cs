@@ -20,6 +20,8 @@ public sealed class RenderedFrame : IDisposable
         string source,
         TimeSpan semanticDuration,
         TimeSpan frameDuration,
+        IReadOnlyList<Dudu.App.Overlay.PixelRect>? overlayHitRegions,
+        long overlayGeometryVersion,
         IFrameBufferReleaser? releaser)
     {
         ArgumentNullException.ThrowIfNull(buffer);
@@ -73,6 +75,8 @@ public sealed class RenderedFrame : IDisposable
         Source = source;
         SemanticDuration = semanticDuration;
         FrameDuration = frameDuration;
+        OverlayHitRegions = overlayHitRegions?.ToArray() ?? [];
+        OverlayGeometryVersion = overlayGeometryVersion;
         _releaser = releaser;
     }
 
@@ -102,6 +106,11 @@ public sealed class RenderedFrame : IDisposable
     public TimeSpan SemanticDuration { get; }
 
     public TimeSpan FrameDuration { get; }
+
+    /// <summary>Action regions in this frame's source-pixel coordinate space.
+    /// The presenter snapshots and scales them with the exact frame it shows.</summary>
+    public IReadOnlyList<Dudu.App.Overlay.PixelRect> OverlayHitRegions { get; }
+    public long OverlayGeometryVersion { get; }
 
     public bool IsDisposed => Volatile.Read(ref _buffer) is null;
 

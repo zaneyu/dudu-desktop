@@ -6,6 +6,19 @@ namespace Dudu.App.Tests.Overlay;
 
 public sealed class LayeredFramePresenterTests
 {
+    [Fact]
+    public void Presented_overlay_regions_scale_with_the_exact_source_and_client_geometry()
+    {
+        var regions = LayeredFramePresenter.ScaleRegionsToClient(
+            [new PixelRect(64, 32, 64, 48)],
+            sourceWidth: 256,
+            sourceHeight: 128,
+            clientWidth: 512,
+            clientHeight: 384);
+
+        Assert.Equal(new PixelRect(128, 96, 128, 144), Assert.Single(regions));
+    }
+
     [Theory]
     [InlineData(-1920, 48, 0.5)]
     [InlineData(1440, -120, 2.0)]

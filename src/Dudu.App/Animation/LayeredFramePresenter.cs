@@ -21,6 +21,7 @@ public sealed class LayeredFramePresenter : IFramePresenter, IDisposable
     private bool _disposed;
     private PresentedFrameInfo? _current;
     private byte[]? _hitTestBuffer;
+    private IReadOnlyList<PixelRect> _presentedOverlayHitRegions = [];
 
     public LayeredFramePresenter()
     {
@@ -78,13 +79,22 @@ public sealed class LayeredFramePresenter : IFramePresenter, IDisposable
                 _hitTestBuffer = new byte[bytes.Length];
             }
             bytes.CopyTo(_hitTestBuffer);
+            _presentedOverlayHitRegions = ScaleRegionsToClient(
+                frame.OverlayHitRegions,
+                frame.Width,
+                frame.Height,
+                _windowState.Bounds.Width,
+                _windowState.Bounds.Height);
             _current = new PresentedFrameInfo(
                 frame.Width,
                 frame.Height,
                 frame.Stride,
                 frame.Opacity,
                 _windowState.Bounds,
-                _windowState.Scale);
+                _windowState.Scale)
+            {
+                OverlayGeometryVersion = frame.OverlayGeometryVersion,
+            };
         }
 
         return ValueTask.CompletedTask;
@@ -98,6 +108,7 @@ public sealed class LayeredFramePresenter : IFramePresenter, IDisposable
             _window = HWND.Null;
             _current = null;
             _hitTestBuffer = null;
+            _presentedOverlayHitRegions = [];
         }
     }
 
@@ -115,7 +126,7 @@ public sealed class LayeredFramePresenter : IFramePresenter, IDisposable
                     current.Bounds.Height,
                     windowX,
                     windowY,
-                    explicitHitRegions);
+                    explicitHitRegions ?? _presentedOverlayHitRegions);
         }
     }
 
@@ -140,6 +151,24 @@ public sealed class LayeredFramePresenter : IFramePresenter, IDisposable
     }
 
     internal object HostUpdateGate => _gate;
+
+    internal static IReadOnlyList<PixelRect> ScaleRegionsToClient(
+        IReadOnlyList<PixelRect> regions,
+        int sourceWidth,
+        int sourceHeight,
+        int clientWidth,
+        int clientHeight)
+    {
+        if (regions.Count == 0) return [];
+        return regions.Select(region =>
+        {
+            var left = (int)Math.Floor(region.X * clientWidth / (double)sourceWidth);
+            var top = (int)Math.Floor(region.Y * clientHeight / (double)sourceHeight);
+            var right = (int)Math.Ceiling(region.Right * clientWidth / (double)sourceWidth);
+            var bottom = (int)Math.Ceiling(region.Bottom * clientHeight / (double)sourceHeight);
+            return new PixelRect(left, top, Math.Max(1, right - left), Math.Max(1, bottom - top));
+        }).ToArray();
+    }
 
     /// <summary>
     /// Describes the immutable placement inputs used by UpdateLayeredWindow.
@@ -329,7 +358,10 @@ public readonly record struct PresentedFrameInfo(
     int Stride,
     float Opacity,
     PixelRect Bounds,
-    double Scale);
+    double Scale)
+{
+    public long OverlayGeometryVersion { get; init; }
+}
 
 public readonly record struct LayeredFrameUpdate(
     PixelRect Bounds,

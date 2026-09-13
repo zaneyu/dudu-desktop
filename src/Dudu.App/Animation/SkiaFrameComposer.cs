@@ -144,11 +144,14 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
             _paint!.Color = new SKColor(255, 255, 255, (byte)Math.Round(opacity * byte.MaxValue));
             var destination = new SKRect(0, 0, dimensions.Width, dimensions.Height);
             _canvas.DrawBitmap(bitmap, destination, SamplingOptions, _paint);
+            OverlaySurfaceSnapshot? overlaySnapshot = null;
             if (_actionSurface is not null)
             {
+                overlaySnapshot = _actionSurface.CreateRenderSnapshot(
+                    new PixelSize(dimensions.Width, dimensions.Height));
                 OverlaySurfaceRenderer.Draw(
                     _canvas,
-                    _actionSurface.CreateRenderSnapshot(),
+                    overlaySnapshot,
                     _overlayPalette);
             }
 
@@ -168,6 +171,8 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
                     source,
                     semanticDuration,
                     frameDuration,
+                    overlaySnapshot?.Actions.Select(action => action.HitRegion).ToArray(),
+                    overlaySnapshot?.GeometryVersion ?? 0,
                     this);
             }
             catch

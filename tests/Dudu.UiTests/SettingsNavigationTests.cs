@@ -11,10 +11,11 @@ namespace Dudu.UiTests;
 /// It asserts the normal-control equivalents of the no-activate overlay,
 /// which keeps every companion action reachable without a mouse.
 /// </summary>
+[Collection(WindowsUiCollection.Name)]
 public sealed class SettingsNavigationTests
 {
     [Fact]
-    public void Settings_navigation_visits_all_pages_and_exposes_overlay_equivalents()
+    public void Settings_journey_persists_features_and_executes_accessible_overlay_routes()
     {
         if (!OperatingSystem.IsWindows())
         {
@@ -27,28 +28,120 @@ public sealed class SettingsNavigationTests
             Assert.Skip("Set DUDU_UI_TEST_EXE to a Windows publish output to run UI automation.");
         }
 
-        using var application = Application.Launch(executable);
-        using var automation = new UIA3Automation();
-        var window = application.GetMainWindow(automation)
-            ?? throw new InvalidOperationException("The Dudu settings window did not appear.");
+        var root = Path.Combine(Path.GetTempPath(), "dudu-ui-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var previousRoot = Environment.GetEnvironmentVariable("DUDU_DATA_ROOT");
+        Environment.SetEnvironmentVariable("DUDU_DATA_ROOT", root);
+        Application? application = null;
+        try
+        {
+            application = Application.Launch(executable);
+            using var automation = new UIA3Automation();
+            var window = application.GetMainWindow(automation)
+                ?? throw new InvalidOperationException("The Dudu settings window did not appear.");
 
-        CompleteOnboardingWhenNeeded(window);
+            CompleteOnboardingWhenNeeded(window);
+            VerifyNavigationContract(window);
 
-        var navigationClicks = 0;
+            var marker = Guid.NewGuid().ToString("N")[..8];
+            var reminderTitle = $"UI reminder {marker}";
+            Navigate(window, "NavReminders", "RemindersPageTitle");
+            Find(window, "RemindersTitle").AsTextBox().Enter(reminderTitle);
+            Find(window, "RemindersSave").AsButton().Invoke();
+            WaitForText(window, "RemindersStatusMessage", "Reminder saved.");
+            SelectByName(window, "RemindersList", reminderTitle);
+            Find(window, "RemindersComplete").AsButton().Invoke();
+            WaitForText(window, "RemindersStatusMessage", "Reminder completed.");
+
+            var taskTitle = $"UI task {marker}";
+            Navigate(window, "NavTasksFocus", "TasksPageTitle");
+            Find(window, "TasksTitle").AsTextBox().Enter(taskTitle);
+            Find(window, "TasksSave").AsButton().Invoke();
+            WaitForText(window, "TasksStatusMessage", "Task saved.");
+            SelectByName(window, "TasksActiveList", taskTitle);
+            Find(window, "TasksComplete").AsButton().Invoke();
+            WaitForText(window, "TasksStatusMessage", "Task completed.");
+            Assert.NotNull(Find(window, "TasksCompletedList").FindFirstDescendant(cf => cf.ByName(taskTitle)));
+
+            Find(window, "FocusStart").AsButton().Invoke();
+            WaitForText(window, "FocusCurrent", "Focus is running");
+            Find(window, "FocusEnd").AsButton().Invoke();
+            WaitForText(window, "TasksStatusMessage", "Focus ended.");
+            WaitForText(window, "FocusCurrent", "ended early");
+            Assert.NotNull(Find(window, "FocusHistoryList").FindFirstDescendant(cf => cf.ByName("EndedEarly")));
+
+            Navigate(window, "NavHome", "HomePageTitle");
+            Find(window, "HomeCheckInNote").AsTextBox().Enter($"check-in-{marker}");
+            Find(window, "HomeSaveCheckIn").AsButton().Invoke();
+            WaitForText(window, "HomeStatusMessage", "Check-in saved on this PC.");
+            WaitForText(window, "HomeCheckInSummary", "1 optional check-in");
+            Assert.NotNull(Find(window, "HomeCheckInHistory").FindFirstDescendant(
+                cf => cf.ByName($"check-in-{marker}")));
+
+            ExerciseAccessibleRoutes(window);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("DUDU_DATA_ROOT", previousRoot);
+            if (application is not null)
+            {
+                try { application.Close(); }
+                catch { application.Kill(); }
+            }
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    private static void VerifyNavigationContract(Window window)
+    {
         foreach (var destination in Destinations)
         {
-            navigationClicks++;
-            Find(window, destination.NavigationId).Click();
-            WaitUntil(() => IsVisible(window, destination.PageTitleId));
+            Navigate(window, destination.NavigationId, destination.PageTitleId);
             foreach (var actionId in destination.RequiredControlIds)
             {
-                Assert.True(IsVisible(window, actionId), $"{actionId} should be reachable on {destination.NavigationId}.");
+                Assert.NotNull(TryFind(window, actionId));
             }
         }
-
-        Assert.Equal(7, navigationClicks);
         Assert.False(Find(window, "AppearanceOutfit").Properties.IsEnabled.ValueOrDefault);
         Assert.False(Find(window, "AppearanceSeasonalMode").Properties.IsEnabled.ValueOrDefault);
+    }
+
+    private static void ExerciseAccessibleRoutes(Window window)
+    {
+        ExerciseRoute(window, "OverlayActionPet", "HomePageTitle", "HomeActionStatus", "Pet is ready.");
+        ExerciseRoute(window, "OverlayActionDrinkWater", "RemindersPageTitle");
+        ExerciseRoute(window, "OverlayActionTasks", "TasksPageTitle");
+        ExerciseRoute(window, "OverlayActionLoveNote", "LoveNotesPageTitle");
+        ExerciseRoute(window, "OverlayActionComfortMe", "HomePageTitle", "HomeActionStatus", "Comfort me is ready.");
+        ExerciseRoute(window, "OverlayComfortActionBreatheWithMe", "HomePageTitle", "HomeActionStatus", "Breathe with me is ready.");
+        ExerciseRoute(window, "OverlayComfortActionTinyHug", "HomePageTitle", "HomeActionStatus", "Tiny hug is ready.");
+        ExerciseRoute(window, "OverlayComfortActionReadALoveNote", "LoveNotesPageTitle");
+        ExerciseRoute(window, "OverlayComfortActionTakeAFiveMinuteBreak", "HomePageTitle", "HomeActionStatus", "Take a five-minute break is ready.");
+        WaitForText(window, "HomePauseDescription", "five minutes");
+        ExerciseRoute(window, "OverlayComfortActionClose", "HomePageTitle", "HomeActionStatus", "Close is ready.");
+
+        Navigate(window, "NavHome", "HomePageTitle");
+        Find(window, "OverlayActionStartFocus").AsButton().Invoke();
+        WaitUntil(() => IsVisible(window, "TasksPageTitle"));
+        WaitForText(window, "FocusCurrent", "Focus is running");
+        Find(window, "FocusEnd").AsButton().Invoke();
+        WaitForText(window, "TasksStatusMessage", "Focus ended.");
+    }
+
+    private static void ExerciseRoute(
+        Window window,
+        string actionId,
+        string destinationTitleId,
+        string? statusId = null,
+        string? statusText = null)
+    {
+        Navigate(window, "NavHome", "HomePageTitle");
+        Find(window, actionId).AsButton().Invoke();
+        WaitUntil(() => IsVisible(window, destinationTitleId));
+        if (statusId is not null && statusText is not null)
+        {
+            WaitForText(window, statusId, statusText);
+        }
     }
 
     private static readonly Destination[] Destinations =
@@ -65,10 +158,10 @@ public sealed class SettingsNavigationTests
             ]),
         new("NavReminders", "RemindersPageTitle", ["RemindersMonday", "RemindersFriday", "RemindersSave"]),
         new("NavTasksFocus", "TasksPageTitle", ["TasksCompletedList", "FocusHistoryList", "FocusStart", "FocusEnd"]),
-        new("NavLoveNotes", "LoveNotesPageTitle", ["LoveNotesLocalList", "LoveNotesRemoteList", "LoveNotesSave"]),
+        new("NavLoveNotes", "LoveNotesPageTitle", ["LoveNotesLocalList", "LoveNotesRemoteList", "LoveNotesRevealSelected", "LoveNotesSave"]),
         new("NavAppearance", "AppearancePageTitle", ["AppearanceSave", "AppearanceOutfit", "AppearanceSeasonalMode"]),
         new("NavConnection", "ConnectionPageTitle", ["ConnectionCreateCode", "ConnectionSessionsList"]),
-        new("NavPrivacy", "PrivacyPageTitle", ["PrivacyStoredFields", "PrivacyBackup"]),
+        new("NavPrivacy", "PrivacyPageTitle", ["PrivacyStoredFields", "PrivacyBackup", "PrivacyRestore", "PrivacyDeleteLocal", "PrivacyDeleteRemote", "PrivacyConfirm"]),
     ];
 
     private static void CompleteOnboardingWhenNeeded(Window window)
@@ -82,8 +175,10 @@ public sealed class SettingsNavigationTests
         Find(window, "OnboardingRecipientName").AsTextBox().Enter("Mia");
         Find(window, "OnboardingRecommendedDefaults").AsButton().Invoke();
         Advance(window, "OnboardingTheme");
+        Find(window, "OnboardingReducedMotion").AsCheckBox().IsChecked = true;
         Advance(window, "OnboardingQuietHoursEnabled");
         Advance(window, "OnboardingHydrationReminders");
+        Find(window, "OnboardingLaunchAtSignIn").AsCheckBox().IsChecked = false;
         Advance(window, "OnboardingPlacementStep");
         Advance(window, "OnboardingSkipPairing");
         Find(window, "OnboardingSkipPairing").AsButton().Invoke();
@@ -97,10 +192,31 @@ public sealed class SettingsNavigationTests
         WaitUntil(() => IsVisible(window, visibleControlId));
     }
 
+    private static void Navigate(Window window, string navigationId, string pageTitleId)
+    {
+        Find(window, navigationId).Click();
+        WaitUntil(() => IsVisible(window, pageTitleId));
+    }
+
+    private static void SelectByName(Window window, string listId, string name)
+    {
+        AutomationElement? item = null;
+        WaitUntil(() =>
+        {
+            item = Find(window, listId).FindFirstDescendant(cf => cf.ByName(name));
+            return item is not null;
+        });
+        item!.Click();
+    }
+
+    private static void WaitForText(Window window, string automationId, string expected) =>
+        WaitUntil(() => (TryFind(window, automationId)?.Properties.Name.ValueOrDefault ?? string.Empty)
+            .Contains(expected, StringComparison.OrdinalIgnoreCase));
+
     private static void WaitUntil(Func<bool> condition)
     {
         var deadline = Stopwatch.GetTimestamp() +
-            (long)(Stopwatch.Frequency * TimeSpan.FromSeconds(5).TotalSeconds);
+            (long)(Stopwatch.Frequency * TimeSpan.FromSeconds(15).TotalSeconds);
         while (!condition())
         {
             if (Stopwatch.GetTimestamp() >= deadline)

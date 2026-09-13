@@ -65,6 +65,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private readonly CancellationTokenSource _startupCancellation = new();
     private readonly CancellationToken _creationCancellation;
     private readonly OverlayOwnerMessageRouter _ownerMessageRouter;
+    private readonly OverlayActionDispatchQueue _actionDispatchQueue;
     private CancellationTokenRegistration _creationRegistration;
     private PetPlacement _placement;
     private PixelRect _windowBounds;
@@ -104,6 +105,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         _systemMessageHandler = systemMessageHandler;
         _bubbleHitRegions = bubbleHitRegions?.ToArray() ?? [];
         _diagnostic = diagnostic ?? ReportDiagnostic;
+        _actionDispatchQueue = new OverlayActionDispatchQueue(_diagnostic);
         _creationCancellation = creationCancellation;
         _ownerActions = new OwnerActionQueue(
             () => _ownerThreadId == Environment.CurrentManagedThreadId,
@@ -565,6 +567,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         }
 
         _windowBounds = bounds;
+        _actionSurface?.UpdateViewport(new PixelRect(0, 0, bounds.Width, bounds.Height));
     }
 
     private void SetNativeWindowState(PixelRect bounds)
@@ -734,6 +737,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                 break;
             case WmDestroy:
                 ReleasePointerCapture();
+                _actionDispatchQueue.Dispose();
                 Hosts.TryRemove((nint)_window.Value, out _);
                 if (!_shutdownIssued)
                 {
@@ -825,6 +829,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         }
 
         _shutdownIssued = true;
+        _actionDispatchQueue.Dispose();
         _ownerActions.Close(new ObjectDisposedException(nameof(OverlayWindowHost)));
         ReleasePointerCapture();
         if (!_window.IsNull)
@@ -886,8 +891,8 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         _presenter is LayeredFramePresenter layered
         && layered.IsInteractiveAt(x, y, CurrentBubbleHitRegions());
 
-    private IReadOnlyList<PixelRect> CurrentBubbleHitRegions() =>
-        _actionSurface?.HitRegions ?? _bubbleHitRegions;
+    private IReadOnlyList<PixelRect>? CurrentBubbleHitRegions() =>
+        _actionSurface is null ? _bubbleHitRegions : null;
 
     private bool TryArmActionSurfacePointer(LPARAM lParam)
     {
@@ -903,7 +908,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         if (_actionSurface is null) return false;
         var point = GetClientPoint(lParam);
         if (!_actionSurface.Contains(new PixelPoint(point.X, point.Y))) return false;
-        _ = OverlayActionSurfaceObserver.ObserveAsync(_actionSurface, new PixelPoint(point.X, point.Y), ReportDiagnostic);
+        _actionDispatchQueue.Enqueue(_actionSurface, new PixelPoint(point.X, point.Y));
         return true;
     }
 
