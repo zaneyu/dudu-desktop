@@ -40,7 +40,7 @@ public sealed partial class ConnectionPage : Page
     {
         ConnectionAvailability.Text = ViewModel.Availability switch
         {
-            PairingAvailability.Available => "dudu is here",
+            PairingAvailability.Available => "can pair now",
             PairingAvailability.NeedsRepair => "pairing needs repair",
             _ => "pairing is offline",
         };

@@ -73,21 +73,21 @@ public sealed class PrivacyDataViewModel : FeatureViewModelBase
     };
     public ObservableCollection<StoredFieldDescription> StoredFields { get; } =
     [
-        Local("profile", "recipient name and whether setup is complete.", "until local deletion.", true),
-        Local("preferences", "theme, motion, quiet hours, note limit, startup, layering, fullscreen, and reminder defaults.", "until changed or locally deleted.", true),
-        Local("pet placement", "monitor identifier, normalized position, and scale.", "until changed or locally deleted.", true),
-        Local("reminders and occurrences", "titles, schedules, quiet-hours behavior, next due, snooze state, completion times.", "until u delete them or delete local data.", true),
-        Local("tasks", "task text, due dates, completion state, timestamps.", "until u delete them or delete local data.", true),
-        Local("focus history", "optional task link, start/end times, paused remainder, duration, and completion status.", "until local deletion.", true),
-        Local("countdowns", "titles, target date or time, all-day choice, and display time zone.", "until u delete them or delete local data.", true),
-        Local("local notes", "bundled defaults and notes u save in local note jar.", "until u delete a note or delete local data.", true),
-        Local("local-note display history", "which note shown, when, and if dudu picked it unprompted.", "used to limit repetition removed by local deletion.", true),
-        new("remote envelopes", "encrypted ciphertext until note opened plaintext only in memory unless u save.", "encrypted data passes through pairing relay reveal sends no read receipt.", "until reveal/acknowledgment, deletion, or the relays 30-day undelivered limit.", "backed up locally local deletion removes it remote deletion erases relay copy."),
-        Local("processed message ids", "opaque message ids and processing timestamps used to prevent duplicate remote-note delivery.", "retained locally for deduplication until local deletion.", true),
-        Local("check-ins", "mood choice, optional note, timestamp entered manually dudu never infers mood.", "until local deletion.", true),
-        new("pairing and sessions", "machine-bound keys plus pairing, expiry, revocation, sender-session metadata no browser history.", "pairing metadata and encrypted traffic use the relay while pairing is enabled.", "until revocation, remote deletion, or local deletion.", "machine-bound secrets never in backups restoring on another pc needs pairing again."),
-        Local("imported asset-pack metadata", "pack id, version, local manifest path, attribution, private-use flag, and selected state.", "until the pack or local data is deleted.", true),
-        Local("notification state", "delivery preferences, quiet-hour deferrals, next-due and snooze state nothing else tracked.", "until the related reminder or local data is deleted.", true),
+        Local("profile", "recipient name and whether setup is complete", "until local deletion", true),
+        Local("preferences", "theme, motion, quiet hours, note limit, startup, layering, fullscreen, and reminder defaults", "until changed or locally deleted", true),
+        Local("pet placement", "monitor identifier, normalized position, and scale", "until changed or locally deleted", true),
+        Local("reminders and occurrences", "titles, schedules, quiet-hours behavior, next due, snooze state, completion times", "until u delete them or delete local data", true),
+        Local("tasks", "task text, due dates, completion state, timestamps", "until u delete them or delete local data", true),
+        Local("focus history", "optional task link, start/end times, paused remainder, duration, and completion status", "until local deletion", true),
+        Local("countdowns", "titles, target date or time, all-day choice, and display time zone", "until u delete them or delete local data", true),
+        Local("local notes", "bundled defaults and notes u save in local note jar", "until u delete a note or delete local data", true),
+        Local("local-note display history", "which note shown, when, and if dudu picked it unprompted", "used to limit repetition removed by local deletion", true),
+        new("remote envelopes", "encrypted ciphertext until note opened plaintext only in memory unless u save", "encrypted data passes through pairing relay reveal sends no read receipt", "until reveal/acknowledgment, deletion, or the relays 30-day undelivered limit", "backed up locally local deletion removes it remote deletion erases relay copy"),
+        Local("processed message ids", "opaque message ids and processing timestamps used to prevent duplicate remote-note delivery", "retained locally for deduplication until local deletion", true),
+        Local("check-ins", "mood choice, optional note, timestamp entered manually dudu never infers mood", "until local deletion", true),
+        new("pairing and sessions", "machine-bound keys plus pairing, expiry, revocation, sender-session metadata no browser history", "pairing metadata and encrypted traffic use the relay while pairing is enabled", "until revocation, remote deletion, or local deletion", "machine-bound secrets never in backups restoring on another pc needs pairing again"),
+        Local("imported asset-pack metadata", "pack id, version, local manifest path, attribution, private-use flag, and selected state", "until the pack or local data is deleted", true),
+        Local("notification state", "delivery preferences, quiet-hour deferrals, next-due and snooze state nothing else tracked", "until the related reminder or local data is deleted", true),
     ];
 
     private static StoredFieldDescription Local(
@@ -97,11 +97,11 @@ public sealed class PrivacyDataViewModel : FeatureViewModelBase
         bool includedInBackup) => new(
             name,
             description,
-            "does not leave this pc.",
+            "does not leave this pc",
             retention,
             includedInBackup
-                ? "included in backups removed from database and backups on local deletion."
-                : "not included in backups removed by local deletion.");
+                ? "included in backups removed from database and backups on local deletion"
+                : "not included in backups removed by local deletion");
 
     public Task BackupAsync(CancellationToken cancellationToken = default) =>
         RunAsync(() => _context.BackupAsync(cancellationToken), "oki backup created on this pc");

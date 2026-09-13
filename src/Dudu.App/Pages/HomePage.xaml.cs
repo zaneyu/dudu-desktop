@@ -110,7 +110,7 @@ public sealed partial class HomePage : Page
             var commands = _overlayCommands ?? throw new InvalidOperationException(
                 "aiyo dudus action controls not ready yet");
             await commands.ExecuteAccessibleAsync(action);
-            HomeActionStatus.Text = $"{ActionBubbleLayout.Label(action)} is ready.";
+            HomeActionStatus.Text = $"{ActionBubbleLayout.Label(action)} ready le";
         }
         catch (Exception exception)
         {
@@ -129,7 +129,7 @@ public sealed partial class HomePage : Page
             var commands = _overlayCommands ?? throw new InvalidOperationException(
                 "oh no dudus comfort controls not ready");
             await commands.ExecuteComfortAccessibleAsync(action);
-            HomeActionStatus.Text = $"{ActionBubbleLayout.ComfortLabel(action)} is ready.";
+            HomeActionStatus.Text = $"{ActionBubbleLayout.ComfortLabel(action)} ready le";
         }
         catch (Exception exception)
         {

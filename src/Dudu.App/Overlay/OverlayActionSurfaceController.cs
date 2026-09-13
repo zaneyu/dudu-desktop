@@ -66,7 +66,7 @@ public sealed class OverlayActionSurfaceController : IDisposable
     /// change while preserving the pet anchor's normalized location.</summary>
     public void UpdateViewport(PixelRect workArea)
     {
-        if (!workArea.IsValid) throw new ArgumentException("aiyo work area must be valid", nameof(workArea));
+        if (!workArea.IsValid) throw new ArgumentException("wait work area must be valid", nameof(workArea));
         lock (_gate)
         {
             ThrowIfDisposed();

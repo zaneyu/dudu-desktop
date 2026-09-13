@@ -108,7 +108,7 @@ public sealed class PetStateMachine
                 break;
 
             default:
-                throw new ArgumentOutOfRangeException(nameof(petEvent), petEvent, "aiyo unknown pet event");
+                throw new ArgumentOutOfRangeException(nameof(petEvent), petEvent, "oh no unknown pet event");
         }
 
         _current = Select();

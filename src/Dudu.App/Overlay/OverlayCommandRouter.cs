@@ -74,7 +74,7 @@ public sealed class OverlayCommandRouter
             OverlayAction.Tasks => NavigateAsync("tasks", cancellationToken),
             OverlayAction.LoveNote => NavigateAsync("notes", cancellationToken),
             OverlayAction.ComfortMe => ExecuteComfortAsync(cancellationToken),
-            _ => throw new ArgumentOutOfRangeException(nameof(action), action, "aiyo unknown overlay action"),
+            _ => throw new ArgumentOutOfRangeException(nameof(action), action, "alala unknown overlay action"),
         };
 
     public Task ExecuteComfortAsync(
@@ -86,7 +86,7 @@ public sealed class OverlayCommandRouter
             ComfortAction.ReadALoveNote => NavigateAsync("notes", cancellationToken),
             ComfortAction.TakeAFiveMinuteBreak => TakeFiveMinuteBreakAsync(cancellationToken),
             ComfortAction.Close => CloseComfortAsync(cancellationToken),
-            _ => throw new ArgumentOutOfRangeException(nameof(action), action, "aiyo unknown comfort action"),
+            _ => throw new ArgumentOutOfRangeException(nameof(action), action, "wait unknown comfort action"),
         };
 
     /// <summary>Runs the same operation exposed by the pointer-only overlay
@@ -117,7 +117,7 @@ public sealed class OverlayCommandRouter
                 await ExecuteComfortAsync(cancellationToken);
                 break;
             default:
-                throw new ArgumentOutOfRangeException(nameof(action), action, "aiyo unknown overlay action");
+                throw new ArgumentOutOfRangeException(nameof(action), action, "hmm unknown overlay action");
         }
 
         await NavigateAsync(EquivalentSettingsDestination(action), cancellationToken);
@@ -145,7 +145,7 @@ public sealed class OverlayCommandRouter
         OverlayAction.StartFocus or OverlayAction.Tasks => "tasks",
         OverlayAction.LoveNote => "notes",
         OverlayAction.ComfortMe => "home",
-        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "aiyo unknown overlay action"),
+        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "oh no unknown overlay action"),
     };
 
     public static string EquivalentSettingsDestination(ComfortAction action) => action switch
@@ -153,7 +153,7 @@ public sealed class OverlayCommandRouter
         ComfortAction.BreatheWithMe or ComfortAction.TinyHug
             or ComfortAction.TakeAFiveMinuteBreak or ComfortAction.Close => "home",
         ComfortAction.ReadALoveNote => "notes",
-        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "aiyo unknown comfort action"),
+        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "alala unknown comfort action"),
     };
 
     private Task ExecutePetAsync(CancellationToken cancellationToken) =>

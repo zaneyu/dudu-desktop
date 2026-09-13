@@ -108,17 +108,17 @@ public sealed class SettingsNavigationTests
 
     private static void ExerciseAccessibleRoutes(Window window)
     {
-        ExerciseRoute(window, "OverlayActionPet", "HomePageTitle", "HomeActionStatus", "pet is ready.");
+        ExerciseRoute(window, "OverlayActionPet", "HomePageTitle", "HomeActionStatus", "pet ready le");
         ExerciseRoute(window, "OverlayActionDrinkWater", "RemindersPageTitle");
         ExerciseRoute(window, "OverlayActionTasks", "TasksPageTitle");
         ExerciseRoute(window, "OverlayActionLoveNote", "LoveNotesPageTitle");
-        ExerciseRoute(window, "OverlayActionComfortMe", "HomePageTitle", "HomeActionStatus", "comfort me is ready.");
-        ExerciseRoute(window, "OverlayComfortActionBreatheWithMe", "HomePageTitle", "HomeActionStatus", "breathe with me is ready.");
-        ExerciseRoute(window, "OverlayComfortActionTinyHug", "HomePageTitle", "HomeActionStatus", "tiny hug is ready.");
+        ExerciseRoute(window, "OverlayActionComfortMe", "HomePageTitle", "HomeActionStatus", "comfort me ready le");
+        ExerciseRoute(window, "OverlayComfortActionBreatheWithMe", "HomePageTitle", "HomeActionStatus", "breathe with me ready le");
+        ExerciseRoute(window, "OverlayComfortActionTinyHug", "HomePageTitle", "HomeActionStatus", "tiny hug ready le");
         ExerciseRoute(window, "OverlayComfortActionReadALoveNote", "LoveNotesPageTitle");
-        ExerciseRoute(window, "OverlayComfortActionTakeAFiveMinuteBreak", "HomePageTitle", "HomeActionStatus", "take a five-minute break is ready.");
+        ExerciseRoute(window, "OverlayComfortActionTakeAFiveMinuteBreak", "HomePageTitle", "HomeActionStatus", "take a five-minute break ready le");
         WaitForText(window, "HomePauseDescription", "five minutes");
-        ExerciseRoute(window, "OverlayComfortActionClose", "HomePageTitle", "HomeActionStatus", "close is ready.");
+        ExerciseRoute(window, "OverlayComfortActionClose", "HomePageTitle", "HomeActionStatus", "close ready le");
 
         Navigate(window, "NavHome", "HomePageTitle");
         Find(window, "OverlayActionStartFocus").AsButton().Invoke();

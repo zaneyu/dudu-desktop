@@ -69,7 +69,7 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
     public bool IsPaired => Availability == PairingAvailability.Available && SessionCount > 0;
     public string AvailabilityText => Availability switch
     {
-        PairingAvailability.Available => "dudu is here",
+        PairingAvailability.Available => "can pair now",
         PairingAvailability.NeedsRepair => "pairing needs fixing before it works",
         _ => "pairing offline dudu still works here",
     };
