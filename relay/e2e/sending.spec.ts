@@ -49,6 +49,11 @@ test("a dropped connection or 5xx keeps the note text and shows a failure status
   await expect(page.getByTestId("send-status")).toHaveText("aiyo couldnt send try again");
   await expect(page.getByLabel("Message")).toHaveValue("still here if it fails");
   expect(api.lastDecryptedPayload).toBeNull();
+
+  // Nothing about the draft changed between the two attempts, so both should have gone out
+  // under the same messageId -- an identical retry must dedup against the relay, not queue twice.
+  expect(api.sentMessageIds).toHaveLength(2);
+  expect(api.sentMessageIds[0]).toBe(api.sentMessageIds[1]);
 });
 
 test("a 401 mid-session drops the page back to the unpaired state", async ({ page }) => {
@@ -60,4 +65,26 @@ test("a 401 mid-session drops the page back to the unpaired state", async ({ pag
 
   await expect(page.getByRole("button", { name: "Pair privately" })).toBeVisible();
   await expect(page.getByText("phone disconnected pair again")).toBeVisible();
+});
+
+test("editing the note after a failed send mints a new message id instead of reusing the stale one", async ({
+  page,
+}) => {
+  const api = await openPairedSender(page);
+  await page.getByLabel("Message").fill("first attempt, before the edit");
+
+  api.failNextSend = "abort";
+  await page.getByRole("button", { name: "Send note" }).click();
+  await expect(page.getByTestId("send-status")).toHaveText("aiyo couldnt send try again");
+
+  // The user edits the text rather than clearing it -- the retry must NOT reuse the first
+  // attempt's messageId, or the relay's same-ID dedup would silently keep the pre-edit content
+  // and report success while discarding the edit.
+  await page.getByLabel("Message").fill("second attempt, after the edit");
+  await page.getByRole("button", { name: "Send note" }).click();
+  await expect(page.getByTestId("send-status")).toHaveText("Queued securely");
+
+  expect(api.lastDecryptedPayload?.text).toBe("second attempt, after the edit");
+  expect(api.sentMessageIds).toHaveLength(2);
+  expect(api.sentMessageIds[0]).not.toBe(api.sentMessageIds[1]);
 });

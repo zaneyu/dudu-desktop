@@ -46,10 +46,13 @@ export interface ComposerCallbacks {
 
 export class MessageComposer {
   private publicKeyBase64Url: string | null = null;
-  /** Minted once per draft and reused across retries so the relay's same-ID dedup collapses a
-   * retried send onto the original, instead of a `fetch` failure after the relay already queued
-   * the message producing a second, duplicate queued note. Cleared (forcing a fresh id) after a
-   * successful send or whenever the user clears the message text — see `wire()`. */
+  /** Minted once per draft and reused only across an *identical* retry, so the relay's same-ID
+   * dedup collapses a retried send onto the original instead of producing a second, duplicate
+   * queued note. Must NOT survive any change to what would actually be sent: the relay dedups
+   * on (sender, messageId) alone, so reusing the id across an edited retry would make the relay
+   * silently keep the pre-edit content and report success, discarding the user's edit. Cleared
+   * (forcing a fresh id on the next send) on every textarea input, reaction change, or
+   * send-later change, as well as after a successful send — see `wire()` and `reset()`. */
   private draftMessageId: string | null = null;
 
   constructor(
@@ -74,12 +77,20 @@ export class MessageComposer {
 
   private wire(): void {
     this.elements.textArea.addEventListener("input", () => {
-      // An emptied textarea means the user has abandoned this draft (or already sent it and
-      // started a new one): the next send should mint a fresh messageId, not reuse a stale one.
-      if (this.elements.textArea.value === "") {
-        this.draftMessageId = null;
-      }
+      // Any edit to the text changes what would actually be sent, so the id must not survive
+      // it -- otherwise a retry after an edit would reuse the id from the pre-edit attempt and
+      // the relay's same-ID dedup would silently keep the stale content. Only an identical
+      // retry (nothing touched between attempts) should reuse `draftMessageId`.
+      this.draftMessageId = null;
       this.updateCounter();
+    });
+    for (const reactionInput of this.elements.reactionInputs) {
+      reactionInput.addEventListener("change", () => {
+        this.draftMessageId = null;
+      });
+    }
+    this.elements.sendLaterInput.addEventListener("input", () => {
+      this.draftMessageId = null;
     });
     this.elements.previewButton.addEventListener("click", () => this.showPreview());
     this.elements.previewClose.addEventListener("click", () => this.elements.previewDialog.close());
@@ -156,9 +167,11 @@ export class MessageComposer {
       return;
     }
 
-    // Reused across retries of this same draft; only cleared on success or when the user clears
-    // the text (see `wire()` and `reset()`), so a retried send dedups against the relay's
-    // same-ID-from-same-sender idempotency instead of queuing a duplicate note.
+    // Reused only when nothing about the draft changed since the last attempt (see `wire()`,
+    // which clears it on every text/reaction/schedule edit, and `reset()` on success), so an
+    // identical retry dedups against the relay's same-ID idempotency instead of queuing a
+    // duplicate note, while an edited retry always gets a fresh id and is never silently
+    // swallowed by that same dedup.
     if (!this.draftMessageId) {
       this.draftMessageId = crypto.randomUUID();
     }

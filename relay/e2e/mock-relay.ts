@@ -24,6 +24,10 @@ export interface MockRelay {
    * page's `fetch` rejects and the composer sees `ApiNetworkError`), or an HTTP status number
    * (e.g. 500, 401, 413, 429) fulfills the response with that status and a generic error body. */
   failNextSend: "abort" | number | null;
+  /** The `messageId` from every `POST /v1/messages` request body, in request order, including
+   * ones the mock then made fail via `failNextSend` -- lets a test see whether a retry reused the
+   * same id (identical retry) or minted a new one (the draft changed since the last attempt). */
+  sentMessageIds: string[];
 }
 
 const VALID_PAIRING_CODE = "7K9M2R4X";
@@ -44,6 +48,7 @@ export async function mockRelay(page: Page): Promise<MockRelay> {
     paired: false,
     statuses: new Map(),
     failNextSend: null,
+    sentMessageIds: [],
   };
 
   await page.route("**/v1/**", async (route) => {
@@ -103,6 +108,19 @@ export async function mockRelay(page: Page): Promise<MockRelay> {
     }
 
     if (method === "POST" && url.pathname === "/v1/messages") {
+      const bodyText = request.postData() ?? "";
+      let envelope: EncryptedEnvelopeV1 | null = null;
+      try {
+        envelope = JSON.parse(bodyText) as EncryptedEnvelopeV1;
+      } catch {
+        envelope = null;
+      }
+      // Record the attempted id even when this request is about to be made to fail below, so a
+      // test can tell an identical retry (same id) apart from an edited one (new id).
+      if (envelope?.messageId) {
+        state.sentMessageIds.push(envelope.messageId);
+      }
+
       if (state.failNextSend !== null) {
         const failure = state.failNextSend;
         state.failNextSend = null;
@@ -118,14 +136,7 @@ export async function mockRelay(page: Page): Promise<MockRelay> {
         return;
       }
 
-      const bodyText = request.postData() ?? "";
       state.lastRequestBody = bodyText;
-      let envelope: EncryptedEnvelopeV1 | null = null;
-      try {
-        envelope = JSON.parse(bodyText) as EncryptedEnvelopeV1;
-      } catch {
-        envelope = null;
-      }
       if (!envelope) {
         await route.fulfill({
           status: 400,
