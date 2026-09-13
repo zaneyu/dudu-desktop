@@ -19,6 +19,11 @@ export interface QueuedMessageParams {
   nonce: string;
   ciphertext: string;
   senderSessionId: string;
+  /** `message_status.expires_utc` at insert time — `createdUtc + 24h`, independent of
+   * `expiresUtc` above (the `messages` row's 30-day ciphertext retention). Status rows are
+   * meant to be short-lived regardless of how long the ciphertext itself is retained; `ackMessage`
+   * later re-sets this to `now + 24h` on delivery, using the same 24h constant. */
+  statusExpiresUtc: string;
 }
 
 /**
@@ -55,7 +60,7 @@ export async function insertQueuedMessage(db: D1Database, params: QueuedMessageP
          VALUES (?1, ?2, ?3, 'queued', ?4, ?5)
          ON CONFLICT (id) DO NOTHING`,
       )
-      .bind(params.id, params.senderSessionId, params.deviceId, params.createdUtc, params.expiresUtc),
+      .bind(params.id, params.senderSessionId, params.deviceId, params.createdUtc, params.statusExpiresUtc),
   ]);
 }
 
@@ -214,8 +219,8 @@ export async function deleteExpiredMessages(db: D1Database, nowIso: string): Pro
   await db.prepare(`DELETE FROM messages WHERE expires_utc < ?1`).bind(nowIso).run();
 }
 
-/** Scheduled cleanup: status rows past their own expiry — 30 days for a never-delivered message,
- * or 24 hours after delivery once `ackMessage` shortens it. */
+/** Scheduled cleanup: status rows past their own expiry — 24h after creation while still queued
+ * (set by `insertQueuedMessage`), or 24h after delivery once `ackMessage` re-sets it. */
 export async function deleteExpiredMessageStatuses(db: D1Database, nowIso: string): Promise<void> {
   await db.prepare(`DELETE FROM message_status WHERE expires_utc < ?1`).bind(nowIso).run();
 }

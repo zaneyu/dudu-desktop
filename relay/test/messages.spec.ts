@@ -2,7 +2,7 @@ import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { createRecipientForTest } from "../sender-src/crypto.js";
 import { MAXIMUM_CIPHERTEXT_LENGTH } from "../src/protocol/types.js";
-import { bytesToBase64Url } from "../src/security/tokens.js";
+import { bytesToBase64Url, sha256HexOfText } from "../src/security/tokens.js";
 import {
   addMinutes,
   allRegisteredRoutes,
@@ -122,6 +122,26 @@ describe("encrypted message queue", () => {
       .run();
 
     expect(await paired.desktop.poll()).toEqual([]);
+  });
+
+  it('rate-limit bucket for message submission is keyed by SHA-256("messages:<session id>")', async () => {
+    // Cheaper and more precise than the behavioral 60-vs-61st test below: reads the bucket row
+    // `postMessage` actually wrote and checks it against the exact scope string the controller's
+    // ruling mandates, so a future refactor that silently changes the scope string (and would
+    // still pass the behavioral test) fails this one.
+    const paired = await pairedFixtureWithMessage();
+    const testEnv = env as unknown as { DB: D1Database };
+    const sessionRow = await testEnv.DB.prepare("SELECT id FROM sender_sessions WHERE device_id = ?1")
+      .bind(paired.deviceId)
+      .first<{ id: string }>();
+    expect(sessionRow).not.toBeNull();
+    const expectedKeyHash = await sha256HexOfText(`messages:${sessionRow!.id}`);
+
+    const bucket = await testEnv.DB.prepare("SELECT count FROM rate_limit_buckets WHERE key_hash = ?1")
+      .bind(expectedKeyHash)
+      .first<{ count: number }>();
+
+    expect(bucket?.count).toBe(1);
   });
 
   it("rate limits message submission to sixty per hour per sender session", async () => {

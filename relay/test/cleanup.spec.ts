@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { cleanupExpired } from "../src/cleanup.js";
 import type { Env } from "../src/env.js";
-import { messageCiphertext, pairedFixtureWithMessage } from "./helpers.js";
+import { fetchWorker, messageCiphertext, pairedFixtureWithMessage } from "./helpers.js";
 
 const testEnv = env as unknown as Env;
 
@@ -41,6 +41,22 @@ describe("hourly cleanup", () => {
       .bind(paired.messageId)
       .first();
     expect(statusRow).toBeNull();
+  });
+
+  it("expires a queued (never-delivered) status row 24h after creation, well before the 30-day ciphertext retention", async () => {
+    const paired = await pairedFixtureWithMessage();
+
+    // 25h out: past the status row's 24h-from-creation expiry, but nowhere near the ciphertext's
+    // 30-day retention window. If `message_status.expires_utc` had been set to the 30-day value
+    // instead of createdUtc+24h, this sweep would not delete it and the status check below would
+    // still return 200, not 404.
+    await cleanupExpired(testEnv, new Date(Date.now() + 25 * 60 * 60 * 1000));
+
+    expect(await messageCiphertext(paired.messageId)).not.toBeNull();
+    const statusResponse = await fetchWorker(`/v1/messages/${paired.messageId}/status`, {
+      headers: { Cookie: paired.sessionCookie },
+    });
+    expect(statusResponse.status).toBe(404);
   });
 
   it("deletes sender sessions revoked more than 24 hours ago", async () => {

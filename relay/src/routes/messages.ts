@@ -98,6 +98,10 @@ export async function postMessage(request: Request, env: Env): Promise<Response>
   const createdMs = Date.parse(envelope.createdUtc);
   const deliverAfterMs = envelope.deliverAfterUtc ? Date.parse(envelope.deliverAfterUtc) : createdMs;
   const expiresUtc = new Date(Math.max(createdMs, deliverAfterMs) + RETENTION_MS).toISOString();
+  // message_status is short-lived regardless of the ciphertext's 30-day retention: it expires
+  // 24h after creation (STATUS_GRACE_MS), the same constant ackMessage uses to re-set it to
+  // now+24h on delivery.
+  const statusExpiresUtc = new Date(createdMs + STATUS_GRACE_MS).toISOString();
 
   await insertQueuedMessage(env.DB, {
     id: envelope.messageId,
@@ -111,6 +115,7 @@ export async function postMessage(request: Request, env: Env): Promise<Response>
     nonce: envelope.nonce,
     ciphertext: envelope.ciphertext,
     senderSessionId: session.id,
+    statusExpiresUtc,
   });
 
   const response: PostMessageResponse = { messageId: envelope.messageId, status: "queued" };
