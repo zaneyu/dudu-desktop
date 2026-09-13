@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>dudu sender</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="page-header">
+        <h1>dudu</h1>
+        <p class="lede">send a private note to your desktop</p>
+      </header>
+
+      <section id="unpaired-section" class="card">
+        <form id="pairing-form" novalidate>
+          <div class="field">
+            <label for="pairing-code">Pairing code</label>
+            <input
+              id="pairing-code"
+              name="pairingCode"
+              type="text"
+              autocomplete="off"
+              autocapitalize="characters"
+              autocorrect="off"
+              spellcheck="false"
+              inputmode="text"
+              maxlength="8"
+              pattern="[0-9A-HJKMNPQRSTVWXYZ]{8}"
+              required
+            />
+            <p class="hint">the 8-character code shown on the desktop app</p>
+          </div>
+          <button type="submit">Pair privately</button>
+          <p id="pairing-status" class="status-line" aria-live="polite"></p>
+        </form>
+      </section>
+
+      <section id="paired-section" class="card" hidden>
+        <p class="lede" id="paired-greeting">paired le 🥰</p>
+
+        <form id="composer-form" novalidate>
+          <div class="field">
+            <label for="message-text">Message</label>
+            <textarea
+              id="message-text"
+              name="message"
+              maxlength="2000"
+              rows="5"
+              aria-describedby="char-counter"
+              required
+            ></textarea>
+            <p id="char-counter" class="counter">0 / 2000</p>
+          </div>
+
+          <fieldset class="field reaction-field">
+            <legend>Reaction</legend>
+            <div class="reaction-group">
+              <label><input type="radio" name="reaction" value="none" checked /> none</label>
+              <label><input type="radio" name="reaction" value="wave" /> wave</label>
+              <label><input type="radio" name="reaction" value="heart" /> heart</label>
+              <label><input type="radio" name="reaction" value="hug" /> hug</label>
+              <label><input type="radio" name="reaction" value="celebrate" /> celebrate</label>
+            </div>
+          </fieldset>
+
+          <div class="field">
+            <label for="send-later">Send later</label>
+            <input id="send-later" name="sendLater" type="datetime-local" />
+            <p id="schedule-status" class="status-line" aria-live="polite"></p>
+          </div>
+
+          <div class="actions">
+            <button type="button" id="preview-button">Preview</button>
+            <button type="submit" id="send-button">Send note</button>
+          </div>
+
+          <p id="send-status" data-testid="send-status" class="status-line" aria-live="polite"></p>
+        </form>
+
+        <dialog id="preview-dialog">
+          <p data-testid="preview" id="preview-text"></p>
+          <p id="preview-reaction" class="hint"></p>
+          <button type="button" id="preview-close">close</button>
+        </dialog>
+
+        <section class="recent" aria-labelledby="recent-heading">
+          <h2 id="recent-heading">recent</h2>
+          <ul id="recent-statuses"></ul>
+        </section>
+
+        <button type="button" id="disconnect-button">Disconnect this phone</button>
+      </section>
+    </main>
+    <script type="module" src="/dist/sender-src/main.js"></script>
+  </body>
+</html>

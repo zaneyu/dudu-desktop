@@ -130,6 +130,17 @@ export async function encryptPayload(
 }
 
 /**
+ * Best-effort zeroing of a plaintext payload buffer once it is no longer needed. JavaScript
+ * strings themselves cannot be reliably zeroed, and `encryptPayload` above encodes its own
+ * internal copy of the payload bytes that this cannot reach — so this only shortens how long a
+ * *caller-held* copy of the plaintext bytes stays resident in memory. It is not a guarantee
+ * against a compromised browser endpoint.
+ */
+export function zeroPayloadBytes(bytes: Uint8Array): void {
+  bytes.fill(0);
+}
+
+/**
  * Validates the SHAPE of an envelope — everything that can be checked without the recipient's
  * private key: protocolVersion, messageId, createdUtc, the ephemeral key's validity, and the
  * salt/nonce/ciphertext lengths. Deliberately does NOT decrypt, so Task 18's relay Worker (which

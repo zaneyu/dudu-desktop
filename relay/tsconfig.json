@@ -10,5 +10,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "sender-src/**/*.ts", "test/**/*.ts", "worker-configuration.d.ts"]
+  "include": ["src/**/*.ts", "sender-src/**/*.ts", "test/**/*.ts", "e2e/**/*.ts", "worker-configuration.d.ts"]
 }

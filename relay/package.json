@@ -10,7 +10,8 @@
     "typecheck": "tsc -p tsconfig.json",
     "types": "wrangler types",
     "test": "vitest",
-    "test:e2e": "playwright test"
+    "e2e": "npm run build && playwright test",
+    "test:e2e": "npm run build && playwright test"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.1.8",
