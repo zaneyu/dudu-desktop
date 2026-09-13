@@ -54,12 +54,12 @@ public sealed class HomeViewModel : FeatureViewModelBase
 
     public string PauseDescription => _context.GetPauseState() switch
     {
-        { Mode: PauseMode.OneHour } => "Paused for one hour.",
-        { Mode: PauseMode.FiveMinutes } => "Paused for five minutes.",
-        { Mode: PauseMode.UntilTomorrowAtSeven } => "Paused until tomorrow morning.",
-        { Mode: PauseMode.UntilFullscreenEnds } => "Paused until fullscreen work ends.",
-        { Mode: PauseMode.Indefinite } => "Paused until you resume Dudu.",
-        _ => "Dudu is available.",
+        { Mode: PauseMode.OneHour } => "paused for one hour",
+        { Mode: PauseMode.FiveMinutes } => "paused for five minutes",
+        { Mode: PauseMode.UntilTomorrowAtSeven } => "paused until tomorrow morning",
+        { Mode: PauseMode.UntilFullscreenEnds } => "paused until fullscreen work ends",
+        { Mode: PauseMode.Indefinite } => "paused until you resume dudu",
+        _ => "dudu is available",
     };
 
     public Reminder? NextReminder
@@ -96,22 +96,22 @@ public sealed class HomeViewModel : FeatureViewModelBase
     }
 
     public string NextReminderText => NextReminder is null
-        ? "No upcoming reminders."
-        : $"Next reminder: {NextReminder.Title} at {NextReminder.NextDueUtc.ToLocalTime():g}.";
+        ? "no upcoming reminders"
+        : $"next reminder: {NextReminder.Title} at {NextReminder.NextDueUtc.ToLocalTime():g}";
 
     public string ActiveFocusText => ActiveFocus is null
-        ? "No focus session is active."
-        : $"Focus is {ActiveFocus.Status.ToString().ToLowerInvariant()} with {Math.Max(0, (int)Math.Ceiling(ActiveFocus.Remaining.TotalMinutes))} minutes remaining.";
+        ? "no focus session active"
+        : $"focus is {ActiveFocus.Status.ToString().ToLowerInvariant()} with {Math.Max(0, (int)Math.Ceiling(ActiveFocus.Remaining.TotalMinutes))} min remaining";
 
     public string PetStateText => IsPaused
-        ? "Dudu is paused."
-        : $"Dudu is {PetPresentation.State.ToString().ToLowerInvariant()}.";
+        ? "dudu is paused"
+        : $"dudu is {PetPresentation.State.ToString().ToLowerInvariant()}";
 
-    public string PetAnimationText => $"Current animation: {PetPresentation.AnimationKey}.";
+    public string PetAnimationText => $"current animation {PetPresentation.AnimationKey}";
 
     public string CheckInSummaryText => CheckInSummary is null
-        ? "No recent check-ins."
-        : $"{CheckInSummary.Recent.Count} optional check-in{(CheckInSummary.Recent.Count == 1 ? string.Empty : "s")} in the last 7 days.";
+        ? "no recent check-ins"
+        : $"{CheckInSummary.Recent.Count} optional check-in{(CheckInSummary.Recent.Count == 1 ? string.Empty : "s")} in the last 7 days";
 
     public string CountdownTitle
     {
@@ -220,7 +220,7 @@ public sealed class HomeViewModel : FeatureViewModelBase
             var title = CountdownTitle.Trim();
             if (title.Length == 0)
             {
-                throw new ArgumentException("Add a title for the countdown.", nameof(CountdownTitle));
+                throw new ArgumentException("aiyo add a title for the countdown first", nameof(CountdownTitle));
             }
 
             var target = CountdownTargetUtc?.ToUniversalTime()
@@ -236,7 +236,7 @@ public sealed class HomeViewModel : FeatureViewModelBase
             if (existing is null) Countdowns.Add(countdown);
             else Countdowns[Countdowns.IndexOf(existing)] = countdown;
             SelectCountdown(null);
-        }, "Countdown saved.");
+        }, "oki countdown saved");
 
     public Task DeleteCountdownAsync(
         Countdown? countdown,
@@ -249,7 +249,7 @@ public sealed class HomeViewModel : FeatureViewModelBase
             var existing = Countdowns.FirstOrDefault(item => item.Id == countdown.Id);
             if (existing is not null) Countdowns.Remove(existing);
             if (SelectedCountdown?.Id == countdown.Id) SelectCountdown(null);
-        }, "Countdown deleted.");
+        }, "countdown deleted le");
     }
 
     public Task RecordCheckInAsync(CancellationToken cancellationToken = default) =>
@@ -264,5 +264,5 @@ public sealed class HomeViewModel : FeatureViewModelBase
             foreach (var checkIn in CheckInSummary.Recent) RecentCheckIns.Add(checkIn);
             CheckInNote = null;
             OnPropertyChanged(nameof(CheckInSummaryText));
-        }, "Check-in saved on this PC.");
+        }, "oki check-in saved on this pc");
 }

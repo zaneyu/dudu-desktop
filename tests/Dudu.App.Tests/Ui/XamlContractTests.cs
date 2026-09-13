@@ -113,7 +113,7 @@ public sealed class XamlContractTests
         Assert.Contains("IsEnabled=\"{x:Bind ViewModel.CanPersistOutfit, Mode=OneWay}\"", allPages);
         Assert.Contains("IsEnabled=\"{x:Bind ViewModel.CanConfigureSeasonalMode, Mode=OneWay}\"", allPages);
         Assert.Contains("ViewModel.OutfitAvailabilityMessage", allPages);
-        Assert.Contains("Outfit selection is unavailable", File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "ViewModels", "AppearanceViewModel.cs")));
+        Assert.Contains("outfit selection is unavailable", File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "ViewModels", "AppearanceViewModel.cs")));
         Assert.Contains("ItemsSource=\"{x:Bind ViewModel.RecentCheckIns, Mode=OneWay}\"", File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml")));
         var loveNotes = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "LoveNotesPage.xaml"));
         Assert.Contains("SelectedItem=\"{x:Bind ViewModel.SelectedRemoteEnvelope, Mode=TwoWay}\"", loveNotes);
@@ -122,7 +122,7 @@ public sealed class XamlContractTests
         var privacy = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "PrivacyDataPage.xaml"));
         Assert.Contains("AutomationProperties.AutomationId=\"PrivacyConfirmationMessage\"", privacy);
         Assert.Contains("AutomationProperties.AutomationId=\"PrivacyConfirm\"", privacy);
-        Assert.Contains("Automatic seasonal mode is unavailable", allPages);
+        Assert.Contains("automatic seasonal mode is unavailable", allPages);
         var automationIds = Regex.Matches(
                 allPages,
                 "AutomationProperties\\.AutomationId=\\\"([^\\\"]+)\\\"")
@@ -170,10 +170,10 @@ public sealed class XamlContractTests
         };
         var expectedLabels = new[]
         {
-            "Home", "Reminders", "Tasks and Focus", "Love Notes", "Appearance", "Connection", "Privacy and Data",
-            "Dudu's status", "Your reminders", "Active tasks", "Task details", "Focus", "Local note jar", "Incoming notes",
-            "Look and motion", "Pet options", "Shortcut", "Pairing status", "Paired sessions", "Stored on this PC", "Your data",
-            "Weekdays", "Completed tasks", "Focus history", "Dudu actions", "Comfort actions",
+            "home", "reminders", "tasks and focus", "love notes", "appearance", "connection", "privacy and data",
+            "dudu status", "your reminders", "active tasks", "task details", "focus", "local note jar", "incoming notes",
+            "look and motion", "pet options", "shortcut", "pairing status", "paired sessions", "stored on this pc", "your data",
+            "weekdays", "completed tasks", "focus history", "dudu actions", "comfort actions",
         };
 
         foreach (var (name, page) in pages)

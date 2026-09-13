@@ -30,7 +30,7 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
         _alwaysOnTop = preferences.AlwaysOnTop;
         _hideDuringFullscreen = preferences.HidePetDuringFullscreen;
         _petScale = 1;
-        _monitorDeviceName = "Current monitor";
+        _monitorDeviceName = "current monitor";
         SaveCommand = new AsyncRelayCommand(() => SaveAsync(CancellationToken.None));
         SavePlacementCommand = new AsyncRelayCommand(() => SavePlacementAsync(CancellationToken.None));
         ApplyOutfitCommand = new AsyncRelayCommand(() => ApplyOutfitAsync(CancellationToken.None));
@@ -41,13 +41,13 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
     public IAsyncRelayCommand SavePlacementCommand { get; }
     public IAsyncRelayCommand ApplyOutfitCommand { get; }
     public IAsyncRelayCommand SaveShortcutCommand { get; }
-    public ObservableCollection<string> OutfitOptions { get; } = ["Automatic", "Base"];
+    public ObservableCollection<string> OutfitOptions { get; } = ["automatic", "base"];
     public ObservableCollection<string> MonitorOptions { get; } = [];
     // Preferences has no outfit/seasonal fields yet. Slice 3 must disable
     // persistent controls rather than presenting a saved value that vanishes.
     public bool CanPersistOutfit => false;
     public bool CanConfigureSeasonalMode => false;
-    public string OutfitAvailabilityMessage => "Outfit selection is unavailable until Dudu can save outfit choices. The current look will stay unchanged.";
+    public string OutfitAvailabilityMessage => "outfit selection is unavailable until dudu can save outfit choices the current look will stay unchanged";
 
     public AppTheme Theme
     {
@@ -109,7 +109,7 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
                 HidePetDuringFullscreen = HideDuringFullscreen,
             }, cancellationToken);
             _applyShellTheme(Theme);
-        }, "Appearance saved.");
+        }, "oki appearance saved");
 
     public Task SavePlacementAsync(CancellationToken cancellationToken = default) =>
         RunAsync(async () =>
@@ -119,16 +119,16 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
             var current = (existing ?? new PetPlacement(MonitorDeviceName, 0.8, 0.8, PetScale)) with { Scale = PetScale };
             await _context.PetPlacements.SaveAsync(current, cancellationToken);
             await _context.ApplyPlacementAsync(current, cancellationToken);
-        }, "Pet placement saved.");
+        }, "oki pet placement saved");
 
     public Task ApplyOutfitAsync(CancellationToken cancellationToken = default) =>
         RunAsync(() => Task.FromException(new NotSupportedException(
-            "Outfit selection is unavailable until Dudu can save outfit choices.")));
+            "aiyo outfit selection not ready yet")));
 
     public Task SaveShortcutAsync(CancellationToken cancellationToken = default) =>
         RunAsync(async () =>
         {
-            if (string.IsNullOrWhiteSpace(GlobalShortcut)) throw new ArgumentException("Enter a shortcut.", nameof(GlobalShortcut));
+            if (string.IsNullOrWhiteSpace(GlobalShortcut)) throw new ArgumentException("aiyo enter a shortcut first", nameof(GlobalShortcut));
             await _context.SetGlobalShortcutAsync(GlobalShortcut.Trim(), cancellationToken);
-        }, "Shortcut active for this session.");
+        }, "oki shortcut active for this session");
 }

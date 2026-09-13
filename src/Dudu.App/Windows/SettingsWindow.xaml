@@ -11,7 +11,7 @@
 
         <Grid x:Name="AppTitleBar" Grid.Row="0" Padding="24,0" Background="{ThemeResource NavigationSurfaceBrush}"
               AutomationProperties.AutomationId="SettingsTitleBar">
-            <TextBlock Text="Dudu settings" VerticalAlignment="Center" FontSize="14" FontWeight="SemiBold" />
+            <TextBlock Text="dudu settings" VerticalAlignment="Center" FontSize="14" FontWeight="SemiBold" />
         </Grid>
 
         <NavigationView x:Name="RootNavigation"
@@ -23,13 +23,13 @@
                         SelectionChanged="RootNavigation_SelectionChanged"
                         Background="{ThemeResource NavigationSurfaceBrush}">
             <NavigationView.MenuItems>
-                <NavigationViewItem Content="Home" Tag="home" AutomationProperties.AutomationId="NavHome" />
-                <NavigationViewItem Content="Reminders" Tag="reminders" AutomationProperties.AutomationId="NavReminders" />
-                <NavigationViewItem Content="Tasks and Focus" Tag="tasks" AutomationProperties.AutomationId="NavTasksFocus" />
-                <NavigationViewItem Content="Love Notes" Tag="notes" AutomationProperties.AutomationId="NavLoveNotes" />
-                <NavigationViewItem Content="Appearance" Tag="appearance" AutomationProperties.AutomationId="NavAppearance" />
-                <NavigationViewItem Content="Connection" Tag="connection" AutomationProperties.AutomationId="NavConnection" />
-                <NavigationViewItem Content="Privacy and Data" Tag="privacy" AutomationProperties.AutomationId="NavPrivacy" />
+                <NavigationViewItem Content="home" Tag="home" AutomationProperties.AutomationId="NavHome" />
+                <NavigationViewItem Content="reminders" Tag="reminders" AutomationProperties.AutomationId="NavReminders" />
+                <NavigationViewItem Content="tasks and focus" Tag="tasks" AutomationProperties.AutomationId="NavTasksFocus" />
+                <NavigationViewItem Content="love notes" Tag="notes" AutomationProperties.AutomationId="NavLoveNotes" />
+                <NavigationViewItem Content="appearance" Tag="appearance" AutomationProperties.AutomationId="NavAppearance" />
+                <NavigationViewItem Content="connection" Tag="connection" AutomationProperties.AutomationId="NavConnection" />
+                <NavigationViewItem Content="privacy and data" Tag="privacy" AutomationProperties.AutomationId="NavPrivacy" />
             </NavigationView.MenuItems>
             <Frame x:Name="ContentFrame" />
         </NavigationView>

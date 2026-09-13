@@ -40,23 +40,23 @@ public sealed partial class ConnectionPage : Page
     {
         ConnectionAvailability.Text = ViewModel.Availability switch
         {
-            PairingAvailability.Available => "Pairing is available.",
-            PairingAvailability.NeedsRepair => "Pairing needs repair.",
-            _ => "Pairing is offline.",
+            PairingAvailability.Available => "pairing is available",
+            PairingAvailability.NeedsRepair => "pairing needs repair",
+            _ => "pairing is offline",
         };
         ConnectionPairingCode.Text = string.IsNullOrWhiteSpace(ViewModel.PairingCode)
-            ? "No active pairing code."
-            : $"Pairing code: {ViewModel.PairingCode}";
+            ? "no active pairing code"
+            : $"pairing code {ViewModel.PairingCode}";
         ConnectionCodeExpiry.Text = ViewModel.CodeExpiresUtc is { } expires
-            ? $"Code expires at {expires.ToLocalTime():g}."
-            : "No active code expiry.";
+            ? $"code expires at {expires.ToLocalTime():g}"
+            : "no active code expiry";
 
         var count = ViewModel.SessionCount;
         ConnectionSessionCount.Text = count switch
         {
-            0 => "No paired sender sessions.",
-            1 => "1 paired sender session.",
-            _ => $"{count} paired sender sessions.",
+            0 => "no paired sender sessions",
+            1 => "1 paired sender session",
+            _ => $"{count} paired sender sessions",
         };
     }
 }

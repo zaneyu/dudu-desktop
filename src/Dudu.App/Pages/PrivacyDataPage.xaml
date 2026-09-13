@@ -7,12 +7,12 @@
     <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
         <StackPanel MaxWidth="880" Margin="32" Spacing="24">
             <StackPanel Spacing="8">
-                <TextBlock Text="Privacy and Data" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="PrivacyPageTitle" />
-                <TextBlock Text="Understand what Dudu stores and choose how to keep or remove it." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <TextBlock Text="privacy and data" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="PrivacyPageTitle" />
+                <TextBlock Text="understand what dudu stores and choose how to keep or remove it" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
             </StackPanel>
 
             <StackPanel Spacing="12">
-                <TextBlock Text="Stored on this PC" Style="{StaticResource SectionHeadingStyle}" />
+                <TextBlock Text="stored on this pc" Style="{StaticResource SectionHeadingStyle}" />
                 <ItemsControl ItemsSource="{x:Bind ViewModel.StoredFields, Mode=OneWay}" AutomationProperties.AutomationId="PrivacyStoredFields">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate x:DataType="viewModels:StoredFieldDescription">
@@ -29,15 +29,15 @@
             </StackPanel>
 
             <StackPanel Spacing="12">
-                <TextBlock Text="Your data" Style="{StaticResource SectionHeadingStyle}" />
-                <TextBlock Text="Backups are stored only in Dudu's local app-data folder. Five valid database backups are retained. They include database records but not machine-bound pairing keys or files outside the database. Copying a backup off this PC is your choice and your responsibility. Remote deletion requires an available pairing relay." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <TextBlock Text="your data" Style="{StaticResource SectionHeadingStyle}" />
+                <TextBlock Text="backups are stored only in dudus local app-data folder. five valid database backups are kept. they include database records but not machine-bound pairing keys or files outside the database. copying a backup off this pc is your choice and your responsibility. remote deletion needs an available pairing relay." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                 <StackPanel Spacing="8">
-                    <Button Content="Create backup" Command="{x:Bind ViewModel.BackupCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="PrivacyBackup" />
-                    <Button Content="Restore backup" Command="{x:Bind ViewModel.RequestRestoreCommand}" AutomationProperties.AutomationId="PrivacyRestore" />
+                    <Button Content="create backup" Command="{x:Bind ViewModel.BackupCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="PrivacyBackup" />
+                    <Button Content="restore backup" Command="{x:Bind ViewModel.RequestRestoreCommand}" AutomationProperties.AutomationId="PrivacyRestore" />
                 </StackPanel>
                 <StackPanel Spacing="8">
-                    <Button Content="Delete local data" Command="{x:Bind ViewModel.RequestDeleteLocalDataCommand}" AutomationProperties.AutomationId="PrivacyDeleteLocal" />
-                    <Button Content="Delete remote device data" Command="{x:Bind ViewModel.RequestDeleteRemoteDataCommand}" AutomationProperties.AutomationId="PrivacyDeleteRemote" />
+                    <Button Content="delete local data" Command="{x:Bind ViewModel.RequestDeleteLocalDataCommand}" AutomationProperties.AutomationId="PrivacyDeleteLocal" />
+                    <Button Content="delete remote device data" Command="{x:Bind ViewModel.RequestDeleteRemoteDataCommand}" AutomationProperties.AutomationId="PrivacyDeleteRemote" />
                 </StackPanel>
                 <Border Padding="16" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource WarningBrush}" AutomationProperties.AutomationId="PrivacyConfirmationPanel">
                     <StackPanel Spacing="8">
@@ -45,7 +45,7 @@
                         <TextBlock Text="{x:Bind ViewModel.ConfirmationMessage, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Assertive" AutomationProperties.AutomationId="PrivacyConfirmationMessage" />
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <Button Content="{x:Bind ViewModel.ConfirmationButtonText, Mode=OneWay}" Command="{x:Bind ViewModel.ConfirmCommand}" AutomationProperties.AutomationId="PrivacyConfirm" />
-                            <Button Content="Cancel" Command="{x:Bind ViewModel.CancelConfirmationCommand}" AutomationProperties.AutomationId="PrivacyCancel" />
+                            <Button Content="cancel" Command="{x:Bind ViewModel.CancelConfirmationCommand}" AutomationProperties.AutomationId="PrivacyCancel" />
                         </StackPanel>
                     </StackPanel>
                 </Border>

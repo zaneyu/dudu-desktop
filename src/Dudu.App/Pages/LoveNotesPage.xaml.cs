@@ -37,14 +37,14 @@ public sealed partial class LoveNotesPage : Page
     private void RefreshCountText()
     {
         var dailyLimit = ViewModel.DailyLocalNoteLimit;
-        LoveNotesDailyLimit.Text = $"Dudu can show up to {dailyLimit} local note{(dailyLimit == 1 ? string.Empty : "s")} each day.";
+        LoveNotesDailyLimit.Text = $"dudu can show up to {dailyLimit} local note{(dailyLimit == 1 ? string.Empty : "s")} each day";
 
         var unopened = ViewModel.UnopenedRemoteNoteCount;
         LoveNotesPendingCount.Text = unopened switch
         {
-            0 => "No unopened remote notes.",
-            1 => "1 unopened remote note.",
-            _ => $"{unopened} unopened remote notes.",
+            0 => "no unopened remote notes",
+            1 => "1 unopened remote note",
+            _ => $"{unopened} unopened remote notes",
         };
     }
 

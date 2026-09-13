@@ -87,19 +87,19 @@ public sealed class CompanionFeatureContext
         });
         RevealRemoteNoteAsync = revealRemoteNoteAsync ?? ((_, _) =>
             Task.FromException<string>(new NotSupportedException(
-                "Remote note reveal is unavailable while the relay is offline.")));
+                "aiyo cant reveal notes right now relay is offline")));
         BackupAsync = backupAsync ?? ((_) => Task.FromException(
-            new NotSupportedException("Local backup is not available yet.")));
+            new NotSupportedException("aiyo backup not ready yet")));
         RestoreAsync = restoreAsync ?? ((_) => Task.FromException(
-            new NotSupportedException("Local restore is not available yet.")));
+            new NotSupportedException("aiyo restore not ready yet")));
         DeleteLocalDataAsync = deleteLocalDataAsync ?? ((_) => Task.FromException(
-            new NotSupportedException("Local data deletion is not available yet.")));
+            new NotSupportedException("aiyo cant delete local data yet")));
         DeleteRemoteDataAsync = deleteRemoteDataAsync ?? ((_) => Task.FromException(
-            new NotSupportedException("Remote data deletion is not available yet.")));
+            new NotSupportedException("aiyo cant delete remote data yet")));
         ApplyOutfitAsync = applyOutfitAsync ?? ((_, _) => Task.FromException(
-            new NotSupportedException("Outfits are not available in this companion runtime.")));
+            new NotSupportedException("aiyo outfits not available here")));
         SetGlobalShortcutAsync = setGlobalShortcutAsync ?? ((_, _) => Task.FromException(
-            new NotSupportedException("Global shortcuts are not available in this companion runtime.")));
+            new NotSupportedException("aiyo shortcuts not available here")));
     }
 
     public IClock Clock { get; }
@@ -236,6 +236,6 @@ public abstract class FeatureViewModelBase : CommunityToolkit.Mvvm.ComponentMode
             ArgumentException => exception.Message,
             KeyNotFoundException => exception.Message,
             InvalidOperationException => exception.Message,
-            _ => "Dudu could not finish that action. Try again.",
+            _ => "aiyo dudu couldnt finish that try again",
         };
 }

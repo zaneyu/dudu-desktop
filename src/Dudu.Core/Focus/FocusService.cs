@@ -41,7 +41,7 @@ public sealed class FocusService
     {
         if (duration <= TimeSpan.Zero)
         {
-            throw new ArgumentOutOfRangeException(nameof(duration), "Focus duration must be positive.");
+            throw new ArgumentOutOfRangeException(nameof(duration), "aiyo focus duration must be positive");
         }
 
         if (taskId is not null)
@@ -49,14 +49,14 @@ public sealed class FocusService
             if (_taskRepository is null)
             {
                 throw new InvalidOperationException(
-                    "The task association transition requires a task repository.");
+                    "aiyo task focus isnt wired up right now");
             }
 
             var task = await _taskRepository.GetAsync(taskId.Value, cancellationToken);
             if (task is null || task.IsCompleted)
             {
                 throw new InvalidOperationException(
-                    $"Cannot start focus for missing or completed task '{taskId}'.");
+                    $"aiyo cant start focus the task '{taskId}' is missing or already done");
             }
         }
 
@@ -73,7 +73,7 @@ public sealed class FocusService
         if (!await _repository.TryCreateActiveAsync(session, cancellationToken))
         {
             throw new InvalidOperationException(
-                "Cannot start a focus session while another focus session is active.");
+                "aiyo another focus session is active");
         }
 
         return ToSnapshot(session, now);
@@ -93,7 +93,7 @@ public sealed class FocusService
         var remaining = RemainingForRunning(session, now);
         if (remaining <= TimeSpan.Zero)
         {
-            throw new InvalidOperationException("Cannot pause an expired running focus session.");
+            throw new InvalidOperationException("aiyo cant pause an expired focus session");
         }
 
         var paused = session with
@@ -118,7 +118,7 @@ public sealed class FocusService
         var now = UtcNow();
         if (session.RemainingWhenPaused <= TimeSpan.Zero)
         {
-            throw new InvalidOperationException("Cannot resume a focus session with no remaining time.");
+            throw new InvalidOperationException("aiyo no time left to resume this focus session");
         }
 
         var resumed = session with
@@ -143,7 +143,7 @@ public sealed class FocusService
     {
         if (extension <= TimeSpan.Zero)
         {
-            throw new ArgumentOutOfRangeException(nameof(extension), "Focus extension must be positive.");
+            throw new ArgumentOutOfRangeException(nameof(extension), "aiyo focus extension must be positive");
         }
 
         var session = await GetRequiredAsync(id, cancellationToken);
@@ -153,7 +153,7 @@ public sealed class FocusService
         {
             if (session.EndsUtc is null || session.EndsUtc <= now)
             {
-                throw new InvalidOperationException("Cannot extend an expired running focus session.");
+                throw new InvalidOperationException("aiyo cant extend an expired focus session");
             }
 
             extended = session with
@@ -236,7 +236,7 @@ public sealed class FocusService
     private async Task<FocusSession> GetRequiredAsync(Guid id, CancellationToken cancellationToken)
     {
         var session = await _repository.GetAsync(id, cancellationToken);
-        return session ?? throw new KeyNotFoundException($"Focus session '{id}' was not found.");
+        return session ?? throw new KeyNotFoundException($"aiyo focus session '{id}' not found");
     }
 
     private DateTimeOffset UtcNow() => _clock.UtcNow.ToUniversalTime();
@@ -245,7 +245,7 @@ public sealed class FocusService
     {
         if (session.EndsUtc is null)
         {
-            throw new InvalidOperationException("Running focus session has no persisted end time.");
+            throw new InvalidOperationException("aiyo this focus session has no end time saved");
         }
 
         var remaining = session.EndsUtc.Value - now;
@@ -272,8 +272,8 @@ public sealed class FocusService
     }
 
     private static InvalidOperationException InvalidTransition(string transition, FocusStatus status) =>
-        new($"Cannot {transition} a focus session in {status} status.");
+        new($"aiyo cant {transition} a focus session in {status} status");
 
     private static InvalidOperationException TransitionConflict(string transition) =>
-        new($"Cannot {transition} focus session because it changed before the transition was saved.");
+        new($"aiyo cant {transition} this focus session it changed before saving");
 }

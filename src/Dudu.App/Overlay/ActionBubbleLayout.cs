@@ -52,7 +52,7 @@ public static class ActionBubbleLayout
         PixelRect workArea,
         PixelPoint petAnchor) =>
         TryArrange(actions, workArea, petAnchor)
-        ?? throw new InvalidOperationException("The work area is too small for an action surface.");
+        ?? throw new InvalidOperationException("aiyo work area too small for an action surface");
 
     public static ActionBubbleArrangement? TryArrange(
         IEnumerable<OverlayAction> actions,
@@ -97,13 +97,13 @@ public static class ActionBubbleLayout
 
     public static string Label(OverlayAction action) => action switch
     {
-        OverlayAction.Pet => "Pet",
-        OverlayAction.DrinkWater => "Drink water",
-        OverlayAction.StartFocus => "Start focus",
-        OverlayAction.Tasks => "Tasks",
-        OverlayAction.LoveNote => "Love note",
-        OverlayAction.ComfortMe => "Comfort me",
-        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown overlay action."),
+        OverlayAction.Pet => "pet",
+        OverlayAction.DrinkWater => "drink water",
+        OverlayAction.StartFocus => "start focus",
+        OverlayAction.Tasks => "tasks",
+        OverlayAction.LoveNote => "love note",
+        OverlayAction.ComfortMe => "comfort me",
+        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "aiyo unknown overlay action"),
     };
 
     /// <summary>Stable UI Automation identifier shared by the painted action
@@ -116,17 +116,17 @@ public static class ActionBubbleLayout
         OverlayAction.Tasks => "OverlayActionTasks",
         OverlayAction.LoveNote => "OverlayActionLoveNote",
         OverlayAction.ComfortMe => "OverlayActionComfortMe",
-        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown overlay action."),
+        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "aiyo unknown overlay action"),
     };
 
     public static string ComfortLabel(ComfortAction action) => action switch
     {
-        ComfortAction.BreatheWithMe => "Breathe with me",
-        ComfortAction.TinyHug => "Tiny hug",
-        ComfortAction.ReadALoveNote => "Read a love note",
-        ComfortAction.TakeAFiveMinuteBreak => "Take a five-minute break",
-        ComfortAction.Close => "Close",
-        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown comfort action."),
+        ComfortAction.BreatheWithMe => "breathe with me",
+        ComfortAction.TinyHug => "tiny hug",
+        ComfortAction.ReadALoveNote => "read a love note",
+        ComfortAction.TakeAFiveMinuteBreak => "take a five-minute break",
+        ComfortAction.Close => "close",
+        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "aiyo unknown comfort action"),
     };
 
     /// <summary>Stable UI Automation identifier for the normal-control route
@@ -138,7 +138,7 @@ public static class ActionBubbleLayout
         ComfortAction.ReadALoveNote => "OverlayComfortActionReadALoveNote",
         ComfortAction.TakeAFiveMinuteBreak => "OverlayComfortActionTakeAFiveMinuteBreak",
         ComfortAction.Close => "OverlayComfortActionClose",
-        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown comfort action."),
+        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "aiyo unknown comfort action"),
     };
 
     private static (PixelRect Bounds, IReadOnlyList<PixelRect> Regions, PixelRect DetailRegion)? ArrangeRows(
@@ -189,6 +189,6 @@ public static class ActionBubbleLayout
 
     private static void ValidateWorkArea(PixelRect workArea)
     {
-        if (!workArea.IsValid) throw new ArgumentException("The work area must be valid.", nameof(workArea));
+        if (!workArea.IsValid) throw new ArgumentException("aiyo work area must be valid", nameof(workArea));
     }
 }

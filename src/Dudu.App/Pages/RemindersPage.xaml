@@ -7,12 +7,12 @@
     <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
         <StackPanel MaxWidth="880" Margin="32" Spacing="24">
             <StackPanel Spacing="8">
-                <TextBlock Text="Reminders" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="RemindersPageTitle" />
-                <TextBlock Text="Gentle prompts that respect quiet hours and your focus." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <TextBlock Text="reminders" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="RemindersPageTitle" />
+                <TextBlock Text="gentle prompts that respect quiet hours and your focus" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
             </StackPanel>
 
             <StackPanel Spacing="12">
-                <TextBlock Text="Your reminders" Style="{StaticResource SectionHeadingStyle}" />
+                <TextBlock Text="your reminders" Style="{StaticResource SectionHeadingStyle}" />
                 <ListView ItemsSource="{x:Bind ViewModel.Reminders, Mode=OneWay}" SelectionChanged="ReminderList_SelectionChanged" MaxHeight="260" AutomationProperties.AutomationId="RemindersList">
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="models:Reminder">
@@ -23,32 +23,32 @@
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Spacing="2">
                                     <TextBlock Text="{x:Bind Title}" />
-                                    <TextBlock Text="Reminder schedule" Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" />
+                                    <TextBlock Text="reminder schedule" Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" />
                                 </StackPanel>
                             </Grid>
                         </DataTemplate>
                     </ListView.ItemTemplate>
                 </ListView>
                 <StackPanel Spacing="8">
-                    <Button Content="Complete selected" Command="{x:Bind ViewModel.CompleteCommand}" CommandParameter="{x:Bind ViewModel.SelectedReminder}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="RemindersComplete" />
-                    <Button Content="Snooze 15 minutes" Command="{x:Bind ViewModel.SnoozeCommand}" CommandParameter="{x:Bind ViewModel.SelectedReminder}" AutomationProperties.AutomationId="RemindersSnooze" />
+                    <Button Content="complete selected" Command="{x:Bind ViewModel.CompleteCommand}" CommandParameter="{x:Bind ViewModel.SelectedReminder}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="RemindersComplete" />
+                    <Button Content="snooze 15 min" Command="{x:Bind ViewModel.SnoozeCommand}" CommandParameter="{x:Bind ViewModel.SelectedReminder}" AutomationProperties.AutomationId="RemindersSnooze" />
                 </StackPanel>
             </StackPanel>
 
             <StackPanel Spacing="12">
-                <TextBlock Text="Create or edit" Style="{StaticResource SectionHeadingStyle}" />
-                <TextBox Header="Title" Text="{x:Bind ViewModel.Title, Mode=TwoWay}" PlaceholderText="For example, drink water" AutomationProperties.AutomationId="RemindersTitle" />
-                <TextBox Header="Details" Text="{x:Bind ViewModel.Details, Mode=TwoWay}" TextWrapping="Wrap" AutomationProperties.AutomationId="RemindersDetails" />
-                <ComboBox x:Name="ScheduleBox" Header="Schedule" SelectedIndex="0" SelectionChanged="ScheduleBox_SelectionChanged" AutomationProperties.AutomationId="RemindersSchedule">
-                    <ComboBoxItem Content="Once" />
-                    <ComboBoxItem Content="Daily" />
-                    <ComboBoxItem Content="Selected weekdays" />
-                    <ComboBoxItem Content="Every interval" />
+                <TextBlock Text="create or edit" Style="{StaticResource SectionHeadingStyle}" />
+                <TextBox Header="title" Text="{x:Bind ViewModel.Title, Mode=TwoWay}" PlaceholderText="for example, drink water" AutomationProperties.AutomationId="RemindersTitle" />
+                <TextBox Header="details" Text="{x:Bind ViewModel.Details, Mode=TwoWay}" TextWrapping="Wrap" AutomationProperties.AutomationId="RemindersDetails" />
+                <ComboBox x:Name="ScheduleBox" Header="schedule" SelectedIndex="0" SelectionChanged="ScheduleBox_SelectionChanged" AutomationProperties.AutomationId="RemindersSchedule">
+                    <ComboBoxItem Content="once" />
+                    <ComboBoxItem Content="daily" />
+                    <ComboBoxItem Content="selected weekdays" />
+                    <ComboBoxItem Content="every interval" />
                 </ComboBox>
-                <TextBox x:Name="LocalTimeBox" Header="Local time" TextChanged="LocalTimeBox_TextChanged" PlaceholderText="09:00" AutomationProperties.AutomationId="RemindersLocalTime" />
+                <TextBox x:Name="LocalTimeBox" Header="local time" TextChanged="LocalTimeBox_TextChanged" PlaceholderText="09:00" AutomationProperties.AutomationId="RemindersLocalTime" />
                 <TextBlock x:Name="RemindersLocalTimeValidation" TextWrapping="Wrap" Foreground="{ThemeResource ErrorBrush}" Visibility="Collapsed" AutomationProperties.AutomationId="RemindersLocalTimeValidation" />
                 <StackPanel Spacing="8">
-                    <TextBlock Text="Weekdays" />
+                    <TextBlock Text="weekdays" />
                     <Grid ColumnSpacing="8" RowSpacing="4">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
@@ -60,30 +60,30 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
-                        <CheckBox x:Name="SundayBox" Content="Sun" Tag="Sunday" Checked="WeekdayBox_Changed" Unchecked="WeekdayBox_Changed" AutomationProperties.AutomationId="RemindersSunday" Grid.Row="0" Grid.Column="0" />
-                        <CheckBox x:Name="MondayBox" Content="Mon" Tag="Monday" Checked="WeekdayBox_Changed" Unchecked="WeekdayBox_Changed" AutomationProperties.AutomationId="RemindersMonday" Grid.Row="0" Grid.Column="1" />
-                        <CheckBox x:Name="TuesdayBox" Content="Tue" Tag="Tuesday" Checked="WeekdayBox_Changed" Unchecked="WeekdayBox_Changed" AutomationProperties.AutomationId="RemindersTuesday" Grid.Row="0" Grid.Column="2" />
-                        <CheckBox x:Name="WednesdayBox" Content="Wed" Tag="Wednesday" Checked="WeekdayBox_Changed" Unchecked="WeekdayBox_Changed" AutomationProperties.AutomationId="RemindersWednesday" Grid.Row="0" Grid.Column="3" />
-                        <CheckBox x:Name="ThursdayBox" Content="Thu" Tag="Thursday" Checked="WeekdayBox_Changed" Unchecked="WeekdayBox_Changed" AutomationProperties.AutomationId="RemindersThursday" Grid.Row="1" Grid.Column="0" />
-                        <CheckBox x:Name="FridayBox" Content="Fri" Tag="Friday" Checked="WeekdayBox_Changed" Unchecked="WeekdayBox_Changed" AutomationProperties.AutomationId="RemindersFriday" Grid.Row="1" Grid.Column="1" />
-                        <CheckBox x:Name="SaturdayBox" Content="Sat" Tag="Saturday" Checked="WeekdayBox_Changed" Unchecked="WeekdayBox_Changed" AutomationProperties.AutomationId="RemindersSaturday" Grid.Row="1" Grid.Column="2" />
+                        <CheckBox x:Name="SundayBox" Content="sun" Tag="Sunday" Checked="WeekdayBox_Changed" Unchecked="WeekdayBox_Changed" AutomationProperties.AutomationId="RemindersSunday" Grid.Row="0" Grid.Column="0" />
+                        <CheckBox x:Name="MondayBox" Content="mon" Tag="Monday" Checked="WeekdayBox_Changed" Unchecked="WeekdayBox_Changed" AutomationProperties.AutomationId="RemindersMonday" Grid.Row="0" Grid.Column="1" />
+                        <CheckBox x:Name="TuesdayBox" Content="tue" Tag="Tuesday" Checked="WeekdayBox_Changed" Unchecked="WeekdayBox_Changed" AutomationProperties.AutomationId="RemindersTuesday" Grid.Row="0" Grid.Column="2" />
+                        <CheckBox x:Name="WednesdayBox" Content="wed" Tag="Wednesday" Checked="WeekdayBox_Changed" Unchecked="WeekdayBox_Changed" AutomationProperties.AutomationId="RemindersWednesday" Grid.Row="0" Grid.Column="3" />
+                        <CheckBox x:Name="ThursdayBox" Content="thu" Tag="Thursday" Checked="WeekdayBox_Changed" Unchecked="WeekdayBox_Changed" AutomationProperties.AutomationId="RemindersThursday" Grid.Row="1" Grid.Column="0" />
+                        <CheckBox x:Name="FridayBox" Content="fri" Tag="Friday" Checked="WeekdayBox_Changed" Unchecked="WeekdayBox_Changed" AutomationProperties.AutomationId="RemindersFriday" Grid.Row="1" Grid.Column="1" />
+                        <CheckBox x:Name="SaturdayBox" Content="sat" Tag="Saturday" Checked="WeekdayBox_Changed" Unchecked="WeekdayBox_Changed" AutomationProperties.AutomationId="RemindersSaturday" Grid.Row="1" Grid.Column="2" />
                     </Grid>
-                    <TextBlock Text="Used when the schedule is set to Selected weekdays." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                    <TextBlock Text="used when schedule is set to selected weekdays" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                 </StackPanel>
-                <NumberBox x:Name="IntervalBox" Header="Interval in minutes" Value="60" Minimum="1" Maximum="10080" SpinButtonPlacementMode="Compact" ValueChanged="IntervalBox_ValueChanged" AutomationProperties.AutomationId="RemindersInterval" />
-                <ComboBox x:Name="QuietHoursBox" Header="Quiet-hours behavior" SelectedIndex="1" SelectionChanged="QuietHoursBox_SelectionChanged" AutomationProperties.AutomationId="RemindersQuietHoursBehavior">
-                    <ComboBoxItem Content="Deliver immediately" Tag="DeliverImmediately" />
-                    <ComboBoxItem Content="Wait until quiet hours end" Tag="WaitUntilQuietHoursEnd" />
+                <NumberBox x:Name="IntervalBox" Header="interval in minutes" Value="60" Minimum="1" Maximum="10080" SpinButtonPlacementMode="Compact" ValueChanged="IntervalBox_ValueChanged" AutomationProperties.AutomationId="RemindersInterval" />
+                <ComboBox x:Name="QuietHoursBox" Header="quiet hours behavior" SelectedIndex="1" SelectionChanged="QuietHoursBox_SelectionChanged" AutomationProperties.AutomationId="RemindersQuietHoursBehavior">
+                    <ComboBoxItem Content="send now" Tag="DeliverImmediately" />
+                    <ComboBoxItem Content="wait till quiet hours end" Tag="WaitUntilQuietHoursEnd" />
                 </ComboBox>
-                <CheckBox Content="Reminder is enabled" IsChecked="{x:Bind ViewModel.Enabled, Mode=TwoWay}" AutomationProperties.AutomationId="RemindersEnabled" />
-                <Button x:Name="SaveReminderButton" Content="Save reminder" Command="{x:Bind ViewModel.SaveCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="RemindersSave" HorizontalAlignment="Left" />
+                <CheckBox Content="reminder enabled" IsChecked="{x:Bind ViewModel.Enabled, Mode=TwoWay}" AutomationProperties.AutomationId="RemindersEnabled" />
+                <Button x:Name="SaveReminderButton" Content="save reminder" Command="{x:Bind ViewModel.SaveCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="RemindersSave" HorizontalAlignment="Left" />
             </StackPanel>
 
             <StackPanel Spacing="12">
-                <TextBlock Text="Helpful defaults" Style="{StaticResource SectionHeadingStyle}" />
-                <CheckBox Content="Suggest water breaks" IsChecked="{x:Bind ViewModel.HydrationRemindersEnabled, Mode=TwoWay}" AutomationProperties.AutomationId="RemindersHydration" />
-                <CheckBox Content="Suggest short breaks" IsChecked="{x:Bind ViewModel.BreakRemindersEnabled, Mode=TwoWay}" AutomationProperties.AutomationId="RemindersBreaks" />
-                <Button Content="Save reminder preferences" Command="{x:Bind ViewModel.SaveReminderPreferencesCommand}" AutomationProperties.AutomationId="RemindersSavePreferences" HorizontalAlignment="Left" />
+                <TextBlock Text="helpful defaults" Style="{StaticResource SectionHeadingStyle}" />
+                <CheckBox Content="suggest water breaks" IsChecked="{x:Bind ViewModel.HydrationRemindersEnabled, Mode=TwoWay}" AutomationProperties.AutomationId="RemindersHydration" />
+                <CheckBox Content="suggest short breaks" IsChecked="{x:Bind ViewModel.BreakRemindersEnabled, Mode=TwoWay}" AutomationProperties.AutomationId="RemindersBreaks" />
+                <Button Content="save reminder preferences" Command="{x:Bind ViewModel.SaveReminderPreferencesCommand}" AutomationProperties.AutomationId="RemindersSavePreferences" HorizontalAlignment="Left" />
             </StackPanel>
 
             <StackPanel Spacing="4" AutomationProperties.LiveSetting="Polite">

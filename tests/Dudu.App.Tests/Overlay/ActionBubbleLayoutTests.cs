@@ -88,7 +88,7 @@ public sealed class ActionBubbleLayoutTests
         var snapshot = surface.CreateRenderSnapshot();
         Assert.Equal(OverlayActionSurfaceKind.Status, snapshot.Kind);
         Assert.Empty(snapshot.Actions);
-        Assert.Contains("Open Settings", snapshot.ErrorMessage);
+        Assert.Contains("open settings", snapshot.ErrorMessage);
     }
 
     [Fact]

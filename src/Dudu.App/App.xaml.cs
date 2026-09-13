@@ -123,7 +123,7 @@ public sealed partial class App : Application
         if (_settingsWindow is null)
         {
             var view = new SettingsWindow(_settingsContext);
-            _settingsWindow = new Window { Title = "Dudu settings", Content = view };
+            _settingsWindow = new Window { Title = "dudu settings", Content = view };
             try
             {
                 _settingsWindow.SystemBackdrop = new Microsoft.UI.Xaml.Media.MicaBackdrop();

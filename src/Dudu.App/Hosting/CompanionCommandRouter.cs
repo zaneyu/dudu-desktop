@@ -213,7 +213,7 @@ public sealed class StartupSettingsService
         catch (Exception exception)
         {
             _needsReconciliation = true;
-            _reconciliationError = "Startup registration needs another try.";
+            _reconciliationError = "aiyo startup registration needs another try";
             throw new InvalidOperationException(_reconciliationError, exception);
         }
     }

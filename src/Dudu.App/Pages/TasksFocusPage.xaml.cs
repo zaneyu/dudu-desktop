@@ -65,7 +65,7 @@ public sealed partial class TasksFocusPage : Page
         }
         else
         {
-            TaskDueValidation.Text = "Use a date and time such as 12/31/2026 5:00 PM, or leave this blank.";
+            TaskDueValidation.Text = "use a date and time like 12/31/2026 5:00 pm or leave this blank";
             TaskDueValidation.Visibility = Visibility.Visible;
             SaveTaskButton.IsEnabled = false;
         }
@@ -108,17 +108,17 @@ public sealed partial class TasksFocusPage : Page
     {
         FocusCurrent.Text = ViewModel.ActiveFocus switch
         {
-            null => "No focus session is active.",
-            { Status: FocusStatus.Running } focus => $"Focus is running with {RemainingMinutes(focus)} remaining.",
-            { Status: FocusStatus.Paused } focus => $"Focus is paused with {RemainingMinutes(focus)} remaining.",
-            { Status: FocusStatus.Completed } => "The last focus session completed.",
-            _ => "The last focus session ended early.",
+            null => "no focus session active",
+            { Status: FocusStatus.Running } focus => $"focus is running with {RemainingMinutes(focus)} remaining",
+            { Status: FocusStatus.Paused } focus => $"focus is paused with {RemainingMinutes(focus)} remaining",
+            { Status: FocusStatus.Completed } => "the last focus session completed",
+            _ => "the last focus session ended early",
         };
     }
 
     private static string RemainingMinutes(FocusSnapshot focus)
     {
         var minutes = Math.Max(0, (int)Math.Ceiling(focus.Remaining.TotalMinutes));
-        return $"{minutes} minute{(minutes == 1 ? string.Empty : "s")} left";
+        return $"{minutes} min left";
     }
 }

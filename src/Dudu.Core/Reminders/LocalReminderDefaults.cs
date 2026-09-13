@@ -17,7 +17,7 @@ public static class LocalReminderDefaults
         [
             CreateReminder(
                 "default-hydration",
-                "Drink some water",
+                "drink water lor",
                 preferences.HydrationRemindersEnabled,
                 new TimeOnly(10, 0),
                 quietHours,
@@ -25,7 +25,7 @@ public static class LocalReminderDefaults
                 timeZone),
             CreateReminder(
                 "default-break",
-                "Take a short break",
+                "go take a short break",
                 preferences.BreakRemindersEnabled,
                 new TimeOnly(14, 0),
                 quietHours,

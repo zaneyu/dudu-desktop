@@ -240,7 +240,7 @@ public sealed class GlobalHotkeyService : IDisposable
             var requestedId = _nextId++;
             if (!_native.Register(ownerWindow, requestedId, _currentGesture.Modifiers, _currentGesture.Key))
             {
-                throw new HotkeyConflictException("The global hotkey could not be moved to the owner window.");
+                throw new HotkeyConflictException("aiyo couldnt move the global hotkey to the owner window");
             }
 
             if (!_native.Unregister(previousWindow, _registeredId))
@@ -248,10 +248,10 @@ public sealed class GlobalHotkeyService : IDisposable
                 if (!_native.Unregister(ownerWindow, requestedId))
                 {
                     throw new HotkeyConflictException(
-                        "The previous global hotkey could not be restored and the replacement could not be unwound.");
+                        "aiyo couldnt restore the previous hotkey or undo the new one");
                 }
 
-                throw new HotkeyConflictException("The previous global hotkey could not be moved.");
+                throw new HotkeyConflictException("aiyo couldnt move the previous global hotkey");
             }
 
             _ownerWindow = ownerWindow;
@@ -277,7 +277,7 @@ public sealed class GlobalHotkeyService : IDisposable
             var requestedId = _registeredId == 0 ? DefaultId : _nextId++;
             if (!_native.Register(_ownerWindow, requestedId, gesture.Modifiers, gesture.Key))
             {
-                throw new HotkeyConflictException($"The global hotkey {gesture} is already registered.");
+                throw new HotkeyConflictException($"aiyo {gesture} is already taken by another shortcut");
             }
 
             if (_registeredId != 0 && !_native.Unregister(_ownerWindow, _registeredId))
@@ -285,10 +285,10 @@ public sealed class GlobalHotkeyService : IDisposable
                 if (!_native.Unregister(_ownerWindow, requestedId))
                 {
                     throw new HotkeyConflictException(
-                        "The previous global hotkey could not be replaced and the replacement could not be unwound.");
+                        "aiyo couldnt replace the previous hotkey or undo the new one");
                 }
 
-                throw new HotkeyConflictException("The previous global hotkey could not be replaced.");
+                throw new HotkeyConflictException("aiyo couldnt replace the previous global hotkey");
             }
 
             _registeredId = requestedId;

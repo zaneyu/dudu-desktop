@@ -125,7 +125,7 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
     public string? StartupRegistrationError { get => _startupRegistrationError; private set => Set(ref _startupRegistrationError, value); }
     public StartupSettingsService StartupSettings => _startupSettings;
     public bool CanGoBack => CurrentStep > OnboardingStep.Recipient && !IsCompleting && !IsComplete;
-    public string ProgressText => $"Step {(int)CurrentStep + 1} of {StepCount}";
+    public string ProgressText => $"step {(int)CurrentStep + 1} of {StepCount}";
 
     public async Task LoadAsync(CancellationToken cancellationToken = default)
     {
@@ -378,7 +378,7 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
                 }
                 catch (Exception exception)
                 {
-                    StartupRegistrationError = "Dudu saved your setup, but could not register startup. You can retry from Home.";
+                    StartupRegistrationError = "dudu saved your setup but startup registration didnt go through you can retry from home";
                     Trace.TraceError("Dudu startup registration failed after commit: {0}", exception);
                 }
 
@@ -393,7 +393,7 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
                     }
                     catch (Exception exception)
                     {
-                        RuntimeApplyError = "Dudu saved your setup, but could not apply it live. Open settings again to retry.";
+                        RuntimeApplyError = "dudu saved your setup but couldnt apply it live open settings again to retry";
                         Trace.TraceError("Dudu runtime settings apply failed after commit: {0}", exception);
                     }
                 }
@@ -438,7 +438,7 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
         OnboardingStep.Reminders => ValidateReminderDefaults(),
         OnboardingStep.Placement => ValidatePlacement(),
         OnboardingStep.Pairing => null,
-        _ => "Choose a next step to continue.",
+        _ => "choose a next step to continue",
     };
 
     private string? ValidateAll() => ValidateRecipient()
@@ -450,16 +450,16 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
     {
         var value = RecipientName.Trim();
         return value.Length is < 1 or > 80 || value.Any(char.IsControl)
-            ? "Enter a name between 1 and 80 characters."
+            ? "aiyo enter a name between 1 and 80 characters"
             : null;
     }
 
     private string? ValidateQuietHours() => QuietHoursEnabled && QuietHoursStart == QuietHoursEnd
-        ? "Quiet hours need a start and end time."
+        ? "aiyo quiet hours need a start and end time"
         : null;
 
     private string? ValidateReminderDefaults() => LocalNoteDailyLimit is < 0 or > 12
-        ? "Choose a daily note limit from 0 to 12."
+        ? "aiyo choose a daily note limit from 0 to 12"
         : null;
 
     private string? ValidatePlacement() => string.IsNullOrWhiteSpace(_monitorDeviceName)
@@ -469,7 +469,7 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
         || PlacementY is < 0 or > 1
         || !double.IsFinite(PlacementScale)
         || PlacementScale is < MonitorPlacementService.MinimumScale or > MonitorPlacementService.MaximumScale
-        ? "Choose a safe pet position and size."
+        ? "aiyo choose a safe pet position and size"
         : null;
 
     private void ThrowIfDisposed()

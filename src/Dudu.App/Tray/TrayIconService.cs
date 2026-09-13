@@ -46,7 +46,7 @@ public sealed class TrayIconService : IDisposable
     public TrayIconService(
         ITrayNativeApi? native = null,
         Action<TrayCommand>? commandHandler = null,
-        string tooltip = "Dudu")
+        string tooltip = "dudu")
     {
         _native = native ?? new WindowsTrayNativeApi();
         _commandHandler = commandHandler
@@ -307,13 +307,13 @@ internal static unsafe class NativeTrayMenu
 
     private static string GetLabel(TrayCommand command) => command switch
     {
-        TrayCommand.ShowOrHide => "Show or hide Dudu",
-        TrayCommand.PauseOneHour => "Pause for one hour",
-        TrayCommand.PauseUntilTomorrowAtSeven => "Pause until tomorrow at 07:00",
-        TrayCommand.PauseUntilFullscreenEnds => "Pause until fullscreen ends",
-        TrayCommand.PauseIndefinitelyOrResume => "Pause indefinitely or resume",
-        TrayCommand.OpenSettings => "Open settings",
-        TrayCommand.Exit => "Exit",
+        TrayCommand.ShowOrHide => "show or hide dudu",
+        TrayCommand.PauseOneHour => "pause for one hour",
+        TrayCommand.PauseUntilTomorrowAtSeven => "pause until tomorrow at 07:00",
+        TrayCommand.PauseUntilFullscreenEnds => "pause until fullscreen ends",
+        TrayCommand.PauseIndefinitelyOrResume => "pause indefinitely or resume",
+        TrayCommand.OpenSettings => "open settings",
+        TrayCommand.Exit => "exit",
         _ => command.ToString(),
     };
 }

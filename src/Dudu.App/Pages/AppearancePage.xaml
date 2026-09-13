@@ -6,41 +6,41 @@
     <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
         <StackPanel MaxWidth="880" Margin="32" Spacing="24">
             <StackPanel Spacing="8">
-                <TextBlock Text="Appearance" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="AppearancePageTitle" />
-                <TextBlock Text="Keep Dudu visible, calm, and comfortable on your screens." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <TextBlock Text="appearance" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="AppearancePageTitle" />
+                <TextBlock Text="keep dudu visible calm and comfortable on your screens" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
             </StackPanel>
 
             <StackPanel Spacing="12">
-                <TextBlock Text="Look and motion" Style="{StaticResource SectionHeadingStyle}" />
-                <ComboBox x:Name="ThemeBox" Header="Theme" SelectedIndex="0" SelectionChanged="ThemeBox_SelectionChanged" AutomationProperties.AutomationId="AppearanceTheme">
-                    <ComboBoxItem Content="Use Windows setting" Tag="System" />
-                    <ComboBoxItem Content="Light" Tag="Light" />
-                    <ComboBoxItem Content="Dark" Tag="Dark" />
+                <TextBlock Text="look and motion" Style="{StaticResource SectionHeadingStyle}" />
+                <ComboBox x:Name="ThemeBox" Header="theme" SelectedIndex="0" SelectionChanged="ThemeBox_SelectionChanged" AutomationProperties.AutomationId="AppearanceTheme">
+                    <ComboBoxItem Content="use windows setting" Tag="System" />
+                    <ComboBoxItem Content="light" Tag="Light" />
+                    <ComboBoxItem Content="dark" Tag="Dark" />
                 </ComboBox>
-                <CheckBox Content="Use reduced motion" IsChecked="{x:Bind ViewModel.ReducedMotion, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceReducedMotion" />
-                <TextBlock Text="Reduced motion uses static poses and short opacity changes." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
-                <Slider Header="Pet size" Minimum="0.5" Maximum="2" SmallChange="0.1" Value="{x:Bind ViewModel.PetScale, Mode=TwoWay}" AutomationProperties.AutomationId="AppearancePetScale" />
-                <ComboBox Header="Monitor" ItemsSource="{x:Bind ViewModel.MonitorOptions, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.MonitorDeviceName, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceMonitor" />
+                <CheckBox Content="use reduced motion" IsChecked="{x:Bind ViewModel.ReducedMotion, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceReducedMotion" />
+                <TextBlock Text="reduced motion uses static poses and short opacity changes" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <Slider Header="pet size" Minimum="0.5" Maximum="2" SmallChange="0.1" Value="{x:Bind ViewModel.PetScale, Mode=TwoWay}" AutomationProperties.AutomationId="AppearancePetScale" />
+                <ComboBox Header="monitor" ItemsSource="{x:Bind ViewModel.MonitorOptions, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.MonitorDeviceName, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceMonitor" />
                 <StackPanel Spacing="8">
-                    <Button Content="Save appearance" Command="{x:Bind ViewModel.SaveCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="AppearanceSave" />
-                    <Button Content="Save pet placement" Command="{x:Bind ViewModel.SavePlacementCommand}" AutomationProperties.AutomationId="AppearanceSavePlacement" />
+                    <Button Content="save appearance" Command="{x:Bind ViewModel.SaveCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="AppearanceSave" />
+                    <Button Content="save pet placement" Command="{x:Bind ViewModel.SavePlacementCommand}" AutomationProperties.AutomationId="AppearanceSavePlacement" />
                 </StackPanel>
             </StackPanel>
 
             <StackPanel Spacing="12">
-                <TextBlock Text="Pet options" Style="{StaticResource SectionHeadingStyle}" />
-                <ComboBox Header="Outfit" ItemsSource="{x:Bind ViewModel.OutfitOptions, Mode=OneWay}" IsEnabled="{x:Bind ViewModel.CanPersistOutfit, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceOutfit" />
+                <TextBlock Text="pet options" Style="{StaticResource SectionHeadingStyle}" />
+                <ComboBox Header="outfit" ItemsSource="{x:Bind ViewModel.OutfitOptions, Mode=OneWay}" IsEnabled="{x:Bind ViewModel.CanPersistOutfit, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceOutfit" />
                 <TextBlock Text="{x:Bind ViewModel.OutfitAvailabilityMessage, Mode=OneWay}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="AppearanceOutfitAvailability" />
-                <CheckBox Content="Automatic seasonal mode" IsChecked="{x:Bind ViewModel.AutomaticSeasonalMode, Mode=TwoWay}" IsEnabled="{x:Bind ViewModel.CanConfigureSeasonalMode, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceSeasonalMode" />
-                <TextBlock Text="Automatic seasonal mode is unavailable until seasonal persistence is added. Dudu will keep the current look." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="AppearanceSeasonalAvailability" />
-                <CheckBox Content="Keep Dudu above other windows" IsChecked="{x:Bind ViewModel.AlwaysOnTop, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceAlwaysOnTop" />
-                <CheckBox Content="Hide Dudu during fullscreen work" IsChecked="{x:Bind ViewModel.HideDuringFullscreen, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceHideFullscreen" />
+                <CheckBox Content="automatic seasonal mode" IsChecked="{x:Bind ViewModel.AutomaticSeasonalMode, Mode=TwoWay}" IsEnabled="{x:Bind ViewModel.CanConfigureSeasonalMode, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceSeasonalMode" />
+                <TextBlock Text="automatic seasonal mode is unavailable until seasonal persistence is added dudu will keep the current look" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="AppearanceSeasonalAvailability" />
+                <CheckBox Content="keep dudu above other windows" IsChecked="{x:Bind ViewModel.AlwaysOnTop, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceAlwaysOnTop" />
+                <CheckBox Content="hide dudu during fullscreen work" IsChecked="{x:Bind ViewModel.HideDuringFullscreen, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceHideFullscreen" />
             </StackPanel>
 
             <StackPanel Spacing="12">
-                <TextBlock Text="Shortcut" Style="{StaticResource SectionHeadingStyle}" />
-                <TextBox Header="Show or hide Dudu" Text="{x:Bind ViewModel.GlobalShortcut, Mode=TwoWay}" PlaceholderText="Ctrl+Alt+D" AutomationProperties.AutomationId="AppearanceShortcut" />
-                <Button Content="Save shortcut" Command="{x:Bind ViewModel.SaveShortcutCommand}" AutomationProperties.AutomationId="AppearanceSaveShortcut" HorizontalAlignment="Left" />
+                <TextBlock Text="shortcut" Style="{StaticResource SectionHeadingStyle}" />
+                <TextBox Header="show or hide dudu" Text="{x:Bind ViewModel.GlobalShortcut, Mode=TwoWay}" PlaceholderText="Ctrl+Alt+D" AutomationProperties.AutomationId="AppearanceShortcut" />
+                <Button Content="save shortcut" Command="{x:Bind ViewModel.SaveShortcutCommand}" AutomationProperties.AutomationId="AppearanceSaveShortcut" HorizontalAlignment="Left" />
             </StackPanel>
 
             <StackPanel Spacing="4" AutomationProperties.LiveSetting="Polite">

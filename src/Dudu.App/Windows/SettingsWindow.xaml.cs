@@ -89,7 +89,7 @@ public sealed partial class SettingsWindow : UserControl
         {
             var error = new TextBlock
             {
-                Text = "Dudu could not load settings. Try opening settings again.",
+                Text = "aiyo dudu couldnt load settings try opening settings again",
                 Margin = new Thickness(32),
                 TextWrapping = TextWrapping.Wrap,
             };

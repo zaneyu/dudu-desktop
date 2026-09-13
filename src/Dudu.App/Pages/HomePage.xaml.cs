@@ -37,7 +37,7 @@ public sealed partial class HomePage : Page
         var visible = Startup.NeedsReconciliation;
         StartupRecoveryPanel.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
         StartupRecoveryMessage.Text = visible
-            ? Startup.ReconciliationError ?? "Startup registration needs another try."
+            ? Startup.ReconciliationError ?? "aiyo startup registration needs another try"
             : string.Empty;
     }
 
@@ -79,7 +79,7 @@ public sealed partial class HomePage : Page
         }
         else
         {
-            SetCountdownTargetValidation(false, "Use a date and time such as 12/31/2026 5:00 PM, or leave this blank.");
+            SetCountdownTargetValidation(false, "use a date and time like 12/31/2026 5:00 pm or leave this blank");
         }
     }
 
@@ -108,7 +108,7 @@ public sealed partial class HomePage : Page
         try
         {
             var commands = _overlayCommands ?? throw new InvalidOperationException(
-                "Dudu's action controls are not ready yet.");
+                "aiyo dudus action controls not ready yet");
             await commands.ExecuteAccessibleAsync(action);
             HomeActionStatus.Text = $"{ActionBubbleLayout.Label(action)} is ready.";
         }
@@ -127,7 +127,7 @@ public sealed partial class HomePage : Page
         try
         {
             var commands = _overlayCommands ?? throw new InvalidOperationException(
-                "Dudu's comfort controls are not ready yet.");
+                "aiyo dudus comfort controls not ready yet");
             await commands.ExecuteComfortAccessibleAsync(action);
             HomeActionStatus.Text = $"{ActionBubbleLayout.ComfortLabel(action)} is ready.";
         }

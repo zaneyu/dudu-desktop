@@ -14,7 +14,7 @@ public sealed class OverlayCommandRouter
     private CancellationTokenSource? _breathingCancellation;
     private bool _closePanelAfterBreathingCancellation;
     private bool _isBreathing;
-    private string _breathingInstruction = "Breathe in for 4, out for 6.";
+    private string _breathingInstruction = "breathe in for 4, out for 6";
     private ComfortPanelState _comfortPanel = ComfortPanelState.Closed;
 
     public OverlayCommandRouter(
@@ -74,7 +74,7 @@ public sealed class OverlayCommandRouter
             OverlayAction.Tasks => NavigateAsync("tasks", cancellationToken),
             OverlayAction.LoveNote => NavigateAsync("notes", cancellationToken),
             OverlayAction.ComfortMe => ExecuteComfortAsync(cancellationToken),
-            _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown overlay action."),
+            _ => throw new ArgumentOutOfRangeException(nameof(action), action, "aiyo unknown overlay action"),
         };
 
     public Task ExecuteComfortAsync(
@@ -86,7 +86,7 @@ public sealed class OverlayCommandRouter
             ComfortAction.ReadALoveNote => NavigateAsync("notes", cancellationToken),
             ComfortAction.TakeAFiveMinuteBreak => TakeFiveMinuteBreakAsync(cancellationToken),
             ComfortAction.Close => CloseComfortAsync(cancellationToken),
-            _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown comfort action."),
+            _ => throw new ArgumentOutOfRangeException(nameof(action), action, "aiyo unknown comfort action"),
         };
 
     /// <summary>Runs the same operation exposed by the pointer-only overlay
@@ -117,7 +117,7 @@ public sealed class OverlayCommandRouter
                 await ExecuteComfortAsync(cancellationToken);
                 break;
             default:
-                throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown overlay action.");
+                throw new ArgumentOutOfRangeException(nameof(action), action, "aiyo unknown overlay action");
         }
 
         await NavigateAsync(EquivalentSettingsDestination(action), cancellationToken);
@@ -145,7 +145,7 @@ public sealed class OverlayCommandRouter
         OverlayAction.StartFocus or OverlayAction.Tasks => "tasks",
         OverlayAction.LoveNote => "notes",
         OverlayAction.ComfortMe => "home",
-        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown overlay action."),
+        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "aiyo unknown overlay action"),
     };
 
     public static string EquivalentSettingsDestination(ComfortAction action) => action switch
@@ -153,7 +153,7 @@ public sealed class OverlayCommandRouter
         ComfortAction.BreatheWithMe or ComfortAction.TinyHug
             or ComfortAction.TakeAFiveMinuteBreak or ComfortAction.Close => "home",
         ComfortAction.ReadALoveNote => "notes",
-        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "Unknown comfort action."),
+        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "aiyo unknown comfort action"),
     };
 
     private Task ExecutePetAsync(CancellationToken cancellationToken) =>
@@ -188,7 +188,7 @@ public sealed class OverlayCommandRouter
         if (_navigateSettings is null)
         {
             return Task.FromException(new InvalidOperationException(
-                "Dudu could not open the requested settings destination."));
+                "aiyo dudu couldnt open that settings page"));
         }
 
         return _navigateSettings(destination, cancellationToken);
@@ -220,7 +220,7 @@ public sealed class OverlayCommandRouter
         cancellationToken.ThrowIfCancellationRequested();
         if (IsReducedMotion)
         {
-            const string instruction = "Breathe slowly: in for 4, out for 6.";
+            const string instruction = "breathe slowly: in for 4, out for 6";
             SetComfortPanel(new ComfortPanelState(true, false, BreathVisualPhase.Static, instruction));
             return;
         }
@@ -237,9 +237,9 @@ public sealed class OverlayCommandRouter
         {
             for (var cycle = 0; cycle < 6; cycle++)
             {
-                SetComfortPanel(new ComfortPanelState(true, true, BreathVisualPhase.Inhale, "Breathe in for 4."));
+                SetComfortPanel(new ComfortPanelState(true, true, BreathVisualPhase.Inhale, "breathe in for 4"));
                 await _delayAsync(TimeSpan.FromSeconds(4), linked.Token);
-                SetComfortPanel(new ComfortPanelState(true, true, BreathVisualPhase.Exhale, "Breathe out for 6."));
+                SetComfortPanel(new ComfortPanelState(true, true, BreathVisualPhase.Exhale, "breathe out for 6"));
                 await _delayAsync(TimeSpan.FromSeconds(6), linked.Token);
             }
         }
@@ -259,12 +259,12 @@ public sealed class OverlayCommandRouter
             SetComfortPanel(closePanel
                 ? ComfortPanelState.Closed
                 : linked.IsCancellationRequested
-                    ? new ComfortPanelState(true, false, BreathVisualPhase.Idle, "Breathing exercise cancelled.")
-                    : new ComfortPanelState(true, false, BreathVisualPhase.Complete, "Nice job. You took a minute for yourself."));
+                    ? new ComfortPanelState(true, false, BreathVisualPhase.Idle, "breathing exercise cancelled")
+                    : new ComfortPanelState(true, false, BreathVisualPhase.Complete, "nice job you took a minute for yourself"));
         }
     }
 
-    public void OpenComfortPanel() => SetComfortPanel(new ComfortPanelState(true, false, BreathVisualPhase.Idle, "Choose a gentle next step."));
+    public void OpenComfortPanel() => SetComfortPanel(new ComfortPanelState(true, false, BreathVisualPhase.Idle, "choose a gentle next step"));
 
     public void CancelBreathing(bool closePanel = false)
     {
@@ -277,7 +277,7 @@ public sealed class OverlayCommandRouter
         }
         SetComfortPanel(closePanel
             ? ComfortPanelState.Closed
-            : new ComfortPanelState(true, false, BreathVisualPhase.Idle, "Breathing exercise cancelled."));
+            : new ComfortPanelState(true, false, BreathVisualPhase.Idle, "breathing exercise cancelled"));
     }
 
     private void SetComfortPanel(ComfortPanelState state)

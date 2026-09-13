@@ -20,13 +20,13 @@ namespace Dudu.App.Windows
             ContentFrame = new Frame();
             foreach (var item in new[]
             {
-                ("Home", "home", "NavHome"),
-                ("Reminders", "reminders", "NavReminders"),
-                ("Tasks and Focus", "tasks", "NavTasksFocus"),
-                ("Love Notes", "notes", "NavLoveNotes"),
-                ("Appearance", "appearance", "NavAppearance"),
-                ("Connection", "connection", "NavConnection"),
-                ("Privacy and Data", "privacy", "NavPrivacy"),
+                ("home", "home", "NavHome"),
+                ("reminders", "reminders", "NavReminders"),
+                ("tasks and focus", "tasks", "NavTasksFocus"),
+                ("love notes", "notes", "NavLoveNotes"),
+                ("appearance", "appearance", "NavAppearance"),
+                ("connection", "connection", "NavConnection"),
+                ("privacy and data", "privacy", "NavPrivacy"),
             })
             {
                 var navigationItem = new NavigationViewItem { Content = item.Item1, Tag = item.Item2 };

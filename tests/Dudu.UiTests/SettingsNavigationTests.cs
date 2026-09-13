@@ -48,32 +48,32 @@ public sealed class SettingsNavigationTests
             Navigate(window, "NavReminders", "RemindersPageTitle");
             Find(window, "RemindersTitle").AsTextBox().Enter(reminderTitle);
             Find(window, "RemindersSave").AsButton().Invoke();
-            WaitForText(window, "RemindersStatusMessage", "Reminder saved.");
+            WaitForText(window, "RemindersStatusMessage", "reminder saved");
             SelectByName(window, "RemindersList", reminderTitle);
             Find(window, "RemindersComplete").AsButton().Invoke();
-            WaitForText(window, "RemindersStatusMessage", "Reminder completed.");
+            WaitForText(window, "RemindersStatusMessage", "reminder done");
 
             var taskTitle = $"UI task {marker}";
             Navigate(window, "NavTasksFocus", "TasksPageTitle");
             Find(window, "TasksTitle").AsTextBox().Enter(taskTitle);
             Find(window, "TasksSave").AsButton().Invoke();
-            WaitForText(window, "TasksStatusMessage", "Task saved.");
+            WaitForText(window, "TasksStatusMessage", "task saved");
             SelectByName(window, "TasksActiveList", taskTitle);
             Find(window, "TasksComplete").AsButton().Invoke();
-            WaitForText(window, "TasksStatusMessage", "Task completed.");
+            WaitForText(window, "TasksStatusMessage", "task done");
             Assert.NotNull(Find(window, "TasksCompletedList").FindFirstDescendant(cf => cf.ByName(taskTitle)));
 
             Find(window, "FocusStart").AsButton().Invoke();
             WaitForText(window, "FocusCurrent", "Focus is running");
             Find(window, "FocusEnd").AsButton().Invoke();
-            WaitForText(window, "TasksStatusMessage", "Focus ended.");
+            WaitForText(window, "TasksStatusMessage", "focus ended");
             WaitForText(window, "FocusCurrent", "ended early");
             Assert.NotNull(Find(window, "FocusHistoryList").FindFirstDescendant(cf => cf.ByName("EndedEarly")));
 
             Navigate(window, "NavHome", "HomePageTitle");
             Find(window, "HomeCheckInNote").AsTextBox().Enter($"check-in-{marker}");
             Find(window, "HomeSaveCheckIn").AsButton().Invoke();
-            WaitForText(window, "HomeStatusMessage", "Check-in saved on this PC.");
+            WaitForText(window, "HomeStatusMessage", "check-in saved on this pc");
             WaitForText(window, "HomeCheckInSummary", "1 optional check-in");
             Assert.NotNull(Find(window, "HomeCheckInHistory").FindFirstDescendant(
                 cf => cf.ByName($"check-in-{marker}")));
@@ -108,24 +108,24 @@ public sealed class SettingsNavigationTests
 
     private static void ExerciseAccessibleRoutes(Window window)
     {
-        ExerciseRoute(window, "OverlayActionPet", "HomePageTitle", "HomeActionStatus", "Pet is ready.");
+        ExerciseRoute(window, "OverlayActionPet", "HomePageTitle", "HomeActionStatus", "pet is ready.");
         ExerciseRoute(window, "OverlayActionDrinkWater", "RemindersPageTitle");
         ExerciseRoute(window, "OverlayActionTasks", "TasksPageTitle");
         ExerciseRoute(window, "OverlayActionLoveNote", "LoveNotesPageTitle");
-        ExerciseRoute(window, "OverlayActionComfortMe", "HomePageTitle", "HomeActionStatus", "Comfort me is ready.");
-        ExerciseRoute(window, "OverlayComfortActionBreatheWithMe", "HomePageTitle", "HomeActionStatus", "Breathe with me is ready.");
-        ExerciseRoute(window, "OverlayComfortActionTinyHug", "HomePageTitle", "HomeActionStatus", "Tiny hug is ready.");
+        ExerciseRoute(window, "OverlayActionComfortMe", "HomePageTitle", "HomeActionStatus", "comfort me is ready.");
+        ExerciseRoute(window, "OverlayComfortActionBreatheWithMe", "HomePageTitle", "HomeActionStatus", "breathe with me is ready.");
+        ExerciseRoute(window, "OverlayComfortActionTinyHug", "HomePageTitle", "HomeActionStatus", "tiny hug is ready.");
         ExerciseRoute(window, "OverlayComfortActionReadALoveNote", "LoveNotesPageTitle");
-        ExerciseRoute(window, "OverlayComfortActionTakeAFiveMinuteBreak", "HomePageTitle", "HomeActionStatus", "Take a five-minute break is ready.");
+        ExerciseRoute(window, "OverlayComfortActionTakeAFiveMinuteBreak", "HomePageTitle", "HomeActionStatus", "take a five-minute break is ready.");
         WaitForText(window, "HomePauseDescription", "five minutes");
-        ExerciseRoute(window, "OverlayComfortActionClose", "HomePageTitle", "HomeActionStatus", "Close is ready.");
+        ExerciseRoute(window, "OverlayComfortActionClose", "HomePageTitle", "HomeActionStatus", "close is ready.");
 
         Navigate(window, "NavHome", "HomePageTitle");
         Find(window, "OverlayActionStartFocus").AsButton().Invoke();
         WaitUntil(() => IsVisible(window, "TasksPageTitle"));
         WaitForText(window, "FocusCurrent", "Focus is running");
         Find(window, "FocusEnd").AsButton().Invoke();
-        WaitForText(window, "TasksStatusMessage", "Focus ended.");
+        WaitForText(window, "TasksStatusMessage", "focus ended");
     }
 
     private static void ExerciseRoute(

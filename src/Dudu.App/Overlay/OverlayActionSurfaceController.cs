@@ -66,7 +66,7 @@ public sealed class OverlayActionSurfaceController : IDisposable
     /// change while preserving the pet anchor's normalized location.</summary>
     public void UpdateViewport(PixelRect workArea)
     {
-        if (!workArea.IsValid) throw new ArgumentException("The work area must be valid.", nameof(workArea));
+        if (!workArea.IsValid) throw new ArgumentException("aiyo work area must be valid", nameof(workArea));
         lock (_gate)
         {
             ThrowIfDisposed();
@@ -232,7 +232,7 @@ public sealed class OverlayActionSurfaceController : IDisposable
             if (router is null)
             {
                 if (!contains) return false;
-                SetError("Dudu's action surface is not ready yet.");
+                SetError("aiyo dudus action surface not ready yet");
                 return true;
             }
 
@@ -410,7 +410,7 @@ public sealed class OverlayActionSurfaceController : IDisposable
         _comfortArrangement = null;
         _kind = _arrangement is null ? OverlayActionSurfaceKind.Status : OverlayActionSurfaceKind.Primary;
         _errorMessage = _arrangement is null
-            ? "There is not enough room to show Dudu's actions. Open Settings to use them."
+            ? "not enough room to show dudus actions open settings to use them"
             : null;
     }
 
@@ -427,7 +427,7 @@ public sealed class OverlayActionSurfaceController : IDisposable
         _arrangement = null;
         _kind = _comfortArrangement is null ? OverlayActionSurfaceKind.Status : OverlayActionSurfaceKind.Comfort;
         _errorMessage = _comfortArrangement is null
-            ? "There is not enough room to show Dudu's comfort actions. Open Settings to use them."
+            ? "not enough room to show dudus comfort actions open settings to use them"
             : null;
     }
 
