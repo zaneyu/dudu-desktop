@@ -14,7 +14,7 @@ import {
   listEligibleMessages,
 } from "../db/messages.js";
 import type { Env } from "../env.js";
-import { readJsonBody, UnsupportedMediaTypeError } from "../http/body.js";
+import { JsonBodyTooLargeError, readJsonBody, UnsupportedMediaTypeError } from "../http/body.js";
 import {
   badRequest,
   conflict,
@@ -65,6 +65,9 @@ export async function postMessage(request: Request, env: Env): Promise<Response>
   } catch (error) {
     if (error instanceof UnsupportedMediaTypeError) {
       return unsupportedMediaType();
+    }
+    if (error instanceof JsonBodyTooLargeError) {
+      return payloadTooLarge();
     }
     return badRequest();
   }

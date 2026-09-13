@@ -9,11 +9,12 @@ import {
 } from "../db/devices.js";
 import { insertPairingCode } from "../db/pairings.js";
 import type { Env } from "../env.js";
-import { readJsonBody, UnsupportedMediaTypeError } from "../http/body.js";
+import { JsonBodyTooLargeError, readJsonBody, UnsupportedMediaTypeError } from "../http/body.js";
 import {
   badRequest,
   jsonResponse,
   noContentResponse,
+  payloadTooLarge,
   tooManyRequests,
   unauthorized,
   unsupportedMediaType,
@@ -70,6 +71,9 @@ export async function registerDevice(request: Request, env: Env): Promise<Respon
   } catch (error) {
     if (error instanceof UnsupportedMediaTypeError) {
       return unsupportedMediaType();
+    }
+    if (error instanceof JsonBodyTooLargeError) {
+      return payloadTooLarge();
     }
     return badRequest();
   }
@@ -131,6 +135,9 @@ export async function rotateDeviceKey(request: Request, env: Env): Promise<Respo
   } catch (error) {
     if (error instanceof UnsupportedMediaTypeError) {
       return unsupportedMediaType();
+    }
+    if (error instanceof JsonBodyTooLargeError) {
+      return payloadTooLarge();
     }
     return badRequest();
   }

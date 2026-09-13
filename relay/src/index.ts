@@ -1,3 +1,11 @@
+/**
+ * Task 21 note: the private-note and outage hardening (security response headers, the
+ * size-bounded/prototype-safe JSON body reader, and noncanonical-Base64URL envelope rejection)
+ * lives in `http/responses.ts`, `http/body.ts`, and `security/envelopeValidation.ts`
+ * respectively, and applies to every route below automatically because each already routes
+ * through those modules — this file stays the wiring point only, with no route-by-route change
+ * needed.
+ */
 import { cleanupExpired } from "./cleanup.js";
 import type { Env } from "./env.js";
 import { Router } from "./http/router.js";

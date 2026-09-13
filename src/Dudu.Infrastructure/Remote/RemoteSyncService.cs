@@ -4,6 +4,9 @@ using Dudu.Core.Abstractions;
 using Dudu.Core.Models;
 using Dudu.Core.Time;
 using Dudu.Infrastructure.Crypto;
+using Dudu.Infrastructure.Logging;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Dudu.Infrastructure.Remote;
 
@@ -26,6 +29,7 @@ public sealed class RemoteSyncService : IAsyncDisposable
     private readonly IClock _clock;
     private readonly PollBackoff _backoff;
     private readonly Action<string, Exception>? _reportError;
+    private readonly ILogger<RemoteSyncService> _logger;
 
     private readonly object _lifecycleGate = new();
     private CancellationTokenSource? _loopCts;
@@ -40,7 +44,8 @@ public sealed class RemoteSyncService : IAsyncDisposable
         DesktopKeyService keyService,
         IClock clock,
         PollBackoff backoff,
-        Action<string, Exception>? reportError = null)
+        Action<string, Exception>? reportError = null,
+        ILogger<RemoteSyncService>? logger = null)
     {
         _relay = relay ?? throw new ArgumentNullException(nameof(relay));
         _envelopes = envelopes ?? throw new ArgumentNullException(nameof(envelopes));
@@ -50,6 +55,7 @@ public sealed class RemoteSyncService : IAsyncDisposable
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
         _backoff = backoff ?? throw new ArgumentNullException(nameof(backoff));
         _reportError = reportError;
+        _logger = logger ?? NullLogger<RemoteSyncService>.Instance;
     }
 
     public PairingAvailability State => _state;
@@ -226,6 +232,10 @@ public sealed class RemoteSyncService : IAsyncDisposable
             _reportError?.Invoke(
                 "remote-sync-decrypt",
                 new InvalidOperationException($"Envelope {wire.MessageId} failed to decrypt or validate."));
+            if (Guid.TryParse(wire.MessageId, out var messageId))
+            {
+                PrivacySafeLog.EnvelopeRejected(_logger, messageId, "decrypt-failed");
+            }
         }
 
         var stored = BuildStoredEnvelope(wire, _clock.UtcNow);

@@ -1,13 +1,14 @@
 import { findActiveSenderSessionByTokenHash, revokeSenderSession, type SenderSessionRecord } from "../db/devices.js";
 import { incrementPairingAttempt, redeemPairingCode } from "../db/pairings.js";
 import type { Env } from "../env.js";
-import { readJsonBody, UnsupportedMediaTypeError } from "../http/body.js";
+import { JsonBodyTooLargeError, readJsonBody, UnsupportedMediaTypeError } from "../http/body.js";
 import {
   badRequest,
   forbidden,
   gone,
   jsonResponse,
   noContentResponse,
+  payloadTooLarge,
   tooManyRequests,
   unauthorized,
   unsupportedMediaType,
@@ -43,6 +44,9 @@ export async function redeemPairing(request: Request, env: Env): Promise<Respons
   } catch (error) {
     if (error instanceof UnsupportedMediaTypeError) {
       return unsupportedMediaType();
+    }
+    if (error instanceof JsonBodyTooLargeError) {
+      return payloadTooLarge();
     }
     return badRequest();
   }

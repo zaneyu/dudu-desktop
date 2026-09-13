@@ -5,6 +5,9 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Dudu.Core.Abstractions;
+using Dudu.Infrastructure.Logging;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Dudu.Infrastructure.Remote;
 
@@ -18,8 +21,13 @@ public sealed class RelayClient : IRelayClient
     private readonly HttpClient _httpClient;
     private readonly ISecretStore _secretStore;
     private readonly Uri _baseUrl;
+    private readonly ILogger<RelayClient> _logger;
 
-    public RelayClient(HttpClient httpClient, ISecretStore secretStore, RelayOptions options)
+    public RelayClient(
+        HttpClient httpClient,
+        ISecretStore secretStore,
+        RelayOptions options,
+        ILogger<RelayClient>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(httpClient);
         ArgumentNullException.ThrowIfNull(secretStore);
@@ -29,6 +37,7 @@ public sealed class RelayClient : IRelayClient
 
         _httpClient = httpClient;
         _secretStore = secretStore;
+        _logger = logger ?? NullLogger<RelayClient>.Instance;
     }
 
     public async Task<RelayRegistrationResult> RegisterAsync(string publicKeySpki, CancellationToken cancellationToken)
@@ -101,7 +110,7 @@ public sealed class RelayClient : IRelayClient
     {
         var response = await SendAuthenticatedAsync(HttpMethod.Get, "/v1/messages", cancellationToken);
         var body = await ReadAsync(response, RelayJsonContext.Default.GetMessagesResponseDto, cancellationToken);
-        return body.Messages
+        var envelopes = body.Messages
             .Select(message => new RelayEnvelope(
                 message.ProtocolVersion,
                 message.MessageId,
@@ -112,6 +121,8 @@ public sealed class RelayClient : IRelayClient
                 message.Nonce,
                 message.Ciphertext))
             .ToArray();
+        PrivacySafeLog.PollCompleted(_logger, envelopes.Length);
+        return envelopes;
     }
 
     public async Task AcknowledgeAsync(string messageId, CancellationToken cancellationToken)
@@ -160,27 +171,32 @@ public sealed class RelayClient : IRelayClient
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
+            PrivacySafeLog.RelayFailed(_logger, 0, "timeout");
             throw new RelayUnavailableException("The relay request timed out.");
         }
         catch (HttpRequestException exception)
         {
+            PrivacySafeLog.RelayFailed(_logger, 0, "network-error");
             throw new RelayUnavailableException("The relay could not be reached.", exception);
         }
 
         if (response.StatusCode == HttpStatusCode.Unauthorized)
         {
+            PrivacySafeLog.RelayFailed(_logger, (int)response.StatusCode, "unauthorized");
             response.Dispose();
             throw new RelayUnauthorizedException();
         }
 
         if ((int)response.StatusCode >= 500)
         {
+            PrivacySafeLog.RelayFailed(_logger, (int)response.StatusCode, "unavailable");
             response.Dispose();
             throw new RelayUnavailableException($"The relay returned status {(int)response.StatusCode}.");
         }
 
         if (!response.IsSuccessStatusCode)
         {
+            PrivacySafeLog.RelayFailed(_logger, (int)response.StatusCode, "protocol");
             response.Dispose();
             throw new RelayProtocolException($"The relay returned status {(int)response.StatusCode}.");
         }
@@ -188,21 +204,22 @@ public sealed class RelayClient : IRelayClient
         return response;
     }
 
-    private static async Task<TResponse> ReadAsync<TResponse>(
+    private async Task<TResponse> ReadAsync<TResponse>(
         HttpResponseMessage response,
         JsonTypeInfo<TResponse> typeInfo,
         CancellationToken cancellationToken)
     {
         using (response)
         {
+            var bytes = await BoundedJsonContent.ReadBoundedAsync(response.Content, cancellationToken);
             try
             {
-                var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-                return await JsonSerializer.DeserializeAsync(stream, typeInfo, cancellationToken)
+                return JsonSerializer.Deserialize(bytes, typeInfo)
                     ?? throw new RelayProtocolException("The relay returned an empty body.");
             }
             catch (JsonException exception)
             {
+                PrivacySafeLog.RelayFailed(_logger, (int)response.StatusCode, "malformed-body");
                 throw new RelayProtocolException("The relay returned a malformed response.", exception);
             }
         }

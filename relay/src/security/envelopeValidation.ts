@@ -18,7 +18,26 @@ import {
   MESSAGE_RETENTION_DAYS,
   type EncryptedEnvelopeV1,
 } from "../protocol/types.js";
-import { base64UrlToBytes } from "./tokens.js";
+import { base64UrlToBytes, bytesToBase64Url } from "./tokens.js";
+
+/** Every Base64URL-encoded field in the wire contract, checked for canonical form below. */
+const BASE64URL_FIELDS = ["ephemeralPublicKey", "hkdfSalt", "nonce", "ciphertext"] as const;
+
+/**
+ * A noncanonical Base64URL string decodes fine (it matches the charset `base64UrlToBytes`
+ * accepts) but re-encoding the decoded bytes does not reproduce it byte-for-byte — e.g. trailing
+ * padding bits set to something other than zero, or an alternate-but-decodable character run.
+ * Genuinely invalid characters are a different, pre-existing failure mode (`base64UrlToBytes`
+ * returns `null`, and `validateEnvelopeShape` already rejects that): this check only fires once a
+ * value is known to decode, so it never duplicates that error.
+ */
+function isNoncanonicalBase64Url(value: string): boolean {
+  const decoded = base64UrlToBytes(value);
+  if (!decoded) {
+    return false;
+  }
+  return bytesToBase64Url(decoded) !== value;
+}
 
 /** The request body was not JSON-shaped as an object at all — maps to 400. */
 export class EnvelopeMalformedError extends Error {}
@@ -53,6 +72,16 @@ export async function validateIncomingEnvelope(body: unknown, now: Date): Promis
     const decoded = base64UrlToBytes(candidate.ephemeralPublicKey);
     if (decoded && decoded.length > MAXIMUM_EPHEMERAL_PUBLIC_KEY_BYTES) {
       throw new EnvelopeTooLargeError("ephemeralPublicKey exceeds the maximum allowed size.");
+    }
+  }
+
+  // A noncanonical Base64URL value is a semantic problem (413 above is reserved for "too many
+  // bytes"), so it is checked after the size bounds but before delegating to
+  // `validateEnvelopeShape`.
+  for (const field of BASE64URL_FIELDS) {
+    const value = candidate[field];
+    if (typeof value === "string" && isNoncanonicalBase64Url(value)) {
+      throw new EnvelopeSemanticError(`${field} is not canonical Base64URL.`);
     }
   }
 

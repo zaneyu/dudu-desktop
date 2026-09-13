@@ -2,11 +2,21 @@
  * Every JSON response (success or error) shares the same headers. Error bodies are always
  * `{ error: "<code>", message: "<short, generic text>" }` and never echo request bodies, tokens,
  * codes, or cookies back to the caller.
+ *
+ * Task 21 hardening: every response — success, every error helper below, and `router.ts`'s own
+ * `notFound`/`methodNotAllowed`/`internalError` paths, since all of those already funnel through
+ * this one function — also carries a locked-down `Content-Security-Policy`, `nosniff`,
+ * `no-referrer`, and an all-denied `Permissions-Policy`. This relay never serves HTML, so the
+ * strictest possible CSP (`default-src 'none'`) is correct, not merely convenient.
  */
 
 function withStandardHeaders(headers?: HeadersInit): Headers {
   const result = new Headers(headers);
   result.set("Cache-Control", "no-store");
+  result.set("Content-Security-Policy", "default-src 'none'");
+  result.set("X-Content-Type-Options", "nosniff");
+  result.set("Referrer-Policy", "no-referrer");
+  result.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   return result;
 }
 
