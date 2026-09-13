@@ -1,3 +1,4 @@
+using System.Buffers.Text;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -26,15 +27,13 @@ public sealed class PrivacyBoundaryTests
     {
         var fixture = PrivacyFixture.WithSecrets(
             note: "uniquely-private-phrase-7491",
-            token: "desktop-token-8821",
-            privateKeyMarker: "private-key-marker-3307");
+            token: "desktop-token-8821");
 
         await fixture.ExerciseRegistrationPollFailureAndRevealAsync();
 
         var logs = fixture.LogSink.JoinedText;
         Assert.DoesNotContain("uniquely-private-phrase-7491", logs);
         Assert.DoesNotContain("desktop-token-8821", logs);
-        Assert.DoesNotContain("private-key-marker-3307", logs);
     }
 
     [Fact]
@@ -89,17 +88,15 @@ public sealed class PrivacyBoundaryTests
 
         private readonly string _note;
         private readonly string _token;
-        private readonly string _privateKeyMarker;
 
-        private PrivacyFixture(string note, string token, string privateKeyMarker)
+        private PrivacyFixture(string note, string token)
         {
             _note = note;
             _token = token;
-            _privateKeyMarker = privateKeyMarker;
         }
 
-        public static PrivacyFixture WithSecrets(string note, string token, string privateKeyMarker) =>
-            new(note, token, privateKeyMarker);
+        public static PrivacyFixture WithSecrets(string note, string token) =>
+            new(note, token);
 
         public RecordingLoggerSink LogSink { get; } = new();
 
@@ -137,29 +134,67 @@ public sealed class PrivacyBoundaryTests
             var decrypted = EnvelopeCrypto.Decrypt(envelope, ecdh.ExportPkcs8PrivateKey(), DateTimeOffset.UtcNow);
             Assert.Equal(_note, decrypted.Text);
 
-            // 4. Corrupted private-key material: stand in for leaked/garbled desktop key bytes
-            //    and exercise the real key-loading path through RemoteSyncService itself — not
-            //    bare DesktopKeyService, which has no logger at all and so could never make this
-            //    assertion falsifiable. Here a real ILogger<RemoteSyncService> is attached, and
-            //    the marker bytes are the exact value RemoteSyncService's per-poll key fetch
-            //    (the same call site a real decrypt failure runs right after) reads back and
-            //    fails to parse as PKCS#8. If anything on this path ever formatted those bytes
-            //    into a log message, the marker would appear in LogSink and fail the test.
+            // 4. Decrypt-failed envelope with real key material genuinely in scope: a real ECDH
+            //    key is loaded successfully (so GetOrCreateAsync does not throw, unlike round 1's
+            //    fix), and the relay returns one well-formed envelope whose ciphertext is
+            //    tampered so EnvelopeCrypto.Decrypt throws inside ProcessEnvelopeAsync's own
+            //    catch. That catch is the one call site in RemoteSyncService that logs
+            //    (PrivacySafeLog.EnvelopeRejected, EventId 1003) on a path where the private key
+            //    was just used, so asserting the marker is absent here is actually falsifiable —
+            //    unlike round 1's key-load failure, which threw before any PrivacySafeLog call
+            //    ever ran and so could never have caught a leak.
             var keySecretStore = new InMemorySecretStore();
-            keySecretStore.Values[DesktopKeyService.SecretStoreKey] = Encoding.UTF8.GetBytes(_privateKeyMarker);
             keySecretStore.Values[RelaySecretKeys.DeviceId] = Encoding.UTF8.GetBytes("device-already-registered");
+            var keyService = new DesktopKeyService(keySecretStore);
+            var keyMaterial = await keyService.GetOrCreateAsync(CancellationToken.None);
+            var storedPrivateKeyBytes = keySecretStore.Values[DesktopKeyService.SecretStoreKey];
+            var privateKeyMarkerBase64 = Convert.ToBase64String(storedPrivateKeyBytes);
+            var privateKeyMarkerBase64Url = Base64Url.EncodeToString(storedPrivateKeyBytes);
+
+            using var recipientPublicKey = ECDiffieHellman.Create();
+            recipientPublicKey.ImportSubjectPublicKeyInfo(
+                Base64Url.DecodeFromChars(keyMaterial.PublicKeySpkiBase64Url), out _);
+            var wellFormedEnvelope = CryptoFixture.EncryptFor(
+                recipientPublicKey.ExportSubjectPublicKeyInfo(), _note);
+            var tamperedCiphertextAndTag = Base64Url.DecodeFromChars(wellFormedEnvelope.Ciphertext);
+            tamperedCiphertextAndTag[0] ^= 0xFF;
+            var tamperedEnvelope = new RelayEnvelope(
+                wellFormedEnvelope.ProtocolVersion,
+                wellFormedEnvelope.MessageId,
+                wellFormedEnvelope.CreatedUtc,
+                wellFormedEnvelope.DeliverAfterUtc,
+                wellFormedEnvelope.EphemeralPublicKey,
+                wellFormedEnvelope.HkdfSalt,
+                wellFormedEnvelope.Nonce,
+                Base64Url.EncodeToString(tamperedCiphertextAndTag));
+
+            Exception? reportedException = null;
             var syncLogger = new RecordingLogger<RemoteSyncService>(LogSink);
             await using var sync = new RemoteSyncService(
-                new NeverReachedRelayClient(),
-                new NeverReachedEnvelopeRepository(),
+                new SingleEnvelopeRelayClient(tamperedEnvelope),
+                new AcceptingEnvelopeRepository(),
                 new NeverReachedArrivalSink(),
                 keySecretStore,
-                new DesktopKeyService(keySecretStore),
+                keyService,
                 new RealClock(),
                 new PollBackoff(new ZeroRandomSource()),
+                reportError: (_, exception) => reportedException = exception,
                 logger: syncLogger);
-            await Assert.ThrowsAsync<CryptographicException>(
-                () => sync.PollOnceAsync(CancellationToken.None));
+
+            // Must not throw: the decrypt failure is caught inside ProcessEnvelopeAsync.
+            await sync.PollOnceAsync(CancellationToken.None);
+
+            Assert.Contains(1003, LogSink.EventIds);
+            Assert.DoesNotContain(privateKeyMarkerBase64, LogSink.JoinedText);
+            Assert.DoesNotContain(privateKeyMarkerBase64Url, LogSink.JoinedText);
+            Assert.DoesNotContain(_token, LogSink.JoinedText);
+            Assert.DoesNotContain(_note, LogSink.JoinedText);
+
+            Assert.NotNull(reportedException);
+            Assert.DoesNotContain(privateKeyMarkerBase64, reportedException!.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain(privateKeyMarkerBase64Url, reportedException.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain(_token, reportedException.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain(_note, reportedException.Message, StringComparison.Ordinal);
         }
 
         private static StringContent JsonContent(string json) => new(json, Encoding.UTF8, "application/json");
@@ -206,6 +241,7 @@ public sealed class PrivacyBoundaryTests
     private sealed class RecordingLoggerSink
     {
         private readonly List<string> _entries = [];
+        private readonly List<int> _eventIds = [];
         private readonly object _sync = new();
 
         public void Add(string entry)
@@ -216,6 +252,14 @@ public sealed class PrivacyBoundaryTests
             }
         }
 
+        public void AddEventId(int eventId)
+        {
+            lock (_sync)
+            {
+                _eventIds.Add(eventId);
+            }
+        }
+
         public string JoinedText
         {
             get
@@ -223,6 +267,17 @@ public sealed class PrivacyBoundaryTests
                 lock (_sync)
                 {
                     return string.Join('\n', _entries);
+                }
+            }
+        }
+
+        public IReadOnlyList<int> EventIds
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    return [.. _eventIds];
                 }
             }
         }
@@ -245,6 +300,7 @@ public sealed class PrivacyBoundaryTests
             Func<TState, Exception?, string> formatter)
         {
             sink.Add(formatter(state, exception));
+            sink.AddEventId(eventId.Id);
             if (exception is not null)
             {
                 sink.Add(exception.GetType().FullName ?? string.Empty);
@@ -260,9 +316,12 @@ public sealed class PrivacyBoundaryTests
         }
     }
 
-    /// <summary>An <see cref="IRelayClient"/> double for the corrupted-key test: the key-loading
-    /// failure must happen before any of these are ever called, so every member throws.</summary>
-    private sealed class NeverReachedRelayClient : IRelayClient
+    /// <summary>An <see cref="IRelayClient"/> double for the decrypt-failed test: registration is
+    /// skipped because the device id is already seeded, so PollAsync returns the one
+    /// caller-supplied (tampered) envelope and AcknowledgeAsync is a no-op — ProcessEnvelopeAsync
+    /// acknowledges every envelope it processes, decrypted or not. Every other member must never
+    /// run, so it throws.</summary>
+    private sealed class SingleEnvelopeRelayClient(RelayEnvelope envelope) : IRelayClient
     {
         public Task<RelayRegistrationResult> RegisterAsync(string publicKeySpki, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("RegisterAsync must not run: the device id is already seeded.");
@@ -280,15 +339,17 @@ public sealed class PrivacyBoundaryTests
             throw new InvalidOperationException("DeleteDeviceAsync must not run in this test.");
 
         public Task<IReadOnlyList<RelayEnvelope>> PollAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<RelayEnvelope>>([]);
+            Task.FromResult<IReadOnlyList<RelayEnvelope>>([envelope]);
 
         public Task AcknowledgeAsync(string messageId, CancellationToken cancellationToken) =>
-            throw new InvalidOperationException("AcknowledgeAsync must not run: no envelopes are ever polled.");
+            Task.CompletedTask;
     }
 
-    /// <summary>An <see cref="IRemoteEnvelopeRepository"/> double for the corrupted-key test: the
-    /// key-loading failure happens before any envelope is ever stored or looked up.</summary>
-    private sealed class NeverReachedEnvelopeRepository : IRemoteEnvelopeRepository
+    /// <summary>An <see cref="IRemoteEnvelopeRepository"/> double for the decrypt-failed test:
+    /// ProcessEnvelopeAsync checks IsProcessedAsync before decrypting and stores the envelope
+    /// (decrypted or not) afterwards via TryInsertAndMarkProcessedAsync, so both must succeed.
+    /// Every other member must never run in this test, so it throws.</summary>
+    private sealed class AcceptingEnvelopeRepository : IRemoteEnvelopeRepository
     {
         public Task<RemoteEnvelope?> GetAsync(string messageId, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("GetAsync must not run in this test.");
@@ -300,13 +361,13 @@ public sealed class PrivacyBoundaryTests
             throw new InvalidOperationException("TryInsertAsync must not run in this test.");
 
         public Task<bool> IsProcessedAsync(string messageId, CancellationToken cancellationToken) =>
-            throw new InvalidOperationException("IsProcessedAsync must not run in this test.");
+            Task.FromResult(false);
 
         public Task<bool> TryMarkProcessedAsync(string messageId, DateTimeOffset processedUtc, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("TryMarkProcessedAsync must not run in this test.");
 
         public Task<bool> TryInsertAndMarkProcessedAsync(RemoteEnvelope envelope, DateTimeOffset processedUtc, CancellationToken cancellationToken) =>
-            throw new InvalidOperationException("TryInsertAndMarkProcessedAsync must not run: PollAsync returns no envelopes.");
+            Task.FromResult(true);
 
         public Task DeleteAsync(string messageId, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("DeleteAsync must not run in this test.");
