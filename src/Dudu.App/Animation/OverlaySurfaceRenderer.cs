@@ -76,6 +76,7 @@ internal static class OverlaySurfaceRenderer
             }
 
             if (snapshot.Kind == OverlayActionSurfaceKind.Comfort
+                && string.IsNullOrWhiteSpace(snapshot.ErrorMessage)
                 && !string.IsNullOrWhiteSpace(snapshot.ComfortPanel.Instruction))
             {
                 // Reduced motion has one stable, visible instruction rather
