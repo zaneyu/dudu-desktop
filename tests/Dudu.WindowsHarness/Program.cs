@@ -2,13 +2,20 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Dudu.App.Animation;
 using Dudu.App.Hosting;
+using Dudu.App.Notifications;
 using Dudu.App.Overlay;
 using Dudu.Core.Assets;
 using Dudu.Core.Models;
+using Dudu.Core.Pet;
 
 if (Array.IndexOf(args, "single-instance") >= 0)
 {
     return await RunSingleInstanceScenarioAsync(args);
+}
+
+if (Array.IndexOf(args, "notifications") >= 0)
+{
+    return await RunNotificationsScenarioAsync();
 }
 
 if (!args.Contains("--scenario", StringComparer.Ordinal)
@@ -74,7 +81,11 @@ using var host = await OverlayWindowHost.CreateAsync(
     presenter,
     new PetPlacement("MISSING", 0.8, 0.8, 1),
     animation.NominalSize,
-    openHome: () => Console.WriteLine("OpenHome callback"),
+    openHome: _ =>
+    {
+        Console.WriteLine("OpenHome callback");
+        return Task.CompletedTask;
+    },
     showContextMenu: () => Console.WriteLine("Context menu callback"));
 
 using var frame = composer.Compose(pack, animation, 0);
@@ -206,6 +217,37 @@ static async Task<int> RunSingleInstanceScenarioAsync(string[] args)
         : 0;
     Console.WriteLine($"primaryExit={primaryProcess.ExitCode}; secondaryExit={secondaryProcess.ExitCode}; OpenHome={activations}; DuduWindows={observedWindows}");
     return primaryProcess.ExitCode == 0 && secondaryProcess.ExitCode == 0 && activations == 1 && observedWindows == 1 ? 0 : 7;
+}
+
+static async Task<int> RunNotificationsScenarioAsync()
+{
+    if (!OperatingSystem.IsWindows())
+    {
+        Console.Error.WriteLine("The notifications harness requires Windows x64 and is intentionally manual.");
+        return 3;
+    }
+
+    var notifications = new AppNotificationService(new WindowsAppNotificationSink());
+    var registered = await notifications.TryRegisterAsync(CancellationToken.None);
+    Console.WriteLine($"Notification registration: {(registered ? "succeeded" : "failed")}");
+
+    var messageId = Guid.NewGuid();
+    await notifications.ShowRemoteNoteArrivalAsync(messageId, CancellationToken.None);
+    Console.WriteLine($"Showed remote-note toast for message {messageId:D}.");
+
+    var pet = PetStateMachine.CreateIdle();
+    var presentation = pet.Handle(new PetEvent.RemoteNoteArrived(messageId.ToString("D")));
+    Console.WriteLine($"Pet bubble fallback state: {presentation.State}; title: {presentation.BubbleTitle}");
+
+    Console.WriteLine();
+    Console.WriteLine("Manual checks:");
+    Console.WriteLine("1. A Windows toast titled 'A note arrived 💌' appears with no body text, no image, and no preview of any message content.");
+    Console.WriteLine("2. Disable notifications for this app (Windows Settings > Notifications), rerun this scenario, and confirm the pet bubble above still shows the same generic text with no data loss.");
+    Console.WriteLine();
+    Console.Write("Enter PASS or FAIL (include a short reason for FAIL): ");
+    var verdict = Console.ReadLine()?.Trim();
+    Console.WriteLine($"Harness result: {verdict ?? "NO-VERDICT"}");
+    return string.Equals(verdict, "PASS", StringComparison.OrdinalIgnoreCase) ? 0 : 6;
 }
 
 static void DeleteIfPresent(string path)

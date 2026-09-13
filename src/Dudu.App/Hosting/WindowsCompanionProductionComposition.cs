@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using Dudu.App.Animation;
+using Dudu.App.Notifications;
 using Dudu.App.Overlay;
+using Dudu.App.Presentation;
 using Dudu.App.System;
 using Dudu.App.ViewModels;
 using Dudu.Core.Abstractions;
@@ -12,6 +14,7 @@ using Dudu.Core.Time;
 using Dudu.Infrastructure;
 using Dudu.Infrastructure.Data;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Windows.AppNotifications;
 
 namespace Dudu.App.Hosting;
 
@@ -100,6 +103,13 @@ public sealed record CompanionLaunchOptions(bool Background)
 
 public static class WindowsCompanionProductionComposition
 {
+    /// <summary>
+    /// Minimum silence between unsolicited releases once a suppressed queue
+    /// starts draining, so leaving quiet hours/fullscreen/lock/pause drains
+    /// one durable item at a time instead of a burst.
+    /// </summary>
+    private static readonly TimeSpan PresentationMinimumSilentInterval = TimeSpan.FromSeconds(90);
+
     public static WindowsCompanionBootstrap CreateBootstrap(
         CompanionUiActions actions,
         IActivationTransport? transport = null)
@@ -131,14 +141,27 @@ public static class WindowsCompanionProductionComposition
         }
 
         var paths = AppPaths.ForCurrentUser();
+        // The real presentation gateway does not exist yet at this point: it
+        // depends on the pet state machine, animation engine, and pause
+        // store, all of which are only available once the overlay is
+        // composed further below. IReminderDueSink must be registered before
+        // BuildServiceProvider (ReminderEngine resolves it eagerly), so it
+        // captures this variable and resolves the gateway lazily once the
+        // rest of the runtime is ready.
+        PresentationCoordinator? presentationGateway = null;
         var services = new ServiceCollection()
             .AddDuduInfrastructure(new DatabaseOptions(paths.Database, paths.Backups))
+            .AddSingleton<IReminderDueSink>(provider => new ReminderDueSink(
+                provider.GetRequiredService<IReminderRepository>(),
+                () => presentationGateway
+                    ?? throw new InvalidOperationException("The presentation gateway is not ready.")))
             .BuildServiceProvider();
         var host = new AppHost(services, paths);
         var composer = default(SkiaFrameComposer);
         var presenter = default(LayeredFramePresenter);
         AnimationEngine? animationEngine = null;
         PetPresentationCoordinator? presentationCoordinator = null;
+        AppNotificationService? notificationService = null;
         StartupRegistrationService? startup = null;
         var actionSurface = new OverlayActionSurfaceController();
 
@@ -244,6 +267,23 @@ public static class WindowsCompanionProductionComposition
                         {
                             ReducedMotionEnabled = runtimePreferences.Current.ReducedMotion,
                         });
+                    notificationService = new AppNotificationService(new WindowsAppNotificationSink());
+                    AppNotificationManager.Default.NotificationInvoked += (_, invokedArgs) =>
+                        HandleNotificationInvoked(actions, invokedArgs.Argument);
+                    presentationGateway = new PresentationCoordinator(
+                        new PresentationPolicy(PresentationMinimumSilentInterval),
+                        notificationService,
+                        pet,
+                        animationEngine.PlayAsync,
+                        () => new AnimationOptions
+                        {
+                            ReducedMotionEnabled = runtimePreferences.Current.ReducedMotion,
+                        },
+                        isQuietHours: () => QuietHoursPolicy.IsQuiet(
+                            DateTimeOffset.UtcNow,
+                            runtimePreferences.Current.QuietHours,
+                            TimeZoneInfo.Local),
+                        pauseState: () => pause.GetEffective(DateTimeOffset.UtcNow));
                     _ = StartAnimationPlayback(
                         animationEngine.PlayAsync(
                             pet.Current,
@@ -277,8 +317,13 @@ public static class WindowsCompanionProductionComposition
                                 : AnimationOptions.Default,
                             token));
                 },
+                presentationEnvironment: new DelegatingPresentationEnvironmentSink(
+                    locked => presentationGateway?.SetSessionLocked(locked),
+                    fullscreenNow => presentationGateway?.SetFullscreen(fullscreenNow)),
                 cancellationToken: cancellationToken);
             activeRuntime = runtime;
+            host.AttachPresentationGateway(presentationGateway
+                ?? throw new InvalidOperationException("The presentation gateway was not composed."));
 
             var placementSnapshot = await runtime.CapturePlacementSnapshotAsync(cancellationToken);
             var currentMonitorPlacement = savedPlacements.FirstOrDefault(item =>
@@ -451,6 +496,32 @@ public static class WindowsCompanionProductionComposition
                 "Dudu could not dispatch settings navigation to the UI thread."));
     }
 
+    /// <summary>
+    /// Resolves a toast activation to a settings destination and navigates
+    /// there. Executing Done/Snooze directly from the toast is out of scope
+    /// for this milestone; a malformed or unknown activation is ignored
+    /// rather than throwing.
+    /// </summary>
+    private static void HandleNotificationInvoked(CompanionUiActions actions, string? argument)
+    {
+        var activation = NotificationActivation.TryParse(argument);
+        var destination = activation?.Action switch
+        {
+            NotificationActivationAction.OpenNote => "notes",
+            NotificationActivationAction.ReminderDone => "reminders",
+            NotificationActivationAction.ReminderSnooze => "reminders",
+            _ => null,
+        };
+        if (destination is null)
+        {
+            return;
+        }
+
+        _ = ObserveNativeCallbackAsync(
+            DispatchSettingsDestinationAsync(actions, destination, CancellationToken.None),
+            "notification-invoked");
+    }
+
     private static async Task ObserveAnimationAsync(Task playback)
     {
         try
@@ -504,5 +575,22 @@ public static class WindowsCompanionProductionComposition
             presenter.Dispose();
             await services.DisposeAsync();
         }
+    }
+
+    /// <summary>
+    /// Forwards session-lock/fullscreen transitions to the presentation
+    /// gateway, which is not composed yet when <c>WindowsCompanionRuntime</c>
+    /// is created. The delegates close over the gateway variable, so calls
+    /// made before it is assigned are safely no-ops and every call made
+    /// after <c>WindowsCompanionRuntime.StartAsync</c> runs reaches the real
+    /// gateway.
+    /// </summary>
+    private sealed class DelegatingPresentationEnvironmentSink(
+        Action<bool> setSessionLocked,
+        Action<bool> setFullscreen) : IPresentationEnvironmentSink
+    {
+        public void SetSessionLocked(bool locked) => setSessionLocked(locked);
+
+        public void SetFullscreen(bool fullscreen) => setFullscreen(fullscreen);
     }
 }

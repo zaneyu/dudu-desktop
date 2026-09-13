@@ -31,6 +31,20 @@ public interface IAppHostErrorReporter
     void Report(string operation, Exception exception);
 }
 
+/// <summary>
+/// The presentation gateway's lifecycle hooks as seen by <see cref="AppHost"/>.
+/// Started once the database has initialized, ticked after every successful
+/// reminder tick (reusing the existing 30-second scheduler instead of a new
+/// timer), and disposed during shutdown cleanup. Attaching one is optional:
+/// an <see cref="AppHost"/> with none attached behaves exactly as before.
+/// </summary>
+public interface IAppHostPresentationGateway : IAsyncDisposable
+{
+    Task StartAsync(CancellationToken cancellationToken = default);
+
+    Task TickAsync(CancellationToken cancellationToken = default);
+}
+
 public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
 {
     private static readonly TimeSpan ReminderTickInterval = TimeSpan.FromSeconds(30);
@@ -42,6 +56,7 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
     private readonly IAppHostTimerFactory _timerFactory;
     private readonly IAppHostErrorReporter _errorReporter;
     private readonly TimeSpan _stopTimeout;
+    private IAppHostPresentationGateway? _presentationGateway;
     private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
     private readonly SemaphoreSlim _reminderTickGate = new(1, 1);
     private readonly CancellationTokenSource _hostStopSource = new();
@@ -107,6 +122,25 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
 
     public bool IsStarted => Volatile.Read(ref _started) != 0;
 
+    /// <summary>
+    /// Attaches the presentation gateway this host will start, tick, and
+    /// dispose. Optional: production composes the gateway after this host is
+    /// constructed (it depends on objects that do not exist yet at that
+    /// point), so attachment happens separately rather than through the
+    /// constructor. Must be called before <see cref="StartAsync"/>.
+    /// </summary>
+    public void AttachPresentationGateway(IAppHostPresentationGateway gateway)
+    {
+        ArgumentNullException.ThrowIfNull(gateway);
+        if (Volatile.Read(ref _started) != 0)
+        {
+            throw new InvalidOperationException(
+                "The presentation gateway must be attached before the host starts.");
+        }
+
+        _presentationGateway = gateway;
+    }
+
     public Task StartAsync(CancellationToken cancellationToken = default)
     {
         Task startTask;
@@ -160,6 +194,7 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
             {
                 CreateDirectories();
                 await _database.InitializeAsync(operation.CancellationToken);
+                await StartPresentationGatewayAsync(operation.CancellationToken);
                 await RunReminderTickAsync(operation.CancellationToken);
 
                 if (!await TryAcquireLifecycleGateAsync(_stopTimeout, operation.CancellationToken))
@@ -304,10 +339,73 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
         try
         {
             await _reminderService.TickAsync(cancellationToken);
+            await TickPresentationGatewayAsync(cancellationToken);
         }
         finally
         {
             _reminderTickGate.Release();
+        }
+    }
+
+    private async Task StartPresentationGatewayAsync(CancellationToken cancellationToken)
+    {
+        var gateway = _presentationGateway;
+        if (gateway is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await gateway.StartAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            ReportError("presentation-gateway-start", exception);
+        }
+    }
+
+    private async Task TickPresentationGatewayAsync(CancellationToken cancellationToken)
+    {
+        var gateway = _presentationGateway;
+        if (gateway is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await gateway.TickAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            ReportError("presentation-gateway-tick", exception);
+        }
+    }
+
+    private async Task DisposePresentationGatewayAsync()
+    {
+        var gateway = _presentationGateway;
+        if (gateway is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await gateway.DisposeAsync();
+        }
+        catch (Exception exception)
+        {
+            ReportError("presentation-gateway-shutdown", exception);
         }
     }
 
@@ -418,6 +516,7 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
 
         await operationsDrained;
         await ObserveHostCancellationAsync(hostCancellationTask);
+        await DisposePresentationGatewayAsync();
         if (Interlocked.Exchange(ref _databaseDisposed, 1) == 0)
         {
             await _database.DisposeAsync();

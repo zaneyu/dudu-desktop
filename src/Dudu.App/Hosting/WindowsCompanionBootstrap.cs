@@ -1,5 +1,6 @@
 using Dudu.App.Overlay;
 using Dudu.App.Animation;
+using Dudu.App.Presentation;
 using Dudu.App.System;
 using Dudu.App.Tray;
 using Dudu.Core.Models;
@@ -424,6 +425,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
     private readonly ICompanionEventSource _events;
     private readonly bool _initialUserVisible;
     private readonly Func<Preferences, CancellationToken, Task>? _onPreferencesChanged;
+    private readonly IPresentationEnvironmentSink? _presentationEnvironment;
     private bool _started;
 
     public WindowsCompanionRuntime(
@@ -434,7 +436,8 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         GlobalHotkeyService hotkey,
         ICompanionEventSource events,
         bool initialUserVisible,
-        Func<Preferences, CancellationToken, Task>? onPreferencesChanged)
+        Func<Preferences, CancellationToken, Task>? onPreferencesChanged,
+        IPresentationEnvironmentSink? presentationEnvironment = null)
     {
         _host = host ?? throw new ArgumentNullException(nameof(host));
         _overlay = overlay ?? throw new ArgumentNullException(nameof(overlay));
@@ -444,6 +447,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         _events = events ?? throw new ArgumentNullException(nameof(events));
         _initialUserVisible = initialUserVisible;
         _onPreferencesChanged = onPreferencesChanged;
+        _presentationEnvironment = presentationEnvironment;
     }
 
     public static async Task<WindowsCompanionRuntime> CreateAsync(
@@ -463,6 +467,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         Func<OverlayWindowHost, Task>? initializeOverlay = null,
         bool initialUserVisible = true,
         Func<Preferences, CancellationToken, Task>? onPreferencesChanged = null,
+        IPresentationEnvironmentSink? presentationEnvironment = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(openHome);
@@ -518,7 +523,8 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                 hotkey,
                 events,
                 initialUserVisible,
-                onPreferencesChanged);
+                onPreferencesChanged,
+                presentationEnvironment);
         }
         catch
         {
@@ -623,11 +629,17 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         _started = false;
     }
 
-    public Task OnSessionLockedAsync(CancellationToken cancellationToken = default) =>
-        _lifecycle.OnSessionLockedAsync(cancellationToken);
+    public Task OnSessionLockedAsync(CancellationToken cancellationToken = default)
+    {
+        _presentationEnvironment?.SetSessionLocked(true);
+        return _lifecycle.OnSessionLockedAsync(cancellationToken);
+    }
 
-    public Task OnSessionUnlockedAsync(CancellationToken cancellationToken = default) =>
-        _lifecycle.OnSessionUnlockedAsync(cancellationToken);
+    public Task OnSessionUnlockedAsync(CancellationToken cancellationToken = default)
+    {
+        _presentationEnvironment?.SetSessionLocked(false);
+        return _lifecycle.OnSessionUnlockedAsync(cancellationToken);
+    }
 
     public Task OnSuspendAsync(CancellationToken cancellationToken = default) =>
         _lifecycle.OnSuspendAsync(cancellationToken);
@@ -641,8 +653,11 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
     public Task OnTaskbarCreatedAsync(CancellationToken cancellationToken = default) =>
         _lifecycle.OnTaskbarCreatedAsync(cancellationToken);
 
-    public Task OnFullscreenChangedAsync(bool fullscreen, CancellationToken cancellationToken = default) =>
-        _lifecycle.OnFullscreenChangedAsync(fullscreen, cancellationToken);
+    public Task OnFullscreenChangedAsync(bool fullscreen, CancellationToken cancellationToken = default)
+    {
+        _presentationEnvironment?.SetFullscreen(fullscreen);
+        return _lifecycle.OnFullscreenChangedAsync(fullscreen, cancellationToken);
+    }
 
     public Task SetUserVisibleAsync(
         bool visible,
