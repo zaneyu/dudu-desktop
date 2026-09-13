@@ -16,6 +16,7 @@ artifacts/
 node_modules/
 .wrangler/
 relay/public/dist/
+relay/dist/
 
 # Private asset staging
 assets/raw/*

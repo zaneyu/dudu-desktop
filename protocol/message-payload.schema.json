@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dudu.private/protocol/message-payload.schema.json",
+  "title": "RemoteMessagePayloadV1",
+  "description": "The plaintext JSON payload encrypted inside an EncryptedEnvelopeV1's ciphertext field. See protocol/README.md for the full specification.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "text", "reaction"],
+  "properties": {
+    "kind": {
+      "const": "note",
+      "description": "The only payload kind version one supports."
+    },
+    "text": {
+      "type": "string",
+      "description": "The note text. Must not exceed 2000 Unicode scalar values. The serialized payload (this object as UTF-8 JSON) must not exceed 4096 bytes."
+    },
+    "reaction": {
+      "type": "string",
+      "enum": ["none", "wave", "heart", "hug", "celebrate"],
+      "description": "An optional reaction attached to the note."
+    }
+  }
+}

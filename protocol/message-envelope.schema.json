@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dudu.private/protocol/message-envelope.schema.json",
+  "title": "EncryptedEnvelopeV1",
+  "description": "Version-one wire envelope for an encrypted note exchanged between the sender and the desktop companion. See protocol/README.md for the full specification.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocolVersion",
+    "messageId",
+    "createdUtc",
+    "deliverAfterUtc",
+    "ephemeralPublicKey",
+    "hkdfSalt",
+    "nonce",
+    "ciphertext"
+  ],
+  "properties": {
+    "protocolVersion": {
+      "const": 1,
+      "description": "Must be exactly 1 for this version of the protocol."
+    },
+    "messageId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "Canonical lowercase UUID, as produced by crypto.randomUUID()."
+    },
+    "createdUtc": {
+      "type": "string",
+      "description": "ISO-8601 UTC timestamp with a 'Z' suffix. Used verbatim (not normalized) as part of the AAD, so the wire string must be preserved exactly."
+    },
+    "deliverAfterUtc": {
+      "type": ["string", "null"],
+      "description": "ISO-8601 UTC timestamp with a 'Z' suffix, or null. Used verbatim as part of the AAD."
+    },
+    "ephemeralPublicKey": {
+      "type": "string",
+      "description": "Unpadded Base64URL encoding of a fresh P-256 SPKI DER public key (91 bytes decoded), generated once per envelope."
+    },
+    "hkdfSalt": {
+      "type": "string",
+      "description": "Unpadded Base64URL encoding of 32 random bytes used as the HKDF-SHA-256 salt."
+    },
+    "nonce": {
+      "type": "string",
+      "description": "Unpadded Base64URL encoding of the 12-byte random AES-256-GCM nonce."
+    },
+    "ciphertext": {
+      "type": "string",
+      "description": "Unpadded Base64URL encoding of AES-256-GCM ciphertext with the 16-byte (128-bit) authentication tag appended (ciphertext‖tag). Decoded length must be between 17 and 6144 bytes inclusive."
+    }
+  }
+}

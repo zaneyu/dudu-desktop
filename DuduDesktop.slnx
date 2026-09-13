@@ -9,4 +9,5 @@
   <Project Path="tests/Dudu.WindowsHarness/Dudu.WindowsHarness.csproj" />
   <Project Path="tools/Dudu.AssetTool/Dudu.AssetTool.csproj" />
   <Project Path="tools/Dudu.AssetTool.Tests/Dudu.AssetTool.Tests.csproj" />
+  <Project Path="tools/Dudu.CryptoInterop/Dudu.CryptoInterop.csproj" />
 </Solution>

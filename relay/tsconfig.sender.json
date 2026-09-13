@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "rootDir": ".",
+    "outDir": "public/dist",
+    "strict": true,
+    "verbatimModuleSyntax": true,
+    "types": [],
+    "skipLibCheck": true,
+    "declaration": false
+  },
+  "include": ["sender-src/**/*.ts", "src/protocol/types.ts"]
+}
