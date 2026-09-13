@@ -6,6 +6,7 @@ import {
   createPairingCodeForTest,
   fetchWorker,
   jsonHeaders,
+  randomTestIp,
   redeem,
   registerDevice,
   TEST_PUBLIC_KEY,
@@ -23,7 +24,7 @@ describe("device registration and pairing", () => {
     const first = await exports.default.fetch(
       new Request("https://example.test/v1/pairings/redeem", {
         method: "POST",
-        headers: jsonHeaders({ Origin: "https://example.test" }),
+        headers: jsonHeaders({ Origin: "https://example.test", "CF-Connecting-IP": randomTestIp() }),
         body: JSON.stringify({ code: pairing.code }),
       }),
     );
@@ -96,7 +97,7 @@ describe("device registration and pairing", () => {
     const response = await exports.default.fetch(
       new Request("https://example.test/v1/pairings/redeem", {
         method: "POST",
-        headers: jsonHeaders({ Origin: "https://evil.test" }),
+        headers: jsonHeaders({ Origin: "https://evil.test", "CF-Connecting-IP": randomTestIp() }),
         body: JSON.stringify({ code: pairing.code }),
       }),
     );

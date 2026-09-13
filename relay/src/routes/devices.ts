@@ -1,5 +1,6 @@
 import { importRecipientPublicKey } from "../../sender-src/crypto.js";
 import {
+  buildDeleteDeviceStatements,
   buildRotateKeyStatements,
   countActiveSenderSessions,
   findDeviceByTokenHash,
@@ -8,9 +9,11 @@ import {
 } from "../db/devices.js";
 import { insertPairingCode } from "../db/pairings.js";
 import type { Env } from "../env.js";
+import { readJsonBody, UnsupportedMediaTypeError } from "../http/body.js";
 import {
   badRequest,
   jsonResponse,
+  noContentResponse,
   tooManyRequests,
   unauthorized,
   unsupportedMediaType,
@@ -38,21 +41,6 @@ async function parsePublicKeyOrThrow(publicKey: unknown): Promise<string> {
   await importRecipientPublicKey(publicKey);
   return publicKey;
 }
-
-async function readJsonBody(request: Request): Promise<unknown> {
-  const contentType = request.headers.get("Content-Type") ?? "";
-  if (!contentType.toLowerCase().includes("application/json")) {
-    throw new UnsupportedMediaTypeError();
-  }
-  try {
-    return await request.json();
-  } catch {
-    throw new MalformedBodyError();
-  }
-}
-
-class UnsupportedMediaTypeError extends Error {}
-class MalformedBodyError extends Error {}
 
 /** Authenticates a device by its `Authorization: Bearer <desktopToken>` header. */
 export async function authenticateDevice(request: Request, env: Env): Promise<DeviceRecord | null> {
@@ -121,7 +109,12 @@ export async function getCurrentDevice(request: Request, env: Env): Promise<Resp
   }
   const nowIso = new Date().toISOString();
   const keyBytes = base64UrlToBytes(device.publicKeySpki);
-  const publicKeyFingerprint = keyBytes ? await sha256Hex(keyBytes) : "";
+  if (!keyBytes) {
+    // Validated as SPKI Base64URL at registration time; a stored row that fails to decode here is
+    // stored data corruption, not a client error.
+    throw new Error("Stored device public key is not valid Base64URL.");
+  }
+  const publicKeyFingerprint = await sha256Hex(keyBytes);
   const activeSenderSessions = await countActiveSenderSessions(env.DB, device.id, nowIso);
   return jsonResponse({ createdUtc: device.createdUtc, publicKeyFingerprint, activeSenderSessions });
 }
@@ -178,4 +171,18 @@ export async function createDevicePairingCode(request: Request, env: Env): Promi
   const expiresUtc = new Date(Date.now() + PAIRING_CODE_VALIDITY_MS).toISOString();
   await insertPairingCode(env.DB, { codeHash, deviceId: device.id, expiresUtc });
   return jsonResponse({ code, expiresUtc }, 201);
+}
+
+/**
+ * Permanently revokes a device and deletes everything tied to it: queued ciphertext, message
+ * status rows, sender sessions, and unredeemed pairing codes — all in one atomic `db.batch`, so a
+ * desktop that has been unpaired leaves nothing behind for its former senders to keep polling.
+ */
+export async function deleteCurrentDevice(request: Request, env: Env): Promise<Response> {
+  const device = await authenticateDevice(request, env);
+  if (!device) {
+    return unauthorized();
+  }
+  await env.DB.batch(buildDeleteDeviceStatements(env.DB, device.id, new Date().toISOString()));
+  return noContentResponse();
 }

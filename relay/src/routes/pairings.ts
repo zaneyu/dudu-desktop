@@ -1,6 +1,7 @@
-import { findActiveSenderSessionByTokenHash, revokeSenderSession } from "../db/devices.js";
+import { findActiveSenderSessionByTokenHash, revokeSenderSession, type SenderSessionRecord } from "../db/devices.js";
 import { incrementPairingAttempt, redeemPairingCode } from "../db/pairings.js";
 import type { Env } from "../env.js";
+import { readJsonBody, UnsupportedMediaTypeError } from "../http/body.js";
 import {
   badRequest,
   forbidden,
@@ -30,21 +31,6 @@ import {
 } from "../security/tokens.js";
 
 const REDEEM_RATE_LIMIT_PER_HOUR = 10;
-
-class UnsupportedMediaTypeError extends Error {}
-class MalformedBodyError extends Error {}
-
-async function readJsonBody(request: Request): Promise<unknown> {
-  const contentType = request.headers.get("Content-Type") ?? "";
-  if (!contentType.toLowerCase().includes("application/json")) {
-    throw new UnsupportedMediaTypeError();
-  }
-  try {
-    return await request.json();
-  } catch {
-    throw new MalformedBodyError();
-  }
-}
 
 export async function redeemPairing(request: Request, env: Env): Promise<Response> {
   if (!isSameOrigin(request)) {
@@ -112,7 +98,12 @@ export async function redeemPairing(request: Request, env: Env): Promise<Respons
   );
 }
 
-async function authenticateSenderSession(request: Request, env: Env) {
+/** Also used by `routes/messages.ts`: every sender-authenticated message route shares this same
+ * cookie-based session lookup. */
+export async function authenticateSenderSession(
+  request: Request,
+  env: Env,
+): Promise<SenderSessionRecord | null> {
   const token = readSenderSessionToken(request);
   if (!token) {
     return null;
@@ -127,7 +118,12 @@ export async function getSenderDevice(request: Request, env: Env): Promise<Respo
     return unauthorized();
   }
   const keyBytes = base64UrlToBytes(session.publicKeySpki);
-  const publicKeyFingerprint = keyBytes ? await sha256Hex(keyBytes) : "";
+  if (!keyBytes) {
+    // The public key was validated as SPKI Base64URL at registration time, so a stored row that
+    // fails to decode here indicates stored data corruption, not a client error.
+    throw new Error("Stored device public key is not valid Base64URL.");
+  }
+  const publicKeyFingerprint = await sha256Hex(keyBytes);
   return jsonResponse({
     publicKey: session.publicKeySpki,
     deviceCreatedUtc: session.deviceCreatedUtc,

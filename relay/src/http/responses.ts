@@ -44,11 +44,23 @@ export const notFound = (): Response =>
 export const methodNotAllowed = (): Response =>
   errorResponse(405, "method_not_allowed", "This method is not supported for this route.");
 
+export const conflict = (message = "This resource already exists under a different owner."): Response =>
+  errorResponse(409, "conflict", message);
+
 export const gone = (message = "This pairing code is no longer valid."): Response =>
   errorResponse(410, "gone", message);
 
 export const unsupportedMediaType = (message = "Requests must use application/json."): Response =>
   errorResponse(415, "unsupported_media_type", message);
 
+export const unprocessable = (message = "The request body failed validation."): Response =>
+  errorResponse(422, "unprocessable", message);
+
 export const tooManyRequests = (message = "Too many requests. Try again later."): Response =>
   errorResponse(429, "rate_limited", message);
+
+export const payloadTooLarge = (message = "The request body exceeds the maximum allowed size."): Response =>
+  errorResponse(413, "payload_too_large", message);
+
+export const internalError = (message = "An unexpected error occurred."): Response =>
+  errorResponse(500, "internal_error", message);

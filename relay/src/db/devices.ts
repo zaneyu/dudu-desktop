@@ -1,3 +1,5 @@
+import { deleteMessagesStatement, deleteMessageStatusesStatement } from "./messages.js";
+
 /** Persistence for the `devices` and `sender_sessions` tables. No plaintext tokens or keys. */
 
 export interface DeviceRecord {
@@ -89,9 +91,10 @@ export interface RotateKeyParams {
 
 /**
  * Statements for one atomic key rotation: replace the device's public key and desktop-token
- * hash, and revoke every active sender session for the device. Returned as a list (rather than
- * run directly) so Task 18 can append a `DELETE FROM messages WHERE device_id = ?` statement to
- * the same `db.batch` once the messages table exists, keeping rotation fully atomic.
+ * hash, revoke every active sender session for the device, and delete its queued messages (the
+ * old ciphertext was encrypted to the key being replaced, so it can never be decrypted by the
+ * device again). `message_status` rows are deliberately left alone: with no `messages` row left,
+ * `findMessageStateForSession` already reports any non-delivered one as `"expired"`.
  */
 export function buildRotateKeyStatements(
   db: D1Database,
@@ -106,11 +109,28 @@ export function buildRotateKeyStatements(
         `UPDATE sender_sessions SET revoked_utc = ?1 WHERE device_id = ?2 AND revoked_utc IS NULL`,
       )
       .bind(params.revokedUtc, params.deviceId),
+    deleteMessagesStatement(db, params.deviceId),
   ];
 }
 
 export async function rotateDeviceKey(db: D1Database, params: RotateKeyParams): Promise<void> {
   await db.batch(buildRotateKeyStatements(db, params));
+}
+
+/**
+ * Statements for one atomic device deletion: revoke the device, delete its queued ciphertext and
+ * message-status rows, delete its sender sessions, and delete any unredeemed pairing codes for
+ * it. Unlike rotation, this deletes `message_status` too — the device is gone for good, so there
+ * is no future "is this still queued for that device" question left to answer.
+ */
+export function buildDeleteDeviceStatements(db: D1Database, deviceId: string, revokedUtc: string): D1PreparedStatement[] {
+  return [
+    db.prepare(`UPDATE devices SET revoked_utc = ?1 WHERE id = ?2`).bind(revokedUtc, deviceId),
+    deleteMessagesStatement(db, deviceId),
+    deleteMessageStatusesStatement(db, deviceId),
+    db.prepare(`DELETE FROM sender_sessions WHERE device_id = ?1`).bind(deviceId),
+    db.prepare(`DELETE FROM pairing_codes WHERE device_id = ?1`).bind(deviceId),
+  ];
 }
 
 export interface SenderSessionRecord {

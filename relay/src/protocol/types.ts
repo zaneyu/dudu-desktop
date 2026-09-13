@@ -30,6 +30,18 @@ export const MAXIMUM_TEXT_SCALAR_VALUES = 2000;
 
 export const MAXIMUM_CREATED_UTC_SKEW_MINUTES = 5;
 
+/**
+ * Both the relay's retention cap (a queued message's ciphertext is deleted this many days after
+ * it was created or scheduled, whichever is later) and the furthest ahead a sender may schedule
+ * delivery — one constant, since scheduling further ahead than the retention cap would let a
+ * message expire before it was ever eligible for delivery.
+ */
+export const MESSAGE_RETENTION_DAYS = 30;
+
+/** Upper bound on the SPKI-encoded ephemeral public key, enforced before shape validation so an
+ * oversized value is rejected as 413 rather than 422. */
+export const MAXIMUM_EPHEMERAL_PUBLIC_KEY_BYTES = 200;
+
 /** Canonical lowercase UUID, matching what crypto.randomUUID() emits. */
 export const MESSAGE_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -124,4 +136,26 @@ export interface GetSenderDeviceResponse {
 export interface RelayErrorResponse {
   error: string;
   message: string;
+}
+
+/**
+ * HTTP request/response shapes for the message-queueing routes (`relay/src/routes/messages.ts`).
+ * The relay stores and returns ciphertext plus routing metadata only; no route here accepts or
+ * reports `opened`/`read`/`seen`.
+ */
+
+export type MessageState = "queued" | "delivered" | "expired";
+
+/** `POST /v1/messages` request body is `EncryptedEnvelopeV1` exactly (unknown keys rejected). */
+export interface PostMessageResponse {
+  messageId: string;
+  status: MessageState;
+}
+
+export interface GetMessagesResponse {
+  messages: EncryptedEnvelopeV1[];
+}
+
+export interface GetMessageStatusResponse {
+  status: MessageState;
 }

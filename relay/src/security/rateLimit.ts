@@ -5,7 +5,9 @@ export function clientIpFromRequest(request: Request): string {
   return request.headers.get("CF-Connecting-IP") ?? "unknown";
 }
 
-function hourWindowStartUtc(now: Date): string {
+/** Exported for `cleanup.ts`: the start of the current hourly bucket window, so cleanup can treat
+ * every bucket from an earlier window as stale regardless of its count. */
+export function hourWindowStartUtc(now: Date): string {
   const floored = new Date(now.getTime());
   floored.setUTCMinutes(0, 0, 0);
   return floored.toISOString();
@@ -44,4 +46,15 @@ export async function enforceRateLimit(
     .first<{ count: number }>();
   const count = row?.count ?? 1;
   return count <= limitPerHour;
+}
+
+/**
+ * Scheduled cleanup: buckets whose window is not the current hour. The limiter never writes
+ * `count = 0` (every bucket starts at 1 and only increments, and resets to 1 rather than 0 on a
+ * new window), so "empty" is interpreted as "stale": once a window is no longer current,
+ * `enforceRateLimit` will never read or update that row again, so it is dead weight regardless of
+ * its count. Callers pass `hourWindowStartUtc(now)` as `currentWindowStartIso`.
+ */
+export async function deleteStaleRateLimitBuckets(db: D1Database, currentWindowStartIso: string): Promise<void> {
+  await db.prepare(`DELETE FROM rate_limit_buckets WHERE window_start_utc < ?1`).bind(currentWindowStartIso).run();
 }
