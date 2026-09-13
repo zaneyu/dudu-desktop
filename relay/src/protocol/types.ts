@@ -60,3 +60,68 @@ export interface RemoteMessagePayloadV1 {
   text: string;
   reaction: Reaction;
 }
+
+/**
+ * HTTP request/response shapes for the relay Worker (`relay/src/index.ts`), mirrored by the
+ * desktop client in Task 20. These describe device registration, one-time pairing, and the
+ * sender-side session established by redeeming a pairing code.
+ */
+
+export interface RegisterDeviceRequest {
+  /** Base64URL-encoded P-256 SPKI public key. */
+  publicKey: string;
+}
+
+export interface RegisterDeviceResponse {
+  deviceId: string;
+  /** Bearer capability token for this device. Returned exactly once, at registration. */
+  desktopToken: string;
+  /** An 8-character Crockford-alphabet pairing code, valid for 10 minutes. */
+  pairingCode: string;
+  pairingCodeExpiresUtc: string;
+}
+
+export interface GetCurrentDeviceResponse {
+  createdUtc: string;
+  /** SHA-256 hex digest of the device's public-key SPKI bytes. Never the key itself. */
+  publicKeyFingerprint: string;
+  activeSenderSessions: number;
+}
+
+export interface RotateDeviceKeyRequest {
+  /** Base64URL-encoded P-256 SPKI public key. */
+  publicKey: string;
+}
+
+export interface RotateDeviceKeyResponse {
+  /** New bearer capability token for this device. Returned exactly once, at rotation. */
+  desktopToken: string;
+}
+
+export interface CreatePairingCodeResponse {
+  code: string;
+  expiresUtc: string;
+}
+
+export interface RedeemPairingRequest {
+  code: string;
+}
+
+export interface RedeemPairingResponse {
+  /** Base64URL-encoded P-256 SPKI public key of the paired device. */
+  publicKey: string;
+  deviceId: string;
+}
+
+export interface GetSenderDeviceResponse {
+  /** Base64URL-encoded P-256 SPKI public key of the paired device. */
+  publicKey: string;
+  deviceCreatedUtc: string;
+  publicKeyFingerprint: string;
+}
+
+/** `{ error: "<code>", message: "<short, generic text>" }`. Never echoes request bodies. */
+export interface RelayErrorResponse {
+  error: string;
+  message: string;
+}

@@ -1,0 +1,31 @@
+{
+  // Dudu relay: a private, single-user Cloudflare Worker that pairs a desktop companion app
+  // with a browser "sender" page and relays end-to-end encrypted notes between them. The
+  // Worker never sees plaintext, private keys, or unhashed capability tokens/pairing codes.
+  "name": "dudu-relay",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-11",
+  // No "nodejs_compat": every route uses only Web Crypto and other Workers-native APIs.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      // "dudu-relay-test" and the all-zero id below are placeholders for local dev/test.
+      // Task 24's release runbook documents creating the real production database and
+      // replacing both database_name and database_id with it.
+      "database_name": "dudu-relay-test",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "assets": {
+    "directory": "public",
+    "binding": "ASSETS",
+    // The Worker (not static assets) must see every API request, even ones that happen to
+    // match a static file path.
+    "run_worker_first": ["/v1/*"]
+  },
+  "triggers": {
+    // Hourly expiry cleanup: stale pairing codes and long-revoked/expired sender sessions.
+    "crons": ["0 * * * *"]
+  }
+}

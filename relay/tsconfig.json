@@ -4,11 +4,11 @@
     "lib": ["ES2022", "DOM"],
     "module": "esnext",
     "moduleResolution": "bundler",
-    "types": ["node"],
+    "types": ["node", "@cloudflare/vitest-plugin/types"],
     "strict": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "sender-src/**/*.ts", "test/**/*.ts"]
+  "include": ["src/**/*.ts", "sender-src/**/*.ts", "test/**/*.ts", "worker-configuration.d.ts"]
 }

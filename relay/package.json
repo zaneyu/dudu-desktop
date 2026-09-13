@@ -8,6 +8,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.node.json && tsc -p tsconfig.sender.json",
     "typecheck": "tsc -p tsconfig.json",
+    "types": "wrangler types",
     "test": "vitest",
     "test:e2e": "playwright test"
   },
