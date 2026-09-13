@@ -69,19 +69,19 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
     public bool IsPaired => Availability == PairingAvailability.Available && SessionCount > 0;
     public string AvailabilityText => Availability switch
     {
-        PairingAvailability.Available => "pairing is available",
-        PairingAvailability.NeedsRepair => "pairing needs a bit of attention before it can be used",
-        _ => "pairing is offline dudu still works fine on this pc",
+        PairingAvailability.Available => "dudu is here",
+        PairingAvailability.NeedsRepair => "pairing needs fixing before it works",
+        _ => "pairing offline dudu still works here",
     };
     public string PairingCodeText => string.IsNullOrWhiteSpace(PairingCode)
-        ? "no pairing code active right now"
+        ? "no code yet ah"
         : $"pairing code {PairingCode}";
     public string CodeExpiryText => CodeExpiresUtc is null
-        ? "no active pairing code expiry"
+        ? "no code expiry yet"
         : $"code expires {CodeExpiresUtc.Value.ToLocalTime():g}";
     public string SessionCountText => SessionCount switch
     {
-        0 => "no paired sender sessions",
+        0 => "no sender sessions yet ah",
         1 => "1 paired sender session",
         _ => $"{SessionCount} paired sender sessions",
     };
@@ -115,30 +115,30 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
             if (result.Availability != PairingAvailability.Available ||
                 string.IsNullOrWhiteSpace(result.Code) || result.ExpiresUtc is null)
             {
-                throw new NotSupportedException("aiyo pairing unavailable while the relay is offline");
+                throw new NotSupportedException("oh no pairing unavailable relay offline");
             }
-        }, "oki pairing code ready for 10 min");
+        }, "yayyy code ready for 10 min");
 
     public Task RevokeSessionsAsync(CancellationToken cancellationToken = default) =>
         RunAsync(async () =>
         {
             var result = await _context.Pairing.RevokeSessionsWithResultAsync(cancellationToken);
-            if (!result.Completed) throw new NotSupportedException(result.ErrorMessage ?? "aiyo cant revoke sender sessions right now");
+            if (!result.Completed) throw new NotSupportedException(result.ErrorMessage ?? "cannot revoke sessions right now");
             Sessions.Clear();
             SessionCount = 0;
             OnPropertyChanged(nameof(IsPaired));
-        }, "sender sessions revoked le");
+        }, "done le sessions revoked");
 
     public Task DeleteRemoteDeviceAsync(CancellationToken cancellationToken = default) =>
         RunAsync(async () =>
         {
             var result = await _context.Pairing.DeleteRemoteDeviceWithResultAsync(cancellationToken: cancellationToken);
-            if (!result.Completed) throw new NotSupportedException(result.ErrorMessage ?? "aiyo cant delete remote device data right now");
+            if (!result.Completed) throw new NotSupportedException(result.ErrorMessage ?? "alala cant delete device data now");
             PairingCode = null;
             CodeExpiresUtc = null;
             Sessions.Clear();
             SessionCount = 0;
             Availability = PairingAvailability.Offline;
             OnPropertyChanged(nameof(IsPaired));
-        }, "remote device data deleted le");
+        }, "can remote data deleted le");
 }

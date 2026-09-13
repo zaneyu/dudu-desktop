@@ -47,7 +47,7 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
     // persistent controls rather than presenting a saved value that vanishes.
     public bool CanPersistOutfit => false;
     public bool CanConfigureSeasonalMode => false;
-    public string OutfitAvailabilityMessage => "outfit selection is unavailable until dudu can save outfit choices the current look will stay unchanged";
+    public string OutfitAvailabilityMessage => "outfit selection is unavailable for now";
 
     public AppTheme Theme
     {
@@ -119,16 +119,16 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
             var current = (existing ?? new PetPlacement(MonitorDeviceName, 0.8, 0.8, PetScale)) with { Scale = PetScale };
             await _context.PetPlacements.SaveAsync(current, cancellationToken);
             await _context.ApplyPlacementAsync(current, cancellationToken);
-        }, "oki pet placement saved");
+        }, "okkk pet placement saved");
 
     public Task ApplyOutfitAsync(CancellationToken cancellationToken = default) =>
         RunAsync(() => Task.FromException(new NotSupportedException(
-            "aiyo outfit selection not ready yet")));
+            "alala outfit picker not ready")));
 
     public Task SaveShortcutAsync(CancellationToken cancellationToken = default) =>
         RunAsync(async () =>
         {
-            if (string.IsNullOrWhiteSpace(GlobalShortcut)) throw new ArgumentException("aiyo enter a shortcut first", nameof(GlobalShortcut));
+            if (string.IsNullOrWhiteSpace(GlobalShortcut)) throw new ArgumentException("wait type a shortcut first", nameof(GlobalShortcut));
             await _context.SetGlobalShortcutAsync(GlobalShortcut.Trim(), cancellationToken);
-        }, "oki shortcut active for this session");
+        }, "otayyy shortcut set");
 }

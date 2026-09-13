@@ -378,7 +378,7 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
                 }
                 catch (Exception exception)
                 {
-                    StartupRegistrationError = "dudu saved your setup but startup registration didnt go through you can retry from home";
+                    StartupRegistrationError = "aiyo setup saved but registration failed retry later";
                     Trace.TraceError("Dudu startup registration failed after commit: {0}", exception);
                 }
 
@@ -393,7 +393,7 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
                     }
                     catch (Exception exception)
                     {
-                        RuntimeApplyError = "dudu saved your setup but couldnt apply it live open settings again to retry";
+                        RuntimeApplyError = "oh no saved live apply failed retry settings";
                         Trace.TraceError("Dudu runtime settings apply failed after commit: {0}", exception);
                     }
                 }
@@ -438,7 +438,7 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
         OnboardingStep.Reminders => ValidateReminderDefaults(),
         OnboardingStep.Placement => ValidatePlacement(),
         OnboardingStep.Pairing => null,
-        _ => "choose a next step to continue",
+        _ => "choose next step ah",
     };
 
     private string? ValidateAll() => ValidateRecipient()
@@ -450,16 +450,16 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
     {
         var value = RecipientName.Trim();
         return value.Length is < 1 or > 80 || value.Any(char.IsControl)
-            ? "aiyo enter a name between 1 and 80 characters"
+            ? "cannot name must be 1 to 80 chars"
             : null;
     }
 
     private string? ValidateQuietHours() => QuietHoursEnabled && QuietHoursStart == QuietHoursEnd
-        ? "aiyo quiet hours need a start and end time"
+        ? "alala quiet hours need start and end"
         : null;
 
     private string? ValidateReminderDefaults() => LocalNoteDailyLimit is < 0 or > 12
-        ? "aiyo choose a daily note limit from 0 to 12"
+        ? "wait note limit must be 0 to 12"
         : null;
 
     private string? ValidatePlacement() => string.IsNullOrWhiteSpace(_monitorDeviceName)
@@ -469,7 +469,7 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
         || PlacementY is < 0 or > 1
         || !double.IsFinite(PlacementScale)
         || PlacementScale is < MonitorPlacementService.MinimumScale or > MonitorPlacementService.MaximumScale
-        ? "aiyo choose a safe pet position and size"
+        ? "aiyo pick a safe pet spot"
         : null;
 
     private void ThrowIfDisposed()

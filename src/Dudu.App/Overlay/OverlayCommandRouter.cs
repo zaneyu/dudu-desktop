@@ -220,7 +220,7 @@ public sealed class OverlayCommandRouter
         cancellationToken.ThrowIfCancellationRequested();
         if (IsReducedMotion)
         {
-            const string instruction = "breathe slowly: in for 4, out for 6";
+            const string instruction = "breathe slowly in for 4, out for 6";
             SetComfortPanel(new ComfortPanelState(true, false, BreathVisualPhase.Static, instruction));
             return;
         }
@@ -260,7 +260,7 @@ public sealed class OverlayCommandRouter
                 ? ComfortPanelState.Closed
                 : linked.IsCancellationRequested
                     ? new ComfortPanelState(true, false, BreathVisualPhase.Idle, "breathing exercise cancelled")
-                    : new ComfortPanelState(true, false, BreathVisualPhase.Complete, "nice job you took a minute for yourself"));
+                    : new ComfortPanelState(true, false, BreathVisualPhase.Complete, "good job lihai breathe done"));
         }
     }
 

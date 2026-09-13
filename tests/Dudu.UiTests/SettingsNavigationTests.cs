@@ -51,7 +51,7 @@ public sealed class SettingsNavigationTests
             WaitForText(window, "RemindersStatusMessage", "reminder saved");
             SelectByName(window, "RemindersList", reminderTitle);
             Find(window, "RemindersComplete").AsButton().Invoke();
-            WaitForText(window, "RemindersStatusMessage", "reminder done");
+            WaitForText(window, "RemindersStatusMessage", "done le good job");
 
             var taskTitle = $"UI task {marker}";
             Navigate(window, "NavTasksFocus", "TasksPageTitle");
@@ -66,14 +66,14 @@ public sealed class SettingsNavigationTests
             Find(window, "FocusStart").AsButton().Invoke();
             WaitForText(window, "FocusCurrent", "Focus is running");
             Find(window, "FocusEnd").AsButton().Invoke();
-            WaitForText(window, "TasksStatusMessage", "focus ended");
+            WaitForText(window, "TasksStatusMessage", "good job rest rest abit");
             WaitForText(window, "FocusCurrent", "ended early");
             Assert.NotNull(Find(window, "FocusHistoryList").FindFirstDescendant(cf => cf.ByName("EndedEarly")));
 
             Navigate(window, "NavHome", "HomePageTitle");
             Find(window, "HomeCheckInNote").AsTextBox().Enter($"check-in-{marker}");
             Find(window, "HomeSaveCheckIn").AsButton().Invoke();
-            WaitForText(window, "HomeStatusMessage", "check-in saved on this pc");
+            WaitForText(window, "HomeStatusMessage", "oki noted mwamwa");
             WaitForText(window, "HomeCheckInSummary", "1 optional check-in");
             Assert.NotNull(Find(window, "HomeCheckInHistory").FindFirstDescendant(
                 cf => cf.ByName($"check-in-{marker}")));
@@ -125,7 +125,7 @@ public sealed class SettingsNavigationTests
         WaitUntil(() => IsVisible(window, "TasksPageTitle"));
         WaitForText(window, "FocusCurrent", "Focus is running");
         Find(window, "FocusEnd").AsButton().Invoke();
-        WaitForText(window, "TasksStatusMessage", "focus ended");
+        WaitForText(window, "TasksStatusMessage", "good job rest rest abit");
     }
 
     private static void ExerciseRoute(

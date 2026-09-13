@@ -54,12 +54,12 @@ public sealed class HomeViewModel : FeatureViewModelBase
 
     public string PauseDescription => _context.GetPauseState() switch
     {
-        { Mode: PauseMode.OneHour } => "paused for one hour",
-        { Mode: PauseMode.FiveMinutes } => "paused for five minutes",
-        { Mode: PauseMode.UntilTomorrowAtSeven } => "paused until tomorrow morning",
-        { Mode: PauseMode.UntilFullscreenEnds } => "paused until fullscreen work ends",
-        { Mode: PauseMode.Indefinite } => "paused until you resume dudu",
-        _ => "dudu is available",
+        { Mode: PauseMode.OneHour } => "dudu rest one hour",
+        { Mode: PauseMode.FiveMinutes } => "dudu rest five minutes",
+        { Mode: PauseMode.UntilTomorrowAtSeven } => "dudu sleep sleep till tmrw",
+        { Mode: PauseMode.UntilFullscreenEnds } => "dudu rest till fullscreen done",
+        { Mode: PauseMode.Indefinite } => "dudu rest till u say",
+        _ => "dudu is here",
     };
 
     public Reminder? NextReminder
@@ -96,12 +96,12 @@ public sealed class HomeViewModel : FeatureViewModelBase
     }
 
     public string NextReminderText => NextReminder is null
-        ? "no upcoming reminders"
-        : $"next reminder: {NextReminder.Title} at {NextReminder.NextDueUtc.ToLocalTime():g}";
+        ? "no reminders yet ah"
+        : $"next reminder {NextReminder.Title} at {NextReminder.NextDueUtc.ToLocalTime():g}";
 
     public string ActiveFocusText => ActiveFocus is null
-        ? "no focus session active"
-        : $"focus is {ActiveFocus.Status.ToString().ToLowerInvariant()} with {Math.Max(0, (int)Math.Ceiling(ActiveFocus.Remaining.TotalMinutes))} min remaining";
+        ? "no focus running ah"
+        : $"focus is {ActiveFocus.Status.ToString().ToLowerInvariant()} with {Math.Max(0, (int)Math.Ceiling(ActiveFocus.Remaining.TotalMinutes))} min left";
 
     public string PetStateText => IsPaused
         ? "dudu is paused"
@@ -110,7 +110,7 @@ public sealed class HomeViewModel : FeatureViewModelBase
     public string PetAnimationText => $"current animation {PetPresentation.AnimationKey}";
 
     public string CheckInSummaryText => CheckInSummary is null
-        ? "no recent check-ins"
+        ? "no check-ins yet ah"
         : $"{CheckInSummary.Recent.Count} optional check-in{(CheckInSummary.Recent.Count == 1 ? string.Empty : "s")} in the last 7 days";
 
     public string CountdownTitle
@@ -220,7 +220,7 @@ public sealed class HomeViewModel : FeatureViewModelBase
             var title = CountdownTitle.Trim();
             if (title.Length == 0)
             {
-                throw new ArgumentException("aiyo add a title for the countdown first", nameof(CountdownTitle));
+                throw new ArgumentException("aiyo add a countdown title first", nameof(CountdownTitle));
             }
 
             var target = CountdownTargetUtc?.ToUniversalTime()
@@ -249,7 +249,7 @@ public sealed class HomeViewModel : FeatureViewModelBase
             var existing = Countdowns.FirstOrDefault(item => item.Id == countdown.Id);
             if (existing is not null) Countdowns.Remove(existing);
             if (SelectedCountdown?.Id == countdown.Id) SelectCountdown(null);
-        }, "countdown deleted le");
+        }, "okkk countdown deleted le");
     }
 
     public Task RecordCheckInAsync(CancellationToken cancellationToken = default) =>
@@ -264,5 +264,5 @@ public sealed class HomeViewModel : FeatureViewModelBase
             foreach (var checkIn in CheckInSummary.Recent) RecentCheckIns.Add(checkIn);
             CheckInNote = null;
             OnPropertyChanged(nameof(CheckInSummaryText));
-        }, "oki check-in saved on this pc");
+        }, "oki noted mwamwa");
 }

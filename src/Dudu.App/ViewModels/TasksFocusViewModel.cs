@@ -57,7 +57,7 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
         }
     }
     public string ActiveFocusText => ActiveFocus is null
-        ? "no focus session active"
+        ? "no focus running ah"
         : $"focus is {ActiveFocus.Status.ToString().ToLowerInvariant()} with {FormatDuration(ActiveFocus.Remaining)} remaining";
     public string Title { get => _title; set => SetProperty(ref _title, value); }
     public string? Notes { get => _notes; set => SetProperty(ref _notes, value); }
@@ -125,7 +125,7 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
             if (active is not null) ActiveTasks.Remove(active);
             CompletedTasks.Insert(0, completed);
             if (SelectedTask?.Id == task.Id) SelectedTask = null;
-        }, "task done");
+        }, "okkk task done");
     }
 
     public Task DeleteTaskAsync(TaskItem? task, CancellationToken cancellationToken = default)
@@ -139,11 +139,11 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
             var completed = CompletedTasks.FirstOrDefault(item => item.Id == task.Id);
             if (completed is not null) CompletedTasks.Remove(completed);
             if (SelectedTask?.Id == task.Id) SelectTask(null);
-        }, "task deleted le");
+        }, "otayyy task deleted le");
     }
 
     public Task StartFocusAsync(CancellationToken cancellationToken = default) =>
-        RunAsync(async () => await StartFocusCoreAsync(cancellationToken), "oki focus started");
+        RunAsync(async () => await StartFocusCoreAsync(cancellationToken), "yayyy focus started");
 
     /// <summary>Result-bearing start path for callers that must not navigate
     /// or dismiss their surface until the focus session is durable.</summary>
@@ -166,20 +166,20 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
     }
 
     public Task PauseFocusAsync(CancellationToken cancellationToken = default) =>
-        RunFocusTransitionAsync((id, token) => _context.FocusService.PauseAsync(id, token), "focus paused", cancellationToken);
+        RunFocusTransitionAsync((id, token) => _context.FocusService.PauseAsync(id, token), "done le focus paused", cancellationToken);
 
     public Task ResumeFocusAsync(CancellationToken cancellationToken = default) =>
-        RunFocusTransitionAsync((id, token) => _context.FocusService.ResumeAsync(id, token), "focus resumed", cancellationToken);
+        RunFocusTransitionAsync((id, token) => _context.FocusService.ResumeAsync(id, token), "can resume focus", cancellationToken);
 
     public Task ExtendFocusAsync(CancellationToken cancellationToken = default) =>
         RunFocusTransitionAsync(
             (id, token) => _context.FocusService.ExtendAsync(id, TimeSpan.FromMinutes(5), token),
-            "extended by 5 min", cancellationToken);
+            "oki extended by 5 min", cancellationToken);
 
     public Task EndFocusAsync(CancellationToken cancellationToken = default) =>
         RunAsync(async () =>
         {
-            var focus = ActiveFocus ?? throw new InvalidOperationException("aiyo no active focus session");
+            var focus = ActiveFocus ?? throw new InvalidOperationException("wait no focus running now");
             var ended = await _context.FocusService.EndAsync(focus.Id, cancellationToken);
             ActiveFocus = ended;
             await _context.PresentOneShotPetAsync(
@@ -187,7 +187,7 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
                 "focus-end",
                 cancellationToken);
             OnPropertyChanged(nameof(IsFocusActive));
-        }, "focus ended");
+        }, "good job rest rest abit");
 
     private Task RunFocusTransitionAsync(
         Func<Guid, CancellationToken, Task<FocusSnapshot>> transition,
@@ -195,7 +195,7 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
         CancellationToken cancellationToken) =>
         RunAsync(async () =>
         {
-            var focus = ActiveFocus ?? throw new InvalidOperationException("aiyo no active focus session");
+            var focus = ActiveFocus ?? throw new InvalidOperationException("wait no focus running now");
             ActiveFocus = await transition(focus.Id, cancellationToken);
             OnPropertyChanged(nameof(IsFocusActive));
         }, successMessage);

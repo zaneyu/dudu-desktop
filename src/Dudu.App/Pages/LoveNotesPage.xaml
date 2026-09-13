@@ -8,7 +8,7 @@
         <StackPanel MaxWidth="880" Margin="32" Spacing="24">
             <StackPanel Spacing="8">
                 <TextBlock Text="love notes" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="LoveNotesPageTitle" />
-                <TextBlock Text="keep local notes here or open an encrypted note when one arrives" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <TextBlock Text="keep notes here or open an encrypted one" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
             </StackPanel>
 
             <StackPanel Spacing="12">

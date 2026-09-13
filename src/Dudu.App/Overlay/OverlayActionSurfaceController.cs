@@ -410,7 +410,7 @@ public sealed class OverlayActionSurfaceController : IDisposable
         _comfortArrangement = null;
         _kind = _arrangement is null ? OverlayActionSurfaceKind.Status : OverlayActionSurfaceKind.Primary;
         _errorMessage = _arrangement is null
-            ? "not enough room to show dudus actions open settings to use them"
+            ? "no room for actions open settings to use"
             : null;
     }
 
@@ -427,7 +427,7 @@ public sealed class OverlayActionSurfaceController : IDisposable
         _arrangement = null;
         _kind = _comfortArrangement is null ? OverlayActionSurfaceKind.Status : OverlayActionSurfaceKind.Comfort;
         _errorMessage = _comfortArrangement is null
-            ? "not enough room to show dudus comfort actions open settings to use them"
+            ? "no room for comfort actions open settings"
             : null;
     }
 

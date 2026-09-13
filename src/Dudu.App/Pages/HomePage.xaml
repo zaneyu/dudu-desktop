@@ -8,7 +8,7 @@
         <StackPanel MaxWidth="880" Margin="32" Spacing="24">
             <StackPanel Spacing="8">
                 <TextBlock Text="home" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="HomePageTitle" />
-                <TextBlock Text="a quiet view of dudu and the next useful thing" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <TextBlock Text="a quiet view of dudu and whats next" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
             </StackPanel>
 
             <Border Background="{ThemeResource BlushSurfaceBrush}" BorderBrush="{ThemeResource LavenderBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="20">
@@ -29,7 +29,7 @@
 
             <StackPanel Spacing="12">
                 <TextBlock Text="dudu actions" Style="{StaticResource SectionHeadingStyle}" />
-                <TextBlock Text="these keyboard-accessible controls are the settings version of dudus action bubble" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <TextBlock Text="same as dudus bubble but keyboard ok" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                 <StackPanel Spacing="8">
                     <Button Content="drink water" Tag="DrinkWater" Click="OverlayAction_Click" AutomationProperties.AutomationId="OverlayActionDrinkWater" />
                     <Button Content="start focus" Tag="StartFocus" Click="OverlayAction_Click" AutomationProperties.AutomationId="OverlayActionStartFocus" />
@@ -42,7 +42,7 @@
 
             <StackPanel Spacing="12">
                 <TextBlock Text="comfort actions" Style="{StaticResource SectionHeadingStyle}" />
-                <TextBlock Text="choose a gentle action without relying on the overlay nothing here records or infers a mood" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <TextBlock Text="pick a gentle action no mood tracked" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                 <StackPanel Spacing="8">
                     <Button Content="breathe with me" Tag="BreatheWithMe" Click="ComfortAction_Click" AutomationProperties.AutomationId="OverlayComfortActionBreatheWithMe" />
                     <Button Content="tiny hug" Tag="TinyHug" Click="ComfortAction_Click" AutomationProperties.AutomationId="OverlayComfortActionTinyHug" />
@@ -54,10 +54,10 @@
 
             <StackPanel Spacing="12">
                 <TextBlock Text="countdowns" Style="{StaticResource SectionHeadingStyle}" />
-                <TextBlock Text="keep one meaningful date in view leave the target blank to use tomorrow" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <TextBlock Text="one date to look forward to" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                 <StackPanel Spacing="8">
                     <TextBox Header="title" Text="{x:Bind ViewModel.CountdownTitle, Mode=TwoWay}" PlaceholderText="for example, next visit" AutomationProperties.AutomationId="HomeCountdownTitle" />
-                    <TextBox x:Name="CountdownTargetBox" Header="target" PlaceholderText="optional" TextChanged="CountdownTarget_Changed" AutomationProperties.AutomationId="HomeCountdownTarget" />
+                    <TextBox x:Name="CountdownTargetBox" Header="target" PlaceholderText="blank means tmrw" TextChanged="CountdownTarget_Changed" AutomationProperties.AutomationId="HomeCountdownTarget" />
                     <TextBlock x:Name="CountdownTargetValidation" TextWrapping="Wrap" Foreground="{ThemeResource ErrorBrush}" Visibility="Collapsed" AutomationProperties.AutomationId="HomeCountdownTargetValidation" />
                     <Button x:Name="HomeSaveCountdownButton" Content="save" Command="{x:Bind ViewModel.CreateCountdownCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="HomeSaveCountdown" />
                 </StackPanel>
@@ -71,8 +71,8 @@
 
             <StackPanel Spacing="12">
                 <TextBlock Text="quick check-in" Style="{StaticResource SectionHeadingStyle}" />
-                <TextBlock Text="this is optional and stays on this pc dudu does not infer a mood" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
-                <ComboBox Header="how are you feeling?" SelectedIndex="1" SelectionChanged="MoodBox_SelectionChanged" AutomationProperties.AutomationId="HomeMoodChoice">
+                <TextBlock Text="optional stays on this pc no mood inferred" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <ComboBox Header="how are u feeling?" SelectedIndex="1" SelectionChanged="MoodBox_SelectionChanged" AutomationProperties.AutomationId="HomeMoodChoice">
                     <ComboBoxItem Content="great" Tag="Great" />
                     <ComboBoxItem Content="okay" Tag="Okay" />
                     <ComboBoxItem Content="tired" Tag="Tired" />

@@ -8,7 +8,7 @@
         <StackPanel MaxWidth="880" Margin="32" Spacing="24">
             <StackPanel Spacing="8">
                 <TextBlock Text="tasks and focus" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="TasksPageTitle" />
-                <TextBlock Text="choose one small next step then give it a protected block of time" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <TextBlock Text="pick one small step give it protected time" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
             </StackPanel>
 
             <StackPanel Spacing="12">

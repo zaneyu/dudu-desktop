@@ -102,7 +102,7 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
             await _context.LocalNotes.DeleteAsync(note.Id, cancellationToken);
             LocalNotes.Remove(note);
             if (SelectedNote?.Id == note.Id) SelectedNote = null;
-        }, "note deleted le");
+        }, "okkk note deleted le");
     }
 
     public Task RevealRemoteNoteAsync(RemoteEnvelope? envelope, CancellationToken cancellationToken = default)
@@ -120,8 +120,8 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
     public Task SaveOpenedNoteAsync(object? _, CancellationToken cancellationToken = default) =>
         RunAsync(async () =>
         {
-            var envelope = OpenedRemoteEnvelope ?? throw new InvalidOperationException("aiyo open a note first");
-            var text = OpenedRemoteNoteText ?? throw new InvalidOperationException("aiyo open a note first");
+            var envelope = OpenedRemoteEnvelope ?? throw new InvalidOperationException("oh no open the note first");
+            var text = OpenedRemoteNoteText ?? throw new InvalidOperationException("oh no open the note first");
             var note = new LocalLoveNote($"remote-{envelope.MessageId}", text);
             await _context.FeatureTransactions.SaveRemoteNoteAndConsumeEnvelopeAsync(
                 note,
@@ -137,13 +137,13 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
             OnPropertyChanged(nameof(UnopenedRemoteNoteCount));
             OnPropertyChanged(nameof(UnopenedRemoteNoteCountText));
             await _context.PresentPetAsync(new PetEvent.Dismissed(envelope.MessageId), cancellationToken);
-        }, "oki saved to the note jar");
+        }, "otayyy saved to the note jar");
 
     public Task ShowLocalNoteAsync(CancellationToken cancellationToken = default) =>
         RunAsync(async () =>
         {
             var note = await _context.NoteSelector.SelectAsync(true, cancellationToken)
-                ?? throw new InvalidOperationException("aiyo add a local note first before dudu can choose");
+                ?? throw new InvalidOperationException("cannot add a local note first");
             OpenedRemoteEnvelope = null;
             OpenedRemoteNoteText = note.Text;
             OnPropertyChanged(nameof(HasOpenedRemoteNote));

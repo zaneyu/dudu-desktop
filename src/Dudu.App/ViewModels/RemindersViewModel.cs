@@ -143,7 +143,7 @@ public sealed class RemindersViewModel : FeatureViewModelBase
         RunAsync(async () =>
         {
             var title = Title.Trim();
-            if (title.Length == 0) throw new ArgumentException("aiyo add a reminder title first", nameof(Title));
+            if (title.Length == 0) throw new ArgumentException("aiyo add a title first", nameof(Title));
             var rule = BuildRule();
             var now = _context.Clock.UtcNow.ToUniversalTime();
             var nextDue = NextDueUtc(rule, now);
@@ -178,7 +178,7 @@ public sealed class RemindersViewModel : FeatureViewModelBase
             await _context.Reminders.RecordOccurrencesAndAdvanceAsync(reminder, [occurrence], next, cancellationToken);
             await _context.PresentPetAsync(new Dudu.Core.Pet.PetEvent.Dismissed(reminder.Id), cancellationToken);
             Replace(reminder with { NextDueUtc = next ?? DateTimeOffset.MaxValue, SnoozedUntilUtc = null });
-        }, "reminder done");
+        }, "yayyy done le good job");
     }
 
     public Task SnoozeAsync(Reminder? reminder, CancellationToken cancellationToken = default)
@@ -189,7 +189,7 @@ public sealed class RemindersViewModel : FeatureViewModelBase
             var snoozed = reminder with { SnoozedUntilUtc = _context.Clock.UtcNow.ToUniversalTime().AddMinutes(15) };
             await _context.ReminderWriter.SaveAsync(snoozed, cancellationToken);
             Replace(snoozed);
-        }, "snoozed for 15 min");
+        }, "otayyy snoozed for 15 min");
     }
 
     public Task SaveReminderPreferencesAsync(CancellationToken cancellationToken = default) =>
@@ -208,7 +208,7 @@ public sealed class RemindersViewModel : FeatureViewModelBase
             {
                 Replace(reminder);
             }
-        }, "oki reminder preferences saved");
+        }, "done le reminder prefs saved");
 
     private RecurrenceRule BuildRule() => ScheduleKind switch
     {

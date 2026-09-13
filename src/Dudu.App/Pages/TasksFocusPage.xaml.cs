@@ -65,7 +65,7 @@ public sealed partial class TasksFocusPage : Page
         }
         else
         {
-            TaskDueValidation.Text = "use a date and time like 12/31/2026 5:00 pm or leave this blank";
+            TaskDueValidation.Text = "use a date like 12/31/2026 5:00 pm";
             TaskDueValidation.Visibility = Visibility.Visible;
             SaveTaskButton.IsEnabled = false;
         }
@@ -108,11 +108,11 @@ public sealed partial class TasksFocusPage : Page
     {
         FocusCurrent.Text = ViewModel.ActiveFocus switch
         {
-            null => "no focus session active",
+            null => "nothing due now",
             { Status: FocusStatus.Running } focus => $"focus is running with {RemainingMinutes(focus)} remaining",
             { Status: FocusStatus.Paused } focus => $"focus is paused with {RemainingMinutes(focus)} remaining",
-            { Status: FocusStatus.Completed } => "the last focus session completed",
-            _ => "the last focus session ended early",
+            { Status: FocusStatus.Completed } => "last focus session completed le",
+            _ => "last focus session ended early",
         };
     }
 

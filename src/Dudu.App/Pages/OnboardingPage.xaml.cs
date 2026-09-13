@@ -45,11 +45,11 @@ public sealed partial class OnboardingPage : Page
         }
         catch (OperationCanceledException)
         {
-            SetMessage("placement was paused your draft is still here");
+            SetMessage("placement paused ur draft still here");
         }
         catch (Exception exception)
         {
-            SetMessage("aiyo dudu couldnt preview that placement yet your draft is still here");
+            SetMessage("aiyo cant preview that yet ur draft stays");
             global::System.Diagnostics.Trace.TraceInformation(
                 "Dudu recommended placement failed: {0}",
                 exception.Message);
@@ -70,13 +70,13 @@ public sealed partial class OnboardingPage : Page
         {
             await _viewModel.RefreshPairingAsync();
             PairingStatus.Text = _viewModel.PairingAvailability == PairingAvailability.Offline
-                ? "pairing is unavailable offline you can safely skip it"
-                : "pairing is available whenever you are ready";
+                ? "pairing offline u can skip it"
+                : "pairing ready whenever u are";
             SetMessage(null);
         }
         catch (Exception exception)
         {
-            PairingStatus.Text = "pairing is unavailable right now you can safely skip it";
+            PairingStatus.Text = "pairing unavailable now u can skip it";
             global::System.Diagnostics.Trace.TraceInformation("Dudu pairing check failed: {0}", exception.Message);
         }
     }
@@ -84,7 +84,7 @@ public sealed partial class OnboardingPage : Page
     private void SkipPairingButton_Click(object sender, RoutedEventArgs args)
     {
         _viewModel.SkipPairing();
-        PairingStatus.Text = "skipped for now you can pair later from connection";
+        PairingStatus.Text = "skipped for now pair later ok";
         SetMessage(null);
     }
 
@@ -132,7 +132,7 @@ public sealed partial class OnboardingPage : Page
                 }
                 catch (Exception exception)
                 {
-                    SetMessage("setup was saved but dudu couldnt be shown yet");
+                    SetMessage("setup saved but dudu not shown yet");
                     global::System.Diagnostics.Trace.TraceError(
                         "Dudu could not show the companion after onboarding: {0}",
                         exception);
@@ -143,11 +143,11 @@ public sealed partial class OnboardingPage : Page
         }
         catch (OperationCanceledException)
         {
-            SetMessage("setup was paused your choices are still here");
+            SetMessage("setup paused ur choices still here");
         }
         catch (Exception exception)
         {
-            SetMessage("aiyo setup couldnt be completed yet your choices are still here");
+            SetMessage("oh no cant finish setup ur choices stay");
             global::System.Diagnostics.Trace.TraceError("Dudu onboarding completion failed: {0}", exception);
         }
     }
@@ -169,11 +169,11 @@ public sealed partial class OnboardingPage : Page
         }
         catch (OperationCanceledException)
         {
-            SetMessage("setup was paused your choices are still here");
+            SetMessage("setup paused ur choices still here");
         }
         catch (Exception exception)
         {
-            SetMessage("aiyo setup couldnt continue yet your choices are still here");
+            SetMessage("cannot continue setup ur choices stay");
             global::System.Diagnostics.Trace.TraceError("Dudu onboarding navigation failed: {0}", exception);
         }
     }
@@ -229,7 +229,7 @@ public sealed partial class OnboardingPage : Page
         catch (Exception exception)
         {
             SetMessage(visible
-                ? "aiyo dudu couldnt be shown yet you can continue and try again"
+                ? "alala dudu not shown yet try again"
                 : null);
             global::System.Diagnostics.Trace.TraceInformation(
                 "Dudu placement visibility change failed: {0}",
@@ -243,7 +243,7 @@ public sealed partial class OnboardingPage : Page
         var visible = startup?.NeedsReconciliation == true;
         StartupRecoveryPanel.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
         StartupRecoveryMessage.Text = visible
-            ? startup!.ReconciliationError ?? "aiyo startup registration needs another try"
+            ? startup!.ReconciliationError ?? "wait startup registration needs retry"
             : string.Empty;
     }
 

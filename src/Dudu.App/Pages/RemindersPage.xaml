@@ -8,7 +8,7 @@
         <StackPanel MaxWidth="880" Margin="32" Spacing="24">
             <StackPanel Spacing="8">
                 <TextBlock Text="reminders" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="RemindersPageTitle" />
-                <TextBlock Text="gentle prompts that respect quiet hours and your focus" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <TextBlock Text="gentle prompts that respect ur quiet hours" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
             </StackPanel>
 
             <StackPanel Spacing="12">

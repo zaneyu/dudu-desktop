@@ -79,7 +79,7 @@ public sealed partial class HomePage : Page
         }
         else
         {
-            SetCountdownTargetValidation(false, "use a date and time like 12/31/2026 5:00 pm or leave this blank");
+            SetCountdownTargetValidation(false, "use a date like 12/31/2026 5:00 pm");
         }
     }
 
@@ -127,7 +127,7 @@ public sealed partial class HomePage : Page
         try
         {
             var commands = _overlayCommands ?? throw new InvalidOperationException(
-                "aiyo dudus comfort controls not ready yet");
+                "oh no dudus comfort controls not ready");
             await commands.ExecuteComfortAccessibleAsync(action);
             HomeActionStatus.Text = $"{ActionBubbleLayout.ComfortLabel(action)} is ready.";
         }

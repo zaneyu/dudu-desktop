@@ -82,9 +82,9 @@ internal static class OverlaySurfaceRenderer
                 // Reduced motion has one stable, visible instruction rather
                 // than a breath phase that changes without an animation.
                 var detail = snapshot.IsReducedMotion
-                    ? $"reduced motion: {snapshot.ComfortPanel.Instruction}"
+                    ? $"reduced motion {snapshot.ComfortPanel.Instruction}"
                     : snapshot.ComfortPanel.IsBreathing
-                        ? $"{snapshot.ComfortPanel.Phase}: {snapshot.ComfortPanel.Instruction}"
+                        ? $"{snapshot.ComfortPanel.Phase} {snapshot.ComfortPanel.Instruction}"
                         : snapshot.ComfortPanel.Instruction;
                 DrawDetail(canvas, detail, snapshot.DetailRegion, detailPaint);
             }

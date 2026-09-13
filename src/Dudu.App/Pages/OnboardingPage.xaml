@@ -11,7 +11,7 @@
                 <StackPanel Spacing="16">
                     <StackPanel x:Name="RecipientStep" Spacing="12">
                         <TextBlock Text="what should dudu call you?" Style="{StaticResource SectionHeadingStyle}" />
-                        <TextBlock Text="use a name that feels natural you can change it later" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                        <TextBlock Text="use a name that feels natural" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                         <TextBox x:Name="RecipientNameBox" Header="your name" AutomationProperties.AutomationId="OnboardingRecipientName" PlaceholderText="for example, mia" />
                         <Button x:Name="RecommendedDefaultsButton" Content="use recommended defaults" AutomationProperties.AutomationId="OnboardingRecommendedDefaults" Click="RecommendedDefaultsButton_Click" />
                     </StackPanel>
@@ -38,7 +38,7 @@
                             <TextBox x:Name="QuietStartBox" Header="starts" Text="22:00" AutomationProperties.AutomationId="OnboardingQuietHoursStart" Grid.Column="0" />
                             <TextBox x:Name="QuietEndBox" Header="ends" Text="07:00" AutomationProperties.AutomationId="OnboardingQuietHoursEnd" Grid.Column="1" />
                         </Grid>
-                        <TextBlock Text="dudu waits during this window before offering non-urgent prompts" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                        <TextBlock Text="dudu waits here before non-urgent prompts" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                     </StackPanel>
 
                     <StackPanel x:Name="RemindersStep" Spacing="12" Visibility="Collapsed">
@@ -50,7 +50,7 @@
 
                     <StackPanel x:Name="PlacementStep" Spacing="12" Visibility="Collapsed" AutomationProperties.AutomationId="OnboardingPlacementStep">
                         <TextBlock Text="place dudu" Style="{StaticResource SectionHeadingStyle}" />
-                        <TextBlock Text="drag dudu to the place you want finish setup captures its current monitor and position" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                        <TextBlock Text="drag dudu where u want it" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                         <Button x:Name="RecommendedPlacementButton" Content="use recommended placement" AutomationProperties.AutomationId="OnboardingRecommendedPlacement" Click="RecommendedPlacementButton_Click" />
                         <Slider x:Name="PlacementScaleSlider" Header="pet size" AutomationProperties.AutomationId="OnboardingPetScale" Minimum="0.5" Maximum="2" SmallChange="0.1" Value="1" ValueChanged="PlacementScaleSlider_ValueChanged" />
                         <CheckBox x:Name="HideFullscreenBox" Content="hide dudu during fullscreen work" AutomationProperties.AutomationId="OnboardingHideDuringFullscreen" IsChecked="True" />
@@ -59,7 +59,7 @@
 
                     <StackPanel x:Name="PairingStep" Spacing="12" Visibility="Collapsed">
                         <TextBlock Text="pair later if you want" Style="{StaticResource SectionHeadingStyle}" />
-                        <TextBlock Text="pairing lets someone send encrypted notes it is optional and dudu works offline" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                        <TextBlock Text="pairing lets someone send encrypted notes its optional" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                         <TextBlock x:Name="PairingStatus" AutomationProperties.AutomationId="OnboardingPairingStatus" Text="pairing is optional" TextWrapping="Wrap" />
                         <Button x:Name="PairingCheckButton" Content="check pairing availability" AutomationProperties.AutomationId="OnboardingPairingCheck" Click="PairingCheckButton_Click" />
                         <Button x:Name="SkipPairingButton" Content="skip for now" AutomationProperties.AutomationId="OnboardingSkipPairing" Click="SkipPairingButton_Click" />

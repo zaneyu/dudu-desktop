@@ -8,7 +8,7 @@
         <StackPanel MaxWidth="880" Margin="32" Spacing="24">
             <StackPanel Spacing="8">
                 <TextBlock Text="privacy and data" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="PrivacyPageTitle" />
-                <TextBlock Text="understand what dudu stores and choose how to keep or remove it" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <TextBlock Text="see what dudu stores keep or remove" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
             </StackPanel>
 
             <StackPanel Spacing="12">
@@ -30,7 +30,7 @@
 
             <StackPanel Spacing="12">
                 <TextBlock Text="your data" Style="{StaticResource SectionHeadingStyle}" />
-                <TextBlock Text="backups are stored only in dudus local app-data folder. five valid database backups are kept. they include database records but not machine-bound pairing keys or files outside the database. copying a backup off this pc is your choice and your responsibility. remote deletion needs an available pairing relay." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <TextBlock Text="backups stay local only five kept pc copy is ur call" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                 <StackPanel Spacing="8">
                     <Button Content="create backup" Command="{x:Bind ViewModel.BackupCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="PrivacyBackup" />
                     <Button Content="restore backup" Command="{x:Bind ViewModel.RequestRestoreCommand}" AutomationProperties.AutomationId="PrivacyRestore" />

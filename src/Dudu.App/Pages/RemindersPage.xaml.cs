@@ -68,7 +68,7 @@ public sealed partial class RemindersPage : Page
         if (_syncingEditor || sender is not TextBox box) return;
         if (string.IsNullOrWhiteSpace(box.Text))
         {
-            RemindersLocalTimeValidation.Text = "aiyo enter a local time or use 09:00 as the reminder time";
+            RemindersLocalTimeValidation.Text = "aiyo enter a time or use 09:00";
             RemindersLocalTimeValidation.Visibility = Visibility.Visible;
             SaveReminderButton.IsEnabled = false;
             return;
@@ -83,7 +83,7 @@ public sealed partial class RemindersPage : Page
         }
         else
         {
-            RemindersLocalTimeValidation.Text = "aiyo use a local time like 09:00";
+            RemindersLocalTimeValidation.Text = "oh no use a time like 09:00";
             RemindersLocalTimeValidation.Visibility = Visibility.Visible;
             SaveReminderButton.IsEnabled = false;
         }

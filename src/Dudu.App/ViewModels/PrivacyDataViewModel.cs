@@ -59,10 +59,10 @@ public sealed class PrivacyDataViewModel : FeatureViewModelBase
         : "confirm this action";
     public string ConfirmationMessage => PendingConfirmation switch
     {
-        PrivacyConfirmationAction.Restore => "restore the newest valid backup? current local data will be replaced and dudu must be restarted after.",
-        PrivacyConfirmationAction.DeleteLocal => "permanently delete this pcs profile, preferences, activity history, notes, encrypted envelopes, asset metadata, backups, and pairing secrets? this cannot be undone.",
-        PrivacyConfirmationAction.DeleteRemote => "ask the pairing relay to permanently delete this devices remote data and revoke its sessions? local data on this pc will stay.",
-        _ => "choose restore or a delete action above, then review the exact effect here before confirming",
+        PrivacyConfirmationAction.Restore => "restore latest backup then dudu restarts",
+        PrivacyConfirmationAction.DeleteLocal => "delete all data here forever cannot undo",
+        PrivacyConfirmationAction.DeleteRemote => "delete remote data and sessions local stays",
+        _ => "pick an action above to see effect",
     };
     public string ConfirmationButtonText => PendingConfirmation switch
     {
@@ -76,18 +76,18 @@ public sealed class PrivacyDataViewModel : FeatureViewModelBase
         Local("profile", "recipient name and whether setup is complete.", "until local deletion.", true),
         Local("preferences", "theme, motion, quiet hours, note limit, startup, layering, fullscreen, and reminder defaults.", "until changed or locally deleted.", true),
         Local("pet placement", "monitor identifier, normalized position, and scale.", "until changed or locally deleted.", true),
-        Local("reminders and occurrences", "titles, details, schedules, time zone, quiet-hours behavior, next due and snooze state, plus completion timestamps.", "until you delete them or delete local data.", true),
-        Local("tasks", "task text, notes, due dates, completion state, and created, updated, and completed times.", "until you delete them or delete local data.", true),
+        Local("reminders and occurrences", "titles, schedules, quiet-hours behavior, next due, snooze state, completion times.", "until u delete them or delete local data.", true),
+        Local("tasks", "task text, due dates, completion state, timestamps.", "until u delete them or delete local data.", true),
         Local("focus history", "optional task link, start/end times, paused remainder, duration, and completion status.", "until local deletion.", true),
-        Local("countdowns", "titles, target date or time, all-day choice, and display time zone.", "until you delete them or delete local data.", true),
-        Local("local notes", "bundled defaults and notes you save in the local love-note jar.", "until you delete a note or delete local data.", true),
-        Local("local-note display history", "which note was shown, when, local date, and whether dudu chose it without a request.", "used to limit repetition; removed by local deletion.", true),
-        new("remote envelopes", "encrypted ciphertext and delivery metadata while a remote note waits to be opened; plaintext exists only in memory unless you save it.", "encrypted transport data arrives from the pairing relay; reveal does not send a read receipt.", "until reveal/acknowledgment, deletion, or the relays 30-day undelivered limit.", "pending ciphertext is backed up; local deletion removes it. remote deletion separately asks the relay to erase its copy."),
+        Local("countdowns", "titles, target date or time, all-day choice, and display time zone.", "until u delete them or delete local data.", true),
+        Local("local notes", "bundled defaults and notes u save in local note jar.", "until u delete a note or delete local data.", true),
+        Local("local-note display history", "which note shown, when, and if dudu picked it unprompted.", "used to limit repetition removed by local deletion.", true),
+        new("remote envelopes", "encrypted ciphertext until note opened plaintext only in memory unless u save.", "encrypted data passes through pairing relay reveal sends no read receipt.", "until reveal/acknowledgment, deletion, or the relays 30-day undelivered limit.", "backed up locally local deletion removes it remote deletion erases relay copy."),
         Local("processed message ids", "opaque message ids and processing timestamps used to prevent duplicate remote-note delivery.", "retained locally for deduplication until local deletion.", true),
-        Local("check-ins", "mood choice, optional note, and timestamp entered manually; dudu does not infer mood.", "until local deletion.", true),
-        new("pairing and sessions", "machine-bound keys plus opaque pairing, expiry, revocation, and sender-session metadata; no browser history or identity profile.", "pairing metadata and encrypted traffic use the relay while pairing is enabled.", "until revocation, remote deletion, or local deletion.", "machine-bound secrets are never in portable database backups. restore on another pc requires pairing again."),
+        Local("check-ins", "mood choice, optional note, timestamp entered manually dudu never infers mood.", "until local deletion.", true),
+        new("pairing and sessions", "machine-bound keys plus pairing, expiry, revocation, sender-session metadata no browser history.", "pairing metadata and encrypted traffic use the relay while pairing is enabled.", "until revocation, remote deletion, or local deletion.", "machine-bound secrets never in backups restoring on another pc needs pairing again."),
         Local("imported asset-pack metadata", "pack id, version, local manifest path, attribution, private-use flag, and selected state.", "until the pack or local data is deleted.", true),
-        Local("notification state", "delivery preferences, quiet-hour deferrals, next-due and snooze state; no unrelated notification content or analytics.", "until the related reminder or local data is deleted.", true),
+        Local("notification state", "delivery preferences, quiet-hour deferrals, next-due and snooze state nothing else tracked.", "until the related reminder or local data is deleted.", true),
     ];
 
     private static StoredFieldDescription Local(
@@ -100,20 +100,20 @@ public sealed class PrivacyDataViewModel : FeatureViewModelBase
             "does not leave this pc.",
             retention,
             includedInBackup
-                ? "included in local database backups; removed from the live database and backups by local deletion."
-                : "not included in backups; removed by local deletion.");
+                ? "included in backups removed from database and backups on local deletion."
+                : "not included in backups removed by local deletion.");
 
     public Task BackupAsync(CancellationToken cancellationToken = default) =>
         RunAsync(() => _context.BackupAsync(cancellationToken), "oki backup created on this pc");
 
     public Task RestoreAsync(CancellationToken cancellationToken = default) =>
-        RunAsync(() => _context.RestoreAsync(cancellationToken), "restore done restart dudu if it asks");
+        RunAsync(() => _context.RestoreAsync(cancellationToken), "okkk backup restored restart dudu if needed");
 
     public Task DeleteLocalDataAsync(CancellationToken cancellationToken = default) =>
-        RunAsync(() => _context.DeleteLocalDataAsync(cancellationToken), "local data deletion requested");
+        RunAsync(() => _context.DeleteLocalDataAsync(cancellationToken), "otayyy local data deletion started");
 
     public Task DeleteRemoteDataAsync(CancellationToken cancellationToken = default) =>
-        RunAsync(() => _context.DeleteRemoteDataAsync(cancellationToken), "remote device deletion requested");
+        RunAsync(() => _context.DeleteRemoteDataAsync(cancellationToken), "yayyy remote deletion started");
 
     public async Task ConfirmAsync(CancellationToken cancellationToken = default)
     {
@@ -124,13 +124,13 @@ public sealed class PrivacyDataViewModel : FeatureViewModelBase
         {
             PrivacyConfirmationAction.Restore => await RunAsync(
                 () => _context.RestoreAsync(cancellationToken),
-                "restore done restart dudu before you do anything else"),
+                "done le restart dudu first"),
             PrivacyConfirmationAction.DeleteLocal => await RunAsync(
                 () => _context.DeleteLocalDataAsync(cancellationToken),
-                "local data deleted le restart dudu for a clean setup"),
+                "can data deleted le restart dudu fresh"),
             PrivacyConfirmationAction.DeleteRemote => await RunAsync(
                 () => _context.DeleteRemoteDataAsync(cancellationToken),
-                "remote device data deleted and sessions revoked le"),
+                "oki remote data deleted sessions revoked le"),
             _ => false,
         };
         if (succeeded) PendingConfirmation = PrivacyConfirmationAction.None;
