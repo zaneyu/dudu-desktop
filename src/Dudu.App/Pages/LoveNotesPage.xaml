@@ -40,7 +40,7 @@
                         </DataTemplate>
                     </ListView.ItemTemplate>
                 </ListView>
-                <Button Content="Reveal selected note" Command="{x:Bind ViewModel.RevealRemoteNoteCommand}" CommandParameter="{x:Bind ViewModel.SelectedRemoteEnvelope}" AutomationProperties.AutomationId="LoveNotesRevealSelected" HorizontalAlignment="Left" />
+                <Button Content="Reveal selected note" Command="{x:Bind ViewModel.RevealRemoteNoteCommand}" CommandParameter="{x:Bind ViewModel.SelectedRemoteEnvelope}" IsEnabled="{x:Bind ViewModel.CanRevealRemoteNote, Mode=OneWay}" AutomationProperties.AutomationId="LoveNotesRevealSelected" HorizontalAlignment="Left" />
                 <TextBox Header="Opened note" Text="{x:Bind ViewModel.OpenedRemoteNoteText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" AutomationProperties.AutomationId="LoveNotesOpened" />
                 <Button Content="Save opened note to local jar" Command="{x:Bind ViewModel.SaveOpenedNoteCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="LoveNotesSaveOpened" HorizontalAlignment="Left" />
             </StackPanel>

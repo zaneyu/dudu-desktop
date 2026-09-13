@@ -37,7 +37,17 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
     public ObservableCollection<RemoteEnvelope> PendingRemoteNotes { get; } = [];
 
     public LocalLoveNote? SelectedNote { get => _selectedNote; set => SetProperty(ref _selectedNote, value); }
-    public RemoteEnvelope? SelectedRemoteEnvelope { get => _selectedRemoteEnvelope; set => SetProperty(ref _selectedRemoteEnvelope, value); }
+    public RemoteEnvelope? SelectedRemoteEnvelope
+    {
+        get => _selectedRemoteEnvelope;
+        set
+        {
+            if (SetProperty(ref _selectedRemoteEnvelope, value))
+            {
+                OnPropertyChanged(nameof(CanRevealRemoteNote));
+            }
+        }
+    }
     public RemoteEnvelope? OpenedRemoteEnvelope { get => _openedRemoteEnvelope; private set => SetProperty(ref _openedRemoteEnvelope, value); }
     public string? OpenedRemoteNoteText { get => _openedRemoteNoteText; private set => SetProperty(ref _openedRemoteNoteText, value); }
     public string DraftText { get => _draftText; set => SetProperty(ref _draftText, value); }
@@ -49,6 +59,7 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
         ? "1 unopened encrypted note."
         : $"{UnopenedRemoteNoteCount} unopened encrypted notes.";
     public bool HasOpenedRemoteNote => !string.IsNullOrWhiteSpace(OpenedRemoteNoteText);
+    public bool CanRevealRemoteNote => SelectedRemoteEnvelope is not null;
 
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
     {
