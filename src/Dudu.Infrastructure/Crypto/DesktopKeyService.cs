@@ -24,7 +24,7 @@ public sealed record DesktopKeyMaterial(string PublicKeySpkiBase64Url, byte[] Pr
 /// </summary>
 public sealed class DesktopKeyService
 {
-    private const string SecretStoreKey = "desktop-ecdh-private-v1";
+    internal const string SecretStoreKey = "desktop-ecdh-private-v1";
 
     private readonly ISecretStore _secretStore;
 

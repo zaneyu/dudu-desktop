@@ -327,7 +327,7 @@ public sealed class RemoteSyncService : IAsyncDisposable
         await _relay.DeleteDeviceAsync(cancellationToken);
         await _secretStore.DeleteAsync(RelaySecretKeys.DeviceId, cancellationToken);
         await _secretStore.DeleteAsync(RelaySecretKeys.DesktopToken, cancellationToken);
-        await _secretStore.DeleteAsync("desktop-ecdh-private-v1", cancellationToken);
+        await _secretStore.DeleteAsync(DesktopKeyService.SecretStoreKey, cancellationToken);
         _state = PairingAvailability.Offline;
     }
 

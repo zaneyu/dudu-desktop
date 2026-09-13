@@ -636,6 +636,15 @@ public static class WindowsCompanionProductionComposition
     /// after <c>WindowsCompanionRuntime.StartAsync</c> runs reaches the real
     /// gateway.
     /// </summary>
+    private sealed class DelegatingPresentationEnvironmentSink(
+        Action<bool> setSessionLocked,
+        Action<bool> setFullscreen) : IPresentationEnvironmentSink
+    {
+        public void SetSessionLocked(bool locked) => setSessionLocked(locked);
+
+        public void SetFullscreen(bool fullscreen) => setFullscreen(fullscreen);
+    }
+
     /// <summary>
     /// Adapts <see cref="RemoteSyncService"/> to the generic <see cref="IAppHostRemoteSync"/>
     /// seam so <c>AppHost</c> stays decoupled from the relay's concrete implementation.
@@ -646,14 +655,5 @@ public static class WindowsCompanionProductionComposition
             remoteSync.StartAsync(cancellationToken);
 
         public ValueTask DisposeAsync() => remoteSync.DisposeAsync();
-    }
-
-    private sealed class DelegatingPresentationEnvironmentSink(
-        Action<bool> setSessionLocked,
-        Action<bool> setFullscreen) : IPresentationEnvironmentSink
-    {
-        public void SetSessionLocked(bool locked) => setSessionLocked(locked);
-
-        public void SetFullscreen(bool fullscreen) => setFullscreen(fullscreen);
     }
 }

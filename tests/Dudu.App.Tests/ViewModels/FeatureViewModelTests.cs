@@ -698,6 +698,36 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Reveal_dismisses_unread_indicator_for_every_reaction()
+    {
+        async Task AssertRevealDismissesUnreadIndicatorAsync(string reaction)
+        {
+            var fixture = FeatureFixture.Create(
+                revealRemoteNoteAsync: (_, _) => Task.FromResult(new RevealedRemoteNote("hi", reaction)));
+            var messageId = $"unread-{reaction}";
+            var envelope = new RemoteEnvelope(messageId, [1], fixture.Clock.UtcNow);
+            fixture.RemoteNotes.Pending.Add(envelope);
+            var viewModel = new LoveNotesViewModel(fixture.Context);
+            await viewModel.RefreshAsync(TestContext.Current.CancellationToken);
+
+            // Simulate the note-arrival presentation RemoteSyncService already raised when the
+            // envelope arrived, so the pet's unread indicator is set before the user opens it.
+            fixture.Context.Pet.Handle(new PetEvent.RemoteNoteArrived(messageId));
+            Assert.Equal(PetState.RemoteNote, fixture.Context.Pet.Current.State);
+
+            await viewModel.RevealRemoteNoteAsync(envelope, TestContext.Current.CancellationToken);
+
+            Assert.NotEqual(PetState.RemoteNote, fixture.Context.Pet.Current.State);
+        }
+
+        await AssertRevealDismissesUnreadIndicatorAsync("wave");
+        await AssertRevealDismissesUnreadIndicatorAsync("hug");
+        await AssertRevealDismissesUnreadIndicatorAsync("celebrate");
+        await AssertRevealDismissesUnreadIndicatorAsync("none");
+        await AssertRevealDismissesUnreadIndicatorAsync("heart");
+    }
+
+    [Fact]
     public async Task Countdown_supports_create_select_edit_and_delete()
     {
         var fixture = FeatureFixture.Create();

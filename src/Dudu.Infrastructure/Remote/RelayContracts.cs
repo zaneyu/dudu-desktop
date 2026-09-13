@@ -50,10 +50,6 @@ internal sealed record RelayEnvelopeDto(
 internal sealed record GetMessagesResponseDto(
     [property: JsonPropertyName("messages")] IReadOnlyList<RelayEnvelopeDto> Messages);
 
-internal sealed record RelayErrorResponseDto(
-    [property: JsonPropertyName("error")] string Error,
-    [property: JsonPropertyName("message")] string Message);
-
 [JsonSerializable(typeof(RegisterDeviceRequestDto))]
 [JsonSerializable(typeof(RegisterDeviceResponseDto))]
 [JsonSerializable(typeof(GetCurrentDeviceResponseDto))]
@@ -61,7 +57,6 @@ internal sealed record RelayErrorResponseDto(
 [JsonSerializable(typeof(RotateDeviceKeyResponseDto))]
 [JsonSerializable(typeof(CreatePairingCodeResponseDto))]
 [JsonSerializable(typeof(GetMessagesResponseDto))]
-[JsonSerializable(typeof(RelayErrorResponseDto))]
 internal partial class RelayJsonContext : JsonSerializerContext
 {
 }

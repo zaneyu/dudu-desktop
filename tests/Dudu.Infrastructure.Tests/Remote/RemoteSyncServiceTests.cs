@@ -94,7 +94,7 @@ public sealed class RemoteSyncServiceTests
     /// </summary>
     private sealed class RemoteSyncFixture : IAsyncDisposable
     {
-        // Matches Dudu.Infrastructure.Crypto.DesktopKeyService's private SecretStoreKey constant.
+        // Matches Dudu.Infrastructure.Crypto.DesktopKeyService's internal SecretStoreKey constant.
         private const string DesktopPrivateKeySecretKey = "desktop-ecdh-private-v1";
 
         private readonly string _root;

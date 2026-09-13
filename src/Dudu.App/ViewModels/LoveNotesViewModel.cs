@@ -114,6 +114,13 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
             OpenedRemoteEnvelope = envelope;
             OpenedRemoteNoteText = revealed.Text;
             OnPropertyChanged(nameof(HasOpenedRemoteNote));
+
+            // Opening a note means it is read: dismiss the pet's unread indicator for this
+            // message id on every reveal, independent of the reaction map below. Without this,
+            // only "heart" (whose one-shot re-raises RemoteNoteArrived and then dismisses it as
+            // part of its own completion) cleared the indicator, while wave/hug/celebrate/none
+            // left "A note arrived" showing for a note the user already opened.
+            await _context.PresentPetAsync(new PetEvent.Dismissed(envelope.MessageId), cancellationToken);
             await PresentReactionAsync(revealed.Reaction, envelope.MessageId, cancellationToken);
         });
     }
