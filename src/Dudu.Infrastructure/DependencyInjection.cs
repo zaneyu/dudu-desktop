@@ -8,6 +8,7 @@ using Dudu.Core.Pet;
 using Dudu.Core.Reminders;
 using Dudu.Core.Tasks;
 using Dudu.Core.Time;
+using Dudu.Infrastructure.Crypto;
 using Dudu.Infrastructure.Data;
 using Dudu.Infrastructure.Data.Repositories;
 using Dudu.Infrastructure.Remote;
@@ -20,7 +21,8 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddDuduInfrastructure(
         this IServiceCollection services,
-        DatabaseOptions options)
+        DatabaseOptions options,
+        RelayOptions? relayOptions = null)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(options);
@@ -69,7 +71,26 @@ public static class DependencyInjection
                 ?? throw new InvalidOperationException("The database path has no directory.");
             return new DpapiSecretStore(Path.Combine(databaseDirectory, "secrets"));
         });
-        services.AddSingleton<IPairingService, OfflinePairingService>();
+        services.AddSingleton<DesktopKeyService>();
+        services.AddSingleton<IRemoteNoteArrivalSink, NullRemoteNoteArrivalSink>();
+
+        if (relayOptions?.BaseUrl is not null)
+        {
+            services.AddSingleton(relayOptions);
+            services.AddSingleton(static _ => new HttpClient
+            {
+                Timeout = TimeSpan.FromSeconds(15),
+                MaxResponseContentBufferSize = 256 * 1024,
+            });
+            services.AddSingleton<IRelayClient, RelayClient>();
+            services.AddSingleton<PollBackoff>();
+            services.AddSingleton<RemoteSyncService>();
+            services.AddSingleton<IPairingService, RelayPairingService>();
+        }
+        else
+        {
+            services.AddSingleton<IPairingService, OfflinePairingService>();
+        }
 
         return services;
     }
@@ -110,6 +131,15 @@ public static class DependencyInjection
             CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(occurrence);
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class NullRemoteNoteArrivalSink : IRemoteNoteArrivalSink
+    {
+        public Task NotifyAsync(Guid messageId, CancellationToken cancellationToken)
+        {
             cancellationToken.ThrowIfCancellationRequested();
             return Task.CompletedTask;
         }

@@ -21,7 +21,7 @@ public sealed class RemoteEnvelopeRepository : SqliteRepository, IRemoteEnvelope
     public async Task<bool> TryInsertAsync(RemoteEnvelope envelope, CancellationToken cancellationToken)
     {
         Validate(envelope);
-        await using var connection=await OpenAsync(cancellationToken); await using var command=connection.CreateCommand(); AddInsert(command,envelope,"INSERT INTO remote_envelopes (message_id,ciphertext,ephemeral_public_key,nonce,authentication_tag,deliver_after_utc,received_utc) VALUES ($id,$ciphertext,$key,$nonce,$tag,$deliverAfter,$received) ON CONFLICT(message_id) DO NOTHING;"); return await command.ExecuteNonQueryAsync(cancellationToken)==1;
+        await using var connection=await OpenAsync(cancellationToken); await using var command=connection.CreateCommand(); AddInsert(command,envelope,InsertSql); return await command.ExecuteNonQueryAsync(cancellationToken)==1;
     }
 
     public async Task<bool> IsProcessedAsync(string messageId, CancellationToken cancellationToken)
@@ -65,7 +65,7 @@ public sealed class RemoteEnvelopeRepository : SqliteRepository, IRemoteEnvelope
             await savepoint.ExecuteNonQueryAsync(cancellationToken);
 
             await using var insert = boundConnection.CreateCommand();
-            AddInsert(insert, envelope, "INSERT INTO remote_envelopes (message_id,ciphertext,ephemeral_public_key,nonce,authentication_tag,deliver_after_utc,received_utc) VALUES ($id,$ciphertext,$key,$nonce,$tag,$deliverAfter,$received) ON CONFLICT(message_id) DO NOTHING;");
+            AddInsert(insert, envelope, InsertSql);
             try
             {
                 await insert.ExecuteNonQueryAsync(cancellationToken);
@@ -93,7 +93,7 @@ public sealed class RemoteEnvelopeRepository : SqliteRepository, IRemoteEnvelope
         await using var connection=await OpenAsync(cancellationToken); await using var transaction=(SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
         try
         {
-            await using var insert=connection.CreateCommand(); insert.Transaction=transaction; AddInsert(insert,envelope,"INSERT INTO remote_envelopes (message_id,ciphertext,ephemeral_public_key,nonce,authentication_tag,deliver_after_utc,received_utc) VALUES ($id,$ciphertext,$key,$nonce,$tag,$deliverAfter,$received) ON CONFLICT(message_id) DO NOTHING;"); await insert.ExecuteNonQueryAsync(cancellationToken);
+            await using var insert=connection.CreateCommand(); insert.Transaction=transaction; AddInsert(insert,envelope,InsertSql); await insert.ExecuteNonQueryAsync(cancellationToken);
             await using var processed=connection.CreateCommand(); processed.Transaction=transaction; processed.CommandText="INSERT INTO processed_remote_messages (message_id,processed_utc) SELECT $id,$processed WHERE EXISTS (SELECT 1 FROM remote_envelopes WHERE message_id=$id) ON CONFLICT(message_id) DO NOTHING;"; Add(processed,"$id",envelope.MessageId); Add(processed,"$processed",Utc(processedUtc));
             if(await processed.ExecuteNonQueryAsync(cancellationToken)!=1){await transaction.RollbackAsync(CancellationToken.None);return false;}
             await transaction.CommitAsync(cancellationToken); return true;
@@ -104,7 +104,8 @@ public sealed class RemoteEnvelopeRepository : SqliteRepository, IRemoteEnvelope
     public async Task DeleteAsync(string messageId, CancellationToken cancellationToken)
     { await using var connection=await OpenAsync(cancellationToken); await using var command=connection.CreateCommand(); command.CommandText="DELETE FROM remote_envelopes WHERE message_id=$id;"; Add(command,"$id",messageId); await command.ExecuteNonQueryAsync(cancellationToken); }
 
-    private const string Select="SELECT message_id,ciphertext,ephemeral_public_key,nonce,authentication_tag,deliver_after_utc,received_utc FROM remote_envelopes";
+    private const string Select="SELECT message_id,ciphertext,ephemeral_public_key,nonce,authentication_tag,deliver_after_utc,received_utc,hkdf_salt,created_utc FROM remote_envelopes";
+    private const string InsertSql="INSERT INTO remote_envelopes (message_id,ciphertext,ephemeral_public_key,nonce,authentication_tag,deliver_after_utc,received_utc,hkdf_salt,created_utc) VALUES ($id,$ciphertext,$key,$nonce,$tag,$deliverAfter,$received,$salt,$createdUtc) ON CONFLICT(message_id) DO NOTHING;";
     private static void Validate(RemoteEnvelope envelope)
     {
         ArgumentNullException.ThrowIfNull(envelope);
@@ -120,8 +121,8 @@ public sealed class RemoteEnvelopeRepository : SqliteRepository, IRemoteEnvelope
         ArgumentException.ThrowIfNullOrWhiteSpace(messageId);
         if (messageId.Length > 256) throw new ArgumentException("Remote message IDs cannot exceed 256 characters.", nameof(messageId));
     }
-    private static void AddInsert(SqliteCommand c,RemoteEnvelope e,string sql){c.CommandText=sql;Add(c,"$id",e.MessageId);Add(c,"$ciphertext",e.Ciphertext);Add(c,"$key",e.EphemeralPublicKey);Add(c,"$nonce",e.Nonce);Add(c,"$tag",e.AuthenticationTag);Add(c,"$deliverAfter",Utc(e.DeliverAfterUtc));Add(c,"$received",Utc(e.ReceivedUtc));}
-    private static RemoteEnvelope Read(SqliteDataReader r)=>new(r.GetString(0),(byte[])r[1],r.IsDBNull(2)?null:(byte[])r[2],r.IsDBNull(3)?null:(byte[])r[3],r.IsDBNull(4)?null:(byte[])r[4],ReadNullableUtc(r[5]),ReadUtc(r[6]));
+    private static void AddInsert(SqliteCommand c,RemoteEnvelope e,string sql){c.CommandText=sql;Add(c,"$id",e.MessageId);Add(c,"$ciphertext",e.Ciphertext);Add(c,"$key",e.EphemeralPublicKey);Add(c,"$nonce",e.Nonce);Add(c,"$tag",e.AuthenticationTag);Add(c,"$deliverAfter",e.DeliverAfterUtc);Add(c,"$received",Utc(e.ReceivedUtc));Add(c,"$salt",e.HkdfSalt);Add(c,"$createdUtc",e.CreatedUtc);}
+    private static RemoteEnvelope Read(SqliteDataReader r)=>new(r.GetString(0),(byte[])r[1],r.IsDBNull(2)?null:(byte[])r[2],r.IsDBNull(3)?null:(byte[])r[3],r.IsDBNull(4)?null:(byte[])r[4],r.IsDBNull(5)?null:r.GetString(5),ReadUtc(r[6])){HkdfSalt=r.IsDBNull(7)?null:(byte[])r[7],CreatedUtc=r.IsDBNull(8)?null:r.GetString(8)};
 
     private static async Task RollbackSavepointAsync(SqliteConnectionLease connection, CancellationToken cancellationToken)
     {

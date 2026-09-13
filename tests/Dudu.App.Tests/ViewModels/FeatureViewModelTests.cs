@@ -660,6 +660,44 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Reveal_remote_note_maps_reaction_to_one_shot_pet_presentation_per_ruling()
+    {
+        async Task<(PetEvent Event, string DismissalId)?> RevealWithReactionAsync(string reaction)
+        {
+            var fixture = FeatureFixture.Create(
+                revealRemoteNoteAsync: (_, _) => Task.FromResult(new RevealedRemoteNote("hi", reaction)));
+            var envelope = new RemoteEnvelope($"note-{reaction}", [1], fixture.Clock.UtcNow);
+            fixture.RemoteNotes.Pending.Add(envelope);
+            var viewModel = new LoveNotesViewModel(fixture.Context);
+            await viewModel.RefreshAsync(TestContext.Current.CancellationToken);
+
+            await viewModel.RevealRemoteNoteAsync(envelope, TestContext.Current.CancellationToken);
+
+            return fixture.OneShotPresentations.Count == 0
+                ? null
+                : Assert.Single(fixture.OneShotPresentations);
+        }
+
+        var wave = await RevealWithReactionAsync("wave");
+        Assert.Equal("greeting", Assert.IsType<PetEvent.AmbientRequested>(wave!.Value.Event).AnimationKey);
+        Assert.Equal("greeting", wave.Value.DismissalId);
+
+        var heart = await RevealWithReactionAsync("heart");
+        Assert.Equal("note-heart", Assert.IsType<PetEvent.RemoteNoteArrived>(heart!.Value.Event).MessageId);
+        Assert.Equal("note-heart", heart.Value.DismissalId);
+
+        var hug = await RevealWithReactionAsync("hug");
+        Assert.IsType<PetEvent.ComfortRequested>(hug!.Value.Event);
+        Assert.Equal("comfort-hug", hug.Value.DismissalId);
+
+        var celebrate = await RevealWithReactionAsync("celebrate");
+        Assert.Equal("celebrate", Assert.IsType<PetEvent.AmbientRequested>(celebrate!.Value.Event).AnimationKey);
+        Assert.Equal("celebrate", celebrate.Value.DismissalId);
+
+        Assert.Null(await RevealWithReactionAsync("none"));
+    }
+
+    [Fact]
     public async Task Countdown_supports_create_select_edit_and_delete()
     {
         var fixture = FeatureFixture.Create();
@@ -789,7 +827,8 @@ public sealed class FeatureViewModelTests
             FakeFeatureTransactions transactions,
             FakeRuntimePreferences runtimePreferences,
             CompanionFeatureContext context,
-            List<string> events)
+            List<string> events,
+            List<(PetEvent Event, string DismissalId)> oneShotPresentations)
         {
             Clock = clock;
             Reminders = reminders;
@@ -803,6 +842,7 @@ public sealed class FeatureViewModelTests
             RuntimePreferences = runtimePreferences;
             Context = context;
             Events = events;
+            OneShotPresentations = oneShotPresentations;
         }
 
         public FakeClock Clock { get; }
@@ -817,6 +857,7 @@ public sealed class FeatureViewModelTests
         public FakeRuntimePreferences RuntimePreferences { get; }
         public CompanionFeatureContext Context { get; }
         public List<string> Events { get; }
+        public List<(PetEvent Event, string DismissalId)> OneShotPresentations { get; }
         public Reminder Reminder { get; } = new(
             "reminder-1",
             "Drink water",
@@ -831,10 +872,12 @@ public sealed class FeatureViewModelTests
         public static FeatureFixture Create(
             Func<CancellationToken, Task>? restoreAsync = null,
             Func<CancellationToken, Task>? deleteLocalDataAsync = null,
-            Func<CancellationToken, Task>? deleteRemoteDataAsync = null)
+            Func<CancellationToken, Task>? deleteRemoteDataAsync = null,
+            Func<RemoteEnvelope, CancellationToken, Task<RevealedRemoteNote>>? revealRemoteNoteAsync = null)
         {
             var clock = new FakeClock("2026-09-12T10:00:00Z");
             var events = new List<string>();
+            var oneShotPresentations = new List<(PetEvent Event, string DismissalId)>();
             var preferences = new Preferences(
                 AppTheme.System,
                 new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
@@ -903,7 +946,16 @@ public sealed class FeatureViewModelTests
                     });
                     return Task.CompletedTask;
                 },
-                revealRemoteNoteAsync: (_, _) => Task.FromResult("You can do it"),
+                presentOneShotPetAsync: (petEvent, dismissalId, token) =>
+                {
+                    oneShotPresentations.Add((petEvent, dismissalId));
+                    pet.Handle(petEvent);
+                    pet.Handle(new PetEvent.PresentationAcknowledged());
+                    pet.Handle(PetEvent.CompletionForOneShot(petEvent, dismissalId));
+                    return Task.CompletedTask;
+                },
+                revealRemoteNoteAsync: revealRemoteNoteAsync
+                    ?? ((_, _) => Task.FromResult(new RevealedRemoteNote("You can do it", "none"))),
                 restoreAsync: restoreAsync,
                 deleteLocalDataAsync: deleteLocalDataAsync,
                 deleteRemoteDataAsync: deleteRemoteDataAsync);
@@ -919,7 +971,8 @@ public sealed class FeatureViewModelTests
                 transactions,
                 runtimePreferences,
                 context,
-                events);
+                events,
+                oneShotPresentations);
         }
     }
 

@@ -4,9 +4,14 @@ using Dudu.App.Animation;
 using Dudu.App.Hosting;
 using Dudu.App.Notifications;
 using Dudu.App.Overlay;
+using Dudu.Core.Abstractions;
 using Dudu.Core.Assets;
 using Dudu.Core.Models;
 using Dudu.Core.Pet;
+using Dudu.Infrastructure;
+using Dudu.Infrastructure.Data;
+using Dudu.Infrastructure.Remote;
+using Microsoft.Extensions.DependencyInjection;
 
 if (Array.IndexOf(args, "single-instance") >= 0)
 {
@@ -16,6 +21,11 @@ if (Array.IndexOf(args, "single-instance") >= 0)
 if (Array.IndexOf(args, "notifications") >= 0)
 {
     return await RunNotificationsScenarioAsync();
+}
+
+if (Array.IndexOf(args, "remote-note") >= 0)
+{
+    return await RunRemoteNoteScenarioAsync();
 }
 
 if (!args.Contains("--scenario", StringComparer.Ordinal)
@@ -250,6 +260,100 @@ static async Task<int> RunNotificationsScenarioAsync()
     return string.Equals(verdict, "PASS", StringComparison.OrdinalIgnoreCase) ? 0 : 6;
 }
 
+static async Task<int> RunRemoteNoteScenarioAsync()
+{
+    if (!OperatingSystem.IsWindows())
+    {
+        Console.Error.WriteLine("The remote-note harness requires Windows x64 (DPAPI secret storage) and is intentionally manual.");
+        return 3;
+    }
+
+    var baseUrl = Environment.GetEnvironmentVariable("DUDU_RELAY_BASE_URL");
+    if (string.IsNullOrWhiteSpace(baseUrl))
+    {
+        Console.Error.WriteLine(
+            "DUDU_RELAY_BASE_URL is required. Start `cd relay && npx wrangler dev --local --port 8787` " +
+            "and set DUDU_RELAY_BASE_URL to its address before running this scenario.");
+        return 4;
+    }
+
+    var workingDirectory = Path.Combine(
+        Path.GetTempPath(), "dudu-harness-remote-note-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(workingDirectory);
+    var databasePath = Path.Combine(workingDirectory, "dudu.db");
+    var backupDirectory = Path.Combine(workingDirectory, "backups");
+
+    var notifications = new AppNotificationService(new WindowsAppNotificationSink());
+    await notifications.TryRegisterAsync(CancellationToken.None);
+    var noteArrived = new TaskCompletionSource<Guid>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    var services = new ServiceCollection()
+        .AddDuduInfrastructure(
+            new DatabaseOptions(databasePath, backupDirectory),
+            new RelayOptions(new Uri(baseUrl)))
+        .AddSingleton<IRemoteNoteArrivalSink>(new HarnessRemoteNoteArrivalSink(notifications, noteArrived))
+        .BuildServiceProvider();
+
+    await using var sync = services.GetRequiredService<RemoteSyncService>();
+    try
+    {
+        var database = services.GetRequiredService<Database>();
+        await database.InitializeAsync(CancellationToken.None);
+
+        var pairingCode = await sync.CreatePairingCodeAsync(CancellationToken.None);
+        if (pairingCode.Availability != PairingAvailability.Available || pairingCode.Code is null)
+        {
+            Console.Error.WriteLine($"Pairing code creation failed; availability={pairingCode.Availability}.");
+            return 5;
+        }
+
+        Console.WriteLine($"Pairing code: {pairingCode.Code} (expires {pairingCode.ExpiresUtc:O})");
+        Console.WriteLine("Open the sender page on a phone, enter the code, and send an encrypted fixture note now.");
+
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        while (!noteArrived.Task.IsCompleted && DateTimeOffset.UtcNow < deadline)
+        {
+            await sync.PollOnceAsync(CancellationToken.None);
+            if (!noteArrived.Task.IsCompleted)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1));
+            }
+        }
+
+        if (!noteArrived.Task.IsCompleted)
+        {
+            Console.Error.WriteLine("No note arrived within 30 seconds.");
+            return 6;
+        }
+
+        var messageId = await noteArrived.Task;
+        var revealed = await sync.RevealAsync(messageId.ToString("D"), CancellationToken.None);
+        Console.WriteLine($"Revealed text: \"{revealed.Text}\"; reaction: {revealed.Reaction}");
+
+        Console.WriteLine();
+        Console.WriteLine("Manual checks (the harness cannot assert these on its own):");
+        Console.WriteLine("1. The Windows toast that appeared above said only 'A note arrived 💌' with no note text or reaction.");
+        Console.WriteLine("2. Query the relay's local D1 database (e.g. via `wrangler d1 execute`) and confirm the stored row for this message id never contains the plaintext printed above.");
+        Console.WriteLine("3. Confirm the relay has no leftover ciphertext for this message id after this run's acknowledgment.");
+        Console.WriteLine();
+        Console.Write("Enter PASS or FAIL (include a short reason for FAIL): ");
+        var verdict = Console.ReadLine()?.Trim();
+        Console.WriteLine($"Harness result: {verdict ?? "NO-VERDICT"}");
+        return string.Equals(verdict, "PASS", StringComparison.OrdinalIgnoreCase) ? 0 : 7;
+    }
+    finally
+    {
+        try
+        {
+            Directory.Delete(workingDirectory, recursive: true);
+        }
+        catch (IOException)
+        {
+            // Best-effort cleanup only; leftover temp files here carry no plaintext or secrets.
+        }
+    }
+}
+
 static void DeleteIfPresent(string path)
 {
     if (File.Exists(path)) File.Delete(path);
@@ -326,6 +430,22 @@ static async Task<NotepadTarget?> FindOrLaunchNotepadAsync()
 
     started.Dispose();
     return null;
+}
+
+/// <summary>
+/// Harness stand-in for <c>Dudu.App.Presentation.RemoteNoteArrivalSink</c>: shows the same
+/// generic Windows toast the production sink would (via the same notification service), and
+/// signals the scenario's poll loop without ever surfacing note text or reaction.
+/// </summary>
+file sealed class HarnessRemoteNoteArrivalSink(
+    AppNotificationService notifications,
+    TaskCompletionSource<Guid> arrived) : IRemoteNoteArrivalSink
+{
+    public async Task NotifyAsync(Guid messageId, CancellationToken cancellationToken)
+    {
+        await notifications.ShowRemoteNoteArrivalAsync(messageId, cancellationToken);
+        arrived.TrySetResult(messageId);
+    }
 }
 
 file sealed class NotepadTarget(Process process, bool startedByHarness) : IDisposable

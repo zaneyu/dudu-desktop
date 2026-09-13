@@ -29,10 +29,10 @@ public sealed class DatabaseTests
         await using var fixture = await DatabaseFixture.CreateAsync();
         await using var connection = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken);
         var runner = new MigrationRunner(fixture.Options);
-        runner.AddMigration(3, "CREATE TABLE broken(;" );
+        runner.AddMigration(4, "CREATE TABLE broken(;" );
 
         await Assert.ThrowsAsync<SqliteException>(() => runner.RunAsync(connection, TestContext.Current.CancellationToken));
-        Assert.Equal(2, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(3, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
         Assert.True(File.Exists(fixture.Options.DatabasePath));
     }
 

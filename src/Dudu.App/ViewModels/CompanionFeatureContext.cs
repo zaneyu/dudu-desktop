@@ -43,7 +43,7 @@ public sealed class CompanionFeatureContext
         Func<PauseState, CancellationToken, Task>? applyPauseAsync = null,
         Func<PetEvent, CancellationToken, Task>? presentPetAsync = null,
         Func<PetEvent, string, CancellationToken, Task>? presentOneShotPetAsync = null,
-        Func<RemoteEnvelope, CancellationToken, Task<string>>? revealRemoteNoteAsync = null,
+        Func<RemoteEnvelope, CancellationToken, Task<RevealedRemoteNote>>? revealRemoteNoteAsync = null,
         Func<CancellationToken, Task>? backupAsync = null,
         Func<CancellationToken, Task>? restoreAsync = null,
         Func<CancellationToken, Task>? deleteLocalDataAsync = null,
@@ -86,7 +86,7 @@ public sealed class CompanionFeatureContext
             Pet.Handle(PetEvent.CompletionForOneShot(petEvent, dismissalId));
         });
         RevealRemoteNoteAsync = revealRemoteNoteAsync ?? ((_, _) =>
-            Task.FromException<string>(new NotSupportedException(
+            Task.FromException<RevealedRemoteNote>(new NotSupportedException(
                 "aiyo cant reveal notes relay offline")));
         BackupAsync = backupAsync ?? ((_) => Task.FromException(
             new NotSupportedException("oh no backup not ready yet")));
@@ -130,7 +130,7 @@ public sealed class CompanionFeatureContext
     public Func<PauseState, CancellationToken, Task> ApplyPauseAsync { get; }
     public Func<PetEvent, CancellationToken, Task> PresentPetAsync { get; }
     public Func<PetEvent, string, CancellationToken, Task> PresentOneShotPetAsync { get; }
-    public Func<RemoteEnvelope, CancellationToken, Task<string>> RevealRemoteNoteAsync { get; }
+    public Func<RemoteEnvelope, CancellationToken, Task<RevealedRemoteNote>> RevealRemoteNoteAsync { get; }
     public Func<CancellationToken, Task> BackupAsync { get; }
     public Func<CancellationToken, Task> RestoreAsync { get; }
     public Func<CancellationToken, Task> DeleteLocalDataAsync { get; }

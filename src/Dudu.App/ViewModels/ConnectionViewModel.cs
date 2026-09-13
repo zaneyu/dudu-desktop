@@ -95,12 +95,15 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
             try
             {
                 foreach (var session in await _context.Pairing.ListSessionsAsync(cancellationToken)) Sessions.Add(session);
-                SessionCount = Sessions.Count;
             }
             catch (NotSupportedException)
             {
-                SessionCount = 0;
+                // No per-session listing available; fall back to the aggregate count below.
             }
+
+            SessionCount = Sessions.Count > 0
+                ? Sessions.Count
+                : await _context.Pairing.GetSessionCountAsync(cancellationToken);
             OnPropertyChanged(nameof(IsPaired));
         });
     }

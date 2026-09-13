@@ -23,7 +23,10 @@ public sealed class InMemorySecretStore : ISecretStore
         string key,
         CancellationToken cancellationToken = default)
     {
-        return Task.FromResult(Values.TryGetValue(key, out var value) ? value : null);
+        // Returns a defensive copy on every call, matching the real DPAPI-backed store (which
+        // decrypts a fresh buffer from disk each time): callers such as RemoteSyncService zero
+        // the returned private-key bytes after use, which must not corrupt what is "stored".
+        return Task.FromResult(Values.TryGetValue(key, out var value) ? value.ToArray() : null);
     }
 
     public Task DeleteAsync(

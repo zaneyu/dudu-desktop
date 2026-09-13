@@ -110,12 +110,32 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
         ArgumentNullException.ThrowIfNull(envelope);
         return RunAsync(async () =>
         {
-            var text = await _context.RevealRemoteNoteAsync(envelope, cancellationToken);
+            var revealed = await _context.RevealRemoteNoteAsync(envelope, cancellationToken);
             OpenedRemoteEnvelope = envelope;
-            OpenedRemoteNoteText = text;
+            OpenedRemoteNoteText = revealed.Text;
             OnPropertyChanged(nameof(HasOpenedRemoteNote));
+            await PresentReactionAsync(revealed.Reaction, envelope.MessageId, cancellationToken);
         });
     }
+
+    // Maps a revealed note's reaction to a one-shot pet presentation, per the ruling: wave ->
+    // greeting, heart -> note-arrival, hug -> comfort-hug, celebrate -> celebrate, none -> no
+    // one-shot. "heart" replays the note-arrival event the envelope already raised on arrival;
+    // the one-shot's completion dismisses it by message id, which is a harmless no-op if the
+    // user's later save/dismiss flow (SaveOpenedNoteAsync) repeats it for the same id.
+    private Task PresentReactionAsync(string reaction, string messageId, CancellationToken cancellationToken) =>
+        reaction switch
+        {
+            "wave" => _context.PresentOneShotPetAsync(
+                new PetEvent.AmbientRequested("greeting"), "greeting", cancellationToken),
+            "heart" => _context.PresentOneShotPetAsync(
+                new PetEvent.RemoteNoteArrived(messageId), messageId, cancellationToken),
+            "celebrate" => _context.PresentOneShotPetAsync(
+                new PetEvent.AmbientRequested("celebrate"), "celebrate", cancellationToken),
+            "hug" => _context.PresentOneShotPetAsync(
+                new PetEvent.ComfortRequested(), "comfort-hug", cancellationToken),
+            _ => Task.CompletedTask,
+        };
 
     public Task SaveOpenedNoteAsync(object? _, CancellationToken cancellationToken = default) =>
         RunAsync(async () =>
