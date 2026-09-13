@@ -203,6 +203,55 @@ public sealed class AppHostTests
         Assert.Equal(1, gateway.DisposeCount);
     }
 
+    [Fact]
+    public async Task Remote_sync_starts_only_when_attached_and_is_disposed_on_stop()
+    {
+        // Relay configured: the fake stands in for a RemoteSyncService wrapper;
+        // AppHost starts it after the reminder scheduler and disposes it on stop.
+        using var configured = new AppHostFixture();
+        var remoteSync = new TestRemoteSync(() => configured.TimerFactory.CreateCount);
+        configured.Host.AttachRemoteSync(remoteSync);
+
+        await configured.Host.StartAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, remoteSync.StartCount);
+        Assert.Equal(1, remoteSync.SchedulerCreateCountAtStart);
+        Assert.Equal(0, remoteSync.DisposeCount);
+
+        await configured.Host.StopAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, remoteSync.DisposeCount);
+
+        // No relay configured (a null DUDU_RELAY_BASE_URL / ProductInfo.DefaultRelayBaseUrl):
+        // nothing is attached, and the host starts and stops exactly as before.
+        using var unconfigured = new AppHostFixture();
+
+        await unconfigured.Host.StartAsync(TestContext.Current.CancellationToken);
+        Assert.True(unconfigured.Database.Initialized);
+        await unconfigured.Host.StopAsync(TestContext.Current.CancellationToken);
+        Assert.True(unconfigured.Database.Disposed);
+    }
+
+    private sealed class TestRemoteSync(Func<int>? schedulerCreateCount = null) : IAppHostRemoteSync
+    {
+        public int StartCount { get; private set; }
+        public int DisposeCount { get; private set; }
+        public int SchedulerCreateCountAtStart { get; private set; }
+
+        public Task StartAsync(CancellationToken cancellationToken = default)
+        {
+            StartCount++;
+            SchedulerCreateCountAtStart = schedulerCreateCount?.Invoke() ?? 0;
+            return Task.CompletedTask;
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            DisposeCount++;
+            return ValueTask.CompletedTask;
+        }
+    }
+
     private sealed class TestPresentationGateway(
         Func<bool>? databaseInitialized = null,
         Func<int>? reminderTickCount = null) : IAppHostPresentationGateway

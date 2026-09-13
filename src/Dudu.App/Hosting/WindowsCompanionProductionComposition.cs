@@ -11,8 +11,10 @@ using Dudu.Core.Models;
 using Dudu.Core.Pet;
 using Dudu.Core.Policies;
 using Dudu.Core.Time;
+using Dudu.Core;
 using Dudu.Infrastructure;
 using Dudu.Infrastructure.Data;
+using Dudu.Infrastructure.Remote;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Windows.AppNotifications;
 
@@ -150,13 +152,20 @@ public static class WindowsCompanionProductionComposition
         // rest of the runtime is ready.
         PresentationCoordinator? presentationGateway = null;
         var services = new ServiceCollection()
-            .AddDuduInfrastructure(new DatabaseOptions(paths.Database, paths.Backups))
+            .AddDuduInfrastructure(
+                new DatabaseOptions(paths.Database, paths.Backups),
+                ResolveRelayOptions())
             .AddSingleton<IReminderDueSink>(provider => new ReminderDueSink(
                 provider.GetRequiredService<IReminderRepository>(),
                 () => presentationGateway
                     ?? throw new InvalidOperationException("The presentation gateway is not ready.")))
             .BuildServiceProvider();
         var host = new AppHost(services, paths);
+        var remoteSync = services.GetService<RemoteSyncService>();
+        if (remoteSync is not null)
+        {
+            host.AttachRemoteSync(new RemoteSyncHostAdapter(remoteSync));
+        }
         var composer = default(SkiaFrameComposer);
         var presenter = default(LayeredFramePresenter);
         AnimationEngine? animationEngine = null;
@@ -490,6 +499,41 @@ public static class WindowsCompanionProductionComposition
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Resolves the relay base URL from <c>DUDU_RELAY_BASE_URL</c>, falling back to
+    /// <see cref="ProductInfo.DefaultRelayBaseUrl"/>. Either value is used only when it parses
+    /// as an absolute http/https URI; anything else (unset, malformed, a non-http(s) scheme) is
+    /// ignored, leaving <see cref="RelayOptions.BaseUrl"/> null so <c>AddDuduInfrastructure</c>
+    /// falls back to <see cref="OfflinePairingService"/> and no relay is activated.
+    /// </summary>
+    private static RelayOptions ResolveRelayOptions()
+    {
+        if (!TryParseAbsoluteHttpUri(Environment.GetEnvironmentVariable("DUDU_RELAY_BASE_URL"), out var baseUrl))
+        {
+            TryParseAbsoluteHttpUri(ProductInfo.DefaultRelayBaseUrl, out baseUrl);
+        }
+
+        return new RelayOptions(baseUrl);
+    }
+
+    private static bool TryParseAbsoluteHttpUri(string? value, out Uri? uri)
+    {
+        uri = null;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        if (Uri.TryCreate(value, UriKind.Absolute, out var parsed)
+            && (parsed.Scheme == Uri.UriSchemeHttp || parsed.Scheme == Uri.UriSchemeHttps))
+        {
+            uri = parsed;
+            return true;
+        }
+
+        return false;
+    }
+
     internal static Task DispatchSettingsDestinationAsync(
         CompanionUiActions actions,
         string destination,
@@ -592,6 +636,18 @@ public static class WindowsCompanionProductionComposition
     /// after <c>WindowsCompanionRuntime.StartAsync</c> runs reaches the real
     /// gateway.
     /// </summary>
+    /// <summary>
+    /// Adapts <see cref="RemoteSyncService"/> to the generic <see cref="IAppHostRemoteSync"/>
+    /// seam so <c>AppHost</c> stays decoupled from the relay's concrete implementation.
+    /// </summary>
+    private sealed class RemoteSyncHostAdapter(RemoteSyncService remoteSync) : IAppHostRemoteSync
+    {
+        public Task StartAsync(CancellationToken cancellationToken = default) =>
+            remoteSync.StartAsync(cancellationToken);
+
+        public ValueTask DisposeAsync() => remoteSync.DisposeAsync();
+    }
+
     private sealed class DelegatingPresentationEnvironmentSink(
         Action<bool> setSessionLocked,
         Action<bool> setFullscreen) : IPresentationEnvironmentSink

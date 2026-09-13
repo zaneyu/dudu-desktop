@@ -45,6 +45,18 @@ public interface IAppHostPresentationGateway : IAsyncDisposable
     Task TickAsync(CancellationToken cancellationToken = default);
 }
 
+/// <summary>
+/// The relay sync background loop's lifecycle hooks as seen by <see cref="AppHost"/>.
+/// Started once the reminder scheduler is running, and disposed during shutdown
+/// cleanup. Attaching one is optional: production attaches it only when a relay
+/// base URL is configured; an <see cref="AppHost"/> with none attached behaves
+/// exactly as before.
+/// </summary>
+public interface IAppHostRemoteSync : IAsyncDisposable
+{
+    Task StartAsync(CancellationToken cancellationToken = default);
+}
+
 public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
 {
     private static readonly TimeSpan ReminderTickInterval = TimeSpan.FromSeconds(30);
@@ -57,6 +69,7 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
     private readonly IAppHostErrorReporter _errorReporter;
     private readonly TimeSpan _stopTimeout;
     private IAppHostPresentationGateway? _presentationGateway;
+    private IAppHostRemoteSync? _remoteSync;
     private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
     private readonly SemaphoreSlim _reminderTickGate = new(1, 1);
     private readonly CancellationTokenSource _hostStopSource = new();
@@ -141,6 +154,24 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
         _presentationGateway = gateway;
     }
 
+    /// <summary>
+    /// Attaches the relay sync service this host will start (after the
+    /// reminder scheduler) and dispose during shutdown cleanup. Optional:
+    /// production attaches it only when a relay base URL is configured.
+    /// Must be called before <see cref="StartAsync"/>.
+    /// </summary>
+    public void AttachRemoteSync(IAppHostRemoteSync remoteSync)
+    {
+        ArgumentNullException.ThrowIfNull(remoteSync);
+        if (Volatile.Read(ref _started) != 0)
+        {
+            throw new InvalidOperationException(
+                "The remote sync service must be attached before the host starts.");
+        }
+
+        _remoteSync = remoteSync;
+    }
+
     public Task StartAsync(CancellationToken cancellationToken = default)
     {
         Task startTask;
@@ -212,6 +243,7 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
 
                     Volatile.Write(ref _started, 1);
                     _schedulerTask = RunReminderSchedulerAsync(_hostStopSource.Token);
+                    await StartRemoteSyncAsync(_hostStopSource.Token);
                 }
                 finally
                 {
@@ -369,6 +401,28 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
         }
     }
 
+    private async Task StartRemoteSyncAsync(CancellationToken cancellationToken)
+    {
+        var remoteSync = _remoteSync;
+        if (remoteSync is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await remoteSync.StartAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            ReportError("remote-sync-start", exception);
+        }
+    }
+
     private async Task TickPresentationGatewayAsync(CancellationToken cancellationToken)
     {
         var gateway = _presentationGateway;
@@ -406,6 +460,24 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
         catch (Exception exception)
         {
             ReportError("presentation-gateway-shutdown", exception);
+        }
+    }
+
+    private async Task DisposeRemoteSyncAsync()
+    {
+        var remoteSync = _remoteSync;
+        if (remoteSync is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await remoteSync.DisposeAsync();
+        }
+        catch (Exception exception)
+        {
+            ReportError("remote-sync-stop", exception);
         }
     }
 
@@ -517,6 +589,7 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
         await operationsDrained;
         await ObserveHostCancellationAsync(hostCancellationTask);
         await DisposePresentationGatewayAsync();
+        await DisposeRemoteSyncAsync();
         if (Interlocked.Exchange(ref _databaseDisposed, 1) == 0)
         {
             await _database.DisposeAsync();
