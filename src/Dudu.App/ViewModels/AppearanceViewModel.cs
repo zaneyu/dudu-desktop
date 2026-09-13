@@ -7,6 +7,7 @@ namespace Dudu.App.ViewModels;
 public sealed class AppearanceViewModel : FeatureViewModelBase
 {
     private readonly CompanionFeatureContext _context;
+    private readonly Action<AppTheme> _applyShellTheme;
     private AppTheme _theme;
     private bool _reducedMotion;
     private double _petScale;
@@ -17,9 +18,12 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
     private bool _hideDuringFullscreen;
     private string _globalShortcut = "Ctrl+Alt+D";
 
-    public AppearanceViewModel(CompanionFeatureContext context)
+    public AppearanceViewModel(
+        CompanionFeatureContext context,
+        Action<AppTheme>? applyShellTheme = null)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
+        _applyShellTheme = applyShellTheme ?? (_ => { });
         var preferences = context.CurrentPreferences;
         _theme = preferences.Theme;
         _reducedMotion = preferences.ReducedMotion;
@@ -104,6 +108,7 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
                 AlwaysOnTop = AlwaysOnTop,
                 HidePetDuringFullscreen = HideDuringFullscreen,
             }, cancellationToken);
+            _applyShellTheme(Theme);
         }, "Appearance saved.");
 
     public Task SavePlacementAsync(CancellationToken cancellationToken = default) =>

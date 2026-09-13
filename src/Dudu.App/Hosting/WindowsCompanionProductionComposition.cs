@@ -337,6 +337,32 @@ public static class WindowsCompanionProductionComposition
                     (presentationCoordinator ?? throw new InvalidOperationException(
                         "The pet presentation coordinator is not ready."))
                     .PresentOneShotAsync(petEvent, dismissalId, token),
+                backupAsync: async token =>
+                {
+                    var path = await services.GetRequiredService<DatabaseBackupService>()
+                        .CreatePreMigrationBackupAsync(token);
+                    if (path is null)
+                    {
+                        throw new InvalidOperationException("There is no local database to back up.");
+                    }
+                },
+                restoreAsync: async token =>
+                {
+                    var result = await services.GetRequiredService<DatabaseBackupService>()
+                        .RestoreLatestValidAsync(token);
+                    if (!result.Restored)
+                    {
+                        throw new InvalidOperationException(result.Failure switch
+                        {
+                            RestoreFailure.NotFound => "No local backup is available to restore.",
+                            RestoreFailure.IntegrityCheckFailed => "No valid local backup could be restored.",
+                            _ => "The latest local backup could not be restored.",
+                        }, result.Exception);
+                    }
+                },
+                deleteLocalDataAsync: token => services
+                    .GetRequiredService<LocalDataMaintenanceService>()
+                    .DeleteAllUserDataAsync(token),
                 applyOutfitAsync: (outfit, token) =>
                 {
                     if (animationEngine is null)

@@ -9,6 +9,7 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
 {
     private readonly CompanionFeatureContext _context;
     private LocalLoveNote? _selectedNote;
+    private RemoteEnvelope? _selectedRemoteEnvelope;
     private RemoteEnvelope? _openedRemoteEnvelope;
     private string? _openedRemoteNoteText;
     private string _draftText = string.Empty;
@@ -36,6 +37,7 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
     public ObservableCollection<RemoteEnvelope> PendingRemoteNotes { get; } = [];
 
     public LocalLoveNote? SelectedNote { get => _selectedNote; set => SetProperty(ref _selectedNote, value); }
+    public RemoteEnvelope? SelectedRemoteEnvelope { get => _selectedRemoteEnvelope; set => SetProperty(ref _selectedRemoteEnvelope, value); }
     public RemoteEnvelope? OpenedRemoteEnvelope { get => _openedRemoteEnvelope; private set => SetProperty(ref _openedRemoteEnvelope, value); }
     public string? OpenedRemoteNoteText { get => _openedRemoteNoteText; private set => SetProperty(ref _openedRemoteNoteText, value); }
     public string DraftText { get => _draftText; set => SetProperty(ref _draftText, value); }
@@ -56,6 +58,11 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
             foreach (var note in await _context.LocalNotes.ListAsync(cancellationToken)) LocalNotes.Add(note);
             PendingRemoteNotes.Clear();
             foreach (var envelope in await _context.RemoteEnvelopes.ListPendingAsync(cancellationToken)) PendingRemoteNotes.Add(envelope);
+            if (SelectedRemoteEnvelope is not null
+                && PendingRemoteNotes.All(item => item.MessageId != SelectedRemoteEnvelope.MessageId))
+            {
+                SelectedRemoteEnvelope = null;
+            }
             OnPropertyChanged(nameof(UnopenedRemoteNoteCount));
             OnPropertyChanged(nameof(UnopenedRemoteNoteCountText));
             OnPropertyChanged(nameof(DailyLocalNoteLimit));
@@ -112,6 +119,7 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
                 cancellationToken);
             Replace(note);
             PendingRemoteNotes.Remove(envelope);
+            if (SelectedRemoteEnvelope?.MessageId == envelope.MessageId) SelectedRemoteEnvelope = null;
             OpenedRemoteEnvelope = null;
             OpenedRemoteNoteText = null;
             OnPropertyChanged(nameof(HasOpenedRemoteNote));

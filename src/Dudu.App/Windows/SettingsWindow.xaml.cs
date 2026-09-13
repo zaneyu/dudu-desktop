@@ -123,7 +123,7 @@ public sealed partial class SettingsWindow : UserControl
         _remindersPage = new RemindersPage(new RemindersViewModel(features));
         _tasksFocusPage = new TasksFocusPage(new TasksFocusViewModel(features));
         _loveNotesPage = new LoveNotesPage(new LoveNotesViewModel(features));
-        _appearancePage = new AppearancePage(new AppearanceViewModel(features));
+        _appearancePage = new AppearancePage(new AppearanceViewModel(features, ApplyRequestedTheme));
         _connectionPage = new ConnectionPage(new ConnectionViewModel(features));
         _privacyDataPage = new PrivacyDataPage(new PrivacyDataViewModel(features));
         _featurePagesInitialized = true;
@@ -165,7 +165,12 @@ public sealed partial class SettingsWindow : UserControl
 
     private void ApplyRequestedTheme()
     {
-        RequestedTheme = _onboarding.Theme switch
+        ApplyRequestedTheme(_onboarding.Theme);
+    }
+
+    private void ApplyRequestedTheme(AppTheme theme)
+    {
+        RequestedTheme = theme switch
         {
             AppTheme.Light => ElementTheme.Light,
             AppTheme.Dark => ElementTheme.Dark,

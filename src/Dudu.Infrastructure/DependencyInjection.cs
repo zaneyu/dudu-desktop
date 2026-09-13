@@ -27,6 +27,8 @@ public static class DependencyInjection
 
         services.AddSingleton(options);
         services.AddSingleton<Database>();
+        services.AddSingleton<DatabaseBackupService>();
+        services.AddSingleton<LocalDataMaintenanceService>();
 
         RegisterRepository<CheckInRepository, ICheckInRepository>(services);
         RegisterRepository<CountdownRepository, ICountdownRepository>(services);

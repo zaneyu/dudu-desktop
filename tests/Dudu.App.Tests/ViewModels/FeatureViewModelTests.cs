@@ -51,6 +51,58 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Privacy_destructive_actions_require_a_separate_confirmation()
+    {
+        var calls = new List<string>();
+        var fixture = FeatureFixture.Create(
+            restoreAsync: _ => { calls.Add("restore"); return Task.CompletedTask; },
+            deleteLocalDataAsync: _ => { calls.Add("local"); return Task.CompletedTask; },
+            deleteRemoteDataAsync: _ => { calls.Add("remote"); return Task.CompletedTask; });
+        var viewModel = new PrivacyDataViewModel(fixture.Context);
+
+        viewModel.RequestDeleteLocalDataCommand.Execute(null);
+        Assert.Empty(calls);
+        Assert.Equal(PrivacyConfirmationAction.DeleteLocal, viewModel.PendingConfirmation);
+        Assert.True(viewModel.ConfirmCommand.CanExecute(null));
+
+        await viewModel.ConfirmAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(["local"], calls);
+        Assert.Equal(PrivacyConfirmationAction.None, viewModel.PendingConfirmation);
+        Assert.False(viewModel.ConfirmCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task Failed_privacy_action_keeps_confirmation_available_for_retry()
+    {
+        var fixture = FeatureFixture.Create(
+            restoreAsync: _ => Task.FromException(new IOException("restore failed")));
+        var viewModel = new PrivacyDataViewModel(fixture.Context);
+
+        viewModel.RequestRestoreCommand.Execute(null);
+        await viewModel.ConfirmAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(PrivacyConfirmationAction.Restore, viewModel.PendingConfirmation);
+        Assert.Contains("restore failed", viewModel.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task Appearance_save_applies_the_shell_theme_only_after_persistence_succeeds()
+    {
+        var fixture = FeatureFixture.Create();
+        var applied = new List<AppTheme>();
+        var viewModel = new AppearanceViewModel(fixture.Context, applied.Add) { Theme = AppTheme.Dark };
+
+        await viewModel.SaveAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal([AppTheme.Dark], applied);
+        fixture.Preferences.FailNextSave = true;
+        viewModel.Theme = AppTheme.Light;
+        await viewModel.SaveAsync(TestContext.Current.CancellationToken);
+        Assert.Equal([AppTheme.Dark], applied);
+    }
+
+    [Fact]
     public void Comfort_surface_has_exactly_the_approved_actions()
     {
         Assert.Equal(
@@ -620,7 +672,10 @@ public sealed class FeatureViewModelTests
             MissedOccurrencePolicy.LatestOnly,
             DateTimeOffset.Parse("2026-09-12T10:00:00Z"));
 
-        public static FeatureFixture Create()
+        public static FeatureFixture Create(
+            Func<CancellationToken, Task>? restoreAsync = null,
+            Func<CancellationToken, Task>? deleteLocalDataAsync = null,
+            Func<CancellationToken, Task>? deleteRemoteDataAsync = null)
         {
             var clock = new FakeClock("2026-09-12T10:00:00Z");
             var events = new List<string>();
@@ -692,7 +747,10 @@ public sealed class FeatureViewModelTests
                     });
                     return Task.CompletedTask;
                 },
-                revealRemoteNoteAsync: (_, _) => Task.FromResult("You can do it"));
+                revealRemoteNoteAsync: (_, _) => Task.FromResult("You can do it"),
+                restoreAsync: restoreAsync,
+                deleteLocalDataAsync: deleteLocalDataAsync,
+                deleteRemoteDataAsync: deleteRemoteDataAsync);
             return new FeatureFixture(
                 clock,
                 reminders,

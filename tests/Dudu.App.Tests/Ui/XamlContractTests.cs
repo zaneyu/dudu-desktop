@@ -115,6 +115,13 @@ public sealed class XamlContractTests
         Assert.Contains("ViewModel.OutfitAvailabilityMessage", allPages);
         Assert.Contains("Outfit selection is unavailable", File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "ViewModels", "AppearanceViewModel.cs")));
         Assert.Contains("ItemsSource=\"{x:Bind ViewModel.RecentCheckIns, Mode=OneWay}\"", File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml")));
+        var loveNotes = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "LoveNotesPage.xaml"));
+        Assert.Contains("SelectedItem=\"{x:Bind ViewModel.SelectedRemoteEnvelope, Mode=TwoWay}\"", loveNotes);
+        Assert.Contains("AutomationProperties.AutomationId=\"LoveNotesRevealSelected\"", loveNotes);
+        Assert.DoesNotContain("RemoteNoteList_SelectionChanged", loveNotes);
+        var privacy = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "PrivacyDataPage.xaml"));
+        Assert.Contains("AutomationProperties.AutomationId=\"PrivacyConfirmationMessage\"", privacy);
+        Assert.Contains("AutomationProperties.AutomationId=\"PrivacyConfirm\"", privacy);
         Assert.Contains("Automatic seasonal mode is unavailable", allPages);
         var automationIds = Regex.Matches(
                 allPages,

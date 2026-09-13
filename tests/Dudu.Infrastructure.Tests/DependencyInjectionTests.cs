@@ -30,6 +30,12 @@ public sealed class DependencyInjectionTests
         Assert.IsType<TaskRepository>(provider.GetRequiredService<ITaskRepository>());
         Assert.IsType<CompanionFeatureTransactionService>(
             provider.GetRequiredService<ICompanionFeatureTransactions>());
+        Assert.Same(
+            provider.GetRequiredService<DatabaseBackupService>(),
+            provider.GetRequiredService<DatabaseBackupService>());
+        Assert.Same(
+            provider.GetRequiredService<LocalDataMaintenanceService>(),
+            provider.GetRequiredService<LocalDataMaintenanceService>());
 
         Assert.Same(
             provider.GetRequiredService<IFocusSessionRepository>(),

@@ -59,11 +59,4 @@ public sealed partial class LoveNotesPage : Page
         }
     }
 
-    private void RemoteNoteList_SelectionChanged(object sender, SelectionChangedEventArgs args)
-    {
-        if (sender is ListView list && list.SelectedItem is RemoteEnvelope envelope)
-        {
-            _ = ViewModel.RevealRemoteNoteCommand.ExecuteAsync(envelope);
-        }
-    }
 }
