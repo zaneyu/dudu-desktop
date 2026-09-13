@@ -173,6 +173,7 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
                     frameDuration,
                     overlaySnapshot?.Actions.Select(action => action.HitRegion).ToArray(),
                     overlaySnapshot?.GeometryVersion ?? 0,
+                    overlaySnapshot,
                     this);
             }
             catch

@@ -72,6 +72,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private HWND _window;
     private bool _dragging;
     private bool _actionSurfacePointerArmed;
+    private OverlaySurfaceAction? _armedOverlayAction;
     private bool _petBodyPointerArmed;
     private int _dragOriginX;
     private int _dragOriginY;
@@ -265,6 +266,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     {
         CancelStartup();
         StopAndJoin();
+        WaitForActionDispatchCompletion();
     }
 
     public ValueTask DisposeAsync()
@@ -273,15 +275,17 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         if (_ownerThreadId == Environment.CurrentManagedThreadId)
         {
             ShutdownOnOwnerThread();
-            return ValueTask.CompletedTask;
+            return OverlayWindowHostLifecycle.WaitForActionDispatchAsync(this);
         }
 
-        return OverlayWindowHostLifecycle.WaitForStopAsync(this);
+        return OverlayWindowHostLifecycle.WaitForStopAndActionDispatchAsync(this);
     }
 
     internal bool OwnerThreadIsAlive => _ownerThread.IsAlive;
 
     internal Task StoppedTask => _stopped.Task;
+
+    internal Task ActionDispatchCompletion => _actionDispatchQueue.Completion;
 
     internal TimeSpan ShutdownBudget => ShutdownTimeout;
 
@@ -289,6 +293,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
 
     private void CancelStartup()
     {
+        _actionDispatchQueue.Dispose();
         _ownerActions.Close(new ObjectDisposedException(nameof(OverlayWindowHost)));
 
         try
@@ -733,6 +738,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             case WmCaptureChanged:
                 ReleasePointerCapture();
                 _actionSurfacePointerArmed = false;
+                _armedOverlayAction = null;
                 _petBodyPointerArmed = false;
                 break;
             case WmDestroy:
@@ -896,20 +902,43 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
 
     private bool TryArmActionSurfacePointer(LPARAM lParam)
     {
-        if (_actionSurface is null) return false;
+        _armedOverlayAction = null;
+        _actionSurfacePointerArmed = false;
+        if (_actionSurface is null || _presenter is not LayeredFramePresenter layered) return false;
         var point = GetClientPoint(lParam);
-        if (!_actionSurface.Contains(new PixelPoint(point.X, point.Y))) return false;
+        var action = layered.FindPresentedOverlayActionAt(point.X, point.Y);
+        if (action is null) return false;
+        _armedOverlayAction = action;
         _actionSurfacePointerArmed = true;
         return true;
     }
 
     private bool TryHandleActionSurfacePointer(LPARAM lParam)
     {
-        if (_actionSurface is null) return false;
+        var armed = _armedOverlayAction;
+        _armedOverlayAction = null;
+        if (_actionSurface is null
+            || _presenter is not LayeredFramePresenter layered
+            || armed is null) return false;
         var point = GetClientPoint(lParam);
-        if (!_actionSurface.Contains(new PixelPoint(point.X, point.Y))) return false;
-        _actionDispatchQueue.Enqueue(_actionSurface, new PixelPoint(point.X, point.Y));
+        var released = layered.FindPresentedOverlayActionAt(point.X, point.Y);
+        if (released is null
+            || !string.Equals(released.AutomationId, armed.AutomationId, StringComparison.Ordinal)) return false;
+        _actionDispatchQueue.Enqueue(_actionSurface, released);
         return true;
+    }
+
+    private void WaitForActionDispatchCompletion()
+    {
+        try
+        {
+            if (!_actionDispatchQueue.Completion.Wait(ShutdownTimeout))
+            {
+                ReportDiagnostic(new TimeoutException(
+                    "Overlay pointer dispatch did not stop before disposal timed out."));
+            }
+        }
+        catch (AggregateException exception) { ReportDiagnostic(exception.Flatten()); }
     }
 
     public static bool TryConfirmPointerCapture(
@@ -1058,6 +1087,26 @@ internal sealed class OverlayOwnerMessageRouter
 
 file static class OverlayWindowHostLifecycle
 {
+    public static async ValueTask WaitForStopAndActionDispatchAsync(OverlayWindowHost host)
+    {
+        await WaitForStopAsync(host).ConfigureAwait(false);
+        await WaitForActionDispatchAsync(host).ConfigureAwait(false);
+    }
+
+    public static async ValueTask WaitForActionDispatchAsync(OverlayWindowHost host)
+    {
+        try
+        {
+            await host.ActionDispatchCompletion.WaitAsync(host.ShutdownBudget).ConfigureAwait(false);
+        }
+        catch (TimeoutException exception)
+        {
+            host.ReportDisposalTimeout(new TimeoutException(
+                "Overlay pointer dispatch did not stop before disposal timed out.",
+                exception));
+        }
+    }
+
     public static async ValueTask WaitForStopAsync(OverlayWindowHost host)
     {
         if (!host.OwnerThreadIsAlive)

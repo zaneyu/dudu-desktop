@@ -191,6 +191,8 @@ public sealed record OverlaySurfaceAction(string Label, PixelRect HitRegion)
 {
     public string AutomationId { get; init; } = string.Empty;
     public string SettingsDestination { get; init; } = string.Empty;
+    public OverlayAction? PrimaryAction { get; init; }
+    public ComfortAction? ComfortAction { get; init; }
 
     public OverlaySurfaceAction(
         string label,

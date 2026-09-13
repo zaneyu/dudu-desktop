@@ -126,14 +126,20 @@ public sealed class OverlayActionSurfaceController : IDisposable
                     ActionBubbleLayout.Label(item.Action),
                     ActionBubbleLayout.AutomationId(item.Action),
                     item.HitRegion,
-                    OverlayCommandRouter.EquivalentSettingsDestination(item.Action)))
+                    OverlayCommandRouter.EquivalentSettingsDestination(item.Action))
+                {
+                    PrimaryAction = item.Action,
+                })
                 .ToArray() ?? [],
                 OverlayActionSurfaceKind.Comfort => _comfortArrangement?.Actions
                 .Select(item => new OverlaySurfaceAction(
                     ActionBubbleLayout.ComfortLabel(item.Action),
                     ActionBubbleLayout.ComfortAutomationId(item.Action),
                     item.HitRegion,
-                    OverlayCommandRouter.EquivalentSettingsDestination(item.Action)))
+                    OverlayCommandRouter.EquivalentSettingsDestination(item.Action))
+                {
+                    ComfortAction = item.Action,
+                })
                 .ToArray() ?? [],
                 _ => [],
             };
@@ -196,6 +202,7 @@ public sealed class OverlayActionSurfaceController : IDisposable
 
     public async Task<bool> HandlePointerAsync(PixelPoint point, CancellationToken cancellationToken = default)
     {
+        if (IsCloseAt(point)) CancelBreathing();
         await _dispatchGate.WaitAsync(cancellationToken);
         try
         {
@@ -244,6 +251,62 @@ public sealed class OverlayActionSurfaceController : IDisposable
         finally
         {
             _dispatchGate.Release();
+        }
+    }
+
+    public async Task<bool> HandlePresentedActionAsync(
+        OverlaySurfaceAction action,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        if (action.ComfortAction == Dudu.App.Overlay.ComfortAction.Close) CancelBreathing();
+        await _dispatchGate.WaitAsync(cancellationToken);
+        try
+        {
+            OverlayCommandRouter? router;
+            long version;
+            OverlayActionSurfaceKind kind;
+            lock (_gate)
+            {
+                ThrowIfDisposed();
+                router = _router;
+                version = _version;
+                kind = _kind;
+            }
+            if (router is null) return false;
+            if (action.PrimaryAction is { } primary && kind == OverlayActionSurfaceKind.Primary)
+            {
+                await DispatchPrimaryAsync(router, primary, version, cancellationToken);
+                return true;
+            }
+            if (action.ComfortAction is { } comfort && kind == OverlayActionSurfaceKind.Comfort)
+            {
+                await DispatchComfortAsync(router, comfort, version, cancellationToken);
+                return true;
+            }
+            return false;
+        }
+        finally
+        {
+            _dispatchGate.Release();
+        }
+    }
+
+    public void CancelBreathing()
+    {
+        OverlayCommandRouter? router;
+        lock (_gate) router = _router;
+        router?.CancelBreathing();
+    }
+
+    private bool IsCloseAt(PixelPoint point)
+    {
+        lock (_gate)
+        {
+            return _kind == OverlayActionSurfaceKind.Comfort
+                && _comfortArrangement?.Actions.Any(item =>
+                    item.Action == Dudu.App.Overlay.ComfortAction.Close
+                    && item.HitRegion.Contains(point.X, point.Y)) == true;
         }
     }
 

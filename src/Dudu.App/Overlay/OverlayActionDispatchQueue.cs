@@ -1,3 +1,4 @@
+using Dudu.App.Animation;
 using Dudu.Core.Assets;
 
 namespace Dudu.App.Overlay;
@@ -23,6 +24,19 @@ internal sealed class OverlayActionDispatchQueue : IDisposable
     public void Enqueue(OverlayActionSurfaceController surface, PixelPoint point)
     {
         ArgumentNullException.ThrowIfNull(surface);
+        EnqueueCore(token => surface.HandlePointerAsync(point, token));
+    }
+
+    public void Enqueue(OverlayActionSurfaceController surface, OverlaySurfaceAction action)
+    {
+        ArgumentNullException.ThrowIfNull(surface);
+        ArgumentNullException.ThrowIfNull(action);
+        if (action.ComfortAction == ComfortAction.Close) surface.CancelBreathing();
+        EnqueueCore(token => surface.HandlePresentedActionAsync(action, token));
+    }
+
+    private void EnqueueCore(Func<CancellationToken, Task<bool>> dispatch)
+    {
         lock (_gate)
         {
             if (_disposed) return;
@@ -32,10 +46,12 @@ internal sealed class OverlayActionDispatchQueue : IDisposable
                 try
                 {
                     await previous.ConfigureAwait(false);
-                    await surface.HandlePointerAsync(point, _cancellation.Token).ConfigureAwait(false);
+                    await dispatch(_cancellation.Token).ConfigureAwait(false);
                 }
-                catch (OperationCanceledException) when (_cancellation.IsCancellationRequested)
+                catch (OperationCanceledException)
                 {
+                    // Closing the comfort surface intentionally cancels an
+                    // in-progress breathing action before its queued Close.
                 }
                 catch (Exception exception)
                 {

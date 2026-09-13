@@ -143,6 +143,92 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Presented_action_dispatch_does_not_reread_reflowed_hit_geometry()
+    {
+        var fixture = FeatureFixture.Create();
+        var destinations = new List<string>();
+        var router = new OverlayCommandRouter(fixture.Context, (destination, _) =>
+        {
+            destinations.Add(destination);
+            return Task.CompletedTask;
+        });
+        using var surface = new OverlayActionSurfaceController();
+        surface.Bind(router);
+        surface.Open(new PixelRect(0, 0, 640, 480), new PixelPoint(320, 400));
+        var presentedTasks = surface.CreateRenderSnapshot().Actions
+            .Single(action => action.PrimaryAction == OverlayAction.Tasks);
+
+        surface.UpdateViewport(new PixelRect(100, 100, 900, 700));
+        await surface.HandlePresentedActionAsync(
+            presentedTasks,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(["tasks"], destinations);
+        Assert.Equal(OverlayActionSurfaceKind.Closed, surface.Kind);
+    }
+
+    [Fact]
+    public async Task Queued_close_cancels_an_active_breathing_action_before_dispatching()
+    {
+        var fixture = FeatureFixture.Create();
+        var breathingEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var router = new OverlayCommandRouter(
+            fixture.Context,
+            (_, _) => Task.CompletedTask,
+            async (_, cancellationToken) =>
+            {
+                breathingEntered.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            });
+        using var surface = new OverlayActionSurfaceController();
+        surface.Bind(router);
+        surface.Open(new PixelRect(0, 0, 640, 480), new PixelPoint(320, 400));
+        var comfort = surface.CreateRenderSnapshot().Actions
+            .Single(action => action.PrimaryAction == OverlayAction.ComfortMe);
+        await surface.HandlePresentedActionAsync(comfort, TestContext.Current.CancellationToken);
+        var snapshot = surface.CreateRenderSnapshot();
+        var breathe = snapshot.Actions.Single(action => action.ComfortAction == ComfortAction.BreatheWithMe);
+        var close = snapshot.Actions.Single(action => action.ComfortAction == ComfortAction.Close);
+        var reported = new List<Exception>();
+        using var queue = new OverlayActionDispatchQueue(reported.Add);
+
+        queue.Enqueue(surface, breathe);
+        await breathingEntered.Task.WaitAsync(TestContext.Current.CancellationToken);
+        queue.Enqueue(surface, close);
+        await queue.Completion.WaitAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(OverlayActionSurfaceKind.Closed, surface.Kind);
+        Assert.False(router.IsBreathing);
+        Assert.Empty(reported);
+    }
+
+    [Fact]
+    public async Task Disposed_overlay_dispatch_queue_finishes_cancelled_work()
+    {
+        var fixture = FeatureFixture.Create();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var router = new OverlayCommandRouter(fixture.Context, async (_, cancellationToken) =>
+        {
+            entered.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        });
+        using var surface = new OverlayActionSurfaceController();
+        surface.Bind(router);
+        surface.Open(new PixelRect(0, 0, 640, 480), new PixelPoint(320, 400));
+        var tasks = surface.CreateRenderSnapshot().Actions
+            .Single(action => action.PrimaryAction == OverlayAction.Tasks);
+        var reported = new List<Exception>();
+        var queue = new OverlayActionDispatchQueue(reported.Add);
+
+        queue.Enqueue(surface, tasks);
+        await entered.Task.WaitAsync(TestContext.Current.CancellationToken);
+        queue.Dispose();
+        await queue.Completion.WaitAsync(TestContext.Current.CancellationToken);
+
+        Assert.Empty(reported);
+    }
+
+    [Fact]
     public async Task Stale_pointer_completion_cannot_close_a_newly_reopened_surface()
     {
         var fixture = FeatureFixture.Create();

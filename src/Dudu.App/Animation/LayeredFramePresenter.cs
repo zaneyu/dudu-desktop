@@ -22,6 +22,7 @@ public sealed class LayeredFramePresenter : IFramePresenter, IDisposable
     private PresentedFrameInfo? _current;
     private byte[]? _hitTestBuffer;
     private IReadOnlyList<PixelRect> _presentedOverlayHitRegions = [];
+    private IReadOnlyList<OverlaySurfaceAction> _presentedOverlayActions = [];
 
     public LayeredFramePresenter()
     {
@@ -85,6 +86,12 @@ public sealed class LayeredFramePresenter : IFramePresenter, IDisposable
                 frame.Height,
                 _windowState.Bounds.Width,
                 _windowState.Bounds.Height);
+            _presentedOverlayActions = ScaleActionsToClient(
+                frame.OverlaySurface?.Actions ?? [],
+                frame.Width,
+                frame.Height,
+                _windowState.Bounds.Width,
+                _windowState.Bounds.Height);
             _current = new PresentedFrameInfo(
                 frame.Width,
                 frame.Height,
@@ -109,6 +116,7 @@ public sealed class LayeredFramePresenter : IFramePresenter, IDisposable
             _current = null;
             _hitTestBuffer = null;
             _presentedOverlayHitRegions = [];
+            _presentedOverlayActions = [];
         }
     }
 
@@ -150,6 +158,15 @@ public sealed class LayeredFramePresenter : IFramePresenter, IDisposable
         }
     }
 
+    public OverlaySurfaceAction? FindPresentedOverlayActionAt(int clientX, int clientY)
+    {
+        lock (_gate)
+        {
+            return _presentedOverlayActions.FirstOrDefault(action =>
+                action.HitRegion.Contains(clientX, clientY));
+        }
+    }
+
     internal object HostUpdateGate => _gate;
 
     internal static IReadOnlyList<PixelRect> ScaleRegionsToClient(
@@ -161,13 +178,41 @@ public sealed class LayeredFramePresenter : IFramePresenter, IDisposable
     {
         if (regions.Count == 0) return [];
         return regions.Select(region =>
+            ScaleRegionToClient(region, sourceWidth, sourceHeight, clientWidth, clientHeight))
+            .ToArray();
+    }
+
+    internal static IReadOnlyList<OverlaySurfaceAction> ScaleActionsToClient(
+        IReadOnlyList<OverlaySurfaceAction> actions,
+        int sourceWidth,
+        int sourceHeight,
+        int clientWidth,
+        int clientHeight)
+    {
+        if (actions.Count == 0) return [];
+        return actions.Select(action => action with
         {
-            var left = (int)Math.Floor(region.X * clientWidth / (double)sourceWidth);
-            var top = (int)Math.Floor(region.Y * clientHeight / (double)sourceHeight);
-            var right = (int)Math.Ceiling(region.Right * clientWidth / (double)sourceWidth);
-            var bottom = (int)Math.Ceiling(region.Bottom * clientHeight / (double)sourceHeight);
-            return new PixelRect(left, top, Math.Max(1, right - left), Math.Max(1, bottom - top));
+            HitRegion = ScaleRegionToClient(
+                action.HitRegion,
+                sourceWidth,
+                sourceHeight,
+                clientWidth,
+                clientHeight),
         }).ToArray();
+    }
+
+    private static PixelRect ScaleRegionToClient(
+        PixelRect region,
+        int sourceWidth,
+        int sourceHeight,
+        int clientWidth,
+        int clientHeight)
+    {
+        var left = (int)Math.Floor(region.X * clientWidth / (double)sourceWidth);
+        var top = (int)Math.Floor(region.Y * clientHeight / (double)sourceHeight);
+        var right = (int)Math.Ceiling(region.Right * clientWidth / (double)sourceWidth);
+        var bottom = (int)Math.Ceiling(region.Bottom * clientHeight / (double)sourceHeight);
+        return new PixelRect(left, top, Math.Max(1, right - left), Math.Max(1, bottom - top));
     }
 
     /// <summary>

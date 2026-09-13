@@ -19,6 +19,30 @@ public sealed class LayeredFramePresenterTests
         Assert.Equal(new PixelRect(128, 96, 128, 144), Assert.Single(regions));
     }
 
+    [Fact]
+    public void Presented_action_scaling_preserves_the_action_identity()
+    {
+        var action = new OverlaySurfaceAction(
+            "Tasks",
+            "overlay.tasks",
+            new PixelRect(64, 32, 64, 48),
+            "tasks")
+        {
+            PrimaryAction = OverlayAction.Tasks,
+        };
+
+        var scaled = Assert.Single(LayeredFramePresenter.ScaleActionsToClient(
+            [action],
+            sourceWidth: 256,
+            sourceHeight: 128,
+            clientWidth: 512,
+            clientHeight: 384));
+
+        Assert.Equal(new PixelRect(128, 96, 128, 144), scaled.HitRegion);
+        Assert.Equal(OverlayAction.Tasks, scaled.PrimaryAction);
+        Assert.Equal("overlay.tasks", scaled.AutomationId);
+    }
+
     [Theory]
     [InlineData(-1920, 48, 0.5)]
     [InlineData(1440, -120, 2.0)]
