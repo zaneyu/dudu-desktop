@@ -28,37 +28,55 @@ public sealed class OnboardingTests
             Assert.Skip("Set DUDU_UI_TEST_EXE to a Windows publish output to run UI automation.");
         }
 
-        using var application = Application.Launch(executable);
-        using var automation = new UIA3Automation();
-        var window = application.GetMainWindow(automation)
-            ?? throw new InvalidOperationException("The Dudu settings window did not appear.");
-        var actions = 0;
+        var root = Path.Combine(Path.GetTempPath(), "dudu-onboarding-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var previousRoot = Environment.GetEnvironmentVariable("DUDU_DATA_ROOT");
+        Environment.SetEnvironmentVariable("DUDU_DATA_ROOT", root);
+        Application? application = null;
+        try
+        {
+            application = Application.Launch(executable);
+            using var automation = new UIA3Automation();
+            var window = application.GetMainWindow(automation)
+                ?? throw new InvalidOperationException("The Dudu settings window did not appear.");
+            var actions = 0;
 
-        Find(window, "OnboardingRecipientName").AsTextBox().Enter("Mia");
-        actions++;
-        Find(window, "OnboardingRecommendedDefaults").AsButton().Invoke();
-        actions++;
-        // Recipient -> Appearance -> Quiet Hours -> Reminders -> Placement.
-        Advance(
-            window,
-            ref actions,
-            "OnboardingTheme",
-            "OnboardingQuietHoursEnabled",
-            "OnboardingHydrationReminders",
-            "OnboardingPlacementStep");
-        var overlay = WaitForOverlay(automation);
-        Assert.False(overlay.Properties.IsOffscreen.ValueOrDefault);
+            Find(window, "OnboardingRecipientName").AsTextBox().Enter("Mia");
+            actions++;
+            Find(window, "OnboardingRecommendedDefaults").AsButton().Invoke();
+            actions++;
+            // Recipient -> Appearance -> Quiet Hours -> Reminders -> Placement.
+            Advance(
+                window,
+                ref actions,
+                "OnboardingTheme",
+                "OnboardingQuietHoursEnabled",
+                "OnboardingHydrationReminders",
+                "OnboardingPlacementStep");
+            var overlay = WaitForOverlay(automation);
+            Assert.False(overlay.Properties.IsOffscreen.ValueOrDefault);
 
-        // Placement -> Pairing, then skip the optional pairing step.
-        Advance(window, ref actions, "OnboardingSkipPairing");
-        Find(window, "OnboardingSkipPairing").AsButton().Invoke();
-        actions++;
-        Find(window, "OnboardingComplete").AsButton().Invoke();
-        actions++;
+            // Placement -> Pairing, then skip the optional pairing step.
+            Advance(window, ref actions, "OnboardingSkipPairing");
+            Find(window, "OnboardingSkipPairing").AsButton().Invoke();
+            actions++;
+            Find(window, "OnboardingComplete").AsButton().Invoke();
+            actions++;
 
-        Assert.True(actions < 20);
-        WaitUntil(() => TryFind(window, "NavHome") is not null);
-        Assert.False(WaitForOverlay(automation).Properties.IsOffscreen.ValueOrDefault);
+            Assert.True(actions < 20);
+            WaitUntil(() => TryFind(window, "NavHome") is not null);
+            Assert.False(WaitForOverlay(automation).Properties.IsOffscreen.ValueOrDefault);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("DUDU_DATA_ROOT", previousRoot);
+            if (application is not null)
+            {
+                try { application.Close(); }
+                catch { application.Kill(); }
+            }
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+        }
     }
 
     private static void Advance(Window window, ref int actions, params string[] visibleControlIds)
