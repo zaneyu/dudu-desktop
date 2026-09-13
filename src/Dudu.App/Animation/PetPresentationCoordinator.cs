@@ -15,14 +15,22 @@ public sealed class PetPresentationCoordinator
     private readonly Func<AnimationOptions> _options;
     private readonly Func<TimeSpan, CancellationToken, Task> _delayAsync;
     private readonly TimeSpan _maximumDuration;
-    private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly SemaphoreSlim _gate;
 
+    /// <param name="gate">
+    /// The lock guarding every mutation of <paramref name="pet"/>'s shared
+    /// <see cref="PetStateMachine"/>. Defaults to a private instance; pass an
+    /// explicit instance (shared with e.g. <c>PresentationCoordinator</c>)
+    /// so an explicit one-shot and an unsolicited background release can
+    /// never interleave their mutation of the same state machine.
+    /// </param>
     public PetPresentationCoordinator(
         PetStateMachine pet,
         Func<PetPresentation, AnimationOptions, CancellationToken, Task> playAsync,
         Func<AnimationOptions>? options = null,
         Func<TimeSpan, CancellationToken, Task>? delayAsync = null,
-        TimeSpan? maximumDuration = null)
+        TimeSpan? maximumDuration = null,
+        SemaphoreSlim? gate = null)
     {
         _pet = pet ?? throw new ArgumentNullException(nameof(pet));
         _playAsync = playAsync ?? throw new ArgumentNullException(nameof(playAsync));
@@ -30,6 +38,7 @@ public sealed class PetPresentationCoordinator
         _delayAsync = delayAsync ?? Task.Delay;
         _maximumDuration = maximumDuration ?? DefaultMaximumDuration;
         if (_maximumDuration <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(maximumDuration));
+        _gate = gate ?? new SemaphoreSlim(1, 1);
     }
 
     public async Task PresentOneShotAsync(

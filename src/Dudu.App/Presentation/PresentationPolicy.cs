@@ -19,6 +19,13 @@ public sealed record DurableNotification
     public string Id { get; }
     public string? Title { get; }
 
+    /// <summary>
+    /// The identity used to detect duplicates, both while an item sits in
+    /// <see cref="PresentationPolicy"/>'s queue and while it is currently
+    /// being presented (tracked by <c>PresentationCoordinator</c>).
+    /// </summary>
+    internal string Key => $"{Kind}:{Id}";
+
     private DurableNotification(PresentationItemKind kind, string id, string? title)
     {
         Kind = kind;
@@ -75,8 +82,15 @@ public sealed record PresentationDecision(
 /// instead of flooding the user the moment quiet hours, fullscreen, a locked
 /// session, or a pause ends.
 /// </summary>
+/// <remarks>
+/// Every public member locks its own internal state (<see cref="_sync"/>),
+/// so this type is safe for concurrent callers on its own — it does not rely
+/// on a caller (such as <c>AppHost</c>'s reminder-tick semaphore) to
+/// serialize access.
+/// </remarks>
 public sealed class PresentationPolicy
 {
+    private readonly object _sync = new();
     private readonly TimeSpan _minimumSilentInterval;
     private readonly Queue<DurableNotification> _queue = new();
     private readonly HashSet<string> _queuedIds = new(StringComparer.Ordinal);
@@ -92,7 +106,16 @@ public sealed class PresentationPolicy
         _minimumSilentInterval = minimumSilentInterval;
     }
 
-    public int QueuedCount => _queue.Count;
+    public int QueuedCount
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _queue.Count;
+            }
+        }
+    }
 
     /// <summary>
     /// Queues a durable item. Ambient items are always discarded rather than
@@ -107,13 +130,29 @@ public sealed class PresentationPolicy
             return false;
         }
 
-        if (!_queuedIds.Add(Key(item)))
+        lock (_sync)
         {
-            return false;
-        }
+            if (!_queuedIds.Add(item.Key))
+            {
+                return false;
+            }
 
-        _queue.Enqueue(item);
-        return true;
+            _queue.Enqueue(item);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// True when an item with the same kind+id is currently sitting in the
+    /// queue (not yet handed back by <see cref="Decide"/>).
+    /// </summary>
+    public bool IsQueued(DurableNotification item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        lock (_sync)
+        {
+            return _queuedIds.Contains(item.Key);
+        }
     }
 
     /// <summary>
@@ -121,7 +160,13 @@ public sealed class PresentationPolicy
     /// so the minimum silent interval still applies to whatever is released
     /// next from the queue.
     /// </summary>
-    public void RecordImmediateRelease(DateTimeOffset nowUtc) => _lastReleaseUtc = nowUtc;
+    public void RecordImmediateRelease(DateTimeOffset nowUtc)
+    {
+        lock (_sync)
+        {
+            _lastReleaseUtc = nowUtc;
+        }
+    }
 
     /// <summary>
     /// Releases at most one queued durable item, and only when the
@@ -139,18 +184,19 @@ public sealed class PresentationPolicy
     {
         var now = nowUtc ?? DateTimeOffset.UtcNow;
         var suppressed = nowQuiet || fullscreen || paused || sessionLocked || focusActive;
-        if (_queue.Count == 0
-            || suppressed
-            || (_lastReleaseUtc is { } last && now - last < _minimumSilentInterval))
+        lock (_sync)
         {
-            return new PresentationDecision(Array.Empty<DurableNotification>(), _queue.Count);
+            if (_queue.Count == 0
+                || suppressed
+                || (_lastReleaseUtc is { } last && now - last < _minimumSilentInterval))
+            {
+                return new PresentationDecision(Array.Empty<DurableNotification>(), _queue.Count);
+            }
+
+            var item = _queue.Dequeue();
+            _queuedIds.Remove(item.Key);
+            _lastReleaseUtc = now;
+            return new PresentationDecision(new[] { item }, _queue.Count);
         }
-
-        var item = _queue.Dequeue();
-        _queuedIds.Remove(Key(item));
-        _lastReleaseUtc = now;
-        return new PresentationDecision(new[] { item }, _queue.Count);
     }
-
-    private static string Key(DurableNotification item) => $"{item.Kind}:{item.Id}";
 }

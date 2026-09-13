@@ -85,6 +85,21 @@ public sealed class PresentationPolicyTests
 
         Assert.DoesNotContain("super-secret-plaintext", exception.Message, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void IsQueued_reflects_queue_membership_until_Decide_releases_the_item()
+    {
+        var policy = new PresentationPolicy(TimeSpan.Zero);
+        var item = DurableNotification.Reminder("reminder-1", "Stretch");
+        policy.Enqueue(item);
+
+        Assert.True(policy.IsQueued(item));
+
+        var decision = policy.Decide(nowQuiet: false, fullscreen: false, paused: false);
+
+        Assert.Single(decision.ToPresent);
+        Assert.False(policy.IsQueued(item));
+    }
 }
 
 file static class PresentationPolicyFixture

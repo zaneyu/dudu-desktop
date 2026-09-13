@@ -260,13 +260,19 @@ public static class WindowsCompanionProductionComposition
                         pack,
                         overlay,
                         composer: composer);
+                    // Shared with PresentationCoordinator below so an explicit
+                    // one-shot (via PetPresentationCoordinator) and an
+                    // unsolicited background release never interleave their
+                    // mutation of the one PetStateMachine instance.
+                    var petGate = new SemaphoreSlim(1, 1);
                     presentationCoordinator = new PetPresentationCoordinator(
                         pet,
                         animationEngine.PlayAsync,
                         () => new AnimationOptions
                         {
                             ReducedMotionEnabled = runtimePreferences.Current.ReducedMotion,
-                        });
+                        },
+                        gate: petGate);
                     notificationService = new AppNotificationService(new WindowsAppNotificationSink());
                     AppNotificationManager.Default.NotificationInvoked += (_, invokedArgs) =>
                         HandleNotificationInvoked(actions, invokedArgs.Argument);
@@ -283,7 +289,8 @@ public static class WindowsCompanionProductionComposition
                             DateTimeOffset.UtcNow,
                             runtimePreferences.Current.QuietHours,
                             TimeZoneInfo.Local),
-                        pauseState: () => pause.GetEffective(DateTimeOffset.UtcNow));
+                        pauseState: () => pause.GetEffective(DateTimeOffset.UtcNow),
+                        petGate: petGate);
                     _ = StartAnimationPlayback(
                         animationEngine.PlayAsync(
                             pet.Current,

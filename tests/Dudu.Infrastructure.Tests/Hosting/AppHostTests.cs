@@ -156,6 +156,93 @@ public sealed class AppHostTests
         Assert.True(fixture.Database.Disposed);
     }
 
+    [Fact]
+    public async Task AttachPresentationGateway_throws_once_the_host_has_started()
+    {
+        using var fixture = new AppHostFixture();
+        await fixture.Host.StartAsync(TestContext.Current.CancellationToken);
+
+        Assert.Throws<InvalidOperationException>(
+            () => fixture.Host.AttachPresentationGateway(new TestPresentationGateway()));
+
+        await fixture.Host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task Presentation_gateway_is_started_after_db_init_then_ticked_per_reminder_tick_then_disposed()
+    {
+        using var fixture = new AppHostFixture();
+        var gateway = new TestPresentationGateway(
+            () => fixture.Database.Initialized,
+            () => fixture.Reminder.TickCount);
+        fixture.Host.AttachPresentationGateway(gateway);
+
+        await fixture.Host.StartAsync(TestContext.Current.CancellationToken);
+
+        // StartAsync must run after the database has finished initializing
+        // and before the first reminder tick has happened.
+        Assert.Equal(1, gateway.StartCount);
+        Assert.True(gateway.DatabaseInitializedAtStart);
+        Assert.Equal(0, gateway.ReminderTickCountAtStart);
+
+        // TickAsync must only run after a successful reminder tick: by the
+        // time it is first invoked, the reminder service's tick count has
+        // already advanced.
+        Assert.Equal(1, gateway.TickCount);
+        Assert.Equal(1, gateway.ReminderTickCountAtFirstGatewayTick);
+        Assert.Equal(0, gateway.DisposeCount);
+
+        await fixture.Host.ResumeAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, gateway.TickCount);
+        Assert.Equal(2, gateway.ReminderTickCountAtLastGatewayTick);
+        Assert.Equal(0, gateway.DisposeCount);
+
+        await fixture.Host.StopAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, gateway.DisposeCount);
+    }
+
+    private sealed class TestPresentationGateway(
+        Func<bool>? databaseInitialized = null,
+        Func<int>? reminderTickCount = null) : IAppHostPresentationGateway
+    {
+        public int StartCount { get; private set; }
+        public int TickCount { get; private set; }
+        public int DisposeCount { get; private set; }
+        public bool DatabaseInitializedAtStart { get; private set; }
+        public int ReminderTickCountAtStart { get; private set; }
+        public int ReminderTickCountAtFirstGatewayTick { get; private set; } = -1;
+        public int ReminderTickCountAtLastGatewayTick { get; private set; }
+
+        public Task StartAsync(CancellationToken cancellationToken = default)
+        {
+            StartCount++;
+            DatabaseInitializedAtStart = databaseInitialized?.Invoke() ?? false;
+            ReminderTickCountAtStart = reminderTickCount?.Invoke() ?? 0;
+            return Task.CompletedTask;
+        }
+
+        public Task TickAsync(CancellationToken cancellationToken = default)
+        {
+            TickCount++;
+            var count = reminderTickCount?.Invoke() ?? 0;
+            if (ReminderTickCountAtFirstGatewayTick < 0)
+            {
+                ReminderTickCountAtFirstGatewayTick = count;
+            }
+
+            ReminderTickCountAtLastGatewayTick = count;
+            return Task.CompletedTask;
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            DisposeCount++;
+            return ValueTask.CompletedTask;
+        }
+    }
+
     private sealed class AppHostFixture : IDisposable
     {
         private readonly string _root = Path.Combine(

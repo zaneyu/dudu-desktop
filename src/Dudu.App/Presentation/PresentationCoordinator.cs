@@ -42,10 +42,18 @@ public sealed class PresentationCoordinator :
     private readonly Func<AnimationOptions> _options;
     private readonly Func<bool> _isQuietHours;
     private readonly Func<PauseState> _pauseState;
+    private readonly SemaphoreSlim _petGate;
     private readonly object _gate = new();
+    private readonly HashSet<string> _presentingIds = new(StringComparer.Ordinal);
     private bool _sessionLocked;
     private bool _fullscreen;
 
+    /// <param name="petGate">
+    /// The same <see cref="SemaphoreSlim"/> instance given to
+    /// <see cref="PetPresentationCoordinator"/> in production, so an
+    /// explicit user one-shot and an unsolicited release can never interleave
+    /// their mutation of the shared <see cref="PetStateMachine"/>.
+    /// </param>
     public PresentationCoordinator(
         PresentationPolicy policy,
         INotificationService notifications,
@@ -53,7 +61,8 @@ public sealed class PresentationCoordinator :
         Func<PetPresentation, AnimationOptions, CancellationToken, Task> playAsync,
         Func<AnimationOptions> options,
         Func<bool> isQuietHours,
-        Func<PauseState> pauseState)
+        Func<PauseState> pauseState,
+        SemaphoreSlim petGate)
     {
         _policy = policy ?? throw new ArgumentNullException(nameof(policy));
         _notifications = notifications ?? throw new ArgumentNullException(nameof(notifications));
@@ -62,6 +71,7 @@ public sealed class PresentationCoordinator :
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _isQuietHours = isQuietHours ?? throw new ArgumentNullException(nameof(isQuietHours));
         _pauseState = pauseState ?? throw new ArgumentNullException(nameof(pauseState));
+        _petGate = petGate ?? throw new ArgumentNullException(nameof(petGate));
     }
 
     public void SetSessionLocked(bool locked)
@@ -111,7 +121,12 @@ public sealed class PresentationCoordinator :
     /// <see cref="QuietHoursBehavior.DeliverImmediately"/>) are presented
     /// immediately regardless of the environment; everything else is queued
     /// while quiet hours, focus, fullscreen, a locked session, or a pause is
-    /// active, and presented immediately otherwise.
+    /// active, and presented immediately otherwise. An item whose kind+id is
+    /// already queued or is currently being presented is a duplicate and is
+    /// dropped rather than queued or presented a second time — this is what
+    /// makes the gateway safe for more than one concurrent unsolicited
+    /// source (e.g. a reminder tick and a remote-note poller) on its own,
+    /// without relying on a caller to serialize them.
     /// </summary>
     public async Task PublishAsync(
         DurableNotification item,
@@ -120,15 +135,36 @@ public sealed class PresentationCoordinator :
     {
         ArgumentNullException.ThrowIfNull(item);
         var now = DateTimeOffset.UtcNow;
-        var suppressed = !bypassSuppression && IsSuppressed(CaptureEnvironment(now));
-        if (suppressed)
+        bool shouldPresentNow;
+        lock (_gate)
         {
-            _policy.Enqueue(item);
-            return;
+            if (_presentingIds.Contains(item.Key) || _policy.IsQueued(item))
+            {
+                return;
+            }
+
+            shouldPresentNow = bypassSuppression || !IsSuppressed(CaptureEnvironment(now));
+            if (!shouldPresentNow)
+            {
+                _policy.Enqueue(item);
+                return;
+            }
+
+            _policy.RecordImmediateRelease(now);
+            _presentingIds.Add(item.Key);
         }
 
-        _policy.RecordImmediateRelease(now);
-        await PresentAsync(item, cancellationToken);
+        try
+        {
+            await PresentAsync(item, cancellationToken);
+        }
+        finally
+        {
+            lock (_gate)
+            {
+                _presentingIds.Remove(item.Key);
+            }
+        }
     }
 
     /// <summary>
@@ -138,30 +174,70 @@ public sealed class PresentationCoordinator :
     public async Task TickAsync(CancellationToken cancellationToken = default)
     {
         var now = DateTimeOffset.UtcNow;
-        var environment = CaptureEnvironment(now);
-        var decision = _policy.Decide(
-            environment.NowQuiet,
-            environment.Fullscreen,
-            environment.Paused,
-            environment.SessionLocked,
-            environment.FocusActive,
-            now);
-
-        foreach (var item in decision.ToPresent)
+        DurableNotification? toPresent;
+        lock (_gate)
         {
-            await PresentAsync(item, cancellationToken);
+            var environment = CaptureEnvironment(now);
+            var decision = _policy.Decide(
+                environment.NowQuiet,
+                environment.Fullscreen,
+                environment.Paused,
+                environment.SessionLocked,
+                environment.FocusActive,
+                now);
+
+            toPresent = decision.ToPresent.FirstOrDefault(item => !_presentingIds.Contains(item.Key));
+            if (toPresent is not null)
+            {
+                _presentingIds.Add(toPresent.Key);
+            }
+        }
+
+        if (toPresent is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await PresentAsync(toPresent, cancellationToken);
+        }
+        finally
+        {
+            lock (_gate)
+            {
+                _presentingIds.Remove(toPresent.Key);
+            }
         }
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
+    /// <summary>
+    /// Mutates the pet state machine and plays its animation under the same
+    /// gate <see cref="PetPresentationCoordinator"/> uses for explicit
+    /// one-shots, so the two never interleave on the shared state machine.
+    /// The notification sink call happens after releasing that gate: it has
+    /// nothing to do with pet state and must not block an explicit user
+    /// action behind a possibly-slow toast call.
+    /// </summary>
     private async Task PresentAsync(DurableNotification item, CancellationToken cancellationToken)
     {
-        var petEvent = ToPetEvent(item);
-        var presentation = _pet.Handle(petEvent);
-        await ObserveAsync(
-            _playAsync(presentation, _options(), cancellationToken),
-            "presentation-playback");
+        await _petGate.WaitAsync(cancellationToken);
+        PetPresentation presentation;
+        try
+        {
+            var petEvent = ToPetEvent(item);
+            presentation = _pet.Handle(petEvent);
+            await ObserveAsync(
+                _playAsync(presentation, _options(), cancellationToken),
+                "presentation-playback");
+        }
+        finally
+        {
+            _petGate.Release();
+        }
+
         await ObserveAsync(
             ShowNotificationAsync(item, cancellationToken),
             "presentation-notification");
