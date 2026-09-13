@@ -192,11 +192,19 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
             }
 
             WaitForCompletion(active);
-            lock (_stateGate)
+            _presentationGate.Wait();
+            try
             {
-                ThrowIfDisposed();
-                _pack = pack;
-                _composer.SetPack(pack);
+                lock (_stateGate)
+                {
+                    ThrowIfDisposed();
+                    _pack = pack;
+                    _composer.SetPack(pack);
+                }
+            }
+            finally
+            {
+                _presentationGate.Release();
             }
         }
         finally
