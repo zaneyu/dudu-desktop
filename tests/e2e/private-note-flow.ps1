@@ -22,10 +22,14 @@
     5. Confirms the relay's `messages` table has gone back to zero rows for this run (acknowledgment
        deletes the row — see `relay/src/db/messages.ts`'s `ackMessage`), i.e. no ciphertext is left
        over after acknowledgment.
-    6. Kills Wrangler, then runs the existing xunit proof that a relay outage never stops local
-       reminders (`PrivacyBoundaryTests.Worker_outage_does_not_stop_local_reminders`) — the
-       `remote-note` harness scenario has no reminder concept of its own to observe directly, so
-       this reuses the one real command that already demonstrates the guarantee end to end.
+    6. Kills Wrangler, then: (a) launches `tests/Dudu.WindowsHarness`'s own `outage-reminder`
+       scenario, which schedules a real local reminder through the real `AppHost` /
+       `ReminderEngine` / `PresentationCoordinator` path and waits for it to actually fire --
+       this script then waits no more than twice the scheduled delay for the harness's
+       `REMINDER-PRESENTED <id>` sentinel line, proving a due local reminder still fires with
+       Wrangler dead, not merely that it would in isolation; and (b) also runs the existing xunit
+       proof covering the same guarantee from the Infrastructure side
+       (`PrivacyBoundaryTests.Worker_outage_does_not_stop_local_reminders`).
 
     Exits 0 only if every one of the above holds. Never prints the note text itself except inside
     an explicitly-labelled diagnostic line, and never prints tokens, pairing codes beyond what the
@@ -84,6 +88,7 @@ $d1DumpPath = Join-Path $workDir "d1-dump.txt"
 $failures = [System.Collections.Generic.List[string]]::new()
 $wranglerProcess = $null
 $harnessProcess = $null
+$outageHarnessProcess = $null
 $harnessTranscript = [System.Text.StringBuilder]::new()
 $harnessExitCode = $null
 
@@ -333,6 +338,63 @@ try {
     try { $wranglerProcess.Kill() } catch { }
     try { $wranglerProcess.WaitForExit(10000) } catch { }
 
+    # Ruling #3 (task-21-review-1.md, Important) requires the script itself -- not only a separate
+    # xunit test -- to prove a due local reminder still fires after Wrangler is dead. The
+    # `outage-reminder` harness scenario schedules a reminder through the real reminder path
+    # (`AppHost` + `ReminderEngine` + `PresentationCoordinator`, no relay base URL configured) and
+    # prints `REMINDER-PRESENTED <id>` only once the presentation gateway actually presents it.
+    $dueReminderSeconds = 5
+    Write-Step "Launching tests/Dudu.WindowsHarness -- --scenario outage-reminder --due-reminder-seconds $dueReminderSeconds (Wrangler is down)."
+    $outageHarnessPsi = [System.Diagnostics.ProcessStartInfo]::new()
+    $outageHarnessPsi.FileName = "dotnet"
+    $outageHarnessPsi.Arguments = "run --project `"$harnessProject`" -c Release -- --scenario outage-reminder --due-reminder-seconds $dueReminderSeconds"
+    $outageHarnessPsi.WorkingDirectory = $repoRoot
+    $outageHarnessPsi.RedirectStandardOutput = $true
+    $outageHarnessPsi.RedirectStandardError = $true
+    $outageHarnessPsi.UseShellExecute = $false
+
+    $outageHarnessProcess = [System.Diagnostics.Process]::new()
+    $outageHarnessProcess.StartInfo = $outageHarnessPsi
+    $reminderPresentedSignal = [System.Threading.SemaphoreSlim]::new(0)
+    $script:reminderPresentedId = $null
+    $outageHarnessTranscript = [System.Text.StringBuilder]::new()
+
+    $outageHarnessOutputHandler = {
+        param($sender, $eventArgs)
+        if ($null -eq $eventArgs.Data) { return }
+        $line = $eventArgs.Data
+        [void]$outageHarnessTranscript.AppendLine($line)
+        if ($line -match '^REMINDER-PRESENTED (?<id>\S+)$') {
+            $script:reminderPresentedId = $Matches.id
+            $reminderPresentedSignal.Release() | Out-Null
+        }
+    }
+    Register-ObjectEvent -InputObject $outageHarnessProcess -EventName OutputDataReceived -Action $outageHarnessOutputHandler | Out-Null
+    Register-ObjectEvent -InputObject $outageHarnessProcess -EventName ErrorDataReceived -Action $outageHarnessOutputHandler | Out-Null
+
+    try {
+        [void]$outageHarnessProcess.Start()
+        $outageHarnessProcess.BeginOutputReadLine()
+        $outageHarnessProcess.BeginErrorReadLine()
+
+        if (-not $reminderPresentedSignal.Wait([TimeSpan]::FromSeconds(2 * $dueReminderSeconds))) {
+            $failures.Add("The outage-reminder harness never printed REMINDER-PRESENTED within $(2 * $dueReminderSeconds) seconds of a relay outage.")
+        } else {
+            Write-Step "Harness presented the due reminder ($script:reminderPresentedId) with Wrangler down."
+        }
+
+        if (-not $outageHarnessProcess.WaitForExit(15000)) {
+            $failures.Add("The outage-reminder harness did not exit within 15 seconds.")
+            try { $outageHarnessProcess.Kill() } catch { }
+        } elseif ($outageHarnessProcess.ExitCode -ne 0) {
+            $failures.Add("The outage-reminder harness exited with code $($outageHarnessProcess.ExitCode). Transcript: $($outageHarnessTranscript.ToString())")
+        }
+    } finally {
+        if (-not $outageHarnessProcess.HasExited) {
+            try { $outageHarnessProcess.Kill() } catch { }
+        }
+    }
+
     Write-Step "Running the xunit proof that a relay outage never stops local reminders."
     & dotnet test $infrastructureTestsProject --filter "FullyQualifiedName~Worker_outage_does_not_stop_local_reminders"
     if ($LASTEXITCODE -ne 0) {
@@ -342,6 +404,9 @@ try {
 finally {
     if ($null -ne $harnessProcess -and -not $harnessProcess.HasExited) {
         try { $harnessProcess.Kill() } catch { }
+    }
+    if ($null -ne $outageHarnessProcess -and -not $outageHarnessProcess.HasExited) {
+        try { $outageHarnessProcess.Kill() } catch { }
     }
     if ($null -ne $wranglerProcess -and -not $wranglerProcess.HasExited) {
         try { $wranglerProcess.Kill() } catch { }

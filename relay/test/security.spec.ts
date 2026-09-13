@@ -1,9 +1,19 @@
 import { exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import { router } from "../src/index.js";
 import { bytesToBase64Url } from "../src/security/tokens.js";
 import { fetchWorker, jsonHeaders, pairedFixture, validEnvelope, type PairedFixture } from "./helpers.js";
 
 const BASE_URL = "https://example.test";
+
+// Ruling #4 (task-21-review-1.md, Important) asks for header coverage on a 500 path, not just
+// 200/404. `router.handle`'s catch-all only fires when a matched route handler throws, so this
+// test-only route (registered once, at module load, on the same `Router` instance `index.ts`'s
+// `fetch` entry point uses) exists purely to make that throw happen deterministically, without
+// depending on any production route ever misbehaving.
+router.add("GET", "/v1/__test-throws-500", () => {
+  throw new Error("deliberate failure for the security-header 500-path test");
+});
 
 /**
  * One paired fixture shared by every row below. Each row needs a VALID sender session so the
@@ -153,5 +163,18 @@ describe("Worker security hardening", () => {
     expect(response.headers.get("Content-Security-Policy")).toBeTruthy();
     expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
     expect(response.headers.get("Referrer-Policy")).toBe("no-referrer");
+  });
+
+  it("sets the same security headers on a 500 from an unhandled route-handler error", async () => {
+    const response = await fetchWorker("/v1/__test-throws-500");
+
+    expect(response.status).toBe(500);
+    expect(response.headers.get("Content-Security-Policy")).toBeTruthy();
+    expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(response.headers.get("Referrer-Policy")).toBe("no-referrer");
+    expect(response.headers.get("Permissions-Policy")).toBe(
+      "camera=(), microphone=(), geolocation=()",
+    );
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
   });
 });

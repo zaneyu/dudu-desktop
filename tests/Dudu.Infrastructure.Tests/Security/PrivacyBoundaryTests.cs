@@ -3,6 +3,8 @@ using System.Security.Cryptography;
 using System.Text;
 using Dudu.App.Hosting;
 using Dudu.Core.Abstractions;
+using Dudu.Core.Models;
+using Dudu.Core.Time;
 using Dudu.Infrastructure.Crypto;
 using Dudu.Infrastructure.Logging;
 using Dudu.Infrastructure.Remote;
@@ -36,6 +38,29 @@ public sealed class PrivacyBoundaryTests
     }
 
     [Fact]
+    public void DesktopKeyService_never_accepts_a_logger_dependency()
+    {
+        // Cheap structural guard, independent of the marker-based assertion above: the desktop's
+        // private key material only ever flows through DesktopKeyService (see GetOrCreateAsync).
+        // Asserting that none of its public constructors take an ILogger/ILogger<T> parameter at
+        // all proves key material can never reach a logger through this class, regardless of
+        // what any caller does or what any future change to this class's body might introduce.
+        foreach (var constructor in typeof(DesktopKeyService).GetConstructors())
+        {
+            foreach (var parameter in constructor.GetParameters())
+            {
+                var parameterType = parameter.ParameterType;
+                var isLogger = typeof(ILogger).IsAssignableFrom(parameterType)
+                    || (parameterType.IsGenericType
+                        && parameterType.GetGenericTypeDefinition() == typeof(ILogger<>));
+                Assert.False(
+                    isLogger,
+                    $"{typeof(DesktopKeyService)} must never take an ILogger dependency.");
+            }
+        }
+    }
+
+    [Fact]
     public async Task Relay_client_rejects_response_larger_than_sixty_four_kib()
     {
         var client = RelayClientFixture.RespondingWithBytes(65 * 1024);
@@ -51,7 +76,7 @@ public sealed class PrivacyBoundaryTests
 
         await fixture.Host.StartAsync(fixture.CancellationToken);
 
-        Assert.True(fixture.Host.IsStarted); // AppHost has no `IsRunning`; see task-21 ruling 3.
+        Assert.True(fixture.Host.IsStarted); // AppHost has no `IsRunning`; see task-21 ruling 1.
         Assert.Single(fixture.PresentedReminders);
     }
 
@@ -113,13 +138,28 @@ public sealed class PrivacyBoundaryTests
             Assert.Equal(_note, decrypted.Text);
 
             // 4. Corrupted private-key material: stand in for leaked/garbled desktop key bytes
-            //    and exercise the real key-loading path, which must fail without ever surfacing
-            //    the marker anywhere a logger could see it.
+            //    and exercise the real key-loading path through RemoteSyncService itself — not
+            //    bare DesktopKeyService, which has no logger at all and so could never make this
+            //    assertion falsifiable. Here a real ILogger<RemoteSyncService> is attached, and
+            //    the marker bytes are the exact value RemoteSyncService's per-poll key fetch
+            //    (the same call site a real decrypt failure runs right after) reads back and
+            //    fails to parse as PKCS#8. If anything on this path ever formatted those bytes
+            //    into a log message, the marker would appear in LogSink and fail the test.
             var keySecretStore = new InMemorySecretStore();
             keySecretStore.Values[DesktopKeyService.SecretStoreKey] = Encoding.UTF8.GetBytes(_privateKeyMarker);
-            var keyService = new DesktopKeyService(keySecretStore);
+            keySecretStore.Values[RelaySecretKeys.DeviceId] = Encoding.UTF8.GetBytes("device-already-registered");
+            var syncLogger = new RecordingLogger<RemoteSyncService>(LogSink);
+            await using var sync = new RemoteSyncService(
+                new NeverReachedRelayClient(),
+                new NeverReachedEnvelopeRepository(),
+                new NeverReachedArrivalSink(),
+                keySecretStore,
+                new DesktopKeyService(keySecretStore),
+                new RealClock(),
+                new PollBackoff(new ZeroRandomSource()),
+                logger: syncLogger);
             await Assert.ThrowsAsync<CryptographicException>(
-                () => keyService.GetOrCreateAsync(CancellationToken.None));
+                () => sync.PollOnceAsync(CancellationToken.None));
         }
 
         private static StringContent JsonContent(string json) => new(json, Encoding.UTF8, "application/json");
@@ -218,6 +258,82 @@ public sealed class PrivacyBoundaryTests
                 }
             }
         }
+    }
+
+    /// <summary>An <see cref="IRelayClient"/> double for the corrupted-key test: the key-loading
+    /// failure must happen before any of these are ever called, so every member throws.</summary>
+    private sealed class NeverReachedRelayClient : IRelayClient
+    {
+        public Task<RelayRegistrationResult> RegisterAsync(string publicKeySpki, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("RegisterAsync must not run: the device id is already seeded.");
+
+        public Task<RelayDeviceInfo> GetDeviceAsync(CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("GetDeviceAsync must not run in this test.");
+
+        public Task<RelayPairingCode> CreatePairingCodeAsync(CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("CreatePairingCodeAsync must not run in this test.");
+
+        public Task<string> RotateKeyAsync(string publicKeySpki, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("RotateKeyAsync must not run in this test.");
+
+        public Task DeleteDeviceAsync(CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("DeleteDeviceAsync must not run in this test.");
+
+        public Task<IReadOnlyList<RelayEnvelope>> PollAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<RelayEnvelope>>([]);
+
+        public Task AcknowledgeAsync(string messageId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("AcknowledgeAsync must not run: no envelopes are ever polled.");
+    }
+
+    /// <summary>An <see cref="IRemoteEnvelopeRepository"/> double for the corrupted-key test: the
+    /// key-loading failure happens before any envelope is ever stored or looked up.</summary>
+    private sealed class NeverReachedEnvelopeRepository : IRemoteEnvelopeRepository
+    {
+        public Task<RemoteEnvelope?> GetAsync(string messageId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("GetAsync must not run in this test.");
+
+        public Task<IReadOnlyList<RemoteEnvelope>> ListPendingAsync(CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("ListPendingAsync must not run in this test.");
+
+        public Task<bool> TryInsertAsync(RemoteEnvelope envelope, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("TryInsertAsync must not run in this test.");
+
+        public Task<bool> IsProcessedAsync(string messageId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("IsProcessedAsync must not run in this test.");
+
+        public Task<bool> TryMarkProcessedAsync(string messageId, DateTimeOffset processedUtc, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("TryMarkProcessedAsync must not run in this test.");
+
+        public Task<bool> TryInsertAndMarkProcessedAsync(RemoteEnvelope envelope, DateTimeOffset processedUtc, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("TryInsertAndMarkProcessedAsync must not run: PollAsync returns no envelopes.");
+
+        public Task DeleteAsync(string messageId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("DeleteAsync must not run in this test.");
+    }
+
+    /// <summary>An <see cref="IRemoteNoteArrivalSink"/> double for the corrupted-key test: no
+    /// envelope is ever decrypted, so nothing should ever be notified.</summary>
+    private sealed class NeverReachedArrivalSink : IRemoteNoteArrivalSink
+    {
+        public Task NotifyAsync(Guid messageId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("NotifyAsync must not run in this test.");
+    }
+
+    /// <summary>A real-time <see cref="IClock"/>: never actually read on the corrupted-key path
+    /// (the failure happens before any envelope is decrypted), but <see cref="RemoteSyncService"/>
+    /// requires a non-null one.</summary>
+    private sealed class RealClock : IClock
+    {
+        public DateTimeOffset UtcNow => DateTimeOffset.UtcNow;
+        public TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
+    }
+
+    /// <summary>An <see cref="IRandomSource"/> that always returns zero: never actually read on
+    /// the corrupted-key path, but <see cref="PollBackoff"/> requires a non-null one.</summary>
+    private sealed class ZeroRandomSource : IRandomSource
+    {
+        public int Next(int exclusiveMax) => 0;
     }
 
     /// <summary>A minimal <see cref="AppHost"/> rig: a reminder service that records every tick

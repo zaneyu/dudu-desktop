@@ -4,6 +4,8 @@ using Dudu.App.Animation;
 using Dudu.App.Hosting;
 using Dudu.App.Notifications;
 using Dudu.App.Overlay;
+using Dudu.App.Presentation;
+using Dudu.App.System;
 using Dudu.Core.Abstractions;
 using Dudu.Core.Assets;
 using Dudu.Core.Models;
@@ -26,6 +28,11 @@ if (Array.IndexOf(args, "notifications") >= 0)
 if (Array.IndexOf(args, "remote-note") >= 0)
 {
     return await RunRemoteNoteScenarioAsync();
+}
+
+if (Array.IndexOf(args, "outage-reminder") >= 0)
+{
+    return await RunOutageReminderScenarioAsync(args);
 }
 
 if (!args.Contains("--scenario", StringComparer.Ordinal)
@@ -354,6 +361,129 @@ static async Task<int> RunRemoteNoteScenarioAsync()
     }
 }
 
+/// <summary>
+/// Ruling #3 (task-21-review-1.md, Important) requires the harness itself to prove a due local
+/// reminder still fires end-to-end after the relay worker has gone dark, through the normal
+/// reminder path rather than a substitute. This scenario schedules a reminder due in
+/// <c>--due-reminder-seconds N</c> seconds (default 5) via the real <see cref="IReminderWriter"/>,
+/// starts the real <see cref="AppHost"/> wired to a real <see cref="Dudu.Core.Reminders.ReminderEngine"/>
+/// (resolved through the same <c>AddDuduInfrastructure</c> DI registration production uses) and a
+/// real, non-UI <see cref="PresentationCoordinator"/> (the minimal construction already exercised by
+/// <c>PresentationCoordinatorTests</c>) wired in as the reminder due sink's gateway. No relay base
+/// URL is configured and no <see cref="RemoteSyncService"/> is attached, so this exercises only the
+/// local reminder path -- exactly what must survive a relay/worker outage.
+///
+/// Rather than waiting out the real 30-second periodic scheduler, this calls
+/// <see cref="AppHost.ResumeAsync"/> once the reminder is due -- the same on-demand immediate-tick
+/// path <c>AppHostTests</c> already drives via <c>ResumeAsync</c> to avoid wall-clock waits, not a
+/// new or invented scheduler. When the coordinator actually presents the reminder (and only then),
+/// this prints a single sentinel line, <c>REMINDER-PRESENTED &lt;id&gt;</c>, to stdout.
+/// </summary>
+static async Task<int> RunOutageReminderScenarioAsync(string[] args)
+{
+    if (!OperatingSystem.IsWindows())
+    {
+        Console.Error.WriteLine("The outage-reminder harness requires Windows x64 and is intentionally manual.");
+        return 3;
+    }
+
+    var dueSeconds = 5;
+    var flagIndex = Array.IndexOf(args, "--due-reminder-seconds");
+    if (flagIndex >= 0
+        && flagIndex + 1 < args.Length
+        && int.TryParse(args[flagIndex + 1], out var parsedSeconds)
+        && parsedSeconds > 0)
+    {
+        dueSeconds = parsedSeconds;
+    }
+
+    var workingDirectory = Path.Combine(
+        Path.GetTempPath(), "dudu-harness-outage-reminder-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(workingDirectory);
+    var databasePath = Path.Combine(workingDirectory, "dudu.db");
+    var backupDirectory = Path.Combine(workingDirectory, "backups");
+
+    var reminderId = Guid.NewGuid().ToString("D");
+    const string reminderTitle = "Outage harness reminder";
+
+    PresentationCoordinator? coordinator = null;
+    var services = new ServiceCollection()
+        .AddDuduInfrastructure(new DatabaseOptions(databasePath, backupDirectory))
+        .AddSingleton<IReminderDueSink>(provider => new ReminderDueSink(
+            provider.GetRequiredService<IReminderRepository>(),
+            () => coordinator
+                ?? throw new InvalidOperationException("Presentation coordinator is not composed yet.")))
+        .BuildServiceProvider();
+
+    var innerNotifications = new AppNotificationService(new WindowsAppNotificationSink());
+    await innerNotifications.TryRegisterAsync(CancellationToken.None);
+    var notifications = new SentinelReminderNotificationService(innerNotifications);
+    var pet = PetStateMachine.CreateIdle();
+    coordinator = new PresentationCoordinator(
+        new PresentationPolicy(TimeSpan.Zero),
+        notifications,
+        pet,
+        (_, _, _) => Task.CompletedTask,
+        () => AnimationOptions.Default,
+        isQuietHours: () => false,
+        pauseState: () => PauseState.None,
+        petGate: new SemaphoreSlim(1, 1));
+
+    var appHost = new AppHost(services, AppPaths.ForRoot(workingDirectory));
+    appHost.AttachPresentationGateway(coordinator);
+
+    try
+    {
+        var writer = services.GetRequiredService<IReminderWriter>();
+        var nextDueUtc = DateTimeOffset.UtcNow.AddSeconds(dueSeconds);
+        await writer.SaveAsync(
+            new Reminder(
+                reminderId,
+                reminderTitle,
+                Details: null,
+                Enabled: true,
+                Rule: new RecurrenceRule.Once(),
+                LocalTimeZoneId: TimeZoneInfo.Local.Id,
+                QuietHoursBehavior: QuietHoursBehavior.DeliverImmediately,
+                MissedPolicy: MissedOccurrencePolicy.Skip,
+                NextDueUtc: nextDueUtc),
+            CancellationToken.None);
+
+        Console.WriteLine($"Scheduled reminder {reminderId} due at {nextDueUtc:O} ({dueSeconds}s from now); no relay base URL configured.");
+
+        await appHost.StartAsync(CancellationToken.None);
+
+        var remaining = nextDueUtc - DateTimeOffset.UtcNow;
+        if (remaining > TimeSpan.Zero)
+        {
+            await Task.Delay(remaining + TimeSpan.FromMilliseconds(200));
+        }
+
+        await appHost.ResumeAsync(CancellationToken.None);
+
+        if (notifications.PresentedReminderId is null)
+        {
+            Console.Error.WriteLine("The scheduled reminder was not presented after becoming due.");
+            return 6;
+        }
+
+        Console.WriteLine($"REMINDER-PRESENTED {notifications.PresentedReminderId}");
+        return 0;
+    }
+    finally
+    {
+        await appHost.StopAsync(CancellationToken.None);
+        try
+        {
+            Directory.Delete(workingDirectory, recursive: true);
+        }
+        catch (IOException)
+        {
+            // Best-effort cleanup only; leftover temp files here carry no plaintext or secrets.
+        }
+    }
+}
+
 static void DeleteIfPresent(string path)
 {
     if (File.Exists(path)) File.Delete(path);
@@ -446,6 +576,28 @@ file sealed class HarnessRemoteNoteArrivalSink(
         await notifications.ShowRemoteNoteArrivalAsync(messageId, cancellationToken);
         arrived.TrySetResult(messageId);
     }
+}
+
+/// <summary>
+/// Wraps the real <see cref="AppNotificationService"/> so the outage-reminder scenario can
+/// observe, from outside <see cref="PresentationCoordinator"/>, the exact moment it actually
+/// presents a reminder (<see cref="ShowReminderAsync"/> is the same call
+/// <c>PresentationCoordinator.ShowNotificationAsync</c> makes for a
+/// <see cref="Dudu.App.Presentation.PresentationItemKind.Reminder"/> item) -- this is the hook
+/// point ruling #3 calls for, not a bypass of the coordinator.
+/// </summary>
+file sealed class SentinelReminderNotificationService(AppNotificationService inner) : INotificationService
+{
+    public string? PresentedReminderId { get; private set; }
+
+    public async Task ShowReminderAsync(string reminderId, string title, CancellationToken cancellationToken)
+    {
+        await inner.ShowReminderAsync(reminderId, title, cancellationToken);
+        PresentedReminderId = reminderId;
+    }
+
+    public Task ShowRemoteNoteArrivalAsync(Guid messageId, CancellationToken cancellationToken) =>
+        inner.ShowRemoteNoteArrivalAsync(messageId, cancellationToken);
 }
 
 file sealed class NotepadTarget(Process process, bool startedByHarness) : IDisposable
