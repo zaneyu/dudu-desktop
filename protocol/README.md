@@ -19,6 +19,13 @@ general-purpose secure messaging protocol.
 - [`message-payload.schema.json`](./message-payload.schema.json) — `RemoteMessagePayloadV1`, the
   plaintext JSON encrypted inside the envelope's `ciphertext` field.
 
+Both schemas express decoded-Base64URL-length limits (e.g. `hkdfSalt` decoding to exactly 32
+bytes, `ciphertext` decoding to 17–6144 bytes) and the `text` field's 2000-Unicode-scalar-value
+limit only in their `description` prose, since JSON Schema's `minLength`/`maxLength` keywords
+count UTF-16 code units of the *encoded string*, not decoded bytes or Unicode scalar values. A
+schema-only validator does not enforce these; implementations must enforce them in code, the way
+`EnvelopeCrypto.Decrypt` (C#) and `validateEnvelopeShape`/`decryptPayloadForTest` (TypeScript) do.
+
 ## Wire envelope
 
 ```typescript
@@ -135,6 +142,10 @@ run unmodified in a browser, in Node, and in a Cloudflare Worker. It therefore:
   can only validate envelope *shape* before forwarding, not decrypt and validate the payload. Full
   decryption + payload validation lives in `decryptPayloadForTest`, named for its purpose (proving
   the TypeScript side of the contract in tests) rather than for production use.
+
+`relay/package.json`'s `engines.node` pin is the plan's target host version, not a hard runtime
+requirement; a newer Node (as on this dev machine) still runs everything correctly and only emits
+a non-fatal `EBADENGINE` warning during `npm install`/`npm ci`.
 
 ## Interop proof
 
