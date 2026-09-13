@@ -1,0 +1,190 @@
+; Dudu Desktop — private, current-user (per-user) installer.
+;
+; This package installs only for the current Windows user, under
+; {localappdata}\Programs\DuduDesktop, with no UAC elevation. It never
+; touches the current-user Startup shortcut owned by
+; StartupRegistrationService (Dudu Desktop Companion.lnk); that shortcut is
+; created and removed exclusively by the app's own in-app preference, both
+; at first run and across every upgrade of this installer.
+;
+; Built with Inno Setup 7.1.0: `pwsh scripts/publish-windows.ps1` publishes
+; src/Dudu.App then compiles this script with ISCC.exe.
+
+[Setup]
+AppId={{FC8FF35F-5A84-41EA-9E84-23A8EF06F1F6}
+AppName=Dudu Desktop
+AppVersion=1.0.0
+DefaultDirName={localappdata}\Programs\DuduDesktop
+DefaultGroupName=Dudu Desktop
+PrivilegesRequired=lowest
+SetupArchitecture=x64
+OutputDir=..\artifacts
+OutputBaseFilename=DuduDesktop-1.0.0-win-x64-private
+Compression=lzma2
+SolidCompression=yes
+WizardStyle=modern
+UninstallDisplayIcon={app}\Dudu.App.exe
+CloseApplications=yes
+RestartApplications=no
+SetupIconFile=assets\dudu.ico
+WizardSmallImageFile=assets\wizard-small.bmp
+
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Tasks]
+Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked
+
+[Files]
+; The complete self-contained publish output (artifacts/publish/win-x64),
+; produced by scripts/publish-windows.ps1 immediately before ISCC.exe runs.
+Source: "..\artifacts\publish\win-x64\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; The private-dudu asset pack is deliberately NOT part of the csproj's
+; Content Include (only Assets/Packs/fallback/** is), so dotnet publish
+; never copies it. Copy it straight from source so the installed app ships
+; both the fallback pack and the private pack.
+Source: "..\src\Dudu.App\Assets\Packs\private-dudu\*"; DestDir: "{app}\Assets\Packs\private-dudu"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+[Icons]
+; Current-user Start Menu shortcut. Deliberately placed directly under
+; {userprograms} (not a DefaultGroupName subfolder) so its path matches
+; tests/installer/installer-smoke.ps1, which checks for
+; "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Dudu Desktop.lnk".
+Name: "{userprograms}\Dudu Desktop"; Filename: "{app}\Dudu.App.exe"
+; Optional desktop shortcut, off by default.
+Name: "{userdesktop}\Dudu Desktop"; Filename: "{app}\Dudu.App.exe"; Tasks: desktopicon
+
+; No entry here ever references {userstartup}: the "launch at sign-in"
+; shortcut (Dudu Desktop Companion.lnk) is owned entirely by
+; StartupRegistrationService and the recipient's in-app preference. The
+; installer must neither create it nor delete it, on install, upgrade, or
+; uninstall — doing so here would fight the in-app toggle across upgrades.
+
+[Code]
+const
+  // The exact, and only, directory this installer is ever allowed to
+  // delete user data from. Keep this in sync with AppPaths.ForCurrentUser()
+  // in src/Dudu.App/Hosting/AppPaths.cs.
+  DataRootFolderName = 'DuduDesktop';
+
+var
+  ShouldDeleteUserData: Boolean;
+
+function GetDataRoot(): string;
+begin
+  Result := ExpandConstant('{localappdata}') + '\' + DataRootFolderName;
+end;
+
+function WantsDeleteUserDataParam(): Boolean;
+begin
+  // Both the silent and interactive uninstall paths go through this same
+  // /DELETEUSERDATA=1 check before DeleteUserData() is ever called.
+  Result := ExpandConstant('{param:DELETEUSERDATA|0}') = '1';
+end;
+
+// Deletes exactly {localappdata}\DuduDesktop, and only after validating
+// that the resolved path genuinely ends in \DuduDesktop. This is the one
+// safety check standing between a future edit and deleting an unrelated
+// directory — never weaken or remove it. The running app is closed first
+// so its database and secrets files are never deleted while open.
+procedure DeleteUserData();
+var
+  DataRoot, RequiredSuffix: string;
+  ResultCode: Integer;
+begin
+  DataRoot := GetDataRoot();
+  RequiredSuffix := '\' + DataRootFolderName;
+
+  if (Length(DataRoot) < Length(RequiredSuffix)) or
+     (CompareText(
+        Copy(DataRoot, Length(DataRoot) - Length(RequiredSuffix) + 1, Length(RequiredSuffix)),
+        RequiredSuffix) <> 0) then
+    Exit;
+
+  Exec(ExpandConstant('{cmd}'), '/C taskkill /IM Dudu.App.exe /F', '', SW_HIDE,
+    ewWaitUntilTerminated, ResultCode);
+
+  if DirExists(DataRoot) then
+    DelTree(DataRoot, True, True, True);
+end;
+
+// Decides, once, whether this uninstall will delete user data:
+//   1. /DELETEUSERDATA=1 on the command line always wins (silent or not).
+//   2. A silent uninstall with no such parameter keeps data (same default
+//      as the interactive checkbox below).
+//   3. An interactive uninstall shows one page with a single checkbox,
+//      "Keep my notes and settings", checked by default; unchecking it and
+//      continuing is the only other way to delete data.
+// Both of the two real outcomes funnel into the same DeleteUserData().
+function InitializeUninstall(): Boolean;
+var
+  Form: TSetupForm;
+  CheckBox: TNewCheckBox;
+  UninstallButton, CancelButton: TNewButton;
+begin
+  Result := True;
+  ShouldDeleteUserData := False;
+
+  if WantsDeleteUserDataParam() then
+  begin
+    ShouldDeleteUserData := True;
+    Exit;
+  end;
+
+  if UninstallSilent then
+  begin
+    ShouldDeleteUserData := False;
+    Exit;
+  end;
+
+  Form := CreateCustomForm();
+  try
+    Form.ClientWidth := ScaleX(380);
+    Form.ClientHeight := ScaleY(150);
+    Form.Caption := 'Uninstall Dudu Desktop';
+    Form.Position := poScreenCenter;
+    Form.BorderStyle := bsDialog;
+
+    CheckBox := TNewCheckBox.Create(Form);
+    CheckBox.Parent := Form;
+    CheckBox.Left := ScaleX(16);
+    CheckBox.Top := ScaleY(16);
+    CheckBox.Width := Form.ClientWidth - ScaleX(32);
+    CheckBox.Height := ScaleY(34);
+    CheckBox.Caption := 'Keep my notes and settings';
+    CheckBox.Checked := True;
+
+    UninstallButton := TNewButton.Create(Form);
+    UninstallButton.Parent := Form;
+    UninstallButton.Caption := 'Uninstall';
+    UninstallButton.Width := ScaleX(85);
+    UninstallButton.Height := ScaleY(23);
+    UninstallButton.Left := Form.ClientWidth - ScaleX(182);
+    UninstallButton.Top := Form.ClientHeight - ScaleY(36);
+    UninstallButton.ModalResult := mrOk;
+    Form.ActiveControl := UninstallButton;
+
+    CancelButton := TNewButton.Create(Form);
+    CancelButton.Parent := Form;
+    CancelButton.Caption := 'Cancel';
+    CancelButton.Width := ScaleX(85);
+    CancelButton.Height := ScaleY(23);
+    CancelButton.Left := Form.ClientWidth - ScaleX(89);
+    CancelButton.Top := Form.ClientHeight - ScaleY(36);
+    CancelButton.ModalResult := mrCancel;
+    Form.CancelButton := CancelButton;
+
+    if Form.ShowModal() = mrOk then
+      ShouldDeleteUserData := not CheckBox.Checked
+    else
+      Result := False;
+  finally
+    Form.Free;
+  end;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if (CurUninstallStep = usPostUninstall) and ShouldDeleteUserData then
+    DeleteUserData();
+end;

@@ -50,6 +50,15 @@ public sealed partial class App : Application
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
         _launchArguments = args.Arguments ?? string.Empty;
+        if (CompanionLaunchOptions.Parse(_launchArguments).SelfTest)
+        {
+            // Self-test short-circuits before the bootstrap factory runs: no
+            // window, tray, overlay, preference write, startup registration,
+            // or relay connection is ever created for this launch.
+            _startupTask = RunSelfTestAndExitAsync();
+            return;
+        }
+
         EnsureDefaultBootstrapFactory();
         _startupRunner = new CompanionStartupRunner(
             _bootstrapFactory!,
@@ -60,6 +69,12 @@ public sealed partial class App : Application
     }
 
     internal Task? StartupTask => _startupTask;
+
+    private static async Task RunSelfTestAndExitAsync()
+    {
+        var exitCode = await SelfTestRunner.RunAsync(AppPaths.ForCurrentUser());
+        Environment.Exit(exitCode);
+    }
 
     private void EnsureDefaultBootstrapFactory()
     {

@@ -72,17 +72,21 @@ public sealed record CompanionSettingsContext(
     public OverlayCommandRouter? OverlayCommands { get; init; }
 }
 
-public sealed record CompanionLaunchOptions(bool Background)
+public sealed record CompanionLaunchOptions(bool Background, bool SelfTest = false)
 {
     public static CompanionLaunchOptions Parse(string? arguments)
     {
-        var background = (arguments ?? string.Empty)
-            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
-            .Any(argument => string.Equals(
-                argument,
-                "--background",
-                StringComparison.OrdinalIgnoreCase));
-        return new CompanionLaunchOptions(background);
+        var tokens = (arguments ?? string.Empty)
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        var background = tokens.Any(argument => string.Equals(
+            argument,
+            "--background",
+            StringComparison.OrdinalIgnoreCase));
+        var selfTest = tokens.Any(argument => string.Equals(
+            argument,
+            "--self-test",
+            StringComparison.OrdinalIgnoreCase));
+        return new CompanionLaunchOptions(background, selfTest);
     }
 
     /// <summary>

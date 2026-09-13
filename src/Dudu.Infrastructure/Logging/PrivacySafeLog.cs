@@ -20,4 +20,12 @@ public static partial class PrivacySafeLog
 
     [LoggerMessage(1003, LogLevel.Warning, "Envelope {MessageId} was rejected as {Reason}")]
     public static partial void EnvelopeRejected(ILogger logger, Guid messageId, string reason);
+
+    /// <summary>
+    /// Logged by <c>--self-test</c> when a step fails. Carries only the step name
+    /// and the failing exception's type name — never the exception's message,
+    /// which could contain a user-specific file path or other local detail.
+    /// </summary>
+    [LoggerMessage(1004, LogLevel.Error, "Self-test step {Step} failed with exception type {ExceptionType}")]
+    public static partial void SelfTestStepFailed(ILogger logger, string step, string exceptionType);
 }
