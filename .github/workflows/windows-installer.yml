@@ -68,4 +68,4 @@ jobs:
           global-json-file: global.json
       - run: dotnet restore DuduDesktop.slnx
       - run: dotnet build DuduDesktop.slnx -c Release --no-restore
-      - run: dotnet test DuduDesktop.slnx -c Release --no-build
+      - run: dotnet test --solution DuduDesktop.slnx -c Release --no-build

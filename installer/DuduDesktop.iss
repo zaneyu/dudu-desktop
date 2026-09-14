@@ -144,10 +144,10 @@ begin
     Exit;
   end;
 
-  Form := CreateCustomForm();
+  // Inno Setup 7 signature: (ClientWidth, ClientHeight, KeepSizeX, KeepSizeY).
+  // KeepSizeY = True: nothing on this form can grow vertically.
+  Form := CreateCustomForm(ScaleX(380), ScaleY(150), False, True);
   try
-    Form.ClientWidth := ScaleX(380);
-    Form.ClientHeight := ScaleY(150);
     Form.Caption := 'Uninstall Dudu Desktop';
     Form.Position := poScreenCenter;
     Form.BorderStyle := bsDialog;

@@ -183,7 +183,7 @@ try {
     # Deviation from the brief: no --locked-mode. See the file header comment.
     dotnet restore DuduDesktop.slnx
     dotnet build DuduDesktop.slnx -c Release --no-restore
-    dotnet test DuduDesktop.slnx -c Release --no-build --collect:"XPlat Code Coverage"
+    dotnet test --solution DuduDesktop.slnx -c Release --no-build
 
     Write-Host "== Relay (Cloudflare Worker) ==" -ForegroundColor Cyan
     Push-Location relay
