@@ -16,7 +16,7 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
 
     private readonly object _gate = new();
     private static readonly SKSamplingOptions SamplingOptions = new(SKFilterMode.Nearest);
-    private readonly Dictionary<string, SKBitmap> _bitmapCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, SKImage> _imageCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _fullPathCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _sourceCache = new(StringComparer.Ordinal);
     private SKBitmap? _surface;
@@ -136,14 +136,17 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
             EnsurePack(pack);
             var dimensions = ValidateDimensions(animation.NominalSize, scale);
             var source = GetSource(pack, frame.File);
-            var bitmap = GetBitmap(pack, frame.File);
+            var image = GetImage(pack, frame.File);
             EnsureSurface(dimensions.Width, dimensions.Height);
             var output = _surface!;
 
             _canvas!.Clear(SKColors.Transparent);
             _paint!.Color = new SKColor(255, 255, 255, (byte)Math.Round(opacity * byte.MaxValue));
             var destination = new SKRect(0, 0, dimensions.Width, dimensions.Height);
-            _canvas.DrawBitmap(bitmap, destination, SamplingOptions, _paint);
+            // DrawImage, not DrawBitmap: SkiaSharp's DrawBitmap wraps the bitmap in a
+            // temporary SKImage on every call, which the 300-frame allocation gate
+            // in AnimationEngineTests measured at about 100 bytes per frame.
+            _canvas.DrawImage(image, destination, SamplingOptions, _paint);
             OverlaySurfaceSnapshot? overlaySnapshot = null;
             if (_actionSurface is not null)
             {
@@ -309,7 +312,7 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
         _pack = pack;
     }
 
-    private SKBitmap GetBitmap(AssetPack pack, string relativePath)
+    private SKImage GetImage(AssetPack pack, string relativePath)
     {
         if (!AssetManifestContract.IsSafeRelativePath(relativePath))
         {
@@ -323,37 +326,33 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
         }
 
         var cacheKey = fullPath;
-        if (_bitmapCache.TryGetValue(cacheKey, out var cached))
+        if (_imageCache.TryGetValue(cacheKey, out var cached))
         {
             return cached;
         }
 
-        var decoded = SKBitmap.Decode(fullPath)
+        using var decoded = SKBitmap.Decode(fullPath)
             ?? throw new AssetManifestException($"Animation frame could not be decoded: {relativePath}");
-        try
+        if (decoded.Width <= 0 || decoded.Height <= 0)
         {
-            if (decoded.Width <= 0 || decoded.Height <= 0)
-            {
-                throw new AssetManifestException($"Animation frame has invalid dimensions: {relativePath}");
-            }
-
-            var decodedBytes = checked((long)decoded.RowBytes * decoded.Height);
-            if (_bitmapCache.Count >= MaxDecodedBitmapCount
-                || decodedBytes > MaxDecodedBitmapBytes - _decodedBitmapBytes)
-            {
-                throw new AssetManifestException(
-                    $"Asset pack exceeds decoded animation cache limits ({MaxDecodedBitmapCount} frames or {MaxDecodedBitmapBytes} bytes).");
-            }
-
-            _bitmapCache.Add(cacheKey, decoded);
-            _decodedBitmapBytes += decodedBytes;
-            return decoded;
+            throw new AssetManifestException($"Animation frame has invalid dimensions: {relativePath}");
         }
-        catch
+
+        var decodedBytes = checked((long)decoded.RowBytes * decoded.Height);
+        if (_imageCache.Count >= MaxDecodedBitmapCount
+            || decodedBytes > MaxDecodedBitmapBytes - _decodedBitmapBytes)
         {
-            decoded.Dispose();
-            throw;
+            throw new AssetManifestException(
+                $"Asset pack exceeds decoded animation cache limits ({MaxDecodedBitmapCount} frames or {MaxDecodedBitmapBytes} bytes).");
         }
+
+        // The image owns its own copy (or ref) of the pixels, so the decoding
+        // bitmap is released as soon as this returns.
+        var image = SKImage.FromBitmap(decoded)
+            ?? throw new AssetManifestException($"Animation frame could not be decoded: {relativePath}");
+        _imageCache.Add(cacheKey, image);
+        _decodedBitmapBytes += decodedBytes;
+        return image;
     }
 
     private void EnsureSurface(int width, int height)
@@ -385,12 +384,12 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
 
     private void DisposeDecodedBitmaps()
     {
-        foreach (var bitmap in _bitmapCache.Values)
+        foreach (var image in _imageCache.Values)
         {
-            bitmap.Dispose();
+            image.Dispose();
         }
 
-        _bitmapCache.Clear();
+        _imageCache.Clear();
         _fullPathCache.Clear();
         _sourceCache.Clear();
         _decodedBitmapBytes = 0;

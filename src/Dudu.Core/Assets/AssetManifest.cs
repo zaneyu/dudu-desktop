@@ -135,15 +135,27 @@ public static class AssetManifestContract
             return false;
         }
 
-        var normalized = path.Replace('\\', '/');
-        if (normalized.StartsWith("/", StringComparison.Ordinal)
-            || normalized.Split('/', StringSplitOptions.RemoveEmptyEntries)
-                .Any(segment => string.Equals(segment, "..", StringComparison.Ordinal)))
+        // Span-based on purpose: the frame composer validates every frame it draws,
+        // and Split/Replace here cost an allocation per animation frame.
+        ReadOnlySpan<char> remaining = path;
+        if (remaining[0] is '/' or '\\')
         {
             return false;
         }
 
-        return normalized.EndsWith(".png", StringComparison.OrdinalIgnoreCase);
+        while (!remaining.IsEmpty)
+        {
+            var separator = remaining.IndexOfAny('/', '\\');
+            var segment = separator < 0 ? remaining : remaining[..separator];
+            if (segment.SequenceEqual(".."))
+            {
+                return false;
+            }
+
+            remaining = separator < 0 ? [] : remaining[(separator + 1)..];
+        }
+
+        return path.EndsWith(".png", StringComparison.OrdinalIgnoreCase);
     }
 
     public static bool IsSafeKey(string? value) =>

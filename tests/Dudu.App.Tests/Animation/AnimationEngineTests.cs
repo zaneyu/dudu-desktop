@@ -183,12 +183,18 @@ public sealed class AnimationEngineTests
         {
         }
 
+        // The gate measures the engine and composer, not this recorder's list growth
+        // or the cancellation that ends the run: the list is sized up front and the
+        // allocation counter is read on the 300th presentation, before cancelling.
         fixture.Presenter.Frames.Clear();
+        fixture.Presenter.Frames.Capacity = 300;
         using var cancellation = new CancellationTokenSource();
+        long afterFrames = 0;
         fixture.Presenter.OnPresented = count =>
         {
             if (count == 300)
             {
+                afterFrames = GC.GetAllocatedBytesForCurrentThread();
                 cancellation.Cancel();
             }
         };
@@ -199,7 +205,7 @@ public sealed class AnimationEngineTests
         var before = GC.GetAllocatedBytesForCurrentThread();
         var play = fixture.Engine.PlayAsync(TestPresentation("idle"), AnimationOptions.Default, cancellation.Token);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => play);
-        var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        var allocated = afterFrames - before;
 
         Assert.Equal(300, fixture.Presenter.Frames.Count);
         Assert.InRange(allocated, 0, 50 * 1024);
