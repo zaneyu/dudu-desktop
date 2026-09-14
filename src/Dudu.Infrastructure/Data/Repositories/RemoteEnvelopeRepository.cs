@@ -15,7 +15,9 @@ public sealed class RemoteEnvelopeRepository : SqliteRepository, IRemoteEnvelope
 
     public async Task<IReadOnlyList<RemoteEnvelope>> ListPendingAsync(CancellationToken cancellationToken)
     {
-        var result=new List<RemoteEnvelope>(); await using var connection=await OpenAsync(cancellationToken); await using var command=connection.CreateCommand(); command.CommandText=Select+" WHERE NOT EXISTS (SELECT 1 FROM processed_remote_messages p WHERE p.message_id = remote_envelopes.message_id) ORDER BY received_utc;"; await using var reader=await command.ExecuteReaderAsync(cancellationToken); while(await reader.ReadAsync(cancellationToken))result.Add(Read(reader)); return result;
+        // processed_remote_messages is relay-delivery deduplication state, not user-read state.
+        // Received ciphertext must remain visible until the user saves/consumes it.
+        var result=new List<RemoteEnvelope>(); await using var connection=await OpenAsync(cancellationToken); await using var command=connection.CreateCommand(); command.CommandText=Select+" ORDER BY received_utc;"; await using var reader=await command.ExecuteReaderAsync(cancellationToken); while(await reader.ReadAsync(cancellationToken))result.Add(Read(reader)); return result;
     }
 
     public async Task<bool> TryInsertAsync(RemoteEnvelope envelope, CancellationToken cancellationToken)
@@ -146,10 +148,10 @@ public sealed class RemoteEnvelopeRepository : SqliteRepository, IRemoteEnvelope
         mark.CommandText = "INSERT INTO processed_remote_messages (message_id,processed_utc) SELECT $id,$processed WHERE EXISTS (SELECT 1 FROM remote_envelopes WHERE message_id=$id) ON CONFLICT(message_id) DO NOTHING;";
         Add(mark, "$id", messageId);
         Add(mark, "$processed", Utc(processedUtc));
-        if (await mark.ExecuteNonQueryAsync(cancellationToken) != 1)
-        {
-            return false;
-        }
+        // The relay path marks the message before the user opens it. Consuming an envelope must
+        // therefore succeed both when this call creates the deduplication row and when that row
+        // already exists. The delete below remains the authoritative existence check.
+        await mark.ExecuteNonQueryAsync(cancellationToken);
 
         await using var delete = connection.CreateCommand();
         if (transaction is not null) delete.Transaction = transaction;

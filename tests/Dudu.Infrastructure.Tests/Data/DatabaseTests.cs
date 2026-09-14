@@ -295,7 +295,7 @@ public sealed class DatabaseTests
     }
 
     [Fact]
-    public async Task Pending_remote_envelopes_exclude_processed_message_ids()
+    public async Task Pending_remote_envelopes_include_received_messages_until_consumed()
     {
         await using var fixture = await DatabaseFixture.CreateAsync();
         var repository = new RemoteEnvelopeRepository(fixture.Database);
@@ -306,7 +306,14 @@ public sealed class DatabaseTests
         Assert.True(await repository.TryInsertAsync(pending, TestContext.Current.CancellationToken));
 
         var result = await repository.ListPendingAsync(TestContext.Current.CancellationToken);
-        Assert.Equal(["pending"], result.Select(envelope => envelope.MessageId));
+        Assert.Equal(["processed", "pending"], result.Select(envelope => envelope.MessageId));
+
+        Assert.True(await repository.TryConsumeAsync(
+            processed.MessageId,
+            DateTimeOffset.UtcNow,
+            TestContext.Current.CancellationToken));
+        Assert.Equal(["pending"], (await repository.ListPendingAsync(
+            TestContext.Current.CancellationToken)).Select(envelope => envelope.MessageId));
     }
 
     [Fact]

@@ -28,6 +28,24 @@ public sealed class RemoteSyncServiceTests
     }
 
     [Fact]
+    public async Task Received_envelope_remains_visible_and_consumable_after_poll()
+    {
+        await using var fixture = await RemoteSyncFixture.WithSameEnvelopeReturnedTwiceAsync();
+
+        await fixture.Service.PollOnceAsync(fixture.CancellationToken);
+
+        Assert.Equal(
+            [fixture.MessageId],
+            (await fixture.RealRepository.ListPendingAsync(fixture.CancellationToken))
+                .Select(envelope => envelope.MessageId));
+        Assert.True(await fixture.RealRepository.TryConsumeAsync(
+            fixture.MessageId,
+            DateTimeOffset.UtcNow,
+            fixture.CancellationToken));
+        Assert.Empty(await fixture.RealRepository.ListPendingAsync(fixture.CancellationToken));
+    }
+
+    [Fact]
     public async Task Ack_is_not_sent_when_local_transaction_fails()
     {
         await using var fixture = await RemoteSyncFixture.WithRepositoryFailureAsync();
