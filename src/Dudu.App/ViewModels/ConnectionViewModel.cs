@@ -81,8 +81,8 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
     // "the relay is answering with something dudu cannot read" (C1).
     public string AvailabilityText => StatusReason switch
     {
-        PairingStatusReason.RelayNotConfigured => "no relay set up yet notes stay local",
-        PairingStatusReason.RelayProtocolError => "relay is saying something dudu cant read, try again later",
+        PairingStatusReason.RelayNotConfigured => "no relay yet notes stay local",
+        PairingStatusReason.RelayProtocolError => "relay talking weird try again later",
         _ => Availability switch
         {
             PairingAvailability.Available => "can pair now",

@@ -10,7 +10,7 @@ import { clearRecent, StatusTracker } from "./status.js";
 const SESSION_LOST_MESSAGE = "phone disconnected pair again";
 // Review I6: the pinned key no longer matches what the relay reports. Deliberately blunt --
 // this is the one case where pairing again is not just housekeeping.
-const KEY_CHANGED_MESSAGE = "ur dudu's key changed, pair again pls";
+const KEY_CHANGED_MESSAGE = "dudu key changed pair again pls";
 
 function requireElement<T extends HTMLElement>(id: string): T {
   const element = document.getElementById(id);
