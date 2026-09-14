@@ -19,8 +19,15 @@
   <ItemGroup>
     <Compile Include="../../src/Dudu.App/Hosting/AppHost.cs" Link="Hosting/AppHost.cs" />
     <Compile Include="../../src/Dudu.App/Hosting/AppPaths.cs" Link="Hosting/AppPaths.cs" />
+    <Compile Include="../../src/Dudu.App/Hosting/RelayConfiguration.cs" Link="Hosting/RelayConfiguration.cs" />
     <Compile Include="../../src/Dudu.App/Hosting/SelfTestRunner.cs" Link="Hosting/SelfTestRunner.cs" />
     <Compile Include="../../src/Dudu.App/Animation/AssetManifestLoader.cs" Link="Animation/AssetManifestLoader.cs" />
+    <Compile Include="../../src/Dudu.App/Notifications/NotificationActivation.cs" Link="Notifications/NotificationActivation.cs" />
+    <Compile Include="../../src/Dudu.App/Notifications/NotificationArguments.cs" Link="Notifications/NotificationArguments.cs" />
+    <!-- Dudu.App.Tests cannot execute on a non-Windows host, so the WinUI-free
+         activation tests are linked here (same pattern as the App sources above)
+         and really run as part of this project. -->
+    <Compile Include="../../tests/Dudu.App.Tests/Notifications/NotificationActivationTests.cs" Link="Notifications/NotificationActivationTests.cs" />
   </ItemGroup>
 
 </Project>

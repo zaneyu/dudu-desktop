@@ -8,6 +8,7 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
 {
     private readonly CompanionFeatureContext _context;
     private PairingAvailability _availability = PairingAvailability.Offline;
+    private PairingStatusReason _statusReason = PairingStatusReason.None;
     private string? _pairingCode;
     private DateTimeOffset? _codeExpiresUtc;
     private int _sessionCount;
@@ -36,6 +37,14 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
                 OnPropertyChanged(nameof(IsPaired));
                 OnPropertyChanged(nameof(AvailabilityText));
             }
+        }
+    }
+    public PairingStatusReason StatusReason
+    {
+        get => _statusReason;
+        private set
+        {
+            if (SetProperty(ref _statusReason, value)) OnPropertyChanged(nameof(AvailabilityText));
         }
     }
     public string? PairingCode
@@ -67,11 +76,19 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
         }
     }
     public bool IsPaired => Availability == PairingAvailability.Available && SessionCount > 0;
-    public string AvailabilityText => Availability switch
+    // A specific reason always wins over the coarse availability: "pairing offline dudu still
+    // works here" is true but useless when the real answer is "you never set a relay up" (I9) or
+    // "the relay is answering with something dudu cannot read" (C1).
+    public string AvailabilityText => StatusReason switch
     {
-        PairingAvailability.Available => "can pair now",
-        PairingAvailability.NeedsRepair => "pairing needs fixing before it works",
-        _ => "pairing offline dudu still works here",
+        PairingStatusReason.RelayNotConfigured => "no relay set up yet notes stay local",
+        PairingStatusReason.RelayProtocolError => "relay is saying something dudu cant read, try again later",
+        _ => Availability switch
+        {
+            PairingAvailability.Available => "can pair now",
+            PairingAvailability.NeedsRepair => "pairing needs fixing before it works",
+            _ => "pairing offline dudu still works here",
+        },
     };
     public string PairingCodeText => string.IsNullOrWhiteSpace(PairingCode)
         ? "no code yet ah"
@@ -91,6 +108,7 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
         await RunAsync(async () =>
         {
             Availability = await _context.Pairing.GetStateAsync(cancellationToken);
+            StatusReason = _context.Pairing.StatusReason;
             Sessions.Clear();
             try
             {
@@ -113,6 +131,7 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
         {
             var result = await _context.Pairing.CreateCodeAsync(cancellationToken);
             Availability = result.Availability;
+            StatusReason = _context.Pairing.StatusReason;
             PairingCode = result.Code;
             CodeExpiresUtc = result.ExpiresUtc;
             if (result.Availability != PairingAvailability.Available ||

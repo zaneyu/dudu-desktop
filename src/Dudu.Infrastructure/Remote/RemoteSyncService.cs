@@ -35,6 +35,7 @@ public sealed class RemoteSyncService : IAsyncDisposable
     private CancellationTokenSource? _loopCts;
     private Task? _loopTask;
     private volatile PairingAvailability _state = PairingAvailability.Offline;
+    private volatile PairingStatusReason _statusReason = PairingStatusReason.None;
 
     public RemoteSyncService(
         IRelayClient relay,
@@ -63,6 +64,27 @@ public sealed class RemoteSyncService : IAsyncDisposable
     public bool NeedsRepair => _state == PairingAvailability.NeedsRepair;
 
     /// <summary>
+    /// Why the loop is in <see cref="State"/>, when there is more to say than the coarse state.
+    /// Surfaced to the Connection page through <see cref="RelayPairingService"/>.
+    /// </summary>
+    public PairingStatusReason StatusReason => _statusReason;
+
+    /// <summary>True while a background poll loop is running. False before the first
+    /// <see cref="StartAsync"/>, after <see cref="StopAsync"/>, and if the loop ever ends on
+    /// its own -- which, after review C1/I1, only cancellation or an unauthorized relay can
+    /// cause.</summary>
+    public bool IsRunning
+    {
+        get
+        {
+            lock (_lifecycleGate)
+            {
+                return _loopTask is { IsCompleted: false };
+            }
+        }
+    }
+
+    /// <summary>
     /// Registers if needed and makes one cheap authenticated call to confirm the stored token
     /// still works, updating and returning <see cref="State"/>. Used by callers (e.g. the
     /// connection settings view) that need a live answer without waiting on the poll loop.
@@ -74,10 +96,18 @@ public sealed class RemoteSyncService : IAsyncDisposable
             await EnsureRegisteredAsync(cancellationToken);
             await _relay.GetDeviceAsync(cancellationToken);
             _state = PairingAvailability.Available;
+            _statusReason = PairingStatusReason.None;
         }
         catch (RelayUnauthorizedException)
         {
             _state = PairingAvailability.NeedsRepair;
+            _statusReason = PairingStatusReason.None;
+        }
+        catch (RelayProtocolException)
+        {
+            // Review C1: an unreadable relay answer is a distinct, reportable condition, not
+            // "offline" -- the Connection page says so instead of silently keeping a stale state.
+            _statusReason = PairingStatusReason.RelayProtocolError;
         }
         catch (RelayUnavailableException)
         {
@@ -92,9 +122,21 @@ public sealed class RemoteSyncService : IAsyncDisposable
     {
         lock (_lifecycleGate)
         {
-            if (_loopTask is not null)
+            if (_loopTask is { IsCompleted: false })
             {
                 return Task.CompletedTask;
+            }
+
+            if (_loopTask is { IsCompleted: true } completed)
+            {
+                // Review I1: a loop task that already finished -- including a faulted one --
+                // must never wedge the service into "started but dead". Observe any fault so it
+                // is not raised as unobserved at finalization, drop the old registration, and
+                // fall through to start a fresh loop.
+                _ = completed.Exception;
+                _loopTask = null;
+                _loopCts?.Dispose();
+                _loopCts = null;
             }
 
             _loopCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -124,11 +166,12 @@ public sealed class RemoteSyncService : IAsyncDisposable
         {
             await loopTask.WaitAsync(StopTimeout, CancellationToken.None);
         }
-        catch (TimeoutException)
+        catch (Exception)
         {
-        }
-        catch (OperationCanceledException)
-        {
+            // Shutdown never fails. A TimeoutException (the loop is mid-delay), an
+            // OperationCanceledException, or -- review I1 -- a stale fault left by an earlier
+            // loop iteration are all expected here; a fault was already handed to _reportError
+            // when it happened, and awaiting it here is only to observe it.
         }
     }
 
@@ -141,6 +184,7 @@ public sealed class RemoteSyncService : IAsyncDisposable
                 await PollOnceAsync(cancellationToken);
                 _backoff.Reset();
                 await Task.Delay(SteadyPollInterval, cancellationToken);
+                continue;
             }
             catch (OperationCanceledException)
             {
@@ -152,19 +196,57 @@ public sealed class RemoteSyncService : IAsyncDisposable
                 // caller re-registers.
                 return;
             }
-            catch (RemoteSyncException exception)
+            catch (RelayProtocolException exception)
             {
-                _reportError?.Invoke("remote-sync-poll", exception);
-                var delay = _backoff.NextDelay();
-                try
-                {
-                    await Task.Delay(delay, cancellationToken);
-                }
-                catch (OperationCanceledException)
+                // Review C1: the relay answered with something this build cannot read -- most
+                // importantly a page larger than BoundedJsonContent.MaxBytes, which the relay
+                // will hand back byte-for-byte on every retry. Retrying it on the normal ramp
+                // would poll, fail, and re-poll forever with nothing shown to the user. So it is
+                // terminal for this iteration: report it, say so on the Connection page, and
+                // wait the full capped backoff -- long enough not to hammer a broken relay, but
+                // still a retry, so a relay that is fixed later recovers without a restart.
+                _statusReason = PairingStatusReason.RelayProtocolError;
+                _reportError?.Invoke("remote-sync-protocol", exception);
+                if (!await TryDelayAsync(_backoff.MaxDelay(), cancellationToken))
                 {
                     return;
                 }
             }
+            catch (RemoteSyncException exception)
+            {
+                _reportError?.Invoke("remote-sync-poll", exception);
+                if (!await TryDelayAsync(_backoff.NextDelay(), cancellationToken))
+                {
+                    return;
+                }
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                // Review I1: anything else -- a repository bug, a sink that throws, a
+                // deserializer surprise -- used to fault the whole loop task, which then sat
+                // "started" and dead until the app restarted. Treat it like any other failed
+                // iteration instead.
+                _reportError?.Invoke("remote-sync-loop", exception);
+                if (!await TryDelayAsync(_backoff.NextDelay(), cancellationToken))
+                {
+                    return;
+                }
+            }
+        }
+    }
+
+    /// <summary>Waits <paramref name="delay"/>; returns false if the loop was cancelled while
+    /// waiting, which is the loop's signal to exit.</summary>
+    private static async Task<bool> TryDelayAsync(TimeSpan delay, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(delay, cancellationToken);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
         }
     }
 
@@ -185,6 +267,7 @@ public sealed class RemoteSyncService : IAsyncDisposable
         }
 
         _state = PairingAvailability.Available;
+        _statusReason = PairingStatusReason.None;
 
         var keyMaterial = await _keyService.GetOrCreateAsync(cancellationToken);
         try
@@ -221,31 +304,48 @@ public sealed class RemoteSyncService : IAsyncDisposable
             wire.Nonce,
             wire.Ciphertext);
 
+        // Review C2/I1: decode and decrypt both run inside this try. BuildStoredEnvelope is the
+        // Base64Url decode of the wire fields, so a malformed field used to throw here -- before
+        // the catch below, outside any handler -- and take the whole poll loop down; and the old
+        // catch filter (CryptographicException/EnvelopeValidationException only) let a null
+        // payload field escape as a NullReferenceException. Any non-cancellation failure now
+        // means the same thing to this method: undecryptable. Store the ciphertext without
+        // plaintext, do not notify, and acknowledge, so a poison message drains instead of being
+        // redelivered forever.
         var decrypted = true;
+        RemoteEnvelope? stored = null;
         try
         {
             EnvelopeCrypto.Decrypt(envelope, privateKeyPkcs8, _clock.UtcNow);
+            stored = BuildStoredEnvelope(wire, _clock.UtcNow);
         }
-        catch (Exception exception) when (exception is CryptographicException or EnvelopeValidationException)
+        catch (Exception exception) when (exception is not OperationCanceledException)
         {
             decrypted = false;
             _reportError?.Invoke(
                 "remote-sync-decrypt",
-                new InvalidOperationException($"Envelope {wire.MessageId} failed to decrypt or validate."));
+                new InvalidOperationException(
+                    $"Envelope {wire.MessageId} failed to decrypt or validate ({exception.GetType().Name})."));
             if (Guid.TryParse(wire.MessageId, out var messageId))
             {
-                PrivacySafeLog.EnvelopeRejected(_logger, messageId, "decrypt-failed");
+                // Exception type only -- never the message, which for a decode failure can echo
+                // the offending wire field back into the log.
+                PrivacySafeLog.EnvelopeRejected(_logger, messageId, exception.GetType().Name);
             }
+
+            stored = TryBuildStoredEnvelope(wire);
         }
 
-        var stored = BuildStoredEnvelope(wire, _clock.UtcNow);
-        try
+        if (stored is not null)
         {
-            await _envelopes.TryInsertAndMarkProcessedAsync(stored, _clock.UtcNow, cancellationToken);
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            throw new RemoteSyncException("Failed to store the received envelope locally.", exception);
+            try
+            {
+                await _envelopes.TryInsertAndMarkProcessedAsync(stored, _clock.UtcNow, cancellationToken);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                throw new RemoteSyncException("Failed to store the received envelope locally.", exception);
+            }
         }
 
         if (decrypted)
@@ -321,13 +421,27 @@ public sealed class RemoteSyncService : IAsyncDisposable
     }
 
     /// <summary>
-    /// Revokes every sender session by rotating the desktop key: the relay discards queued
-    /// ciphertext and every sender session tied to the old key as part of rotation.
+    /// Revokes every sender session: the relay deletes each paired sender session and the
+    /// ciphertext still queued for them, and reissues this desktop's bearer token.
+    /// <para>
+    /// Review M3: despite the relay endpoint's name, this does NOT rotate the desktop's ECDH key
+    /// pair -- it re-presents the same public key (see relay/src/routes/devices.ts
+    /// <c>rotateDeviceKey</c>, which rotates the desktop token and revokes sessions). Rotating
+    /// the key pair would make every already-stored envelope permanently unreadable, so it is
+    /// deliberately not done here.
+    /// </para>
     /// </summary>
     public async Task DisconnectSendersAsync(CancellationToken cancellationToken)
     {
         var keyMaterial = await _keyService.GetOrCreateAsync(cancellationToken);
-        await _relay.RotateKeyAsync(keyMaterial.PublicKeySpkiBase64Url, cancellationToken);
+        try
+        {
+            await _relay.RotateKeyAsync(keyMaterial.PublicKeySpkiBase64Url, cancellationToken);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(keyMaterial.PrivateKeyPkcs8);
+        }
     }
 
     /// <summary>Permanently unpairs this desktop: deletes the remote device, then all local
@@ -349,11 +463,35 @@ public sealed class RemoteSyncService : IAsyncDisposable
         }
 
         var keyMaterial = await _keyService.GetOrCreateAsync(cancellationToken);
-        await _relay.RegisterAsync(keyMaterial.PublicKeySpkiBase64Url, cancellationToken);
+        try
+        {
+            await _relay.RegisterAsync(keyMaterial.PublicKeySpkiBase64Url, cancellationToken);
+        }
+        finally
+        {
+            // Same M3 rule as PollOnceAsync/RevealAsync/DisconnectSendersAsync: the PKCS#8 copy
+            // this call owns never outlives the call.
+            CryptographicOperations.ZeroMemory(keyMaterial.PrivateKeyPkcs8);
+        }
     }
 
     private Task<byte[]?> GetDeviceIdAsync(CancellationToken cancellationToken) =>
         _secretStore.GetAsync(RelaySecretKeys.DeviceId, cancellationToken);
+
+    /// <summary>Builds the stored row for an envelope that already failed to decrypt. Returns
+    /// null when even the Base64Url decode is impossible: that envelope cannot be persisted at
+    /// all, so the caller skips the store and only acknowledges it.</summary>
+    private RemoteEnvelope? TryBuildStoredEnvelope(RelayEnvelope wire)
+    {
+        try
+        {
+            return BuildStoredEnvelope(wire, _clock.UtcNow);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            return null;
+        }
+    }
 
     private static RemoteEnvelope BuildStoredEnvelope(RelayEnvelope wire, DateTimeOffset receivedUtc) =>
         new(

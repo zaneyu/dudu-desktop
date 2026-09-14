@@ -31,5 +31,17 @@ public sealed class PollBackoff
         return TimeSpan.FromSeconds(baseDelaySeconds * (0.5 + fraction));
     }
 
+    /// <summary>
+    /// The fully-backed-off delay (the <see cref="CapSeconds"/> cap, jittered the same way)
+    /// without advancing the attempt counter. Used for a failure the poll loop treats as
+    /// terminal for this iteration -- there is nothing to ramp up to, so it waits the cap
+    /// immediately instead of tight-looping through the early, short delays.
+    /// </summary>
+    public TimeSpan MaxDelay()
+    {
+        var fraction = _random.Next(JitterResolution) / (double)JitterResolution;
+        return TimeSpan.FromSeconds(CapSeconds * (0.5 + fraction));
+    }
+
     public void Reset() => _attempt = 0;
 }

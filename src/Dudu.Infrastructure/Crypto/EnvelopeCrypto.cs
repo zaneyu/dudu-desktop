@@ -155,6 +155,15 @@ public static class EnvelopeCrypto
             throw new EnvelopeValidationException("Decrypted payload is not valid JSON.", exception);
         }
 
+        // System.Text.Json does not enforce nullable reference annotations, so every one of
+        // these can still arrive as JSON null (or be absent) on a well-formed envelope. Each
+        // must be rejected as a validation failure here, before it reaches a HashSet lookup or
+        // a string member below and throws an exception type the caller does not expect.
+        if (payload.Kind is null || payload.Text is null || payload.Reaction is null)
+        {
+            throw new EnvelopeValidationException("Decrypted payload is missing kind, text, or reaction.");
+        }
+
         if (payload.Kind != "note")
         {
             throw new EnvelopeValidationException($"Unsupported payload kind '{payload.Kind}'.");

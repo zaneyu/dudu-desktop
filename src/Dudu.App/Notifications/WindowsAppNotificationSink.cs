@@ -38,7 +38,7 @@ public sealed class WindowsAppNotificationSink : INotificationSink
             builder.AddText(request.Body);
         }
 
-        foreach (var (key, value) in ParseArguments(request.ActivationArguments))
+        foreach (var (key, value) in NotificationArguments.Parse(request.ActivationArguments))
         {
             builder.AddArgument(key, value);
         }
@@ -46,7 +46,7 @@ public sealed class WindowsAppNotificationSink : INotificationSink
         foreach (var button in request.Buttons)
         {
             var appButton = new AppNotificationButton(button.Label);
-            foreach (var (key, value) in ParseArguments(button.ActivationArguments))
+            foreach (var (key, value) in NotificationArguments.Parse(button.ActivationArguments))
             {
                 appButton.AddArgument(key, value);
             }
@@ -56,24 +56,5 @@ public sealed class WindowsAppNotificationSink : INotificationSink
 
         AppNotificationManager.Default.Show(builder.BuildNotification());
         return Task.CompletedTask;
-    }
-
-    private static IEnumerable<(string Key, string Value)> ParseArguments(string? arguments)
-    {
-        if (string.IsNullOrEmpty(arguments))
-        {
-            yield break;
-        }
-
-        foreach (var pair in arguments.Split('&', StringSplitOptions.RemoveEmptyEntries))
-        {
-            var separatorIndex = pair.IndexOf('=');
-            if (separatorIndex <= 0)
-            {
-                continue;
-            }
-
-            yield return (pair[..separatorIndex], pair[(separatorIndex + 1)..]);
-        }
     }
 }

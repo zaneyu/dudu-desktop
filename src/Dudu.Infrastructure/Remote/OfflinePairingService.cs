@@ -4,6 +4,13 @@ namespace Dudu.Infrastructure.Remote;
 
 public sealed class OfflinePairingService : IPairingService
 {
+    /// <summary>
+    /// Review I9: this service is registered exactly when no relay base URL is configured, so
+    /// "offline" here always has one specific cause. Saying so lets the Connection page explain
+    /// it instead of showing a bare failure.
+    /// </summary>
+    public PairingStatusReason StatusReason => PairingStatusReason.RelayNotConfigured;
+
     public Task<PairingAvailability> GetStateAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();

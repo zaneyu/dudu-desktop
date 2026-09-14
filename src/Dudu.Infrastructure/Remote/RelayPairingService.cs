@@ -20,6 +20,8 @@ public sealed class RelayPairingService : IPairingService
     public Task<PairingAvailability> GetStateAsync(CancellationToken cancellationToken = default) =>
         _sync.GetStateAsync(cancellationToken);
 
+    public PairingStatusReason StatusReason => _sync.StatusReason;
+
     public async Task<PairingCodeResult> CreateCodeAsync(CancellationToken cancellationToken = default)
     {
         try

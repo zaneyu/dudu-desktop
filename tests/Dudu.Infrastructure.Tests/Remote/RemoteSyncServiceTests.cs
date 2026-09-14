@@ -62,6 +62,81 @@ public sealed class RemoteSyncServiceTests
         Assert.True(fixture.Service.NeedsRepair);
     }
 
+    [Theory]
+    // Review C2: both payloads deserialize cleanly -- System.Text.Json binds JSON null onto a
+    // non-nullable string member without complaint. The first is the one named in the review;
+    // it happened to survive only because the reaction check ran first and rejected null as an
+    // unknown reaction. The second is the one that actually reached payload.Text and threw a
+    // NullReferenceException, past the old catch filter and out of the poll loop entirely.
+    // Both must be treated as any other undecryptable envelope: kept as ciphertext, never
+    // presented, acknowledged so they stop coming back.
+    [InlineData("""{"kind":"note","text":null,"reaction":null}""")]
+    [InlineData("""{"kind":"note","text":null,"reaction":"none"}""")]
+    public async Task Null_payload_fields_are_acked_and_stored_without_plaintext(string rawPayloadJson)
+    {
+        await using var fixture = await RemoteSyncFixture.WithRawPayloadAsync(rawPayloadJson);
+
+        await fixture.Service.PollOnceAsync(fixture.CancellationToken);
+
+        Assert.Single(fixture.Envelopes);
+        Assert.Empty(fixture.Presentations);
+        Assert.Equal(new[] { fixture.MessageId }, fixture.AcknowledgedIds);
+        Assert.Contains(fixture.ReportedErrors, error => error.Tag == "remote-sync-decrypt");
+    }
+
+    [Fact]
+    public async Task Malformed_wire_field_is_acked_instead_of_killing_the_poll()
+    {
+        // Review I1: BuildStoredEnvelope (the Base64Url decode of the wire fields) used to run
+        // outside ProcessEnvelopeAsync's try, so one unparsable field threw straight out of the
+        // poll -- and, before the RunLoopAsync fix, out of the background loop as well.
+        await using var fixture = await RemoteSyncFixture.WithMalformedCiphertextAsync();
+
+        await fixture.Service.PollOnceAsync(fixture.CancellationToken);
+
+        Assert.Empty(fixture.Presentations);
+        Assert.Equal(new[] { fixture.MessageId }, fixture.AcknowledgedIds);
+        Assert.Contains(fixture.ReportedErrors, error => error.Tag == "remote-sync-decrypt");
+    }
+
+    [Fact]
+    public async Task Poll_loop_survives_an_unexpected_exception_instead_of_faulting()
+    {
+        // Review I1: an exception that is not a RemoteSyncException at all (here, a relay client
+        // contract violation) used to fault the loop task. _loopTask then stayed non-null, so
+        // StartAsync refused to start a replacement and StopAsync rethrew the stale fault: the
+        // service looked started and polled nothing until the app restarted.
+        await using var fixture = await RemoteSyncFixture.WithUnexpectedPollExceptionAsync();
+
+        await fixture.Service.StartAsync(fixture.CancellationToken);
+        try
+        {
+            await WaitUntilAsync(
+                () => fixture.ReportedErrors.Any(error => error.Tag == "remote-sync-loop"),
+                fixture.CancellationToken);
+
+            Assert.Contains(fixture.ReportedErrors, error => error.Tag == "remote-sync-loop");
+            Assert.True(fixture.Service.IsRunning, "the loop must still be running after an unexpected exception");
+        }
+        finally
+        {
+            // Must not rethrow the loop's exception.
+            await fixture.Service.StopAsync(fixture.CancellationToken);
+        }
+
+        Assert.False(fixture.Service.IsRunning);
+    }
+
+    /// <summary>Polls <paramref name="condition"/> until it holds or ten seconds elapse.</summary>
+    private static async Task WaitUntilAsync(Func<bool> condition, CancellationToken cancellationToken)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+        while (!condition() && DateTimeOffset.UtcNow < deadline)
+        {
+            await Task.Delay(25, cancellationToken);
+        }
+    }
+
     [Fact]
     public async Task Poll_loop_backs_off_after_an_outage_and_resets_on_the_next_success()
     {
@@ -172,6 +247,33 @@ public sealed class RemoteSyncServiceTests
                 CreatedUtc = encrypted.CreatedUtc,
             };
             await fixture.RealRepository.TryInsertAsync(stored, TestContext.Current.CancellationToken);
+            return fixture;
+        }
+
+        public static async Task<RemoteSyncFixture> WithRawPayloadAsync(string rawPayloadJson)
+        {
+            var fixture = await CreateAsync();
+            var envelope = CryptoFixture.EncryptRawPayloadFor(
+                fixture.RecipientPublicKeySpki,
+                Encoding.UTF8.GetBytes(rawPayloadJson),
+                fixture.MessageId);
+            fixture.Relay.PollResult = [ToRelayEnvelope(envelope)];
+            return fixture;
+        }
+
+        public static async Task<RemoteSyncFixture> WithMalformedCiphertextAsync()
+        {
+            var fixture = await CreateAsync();
+            var envelope = CryptoFixture.EncryptFor(fixture.RecipientPublicKeySpki, "hi there", fixture.MessageId);
+            var wire = ToRelayEnvelope(envelope);
+            fixture.Relay.PollResult = [wire with { Ciphertext = "not-base64url!!!" }];
+            return fixture;
+        }
+
+        public static async Task<RemoteSyncFixture> WithUnexpectedPollExceptionAsync()
+        {
+            var fixture = await CreateAsync();
+            fixture.Relay.PollException = () => new InvalidOperationException("unexpected relay-client failure");
             return fixture;
         }
 

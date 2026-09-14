@@ -1,6 +1,5 @@
 using System.ComponentModel;
 using Dudu.App.ViewModels;
-using Dudu.Core.Abstractions;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
@@ -28,6 +27,7 @@ public sealed partial class ConnectionPage : Page
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs args)
     {
         if (args.PropertyName is nameof(ConnectionViewModel.Availability)
+            or nameof(ConnectionViewModel.StatusReason)
             or nameof(ConnectionViewModel.PairingCode)
             or nameof(ConnectionViewModel.CodeExpiresUtc)
             or nameof(ConnectionViewModel.SessionCount))
@@ -38,12 +38,10 @@ public sealed partial class ConnectionPage : Page
 
     private void RefreshStatusText()
     {
-        ConnectionAvailability.Text = ViewModel.Availability switch
-        {
-            PairingAvailability.Available => "can pair now",
-            PairingAvailability.NeedsRepair => "pairing needs repair",
-            _ => "pairing is offline",
-        };
+        // Reviews C1/I9: one source of truth. This used to be a second, subtly different copy
+        // of the view model's switch, so a reason the view model knows about -- no relay
+        // configured, or a relay answering with something unreadable -- never reached the page.
+        ConnectionAvailability.Text = ViewModel.AvailabilityText;
         ConnectionPairingCode.Text = string.IsNullOrWhiteSpace(ViewModel.PairingCode)
             ? "no code yet ah"
             : $"pairing code {ViewModel.PairingCode}";

@@ -69,6 +69,55 @@ public sealed class PrivacyBoundaryTests
     }
 
     [Fact]
+    public async Task Oversized_relay_page_reports_a_terminal_state_and_leaves_the_loop_alive()
+    {
+        // Review C1: the relay's own page cap was 20 rows with no byte budget, so a page of 20
+        // maximum-size envelopes (6144 bytes of ciphertext each) sails past the desktop's 64 KiB
+        // BoundedJsonContent limit. RelayClient then throws RelayProtocolException on that page
+        // every single time, byte for byte. Before the fix RunLoopAsync caught it as an ordinary
+        // RemoteSyncException and retried on the short ramp forever: the desktop polled, failed,
+        // and re-polled with nothing ever shown to the user -- a permanent silent stall.
+        var secretStore = new InMemorySecretStore();
+        secretStore.Values["relay-desktop-token-v1"] = Encoding.UTF8.GetBytes("token");
+        secretStore.Values[RelaySecretKeys.DeviceId] = Encoding.UTF8.GetBytes("device-already-registered");
+        var relay = RelayClientFixture.RespondingWithEnvelopePage(
+            secretStore, envelopeCount: 20, ciphertextBytes: 6144);
+
+        var reported = new List<string>();
+        await using var sync = new RemoteSyncService(
+            relay,
+            new AcceptingEnvelopeRepository(),
+            new NeverReachedArrivalSink(),
+            secretStore,
+            new DesktopKeyService(secretStore),
+            new RealClock(),
+            new PollBackoff(new ZeroRandomSource()),
+            reportError: (tag, _) => reported.Add(tag));
+
+        await sync.StartAsync(TestContext.Current.CancellationToken);
+        try
+        {
+            var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+            while (sync.StatusReason != PairingStatusReason.RelayProtocolError
+                && DateTimeOffset.UtcNow < deadline)
+            {
+                await Task.Delay(25, TestContext.Current.CancellationToken);
+            }
+
+            Assert.Equal(PairingStatusReason.RelayProtocolError, sync.StatusReason);
+            Assert.Contains("remote-sync-protocol", reported);
+
+            // Alive, not dead and not spinning: it is sitting in the capped backoff, so a relay
+            // that is fixed later still recovers without an app restart.
+            Assert.True(sync.IsRunning, "the poll loop must survive an unreadable relay page");
+        }
+        finally
+        {
+            await sync.StopAsync(TestContext.Current.CancellationToken);
+        }
+    }
+
+    [Fact]
     public async Task Worker_outage_does_not_stop_local_reminders()
     {
         var fixture = AppFixture.WithUnavailableRelayAndDueReminder();
@@ -184,6 +233,35 @@ public sealed class PrivacyBoundaryTests
             // Must not throw: the decrypt failure is caught inside ProcessEnvelopeAsync.
             await sync.PollOnceAsync(CancellationToken.None);
 
+            // 5. Review C2: the same loop, fed a payload whose fields are JSON null. It is
+            //    undecryptable in exactly the same way (and used to throw a
+            //    NullReferenceException out of the loop), so it takes the same logging path --
+            //    which must stay just as free of key, token, and note material.
+            var nullFieldEnvelope = CryptoFixture.EncryptRawPayloadFor(
+                recipientPublicKey.ExportSubjectPublicKeyInfo(),
+                Encoding.UTF8.GetBytes("""{"kind":"note","text":null,"reaction":"none"}"""));
+            await using var nullFieldSync = new RemoteSyncService(
+                new SingleEnvelopeRelayClient(new RelayEnvelope(
+                    nullFieldEnvelope.ProtocolVersion,
+                    nullFieldEnvelope.MessageId,
+                    nullFieldEnvelope.CreatedUtc,
+                    nullFieldEnvelope.DeliverAfterUtc,
+                    nullFieldEnvelope.EphemeralPublicKey,
+                    nullFieldEnvelope.HkdfSalt,
+                    nullFieldEnvelope.Nonce,
+                    nullFieldEnvelope.Ciphertext)),
+                new AcceptingEnvelopeRepository(),
+                new NeverReachedArrivalSink(),
+                keySecretStore,
+                keyService,
+                new RealClock(),
+                new PollBackoff(new ZeroRandomSource()),
+                reportError: (_, exception) => reportedException = exception,
+                logger: syncLogger);
+
+            // Must not throw: a null payload field is an ordinary validation failure now.
+            await nullFieldSync.PollOnceAsync(CancellationToken.None);
+
             Assert.Contains(1003, LogSink.EventIds);
             Assert.DoesNotContain(privateKeyMarkerBase64, LogSink.JoinedText);
             Assert.DoesNotContain(privateKeyMarkerBase64Url, LogSink.JoinedText);
@@ -216,6 +294,27 @@ public sealed class PrivacyBoundaryTests
             });
             var secretStore = new InMemorySecretStore();
             secretStore.Values["relay-desktop-token-v1"] = Encoding.UTF8.GetBytes("token");
+            return new RelayClient(new HttpClient(handler), secretStore, new RelayOptions(BaseUrl));
+        }
+
+        /// <summary>Answers every request with a well-formed <c>GET /v1/messages</c> body of
+        /// <paramref name="envelopeCount"/> envelopes carrying <paramref name="ciphertextBytes"/>
+        /// bytes of ciphertext each -- the largest page the relay's row cap alone would allow.</summary>
+        public static RelayClient RespondingWithEnvelopePage(
+            InMemorySecretStore secretStore, int envelopeCount, int ciphertextBytes)
+        {
+            var ciphertext = Base64Url.EncodeToString(new byte[ciphertextBytes]);
+            var envelopes = string.Join(",", Enumerable.Range(0, envelopeCount).Select(index =>
+                $$"""
+                {"protocolVersion":1,"messageId":"{{Guid.NewGuid():D}}",
+                 "createdUtc":"2026-01-01T00:00:00.000Z","deliverAfterUtc":null,
+                 "ephemeralPublicKey":"AA","hkdfSalt":"AA","nonce":"AA","ciphertext":"{{ciphertext}}"}
+                """));
+            var handler = new FakeHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    $$"""{"messages":[{{envelopes}}]}""", Encoding.UTF8, "application/json"),
+            });
             return new RelayClient(new HttpClient(handler), secretStore, new RelayOptions(BaseUrl));
         }
     }

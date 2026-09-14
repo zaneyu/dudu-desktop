@@ -7,6 +7,27 @@ public enum PairingAvailability
     NeedsRepair,
 }
 
+/// <summary>
+/// Why pairing is in its current <see cref="PairingAvailability"/>, when the coarse state alone
+/// would leave the user staring at a generic "offline" line with no idea what to do. The
+/// Connection page turns this into its status text, so every member must map to a sentence a
+/// non-technical user can act on.
+/// </summary>
+public enum PairingStatusReason
+{
+    /// <summary>Nothing to add beyond <see cref="PairingAvailability"/> itself.</summary>
+    None,
+
+    /// <summary>No relay base URL is configured, so the app runs fully local (review I9).</summary>
+    RelayNotConfigured,
+
+    /// <summary>
+    /// The relay answered with something this build cannot read — an oversized page or a
+    /// malformed body. Retried on a long backoff rather than tight-looping (review C1).
+    /// </summary>
+    RelayProtocolError,
+}
+
 public sealed record PairingCodeResult(
     PairingAvailability Availability,
     string? Code,
@@ -33,6 +54,13 @@ public sealed record PairingOperationResult(bool Completed, string? ErrorMessage
 public interface IPairingService
 {
     Task<PairingAvailability> GetStateAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The latest reason behind <see cref="GetStateAsync"/>'s answer, for implementations that
+    /// can distinguish one. Defaults to <see cref="PairingStatusReason.None"/> so existing
+    /// implementations need not change.
+    /// </summary>
+    PairingStatusReason StatusReason => PairingStatusReason.None;
 
     Task<PairingCodeResult> CreateCodeAsync(CancellationToken cancellationToken = default);
 

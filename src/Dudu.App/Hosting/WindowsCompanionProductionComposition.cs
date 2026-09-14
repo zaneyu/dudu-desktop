@@ -158,7 +158,7 @@ public static class WindowsCompanionProductionComposition
         var services = new ServiceCollection()
             .AddDuduInfrastructure(
                 new DatabaseOptions(paths.Database, paths.Backups),
-                ResolveRelayOptions())
+                RelayConfiguration.Resolve())
             .AddSingleton<IReminderDueSink>(provider => new ReminderDueSink(
                 provider.GetRequiredService<IReminderRepository>(),
                 () => presentationGateway
@@ -288,7 +288,7 @@ public static class WindowsCompanionProductionComposition
                         gate: petGate);
                     notificationService = new AppNotificationService(new WindowsAppNotificationSink());
                     AppNotificationManager.Default.NotificationInvoked += (_, invokedArgs) =>
-                        HandleNotificationInvoked(actions, invokedArgs.Argument);
+                        HandleNotificationInvoked(actions, invokedArgs.Arguments);
                     presentationGateway = new PresentationCoordinator(
                         new PresentationPolicy(PresentationMinimumSilentInterval),
                         notificationService,
@@ -515,41 +515,6 @@ public static class WindowsCompanionProductionComposition
         return Task.CompletedTask;
     }
 
-    /// <summary>
-    /// Resolves the relay base URL from <c>DUDU_RELAY_BASE_URL</c>, falling back to
-    /// <see cref="ProductInfo.DefaultRelayBaseUrl"/>. Either value is used only when it parses
-    /// as an absolute http/https URI; anything else (unset, malformed, a non-http(s) scheme) is
-    /// ignored, leaving <see cref="RelayOptions.BaseUrl"/> null so <c>AddDuduInfrastructure</c>
-    /// falls back to <see cref="OfflinePairingService"/> and no relay is activated.
-    /// </summary>
-    private static RelayOptions ResolveRelayOptions()
-    {
-        if (!TryParseAbsoluteHttpUri(Environment.GetEnvironmentVariable("DUDU_RELAY_BASE_URL"), out var baseUrl))
-        {
-            TryParseAbsoluteHttpUri(ProductInfo.DefaultRelayBaseUrl, out baseUrl);
-        }
-
-        return new RelayOptions(baseUrl);
-    }
-
-    private static bool TryParseAbsoluteHttpUri(string? value, out Uri? uri)
-    {
-        uri = null;
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return false;
-        }
-
-        if (Uri.TryCreate(value, UriKind.Absolute, out var parsed)
-            && (parsed.Scheme == Uri.UriSchemeHttp || parsed.Scheme == Uri.UriSchemeHttps))
-        {
-            uri = parsed;
-            return true;
-        }
-
-        return false;
-    }
-
     internal static Task DispatchSettingsDestinationAsync(
         CompanionUiActions actions,
         string destination,
@@ -569,9 +534,15 @@ public static class WindowsCompanionProductionComposition
     /// for this milestone; a malformed or unknown activation is ignored
     /// rather than throwing.
     /// </summary>
-    private static void HandleNotificationInvoked(CompanionUiActions actions, string? argument)
+    private static void HandleNotificationInvoked(
+        CompanionUiActions actions,
+        IEnumerable<KeyValuePair<string, string>>? arguments)
     {
-        var activation = NotificationActivation.TryParse(argument);
+        // Review I2: this used to re-parse invokedArgs.Argument, the raw string, with a
+        // parser that split on '&' while the Windows App SDK writes ';' -- so every click
+        // resolved to null. invokedArgs.Arguments is the SDK's own parsed map, which needs
+        // no separator convention at all.
+        var activation = NotificationActivation.TryParse(arguments);
         var destination = activation?.Action switch
         {
             NotificationActivationAction.OpenNote => "notes",

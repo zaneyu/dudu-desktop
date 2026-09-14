@@ -182,6 +182,27 @@ public sealed class EnvelopeCryptoTests
             EnvelopeCrypto.Decrypt(envelope, recipient.ExportPkcs8PrivateKey()));
     }
 
+    [Theory]
+    // Review C2: System.Text.Json happily binds a JSON null onto a non-nullable string member,
+    // so each of these decrypts and deserializes cleanly and only fails when validation reaches
+    // a HashSet lookup (reaction) or a string member (text). Every one must be an
+    // EnvelopeValidationException, the type ProcessEnvelopeAsync treats as "undecryptable".
+    [InlineData("""{"kind":"note","text":null,"reaction":null}""")]
+    [InlineData("""{"kind":null,"text":"hi","reaction":"none"}""")]
+    [InlineData("""{"kind":"note","text":null,"reaction":"none"}""")]
+    [InlineData("""{"kind":"note","text":"hi","reaction":null}""")]
+    [InlineData("""{}""")]
+    public void Decrypt_rejects_a_payload_with_a_null_or_missing_field(string rawPayloadJson)
+    {
+        using var recipient = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
+        var envelope = CryptoFixture.EncryptRawPayloadFor(
+            recipient.ExportSubjectPublicKeyInfo(),
+            Encoding.UTF8.GetBytes(rawPayloadJson));
+
+        Assert.Throws<EnvelopeValidationException>(() =>
+            EnvelopeCrypto.Decrypt(envelope, recipient.ExportPkcs8PrivateKey()));
+    }
+
     [Fact]
     public async Task Desktop_key_is_reused_from_Dpapi_secret_store()
     {
