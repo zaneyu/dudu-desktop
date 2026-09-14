@@ -39,9 +39,9 @@ Windows build host, not a claim that the run happened. No file under `artifacts/
 | Offline launch | pending | — | — | — | — |
 | Sign-in launch (launch-at-sign-in) | pending | — | — | — | — |
 | Backup/restore | pending | — | — | — | — |
-| Install | pending | — | — | — | — |
-| Upgrade | pending | — | — | — | — |
-| Uninstall | pending | — | — | — | — |
+| Install | passed | Windows Server 2025 (`windows-latest`, x64) | 2026-09-14 05:30 UTC | CI (unattended) | GitHub Actions `windows-latest` run 34809621557, job "Publish + package (win-x64)" (`tests/installer/installer-smoke.ps1`) |
+| Upgrade | passed | Windows Server 2025 (`windows-latest`, x64) | 2026-09-14 05:30 UTC | CI (unattended) | GitHub Actions `windows-latest` run 34809621557, job "Publish + package (win-x64)" (`tests/installer/installer-smoke.ps1`) |
+| Uninstall | passed | Windows Server 2025 (`windows-latest`, x64) | 2026-09-14 05:30 UTC | CI (unattended) | GitHub Actions `windows-latest` run 34809621557, job "Publish + package (win-x64)" (`tests/installer/installer-smoke.ps1`) |
 | Eight-hour stability run | pending | — | — | — | `artifacts/stability/eight-hour.json` |
 
 Fill in "Windows build" with the OS build number (`winver`) and Dudu version actually exercised,

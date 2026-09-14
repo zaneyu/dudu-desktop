@@ -84,4 +84,11 @@ jobs:
       - name: Dudu.App.Tests
         if: always()
         run: dotnet test --project tests/Dudu.App.Tests/Dudu.App.Tests.csproj -c Release --no-build -- --long-running 60 --xunit-info
-        timeout-minutes: 10
+        timeout-minutes: 4
+      # Runs only when the suite above did not finish: one dotnet test per
+      # class, then per method inside any class that hangs, so the hung test
+      # is named in the log (xunit's --long-running never printed anything).
+      - name: Dudu.App.Tests (find hung tests)
+        if: always()
+        run: pwsh scripts/find-hung-tests.ps1 -Project tests/Dudu.App.Tests/Dudu.App.Tests.csproj -TimeoutSeconds 90
+        timeout-minutes: 25

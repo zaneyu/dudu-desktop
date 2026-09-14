@@ -180,7 +180,7 @@ public sealed class XamlContractTests
             ["LoveNotesPage.xaml"] = ["ViewModel.LocalNotes", "ViewModel.PendingRemoteNotes", "ViewModel.SaveLocalNoteCommand", "ViewModel.DeleteLocalNoteCommand", "ViewModel.ShowLocalNoteCommand", "ViewModel.SaveOpenedNoteCommand"],
             ["AppearancePage.xaml"] = ["ViewModel.SaveCommand", "ViewModel.SavePlacementCommand", "ViewModel.SaveShortcutCommand"],
             ["ConnectionPage.xaml"] = ["ViewModel.CreateCodeCommand", "ViewModel.RevokeSessionsCommand", "ViewModel.DeleteRemoteDeviceCommand"],
-            ["PrivacyDataPage.xaml"] = ["ViewModel.BackupCommand", "ViewModel.RestoreCommand", "ViewModel.DeleteLocalDataCommand", "ViewModel.DeleteRemoteDataCommand"],
+            ["PrivacyDataPage.xaml"] = ["ViewModel.BackupCommand", "ViewModel.RequestRestoreCommand", "ViewModel.RequestDeleteLocalDataCommand", "ViewModel.RequestDeleteRemoteDataCommand", "ViewModel.ConfirmCommand", "ViewModel.CancelConfirmationCommand"],
         };
         var expectedLabels = new[]
         {
