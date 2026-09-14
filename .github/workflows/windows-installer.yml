@@ -1,0 +1,71 @@
+name: Windows installer
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  installer:
+    name: Publish + package (win-x64)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Install Inno Setup 7
+        shell: pwsh
+        run: |
+          $url = "https://github.com/jrsoftware/issrc/releases/download/is-7_1_0/innosetup-7.1.0-x64.exe"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\innosetup.exe"
+          Start-Process "$env:RUNNER_TEMP\innosetup.exe" -ArgumentList "/VERYSILENT","/ALLUSERS","/SUPPRESSMSGBOXES","/NORESTART" -Wait
+          $iscc = Join-Path $env:ProgramFiles "Inno Setup 7\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe missing at $iscc" }
+          & $iscc /? | Select-Object -First 2
+
+      - name: Restore
+        run: dotnet restore DuduDesktop.slnx
+
+      - name: Publish and package
+        shell: pwsh
+        run: pwsh scripts/publish-windows.ps1 -Version 1.0.0
+
+      - name: Installer smoke test
+        shell: pwsh
+        run: pwsh tests/installer/installer-smoke.ps1 -Installer artifacts/DuduDesktop-1.0.0-win-x64-private.exe
+
+      - name: Checksum
+        shell: pwsh
+        run: |
+          $h = (Get-FileHash artifacts/DuduDesktop-1.0.0-win-x64-private.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$h  DuduDesktop-1.0.0-win-x64-private.exe" | Set-Content -NoNewline artifacts/SHA256SUMS.txt
+          Get-Content artifacts/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DuduDesktop-1.0.0-win-x64-private
+          path: |
+            artifacts/DuduDesktop-1.0.0-win-x64-private.exe
+            artifacts/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  tests:
+    name: Windows test suite (first-ever run)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - run: dotnet restore DuduDesktop.slnx
+      - run: dotnet build DuduDesktop.slnx -c Release --no-restore
+      - run: dotnet test DuduDesktop.slnx -c Release --no-build
