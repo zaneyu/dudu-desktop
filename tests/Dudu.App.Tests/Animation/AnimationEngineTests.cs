@@ -24,7 +24,9 @@ public sealed class AnimationEngineTests
     [Fact]
     public async Task Missing_animation_uses_fallback_idle_pose()
     {
-        using var fixture = AnimationFixture.Create([100], loop: "once", animationKey: "idle", packId: "fallback");
+        // Reduced motion holds the fallback pose for its semantic duration; nothing here
+        // advances the manual clock, so it must complete waits by itself.
+        using var fixture = AnimationFixture.Create([100], loop: "once", animationKey: "idle", packId: "fallback", immediateClock: true);
 
         await fixture.Engine.PlayAsync(TestPresentation("unknown"), AnimationOptions.ReducedMotion, TestContext.Current.CancellationToken);
 

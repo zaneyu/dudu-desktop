@@ -23,8 +23,8 @@ function Invoke-Filtered {
     param([string[]]$FilterArguments, [string]$Label)
 
     $arguments = @("test", "--project", $Project, "-c", "Release", "--no-build", "--") + $FilterArguments
-    $process = Start-Process dotnet -ArgumentList $arguments -PassThru -NoNewWindow `
-        -RedirectStandardOutput ([IO.Path]::Combine([IO.Path]::GetTempPath(), "hung-$([guid]::NewGuid().ToString('N')).log"))
+    $log = [IO.Path]::Combine([IO.Path]::GetTempPath(), "hung-$([guid]::NewGuid().ToString('N')).log")
+    $process = Start-Process dotnet -ArgumentList $arguments -PassThru -NoNewWindow -RedirectStandardOutput $log
     if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
         $process.Kill($true)
         Write-Host "HUNG  $Label (no exit within $TimeoutSeconds s)"
@@ -32,6 +32,10 @@ function Invoke-Filtered {
     }
     $status = if ($process.ExitCode -eq 0) { "ok  " } elseif ($process.ExitCode -eq 8) { "none" } else { "FAIL" }
     Write-Host "$status  $Label (exit $($process.ExitCode))"
+    if ($status -eq "FAIL") {
+        # The runner's own output is the only place the assertion message lives.
+        Get-Content $log | Where-Object { $_ -match '\S' } | ForEach-Object { Write-Host "      $_" }
+    }
     return $status.Trim()
 }
 
