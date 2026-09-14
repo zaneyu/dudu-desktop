@@ -198,6 +198,18 @@ describe("composer draft id", () => {
     expect(posted[1].messageId).not.toBe(posted[0].messageId);
   });
 
+  it("rejects an empty or whitespace-only note before encrypting or posting", async () => {
+    installFetch(() => {
+      throw new Error("An empty note must not reach the relay.");
+    });
+    const harness = buildComposer();
+    harness.elements.textArea.value = " \n  ";
+
+    harness.elements.form.dispatch("submit");
+
+    expect(harness.elements.sendStatus.textContent).toBe("write something first");
+  });
+
   it("reuses the message id for an identical retry that was not a 401", async () => {
     const posted: EncryptedEnvelopeV1[] = [];
     let status = 500;

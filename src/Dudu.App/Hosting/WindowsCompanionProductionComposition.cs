@@ -195,13 +195,26 @@ public static class WindowsCompanionProductionComposition
             // Saved placements are selected only after that identity is known.
             var initialPlacement = new PetPlacement("MISSING", 0.8, 0.8, 1);
             var pet = services.GetRequiredService<PetStateMachine>();
-            var manifestPath = Path.Combine(
-                AppContext.BaseDirectory,
-                "Assets",
-                "Packs",
-                "fallback",
-                "manifest.json");
-            var pack = await AssetManifestLoader.LoadAsync(manifestPath, cancellationToken);
+            var packsRoot = Path.Combine(AppContext.BaseDirectory, "Assets", "Packs");
+            var privateManifestPath = Path.Combine(packsRoot, "private-dudu", "manifest.json");
+            var fallbackManifestPath = Path.Combine(packsRoot, "fallback", "manifest.json");
+            var manifestPath = File.Exists(privateManifestPath)
+                ? privateManifestPath
+                : fallbackManifestPath;
+            AssetPack pack;
+            try
+            {
+                pack = await AssetManifestLoader.LoadAsync(manifestPath, cancellationToken);
+            }
+            catch (AssetManifestException) when (string.Equals(
+                manifestPath,
+                privateManifestPath,
+                StringComparison.OrdinalIgnoreCase))
+            {
+                // The private pack is optional for raw publish folders. If it is absent or
+                // damaged, keep the companion usable with the original neutral fallback.
+                pack = await AssetManifestLoader.LoadAsync(fallbackManifestPath, cancellationToken);
+            }
             var animation = pack.ResolveAnimation(
                 "idle",
                 DateOnly.FromDateTime(DateTime.Now),

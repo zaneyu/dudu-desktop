@@ -19,6 +19,7 @@ import {
 const MAX_TEXT_SCALAR_VALUES = MAXIMUM_TEXT_SCALAR_VALUES;
 const MAX_SCHEDULE_AHEAD_MS = MESSAGE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 const TOO_LONG_STATUS = "aiyo too long trim it abit";
+const EMPTY_TEXT_STATUS = "write something first";
 const RATE_LIMITED_STATUS = "wait wait try again ltr";
 const SEND_FAILED_STATUS = "aiyo couldnt send try again";
 const UNEXPECTED_ERROR_STATUS = "aiyo something broke try again";
@@ -159,6 +160,10 @@ export class MessageComposer {
     }
 
     const text = this.elements.textArea.value;
+    if (text.trim().length === 0) {
+      this.elements.sendStatus.textContent = EMPTY_TEXT_STATUS;
+      return;
+    }
     const payload: RemoteMessagePayloadV1 = { kind: "note", text, reaction: this.currentReaction() };
     const payloadBytes = new TextEncoder().encode(JSON.stringify(payload));
 
