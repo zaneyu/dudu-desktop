@@ -79,10 +79,37 @@ function New-StartupShortcutStandIn {
 }
 
 function Invoke-SelfTest {
-    & $exePath --self-test
-    if ($LASTEXITCODE -ne 0) {
-        throw "Installed application self-test failed."
+    # Dudu.App is a WinExe: the call operator returns immediately and never sets
+    # $LASTEXITCODE, so start it as a process and read its own exit code.
+    $process = Start-Process $exePath -ArgumentList "--self-test" -PassThru
+    if (-not $process.WaitForExit(120000)) {
+        $process.Kill()
+        Write-SelfTestDiagnostics
+        throw "Installed application self-test did not exit within 120 s."
     }
+    if ($process.ExitCode -ne 0) {
+        Write-SelfTestDiagnostics
+        throw "Installed application self-test failed with exit code $($process.ExitCode)."
+    }
+}
+
+function Write-SelfTestDiagnostics {
+    # self-test.log never contains note text or key material (SelfTestFileLogger).
+    $selfTestLog = Join-Path $dataRoot "logs\self-test.log"
+    if (Test-Path $selfTestLog) {
+        Write-Host "--- self-test.log ---"
+        Get-Content $selfTestLog | Write-Host
+    } else {
+        Write-Host "self-test.log was not written at '$selfTestLog'."
+    }
+    $since = (Get-Date).AddMinutes(-5)
+    Get-WinEvent -FilterHashtable @{ LogName = "Application"; StartTime = $since } -ErrorAction SilentlyContinue |
+        Where-Object { $_.ProviderName -in @(".NET Runtime", "Application Error", "Windows Error Reporting") } |
+        Select-Object -First 5 |
+        ForEach-Object {
+            Write-Host "--- $($_.ProviderName) $($_.TimeCreated) ---"
+            Write-Host $_.Message
+        }
 }
 
 # --- Phase 1: clean install ---
