@@ -10,6 +10,7 @@ import type { EncryptedEnvelopeV1 } from "../protocol/types.js";
 export interface QueuedMessageParams {
   id: string;
   deviceId: string;
+  nowIso: string;
   protocolVersion: number;
   createdUtc: string;
   deliverAfterUtc: string | null;
@@ -27,19 +28,48 @@ export interface QueuedMessageParams {
 }
 
 /**
- * Inserts the queued-ciphertext row and its status row atomically. Both inserts use
- * `ON CONFLICT DO NOTHING`: callers check `findMessageStatusOwner` first and only reach this
- * function on the "no existing status row" branch, so the conflict clause only guards against a
- * genuine race between that check and this insert, never papering over a real logic bug.
+ * Inserts the status row before the ciphertext row, atomically. The ciphertext insert is
+ * conditional on the status row belonging to this sender/device. This ordering matters because
+ * `message_status.id` is globally unique while `messages` has a per-device key: two devices
+ * racing to submit the same id must not leave an orphan ciphertext owned by the losing device.
+ * Returns true only when this call created the status row; callers use false to resolve a race as
+ * idempotent success for the same sender or 409 for a different sender.
  */
-export async function insertQueuedMessage(db: D1Database, params: QueuedMessageParams): Promise<void> {
-  await db.batch([
+export async function insertQueuedMessage(db: D1Database, params: QueuedMessageParams): Promise<boolean> {
+  const results = await db.batch([
+    db
+      .prepare(
+        `INSERT INTO message_status (id, sender_session_id, device_id, state, updated_utc, expires_utc)
+         SELECT ?1, ?2, ?3, 'queued', ?4, ?5
+         FROM sender_sessions s
+         JOIN devices d ON d.id = s.device_id
+         WHERE s.id = ?6
+           AND s.device_id = ?7
+           AND s.revoked_utc IS NULL
+           AND s.expires_utc > ?8
+           AND d.revoked_utc IS NULL
+         ON CONFLICT (id) DO NOTHING`,
+      )
+      .bind(
+        params.id,
+        params.senderSessionId,
+        params.deviceId,
+        params.createdUtc,
+        params.statusExpiresUtc,
+        params.senderSessionId,
+        params.deviceId,
+        params.nowIso,
+      ),
     db
       .prepare(
         `INSERT INTO messages
            (id, device_id, protocol_version, created_utc, deliver_after_utc, expires_utc,
             ephemeral_public_key, hkdf_salt, nonce, ciphertext)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10
+         WHERE EXISTS (
+           SELECT 1 FROM message_status
+           WHERE id = ?11 AND sender_session_id = ?12 AND device_id = ?13
+         )
          ON CONFLICT (device_id, id) DO NOTHING`,
       )
       .bind(
@@ -53,15 +83,12 @@ export async function insertQueuedMessage(db: D1Database, params: QueuedMessageP
         params.hkdfSalt,
         params.nonce,
         params.ciphertext,
+        params.id,
+        params.senderSessionId,
+        params.deviceId,
       ),
-    db
-      .prepare(
-        `INSERT INTO message_status (id, sender_session_id, device_id, state, updated_utc, expires_utc)
-         VALUES (?1, ?2, ?3, 'queued', ?4, ?5)
-         ON CONFLICT (id) DO NOTHING`,
-      )
-      .bind(params.id, params.senderSessionId, params.deviceId, params.createdUtc, params.statusExpiresUtc),
   ]);
+  return (results[0]?.meta.changes ?? 0) > 0;
 }
 
 export interface MessageStatusOwner {

@@ -61,8 +61,11 @@ export interface RedeemedPairing {
 
 /**
  * Consumes a pairing code and creates its sender session in one atomic `db.batch`, guarded by
- * `consumed_utc IS NULL AND expires_utc > nowIso`. If that guard does not hold (code unknown,
- * already consumed, or expired), nothing changes and this returns `null`.
+ * `consumed_utc IS NULL AND expires_utc > nowIso`. The winner writes its session id into the
+ * code row before the session insert; the insert is then guarded by that exact id. A timestamp
+ * alone is not a safe winner marker because two simultaneous redemptions can share the same
+ * millisecond. If the guard does not hold (code unknown, already consumed, or expired), nothing
+ * changes and this returns `null`.
  */
 export async function redeemPairingCode(
   db: D1Database,
@@ -78,15 +81,15 @@ export async function redeemPairingCode(
   const results = await db.batch([
     db
       .prepare(
-        `UPDATE pairing_codes SET consumed_utc = ?1
-         WHERE code_hash = ?2 AND consumed_utc IS NULL AND expires_utc > ?1`,
+        `UPDATE pairing_codes SET consumed_utc = ?1, consumed_session_id = ?2
+         WHERE code_hash = ?3 AND consumed_utc IS NULL AND expires_utc > ?1`,
       )
-      .bind(nowIso, codeHash),
+      .bind(nowIso, sessionId, codeHash),
     db
       .prepare(
         `INSERT INTO sender_sessions (id, device_id, token_hash, created_utc, expires_utc)
          SELECT ?1, device_id, ?2, ?3, ?4 FROM pairing_codes
-         WHERE code_hash = ?5 AND consumed_utc = ?3`,
+         WHERE code_hash = ?5 AND consumed_utc = ?3 AND consumed_session_id = ?1`,
       )
       .bind(sessionId, sessionTokenHash, nowIso, sessionExpiresUtc, codeHash),
     db
@@ -94,9 +97,9 @@ export async function redeemPairingCode(
         `SELECT d.id as device_id, d.public_key_spki as public_key_spki
          FROM pairing_codes pc
          JOIN devices d ON d.id = pc.device_id
-         WHERE pc.code_hash = ?1 AND pc.consumed_utc = ?2`,
+         WHERE pc.code_hash = ?1 AND pc.consumed_utc = ?2 AND pc.consumed_session_id = ?3`,
       )
-      .bind(codeHash, nowIso),
+      .bind(codeHash, nowIso, sessionId),
   ]);
   const selectResult = results[2];
   const row = selectResult.results?.[0] as { device_id: string; public_key_spki: string } | undefined;

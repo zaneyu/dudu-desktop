@@ -36,9 +36,9 @@ npm run dev            # or: npm exec wrangler dev
 ```
 
 `wrangler.jsonc` binds the D1 database as `DB` and reads migrations from
-`relay/migrations/` (`0001_identity.sql`, `0002_messages.sql`, applied in
-order). The local D1 database file lives under `.wrangler/` and is already
-git-ignored.
+`relay/migrations/` (`0001_identity.sql`, `0002_messages.sql`, and
+`0003_pairing_winner.sql`, applied in order). The local D1 database file lives
+under `.wrangler/` and is already git-ignored.
 
 ## 3. Relay: production Cloudflare setup
 

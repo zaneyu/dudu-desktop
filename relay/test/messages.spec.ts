@@ -148,6 +148,26 @@ describe("encrypted message queue", () => {
     expect(response.status).toBe(409);
   });
 
+  it("rejects the losing sender when the same message id is submitted concurrently", async () => {
+    const messageId = crypto.randomUUID();
+    const first = await pairedFixture();
+    const second = await pairedFixture();
+    const firstEnvelope = await validEnvelope({ messageId });
+    const secondEnvelope = await validEnvelope({ messageId });
+
+    const responses = await Promise.all([
+      first.sender.postMessage(firstEnvelope),
+      second.sender.postMessage(secondEnvelope),
+    ]);
+    const statuses = responses.map((response) => response.status).sort((a, b) => a - b);
+
+    expect(statuses).toEqual([202, 409]);
+    const storedRows = await env.DB.prepare("SELECT COUNT(*) AS count FROM messages WHERE id = ?1")
+      .bind(messageId)
+      .first<{ count: number }>();
+    expect(storedRows?.count).toBe(1);
+  });
+
   it("ack of an unknown message id is a 404; re-acking the same message is idempotent", async () => {
     const paired = await pairedFixtureWithMessage();
 

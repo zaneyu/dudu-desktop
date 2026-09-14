@@ -36,6 +36,20 @@ describe("device registration and pairing", () => {
     expect(second.status).toBe(410);
   });
 
+  it("allows only one session when the same pairing code is redeemed concurrently", async () => {
+    const { code, deviceId } = await createPairingCodeForTest({ ageSeconds: 0 });
+
+    const responses = await Promise.all([redeem(code), redeem(code)]);
+    expect(responses.map((response) => response.status).sort((a, b) => a - b)).toEqual([200, 410]);
+
+    const sessionCount = await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM sender_sessions WHERE device_id = ?1",
+    )
+      .bind(deviceId)
+      .first<{ count: number }>();
+    expect(sessionCount?.count).toBe(1);
+  });
+
   it("expires pairing codes after ten minutes", async () => {
     const { code } = await createPairingCodeForTest({ ageSeconds: 601 });
     expect((await redeem(code)).status).toBe(410);

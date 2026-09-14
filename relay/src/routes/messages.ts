@@ -72,10 +72,10 @@ export async function postMessage(request: Request, env: Env): Promise<Response>
     return badRequest();
   }
 
-  const now = new Date();
+  const validationNow = new Date();
   let envelope;
   try {
-    envelope = await validateIncomingEnvelope(body, now);
+    envelope = await validateIncomingEnvelope(body, validationNow);
   } catch (error) {
     if (error instanceof EnvelopeTooLargeError) {
       return payloadTooLarge();
@@ -89,6 +89,11 @@ export async function postMessage(request: Request, env: Env): Promise<Response>
     throw error;
   }
 
+  // Use a fresh timestamp for write-side expiry calculations and the active-session guard;
+  // validation can involve a non-trivial key import, and a session must not remain writable just
+  // because it was valid when JSON validation began.
+  const now = new Date();
+  const nowIso = now.toISOString();
   const existingOwner = await findMessageStatusOwner(env.DB, envelope.messageId);
   if (existingOwner) {
     if (existingOwner.senderSessionId !== session.id) {
@@ -106,9 +111,10 @@ export async function postMessage(request: Request, env: Env): Promise<Response>
   // when delivery becomes eligible. ackMessage uses the same 24-hour grace after actual delivery.
   const statusExpiresUtc = new Date(Math.max(createdMs, deliverAfterMs) + STATUS_GRACE_MS).toISOString();
 
-  await insertQueuedMessage(env.DB, {
+  const inserted = await insertQueuedMessage(env.DB, {
     id: envelope.messageId,
     deviceId: session.deviceId,
+    nowIso,
     protocolVersion: envelope.protocolVersion,
     createdUtc: envelope.createdUtc,
     deliverAfterUtc: envelope.deliverAfterUtc,
@@ -120,6 +126,22 @@ export async function postMessage(request: Request, env: Env): Promise<Response>
     senderSessionId: session.id,
     statusExpiresUtc,
   });
+
+  if (!inserted) {
+    // A concurrent request won the globally-unique message id. The pre-insert lookup above can
+    // legitimately miss that winner, so resolve ownership again after the atomic insert instead
+    // of reporting success for a ciphertext this request did not queue.
+    const ownerAfterRace = await findMessageStatusOwner(env.DB, envelope.messageId);
+    if (!ownerAfterRace) {
+      // The authenticated session/device may have been revoked by a concurrent delete or key
+      // rotation between the initial auth lookup and this atomic insert. No message was queued.
+      return unauthorized();
+    }
+    if (ownerAfterRace.senderSessionId !== session.id) {
+      return conflict();
+    }
+    return jsonResponse({ messageId: envelope.messageId, status: ownerAfterRace.state }, 200);
+  }
 
   const response: PostMessageResponse = { messageId: envelope.messageId, status: "queued" };
   return jsonResponse(response, 202);
