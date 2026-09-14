@@ -9,11 +9,8 @@
   "d1_databases": [
     {
       "binding": "DB",
-      // "dudu-relay-test" and the all-zero id below are placeholders for local dev/test.
-      // Task 24's release runbook documents creating the real production database and
-      // replacing both database_name and database_id with it.
-      "database_name": "dudu-relay-test",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_name": "dudu-relay",
+      "database_id": "41c4b668-3a11-400c-ad25-4e0cd833d423",
       "migrations_dir": "migrations"
     }
   ],
