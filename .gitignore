@@ -22,6 +22,11 @@ relay/dist/
 assets/raw/*
 !assets/raw/.gitkeep
 
+# Host-local scratch: downloaded toolchains, regenerated packages.lock.json
+# snapshots, and any generated output. Never committed.
+work/
+outputs/
+
 # Operating-system files
 .DS_Store
 Thumbs.db

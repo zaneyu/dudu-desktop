@@ -220,14 +220,15 @@ private channel.
   repository's projects all set `RestorePackagesWithLockFile=true`
   (`Directory.Build.props`), so every restore regenerates a
   `packages.lock.json` per project — but that file is RID-specific and
-  differs between the macOS authoring host and the Windows release host,
-  and is deliberately **not** committed in the live project directories.
-  Per-host snapshots are relocated to `work/generated-package-locks/`
-  instead (a pre-existing, git-tracked exception for four projects whose
-  lock content does not vary by RID; everything else under `work/` stays
-  untracked). `--locked-mode` would require the checked-in lock file to
-  exactly match the resolved graph on whichever host runs it, which this
-  per-host-regeneration setup cannot satisfy.
+  differs between the macOS authoring host and the Windows release host, so
+  **no `packages.lock.json` is ever committed**. Host-local snapshots live
+  under `work/generated-package-locks/`, which — like all of `work/` and
+  `outputs/` — is ignored by `.gitignore` and never tracked;
+  `Assert-NoTrackedGeneratedArtifacts` in `scripts/verify.ps1` fails the
+  release if any lock file, or anything under `work/` or `outputs/`, turns
+  up in the git index. `--locked-mode` would require the checked-in lock
+  file to exactly match the resolved graph on whichever host runs it, which
+  this per-host-regeneration setup cannot satisfy.
 - **`DUDU_RELAY_BASE_URL`** is the environment variable that points the
   desktop at a relay Worker (`src/Dudu.App/Hosting/WindowsCompanionProductionComposition.cs`,
   `ResolveRelayOptions()`). It is read at startup and must parse as an

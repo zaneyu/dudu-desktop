@@ -14,16 +14,16 @@
 
     Deviation from the original task brief: this script runs
     `dotnet restore DuduDesktop.slnx` WITHOUT `--locked-mode`. This repository
-    deliberately does not commit `packages.lock.json` files (Central Package
-    Management regenerates a lock file with a RID-specific entry whenever a
-    project is restored, and a file generated on the macOS authoring host
-    differs from one generated on the Windows release host). `--locked-mode`
-    requires the checked-in lock file to byte-for-byte match the resolved
-    graph, which would make this script fail on every clean checkout.
-    docs/release.md repeats this explanation so anyone rerunning the release
-    understands why the restore step is unlocked. See
-    work/generated-package-locks/ for the per-host lock snapshots that
-    *are* committed (a pre-existing exception, not new artifact output).
+    never commits `packages.lock.json` files (Central Package Management
+    regenerates a lock file with a RID-specific entry whenever a project is
+    restored, and a file generated on the macOS authoring host differs from
+    one generated on the Windows release host). `--locked-mode` requires the
+    checked-in lock file to byte-for-byte match the resolved graph, which
+    would make this script fail on every clean checkout. docs/release.md
+    repeats this explanation so anyone rerunning the release understands why
+    the restore step is unlocked. Assert-NoTrackedGeneratedArtifacts below
+    enforces that nothing generated — no lock file anywhere, nothing under
+    work/ or outputs/ — is ever tracked.
 
     Every check below is written so it can fail: this script is the
     acceptance contract for the release, not a status report.
@@ -36,7 +36,6 @@ $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $true
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-Push-Location $RepoRoot
 
 function Assert-NoTrackedRawAssets {
     <#
@@ -108,25 +107,39 @@ function Assert-RelayDepsInLockfile {
     }
 }
 
+function Assert-NoTrackedGeneratedArtifacts {
+    <#
+        Nothing generated may be tracked by git: no packages.lock.json
+        anywhere (every restore regenerates a RID-specific one, so a
+        committed copy is already wrong on the next host), and nothing under
+        work/ or outputs/, the two host-local scratch directories .gitignore
+        excludes. Both checks read git's index, so they fail even when the
+        working tree itself is clean. The parameters exist so
+        tests/scripts/verify.tests.ps1 can drive both outcomes without
+        staging real files; production callers pass nothing.
+    #>
+    param(
+        [string[]]$TrackedLockFiles = @(git ls-files '*packages.lock.json'),
+        [string[]]$TrackedScratchPaths = @(git ls-files work outputs)
+    )
+
+    $violations = @(@($TrackedLockFiles) + @($TrackedScratchPaths) |
+        Where-Object { $_ } |
+        Select-Object -Unique)
+    if ($violations) {
+        throw "Generated file(s) tracked by git (remove with ``git rm --cached``):`n$($violations -join "`n")"
+    }
+}
+
 function Assert-CleanWorkingTree {
     <#
         Nothing this script (or the build it verifies) touches may leave a
-        git working-tree change behind, except inside work/ or outputs/ —
-        the two directories this repository uses for host-local, never-
-        committed scratch state (regenerated packages.lock.json snapshots,
-        downloaded tools, etc.). Anything else — including an untracked
-        packages.lock.json left in a project directory — fails the release.
+        git working-tree change behind. work/ and outputs/ are ignored by
+        .gitignore, so `git status --porcelain` never lists them at all; an
+        untracked packages.lock.json left in a project directory does show
+        up here, and fails the release.
     #>
-    $status = git status --porcelain
-    $violations = $status | Where-Object {
-        $path = $_.Substring(3).Trim('"')
-        # A rename/copy entry reads "old/path -> new/path"; only the
-        # destination path is the one that still exists in the working tree.
-        if ($path -match " -> ") {
-            $path = ($path -split " -> ", 2)[1].Trim('"')
-        }
-        -not ($path.StartsWith("work/") -or $path.StartsWith("outputs/"))
-    }
+    $violations = git status --porcelain
     if ($violations) {
         throw "Git working tree has unexpected change(s):`n$($violations -join "`n")"
     }
@@ -152,6 +165,15 @@ function Write-Sha256Sums {
     Set-Content -Path $OutputPath -Value $lines
 }
 
+# Dot-source guard, matching scripts/run-performance-gates.ps1: dot-sourcing
+# this file (tests/scripts/verify.tests.ps1 does) must load the Assert-*
+# functions without running a release verification.
+# $MyInvocation.InvocationName is '.' only when dot-sourced.
+if ($MyInvocation.InvocationName -eq '.') {
+    return
+}
+
+Push-Location $RepoRoot
 try {
     Write-Host "== Toolchain versions ==" -ForegroundColor Cyan
     dotnet --version
@@ -191,6 +213,7 @@ try {
 
     Write-Host "== Private-use and working-tree invariants ==" -ForegroundColor Cyan
     Assert-NoTrackedRawAssets
+    Assert-NoTrackedGeneratedArtifacts
     Assert-ManifestsPrivate
     Assert-RelayDepsInLockfile
     Assert-CleanWorkingTree
