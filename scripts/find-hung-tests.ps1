@@ -62,7 +62,7 @@ foreach ($class in ($classes.Keys | Sort-Object)) {
 foreach ($class in $hung) {
     Write-Host "--- methods of $class ---"
     foreach ($method in $classes[$class]) {
-        Invoke-Filtered @("--filter-class", $class, "--filter-method", $method) "$class.$method" | Out-Null
+        Invoke-Filtered @("--filter-method", "$class.$method") "$class.$method" | Out-Null
     }
 }
 
