@@ -36,6 +36,24 @@ public sealed class RelayClientTests
     }
 
     [Fact]
+    public async Task Register_writes_device_id_last_so_partial_storage_does_not_look_registered()
+    {
+        var handler = new FakeHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.Created)
+        {
+            Content = JsonContent(
+                "{\"deviceId\":\"device-1\",\"desktopToken\":\"token-1\",\"pairingCode\":\"ABC123\",\"pairingCodeExpiresUtc\":\"2026-01-01T00:00:00.000Z\"}"),
+        });
+        var secretStore = new FailingSecretStore("relay-device-id-v1");
+        var client = new RelayClient(new HttpClient(handler), secretStore, new RelayOptions(BaseUrl));
+
+        await Assert.ThrowsAsync<IOException>(
+            () => client.RegisterAsync("public-key-spki", TestContext.Current.CancellationToken));
+
+        Assert.True(secretStore.Values.ContainsKey("relay-desktop-token-v1"));
+        Assert.False(secretStore.Values.ContainsKey("relay-device-id-v1"));
+    }
+
+    [Fact]
     public async Task Register_with_a_malformed_response_stores_nothing()
     {
         var handler = new FakeHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.Created)
@@ -93,6 +111,31 @@ public sealed class RelayClientTests
 
     private static StringContent JsonContent(string json) =>
         new(json, Encoding.UTF8, "application/json");
+
+    private sealed class FailingSecretStore(string failingKey) : ISecretStore
+    {
+        public Dictionary<string, byte[]> Values { get; } = new(StringComparer.Ordinal);
+
+        public Task SetAsync(string key, ReadOnlyMemory<byte> value, CancellationToken cancellationToken = default)
+        {
+            if (key == failingKey)
+            {
+                throw new IOException("simulated secret-store failure");
+            }
+
+            Values[key] = value.ToArray();
+            return Task.CompletedTask;
+        }
+
+        public Task<byte[]?> GetAsync(string key, CancellationToken cancellationToken = default) =>
+            Task.FromResult(Values.TryGetValue(key, out var value) ? value.ToArray() : null);
+
+        public Task DeleteAsync(string key, CancellationToken cancellationToken = default)
+        {
+            Values.Remove(key);
+            return Task.CompletedTask;
+        }
+    }
 
     /// <summary>A fake transport that records how many requests it served and answers with a
     /// caller-supplied response, never touching the network.</summary>

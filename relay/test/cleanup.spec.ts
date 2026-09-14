@@ -59,6 +59,25 @@ describe("hourly cleanup", () => {
     expect(statusResponse.status).toBe(404);
   });
 
+  it("keeps a scheduled queued status until after its delivery window", async () => {
+    const deliverAfterUtc = new Date(Date.now() + 29 * 24 * 60 * 60 * 1000).toISOString();
+    const paired = await pairedFixtureWithMessage({ deliverAfterUtc });
+
+    // A scheduled message must remain observable while it is waiting. This is deliberately past
+    // the old 24h-from-creation expiry and still before the scheduled delivery time.
+    await cleanupExpired(testEnv, new Date(Date.now() + 25 * 60 * 60 * 1000));
+
+    expect(await messageCiphertext(paired.messageId)).not.toBeNull();
+    const statusRow = await testEnv.DB.prepare(
+      "SELECT expires_utc FROM message_status WHERE id = ?1",
+    )
+      .bind(paired.messageId)
+      .first<{ expires_utc: string }>();
+    expect(statusRow).not.toBeNull();
+    expect(Date.parse(statusRow!.expires_utc)).toBeGreaterThan(Date.now() + 29 * 24 * 60 * 60 * 1000);
+    expect(await paired.sender.status(paired.messageId)).toEqual({ status: "queued" });
+  });
+
   it("deletes sender sessions revoked more than 24 hours ago", async () => {
     const paired = await pairedFixtureWithMessage();
     const revokedLongAgo = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();

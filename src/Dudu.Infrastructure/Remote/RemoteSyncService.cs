@@ -457,7 +457,11 @@ public sealed class RemoteSyncService : IAsyncDisposable
 
     private async Task EnsureRegisteredAsync(CancellationToken cancellationToken)
     {
-        if (await GetDeviceIdAsync(cancellationToken) is not null)
+        // Registration writes the token before the id, and the id is the completion marker.
+        // Check both anyway so an installation left by an older/partial build self-heals on the
+        // next startup instead of treating a device id without its bearer token as registered.
+        if (await HasSecretAsync(RelaySecretKeys.DeviceId, cancellationToken)
+            && await HasSecretAsync(RelaySecretKeys.DesktopToken, cancellationToken))
         {
             return;
         }
@@ -477,6 +481,18 @@ public sealed class RemoteSyncService : IAsyncDisposable
 
     private Task<byte[]?> GetDeviceIdAsync(CancellationToken cancellationToken) =>
         _secretStore.GetAsync(RelaySecretKeys.DeviceId, cancellationToken);
+
+    private async Task<bool> HasSecretAsync(string key, CancellationToken cancellationToken)
+    {
+        var value = await _secretStore.GetAsync(key, cancellationToken);
+        if (value is null)
+        {
+            return false;
+        }
+
+        CryptographicOperations.ZeroMemory(value);
+        return true;
+    }
 
     /// <summary>Builds the stored row for an envelope that already failed to decrypt. Returns
     /// null when even the Base64Url decode is impossible: that envelope cannot be persisted at

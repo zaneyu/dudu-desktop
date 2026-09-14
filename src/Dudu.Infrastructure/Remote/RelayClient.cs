@@ -54,10 +54,12 @@ public sealed class RelayClient : IRelayClient
 
         var body = await ReadAsync(response, RelayJsonContext.Default.RegisterDeviceResponseDto, cancellationToken);
 
-        await _secretStore.SetAsync(
-            RelaySecretKeys.DeviceId, Encoding.UTF8.GetBytes(body.DeviceId), cancellationToken);
+        // Write the token first and the device id last. The presence of the id is the
+        // registration-complete marker, so it must never be persisted before its credential.
         await _secretStore.SetAsync(
             RelaySecretKeys.DesktopToken, Encoding.UTF8.GetBytes(body.DesktopToken), cancellationToken);
+        await _secretStore.SetAsync(
+            RelaySecretKeys.DeviceId, Encoding.UTF8.GetBytes(body.DeviceId), cancellationToken);
 
         return new RelayRegistrationResult(
             body.DeviceId,

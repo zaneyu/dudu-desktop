@@ -46,6 +46,17 @@ public sealed class RemoteSyncServiceTests
     }
 
     [Fact]
+    public async Task Partial_registration_is_repaired_before_polling()
+    {
+        await using var fixture = await RemoteSyncFixture.WithPartialRegistrationAsync();
+
+        await fixture.Service.PollOnceAsync(fixture.CancellationToken);
+
+        Assert.Equal(1, fixture.Relay.RegisterCallCount);
+        Assert.Equal(1, fixture.Relay.PollCallCount);
+    }
+
+    [Fact]
     public async Task Ack_is_not_sent_when_local_transaction_fails()
     {
         await using var fixture = await RemoteSyncFixture.WithRepositoryFailureAsync();
@@ -200,6 +211,7 @@ public sealed class RemoteSyncServiceTests
             RecordingRemoteEnvelopeRepository recordingRepository,
             FakeRelayClient relay,
             FakeArrivalSink sink,
+            InMemorySecretStore secretStore,
             byte[] recipientPublicKeySpki,
             string messageId,
             RemoteSyncService service,
@@ -211,6 +223,7 @@ public sealed class RemoteSyncServiceTests
             Recording = recordingRepository;
             Relay = relay;
             Sink = sink;
+            SecretStore = secretStore;
             RecipientPublicKeySpki = recipientPublicKeySpki;
             MessageId = messageId;
             Service = service;
@@ -221,6 +234,7 @@ public sealed class RemoteSyncServiceTests
         public RecordingRemoteEnvelopeRepository Recording { get; }
         public FakeRelayClient Relay { get; }
         public FakeArrivalSink Sink { get; }
+        public InMemorySecretStore SecretStore { get; }
         public byte[] RecipientPublicKeySpki { get; }
         public string MessageId { get; }
         public RemoteSyncService Service { get; }
@@ -245,6 +259,13 @@ public sealed class RemoteSyncServiceTests
             var fixture = await CreateAsync(useThrowingRepository: true);
             var envelope = CryptoFixture.EncryptFor(fixture.RecipientPublicKeySpki, "hi there", fixture.MessageId);
             fixture.Relay.PollResult = [ToRelayEnvelope(envelope)];
+            return fixture;
+        }
+
+        public static async Task<RemoteSyncFixture> WithPartialRegistrationAsync()
+        {
+            var fixture = await CreateAsync();
+            fixture.SecretStore.Values[RelaySecretKeys.DeviceId] = Encoding.UTF8.GetBytes("partial-device");
             return fixture;
         }
 
@@ -351,7 +372,7 @@ public sealed class RemoteSyncServiceTests
                 (tag, exception) => reportedErrors.Add((tag, exception)));
 
             return new RemoteSyncFixture(
-                root, database, realRepository, recording, relay, sink, recipientPublicKeySpki, messageId, service,
+                root, database, realRepository, recording, relay, sink, secretStore, recipientPublicKeySpki, messageId, service,
                 reportedErrors);
         }
 
@@ -499,6 +520,7 @@ public sealed class RemoteSyncServiceTests
 
         public int RequestCount { get; private set; }
         public int PollCallCount { get; private set; }
+        public int RegisterCallCount { get; private set; }
         public IReadOnlyList<RelayEnvelope>? PollResult { get; set; }
         public Func<Exception>? PollException { get; set; }
         public List<string> AcknowledgedIds { get; } = [];
@@ -508,6 +530,7 @@ public sealed class RemoteSyncServiceTests
         public Task<RelayRegistrationResult> RegisterAsync(string publicKeySpki, CancellationToken cancellationToken)
         {
             RequestCount++;
+            RegisterCallCount++;
             return Task.FromResult(new RelayRegistrationResult(
                 "device-1", "token-1", "ABC123", DateTimeOffset.UtcNow.AddMinutes(10)));
         }

@@ -193,7 +193,10 @@ public sealed class PrivacyBoundaryTests
             //    unlike round 1's key-load failure, which threw before any PrivacySafeLog call
             //    ever ran and so could never have caught a leak.
             var keySecretStore = new InMemorySecretStore();
+            // Both registration markers are required; seeding only the id would correctly cause
+            // RemoteSyncService to repair a partial registration before polling.
             keySecretStore.Values[RelaySecretKeys.DeviceId] = Encoding.UTF8.GetBytes("device-already-registered");
+            keySecretStore.Values[RelaySecretKeys.DesktopToken] = Encoding.UTF8.GetBytes("token-already-registered");
             var keyService = new DesktopKeyService(keySecretStore);
             var keyMaterial = await keyService.GetOrCreateAsync(CancellationToken.None);
             var storedPrivateKeyBytes = keySecretStore.Values[DesktopKeyService.SecretStoreKey];
@@ -416,14 +419,14 @@ public sealed class PrivacyBoundaryTests
     }
 
     /// <summary>An <see cref="IRelayClient"/> double for the decrypt-failed test: registration is
-    /// skipped because the device id is already seeded, so PollAsync returns the one
+    /// skipped because both registration markers are seeded, so PollAsync returns the one
     /// caller-supplied (tampered) envelope and AcknowledgeAsync is a no-op — ProcessEnvelopeAsync
     /// acknowledges every envelope it processes, decrypted or not. Every other member must never
     /// run, so it throws.</summary>
     private sealed class SingleEnvelopeRelayClient(RelayEnvelope envelope) : IRelayClient
     {
         public Task<RelayRegistrationResult> RegisterAsync(string publicKeySpki, CancellationToken cancellationToken) =>
-            throw new InvalidOperationException("RegisterAsync must not run: the device id is already seeded.");
+            throw new InvalidOperationException("RegisterAsync must not run: both registration markers are seeded.");
 
         public Task<RelayDeviceInfo> GetDeviceAsync(CancellationToken cancellationToken) =>
             throw new InvalidOperationException("GetDeviceAsync must not run in this test.");
