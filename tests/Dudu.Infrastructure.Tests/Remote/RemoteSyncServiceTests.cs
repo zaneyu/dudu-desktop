@@ -356,7 +356,9 @@ public sealed class RemoteSyncServiceTests
                 var path = Options.DatabasePath + suffix;
                 if (File.Exists(path))
                 {
-                    text.Append(Encoding.Latin1.GetString(File.ReadAllBytes(path)));
+                    using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                    using var reader = new StreamReader(stream, Encoding.Latin1);
+                    text.Append(reader.ReadToEnd());
                 }
             }
 

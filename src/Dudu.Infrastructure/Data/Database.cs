@@ -59,11 +59,16 @@ public sealed class Database : IAsyncDisposable, IDisposable
         return await OpenConnectionAsync(cancellationToken);
     }
 
-    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
-
-    public void Dispose()
+    public ValueTask DisposeAsync()
     {
+        Dispose();
+        return ValueTask.CompletedTask;
     }
+
+    // Microsoft.Data.Sqlite pools connections per connection string and keeps the
+    // database file open until the pool is cleared; on Windows that blocks deleting
+    // or moving the data root after the owning host has shut down.
+    public void Dispose() => SqliteConnection.ClearAllPools();
 
     internal static string ConnectionString(DatabaseOptions options) =>
         new SqliteConnectionStringBuilder

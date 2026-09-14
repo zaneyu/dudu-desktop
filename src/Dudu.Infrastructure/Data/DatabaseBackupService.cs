@@ -139,6 +139,9 @@ public sealed class DatabaseBackupService
                 {
                     DataSource = backupPath,
                     Mode = SqliteOpenMode.ReadOnly,
+                    // Pooled connections keep the backup file open after Dispose; on Windows that
+                    // blocks the File.Delete in RotateAsync and LocalDataMaintenanceService.
+                    Pooling = false,
                 }.ToString());
             await connection.OpenAsync(cancellationToken);
             await using var command = connection.CreateCommand();

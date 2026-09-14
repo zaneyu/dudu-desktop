@@ -70,14 +70,18 @@ jobs:
       - run: dotnet build DuduDesktop.slnx -c Release --no-restore
       # One step per project with its own timeout so a hang names its project
       # and still leaves the other suites' results visible.
+      # Every step runs even after an earlier one fails (if: always()) so one
+      # red suite never hides another; the job itself still fails.
+      # --long-running names any test still running after 60 s in the log,
+      # which is the only way a hang identifies itself under a step timeout.
       - name: Dudu.Core.Tests
-        run: dotnet test --project tests/Dudu.Core.Tests/Dudu.Core.Tests.csproj -c Release --no-build
+        run: dotnet test --project tests/Dudu.Core.Tests/Dudu.Core.Tests.csproj -c Release --no-build -- --long-running 60 --xunit-info
         timeout-minutes: 10
-        continue-on-error: true
       - name: Dudu.Infrastructure.Tests
-        run: dotnet test --project tests/Dudu.Infrastructure.Tests/Dudu.Infrastructure.Tests.csproj -c Release --no-build
+        if: always()
+        run: dotnet test --project tests/Dudu.Infrastructure.Tests/Dudu.Infrastructure.Tests.csproj -c Release --no-build -- --long-running 60 --xunit-info
         timeout-minutes: 10
-        continue-on-error: true
       - name: Dudu.App.Tests
-        run: dotnet test --project tests/Dudu.App.Tests/Dudu.App.Tests.csproj -c Release --no-build
-        timeout-minutes: 15
+        if: always()
+        run: dotnet test --project tests/Dudu.App.Tests/Dudu.App.Tests.csproj -c Release --no-build -- --long-running 60 --xunit-info
+        timeout-minutes: 10

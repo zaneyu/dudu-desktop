@@ -16,7 +16,7 @@ public sealed class XamlContractTests
 
         Assert.Contains("SmallChange=\"0.1\"", onboarding);
         Assert.DoesNotContain("StepFrequency=", onboarding);
-        Assert.Contains("Foreground=\"{ThemeResource PrimaryButtonForegroundBrush}\"", controls);
+        Assert.Contains("<Setter Property=\"Foreground\" Value=\"{ThemeResource PrimaryButtonForegroundBrush}\" />", controls);
         Assert.Contains("SystemColorHighlightTextColor", colors);
         Assert.Contains("private StackPanel StartupRecoveryPanel", stubs);
         Assert.Contains("private TextBlock StartupRecoveryMessage", stubs);
@@ -100,7 +100,7 @@ public sealed class XamlContractTests
             }
             foreach (Match control in Regex.Matches(
                 xaml,
-                @"<(Button|CheckBox|ComboBox|Slider|TextBox|NumberBox|ListView|ItemsControl)\b[^>]*>",
+                @"<(Button|CheckBox|ComboBox|Slider|TextBox|NumberBox|ListView|ItemsControl)(?=[\s/>])[^>]*>",
                 RegexOptions.Singleline))
             {
                 Assert.Contains("AutomationProperties.AutomationId=\"", control.Value);
@@ -193,7 +193,7 @@ public sealed class XamlContractTests
         foreach (var (name, page) in pages)
         {
             foreach (var binding in expectedBindings[name]) Assert.Contains(binding, page);
-            foreach (Match control in Regex.Matches(page, "<(Button|CheckBox|ComboBox|ListView|NumberBox|Slider|TextBox|ItemsControl)\\b"))
+            foreach (Match control in Regex.Matches(page, "<(Button|CheckBox|ComboBox|ListView|NumberBox|Slider|TextBox|ItemsControl)(?=[\\s/>])"))
             {
                 var start = control.Index;
                 var end = page.IndexOf('>', start);

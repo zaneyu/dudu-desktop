@@ -548,6 +548,7 @@ public sealed class DatabaseTests
         }
         finally
         {
+            SqliteConnection.ClearAllPools();
             Directory.Delete(root, recursive: true);
         }
     }

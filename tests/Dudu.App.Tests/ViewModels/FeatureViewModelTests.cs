@@ -83,7 +83,8 @@ public sealed class FeatureViewModelTests
         await viewModel.ConfirmAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(PrivacyConfirmationAction.Restore, viewModel.PendingConfirmation);
-        Assert.Contains("restore failed", viewModel.ErrorMessage);
+        Assert.Equal("cannot finish that try again", viewModel.ErrorMessage);
+        Assert.DoesNotContain("restore failed", viewModel.ErrorMessage);
     }
 
     [Fact]
@@ -471,7 +472,9 @@ public sealed class FeatureViewModelTests
 
         await viewModel.EndFocusAsync(TestContext.Current.CancellationToken);
 
-        Assert.Contains("pet.focus-end", fixture.Events);
+        Assert.Contains(
+            fixture.OneShotPresentations,
+            presentation => presentation.Event is PetEvent.FocusEnded && presentation.DismissalId == "focus-end");
         Assert.Equal(PetState.Idle, fixture.Context.Pet.Current.State);
         Assert.Equal(FocusStatus.EndedEarly, viewModel.ActiveFocus!.Status);
     }
