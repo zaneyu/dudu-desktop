@@ -50,22 +50,37 @@ export async function pairWithCode(code: string): Promise<StoredDevice> {
 }
 
 /**
- * On load, if a device is cached locally, confirms the session is still live. Clears the cache
- * and returns null on a 401; returns null with the cache intact when nothing is stored or the
- * relay could not be reached (leaves the door open for the caller to retry rather than forcing a
- * fresh pairing over a transient failure).
+ * The outcome of confirming a cached pairing: still good, gone, or -- the case review I6 added --
+ * still live but answering with a different public key than the one pinned at pairing.
  */
-export async function verifyStoredSession(): Promise<StoredDevice | null> {
+export type StoredSessionState =
+  | { state: "paired"; device: StoredDevice }
+  | { state: "unpaired" }
+  | { state: "key-changed" };
+
+/**
+ * On load, if a device is cached locally, confirms the session is still live AND that the relay
+ * still reports the very public key this browser saw when it paired (trust on first use). A 401
+ * clears the cache and reports `unpaired`; a changed key clears it and reports `key-changed`, for
+ * the caller to show as a visible warning -- silently adopting the new key would let a relay that
+ * swapped in its own key read every note from then on. Throws (cache intact) when the relay could
+ * not be reached at all, so a transient failure never forces a fresh pairing.
+ */
+export async function verifyStoredSession(): Promise<StoredSessionState> {
   const stored = loadStoredDevice();
   if (!stored) {
-    return null;
+    return { state: "unpaired" };
   }
   const current = await getSenderDevice();
   if (!current) {
     clearStoredDevice();
-    return null;
+    return { state: "unpaired" };
   }
-  return { deviceId: stored.deviceId, publicKey: current.publicKey };
+  if (current.publicKey !== stored.publicKey) {
+    clearStoredDevice();
+    return { state: "key-changed" };
+  }
+  return { state: "paired", device: { deviceId: stored.deviceId, publicKey: stored.publicKey } };
 }
 
 export async function disconnect(): Promise<void> {

@@ -1,5 +1,5 @@
 import type { Env } from "../env.js";
-import { internalError, methodNotAllowed, notFound } from "./responses.js";
+import { badRequest, internalError, methodNotAllowed, notFound } from "./responses.js";
 
 export type RouteHandler = (
   request: Request,
@@ -42,10 +42,16 @@ export class Router {
     if (!matchingMethod) {
       return methodNotAllowed();
     }
-    const params = extractParams(matchingMethod.segments, requestSegments);
     try {
+      // Inside the try on purpose (review M1): decodeURIComponent throws URIError on a malformed
+      // percent-escape, which is a client mistake and must read as 400, not as a 500 from an
+      // exception escaping the router entirely.
+      const params = extractParams(matchingMethod.segments, requestSegments);
       return await matchingMethod.handler(request, env, ctx, params);
-    } catch {
+    } catch (error) {
+      if (error instanceof URIError) {
+        return badRequest();
+      }
       // Deliberately logs no detail: a handler's thrown error could, in principle, carry request
       // context, and no log line may contain envelope fields, tokens, or cookies.
       console.error("Unhandled error while handling a request.");

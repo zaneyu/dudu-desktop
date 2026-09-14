@@ -18,7 +18,7 @@ export default defineConfig({
         test: {
           name: "node",
           environment: "node",
-          include: ["test/crypto.spec.ts"],
+          include: ["test/crypto.spec.ts", "test/sender.spec.ts"],
         },
       },
       {
@@ -39,7 +39,7 @@ export default defineConfig({
         test: {
           name: "workers",
           include: ["test/**/*.spec.ts"],
-          exclude: ["test/crypto.spec.ts"],
+          exclude: ["test/crypto.spec.ts", "test/sender.spec.ts"],
           setupFiles: ["./test/apply-migrations.ts"],
         },
       },

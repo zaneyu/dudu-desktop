@@ -1,6 +1,7 @@
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { createRecipientForTest } from "../sender-src/crypto.js";
+import { MAXIMUM_PAGE_BYTES } from "../src/db/messages.js";
 import { MAXIMUM_CIPHERTEXT_LENGTH } from "../src/protocol/types.js";
 import { bytesToBase64Url, sha256HexOfText } from "../src/security/tokens.js";
 import {
@@ -46,6 +47,56 @@ describe("encrypted message queue", () => {
   it("does not return a scheduled envelope early", async () => {
     const paired = await pairedFixtureWithMessage({ deliverAfterUtc: addMinutes(now(), 5) });
     expect(await paired.desktop.poll()).toEqual([]);
+  });
+
+  it("bounds one poll page by serialized bytes, and returns the remainder after the ack", async () => {
+    // Review C1: the desktop rejects any relay response over 64 KiB, and twenty envelopes at the
+    // maximum 6144-byte ciphertext are ~168 KiB -- so a full row-capped page was unreadable, and
+    // because an unread page is never acked the queue stalled there permanently.
+    const paired = await pairedFixture();
+    const maximumCiphertext = bytesToBase64Url(crypto.getRandomValues(new Uint8Array(MAXIMUM_CIPHERTEXT_LENGTH)));
+    const queuedIds: string[] = [];
+    for (let index = 0; index < 20; index += 1) {
+      const messageId = crypto.randomUUID();
+      const envelope = await validEnvelope({
+        messageId,
+        createdUtc: new Date(now().getTime() - (20 - index) * 1000).toISOString(),
+      });
+      const response = await paired.sender.postMessage({ ...envelope, ciphertext: maximumCiphertext });
+      expect(response.status).toBe(202);
+      queuedIds.push(messageId);
+    }
+
+    const firstPage = await paired.desktop.poll();
+
+    expect(firstPage.length).toBeGreaterThan(0);
+    expect(firstPage.length).toBeLessThan(queuedIds.length);
+    expect(new TextEncoder().encode(JSON.stringify({ messages: firstPage })).length).toBeLessThanOrEqual(
+      MAXIMUM_PAGE_BYTES,
+    );
+    expect(firstPage.map((envelope) => envelope.messageId)).toEqual(queuedIds.slice(0, firstPage.length));
+
+    for (const envelope of firstPage) {
+      expect((await paired.desktop.ack(envelope.messageId)).status).toBe(204);
+    }
+    const secondPage = await paired.desktop.poll();
+
+    expect(secondPage.length).toBeGreaterThan(0);
+    expect(secondPage.map((envelope) => envelope.messageId)).toEqual(
+      queuedIds.slice(firstPage.length, firstPage.length + secondPage.length),
+    );
+  });
+
+  it("still returns a single envelope that alone exceeds the page byte budget", async () => {
+    // The budget must never starve the queue: one envelope always comes back, whatever its size.
+    const paired = await pairedFixture();
+    const maximumCiphertext = bytesToBase64Url(crypto.getRandomValues(new Uint8Array(MAXIMUM_CIPHERTEXT_LENGTH)));
+    const messageId = crypto.randomUUID();
+    const envelope = await validEnvelope({ messageId });
+
+    expect((await paired.sender.postMessage({ ...envelope, ciphertext: maximumCiphertext })).status).toBe(202);
+
+    expect((await paired.desktop.poll()).map((received) => received.messageId)).toEqual([messageId]);
   });
 
   // --- Additional coverage for the rest of the controller's rulings. ---
@@ -166,6 +217,14 @@ describe("encrypted message queue", () => {
 
     const messages = await paired.desktop.poll();
     expect(messages).toHaveLength(20);
+  });
+
+  it("answers a malformed percent-escape in a path parameter with 400, not 500", async () => {
+    // Review M1: extractParams ran before the router's try, so decodeURIComponent's URIError
+    // escaped as an unhandled exception and the client saw a 500 for a client-side mistake.
+    const response = await fetchWorker("/v1/messages/%ZZ/ack", { method: "POST" });
+
+    expect(response.status).toBe(400);
   });
 
   it("DELETE /v1/devices/current revokes the device and deletes its queued messages", async () => {

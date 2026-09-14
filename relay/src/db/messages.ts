@@ -144,8 +144,23 @@ function toEnvelope(row: MessageRow): EncryptedEnvelopeV1 {
 
 const MAXIMUM_ELIGIBLE_MESSAGES = 20;
 
-/** The up-to-twenty oldest eligible (not scheduled in the future) envelopes for one device, in
- * delivery then creation order — byte-for-byte what was submitted, never re-derived. */
+/**
+ * The serialized-byte budget for one poll page — 48 KiB, comfortably inside the desktop's 64 KiB
+ * hard response cap (review C1: twenty maximum-size envelopes are ~168 KiB, which the desktop
+ * refuses to read, and an unread page is never acked, so the queue stalled there forever). The
+ * row count above stays as a secondary cap for the ordinary small-envelope case.
+ */
+export const MAXIMUM_PAGE_BYTES = 49_152;
+
+/**
+ * The oldest eligible (not scheduled in the future) envelopes for one device, in delivery then
+ * creation order — byte-for-byte what was submitted, never re-derived. The page stops at
+ * whichever comes first: {@link MAXIMUM_ELIGIBLE_MESSAGES} rows, or the next envelope not fitting
+ * in {@link MAXIMUM_PAGE_BYTES}. The first eligible envelope is always returned even if it alone
+ * exceeds the budget (at the 6144-byte ciphertext maximum a single envelope is ~8.6 KB, so this
+ * never actually happens today) — a page that can starve is worse than a page that is slightly
+ * over budget. Whatever does not fit is returned by the next poll, once these are acked.
+ */
 export async function listEligibleMessages(
   db: D1Database,
   deviceId: string,
@@ -164,7 +179,22 @@ export async function listEligibleMessages(
     )
     .bind(deviceId, nowIso, MAXIMUM_ELIGIBLE_MESSAGES)
     .all<MessageRow>();
-  return results.map(toEnvelope);
+
+  // Measured against the same JSON the route actually sends -- `{"messages":[...]}` -- so the
+  // budget covers the wrapper and the separators, not just the envelopes themselves.
+  const encoder = new TextEncoder();
+  const page: EncryptedEnvelopeV1[] = [];
+  let pageBytes = encoder.encode(`{"messages":[]}`).length;
+  for (const row of results) {
+    const envelope = toEnvelope(row);
+    const envelopeBytes = encoder.encode(JSON.stringify(envelope)).length + (page.length > 0 ? 1 : 0);
+    if (page.length > 0 && pageBytes + envelopeBytes > MAXIMUM_PAGE_BYTES) {
+      break;
+    }
+    page.push(envelope);
+    pageBytes += envelopeBytes;
+  }
+  return page;
 }
 
 export type AckResult = "not_found" | "ok";

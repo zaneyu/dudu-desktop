@@ -163,6 +163,9 @@ export class MessageComposer {
     const payloadBytes = new TextEncoder().encode(JSON.stringify(payload));
 
     if (payloadBytes.byteLength > MAXIMUM_PAYLOAD_UTF8_BYTES) {
+      // Review M4: this early return is an exit path like any other, so the plaintext buffer is
+      // zeroed here too rather than left for the garbage collector.
+      zeroPayloadBytes(payloadBytes);
       this.elements.sendStatus.textContent = TOO_LONG_STATUS;
       return;
     }
@@ -198,6 +201,10 @@ export class MessageComposer {
       this.elements.sendStatus.textContent = "Queued securely";
     } catch (error) {
       if (error instanceof ApiUnauthorizedError) {
+        // Review I5: the session this id was minted under is gone. Keeping it would make the
+        // first send after re-pairing collide with the relay's (sender, messageId) dedup -- a
+        // 409 for a note the new session never sent -- so the draft starts over with a fresh id.
+        this.draftMessageId = null;
         this.callbacks.onUnauthorized();
         return;
       }

@@ -8,6 +8,9 @@ import { disconnect, pairWithCode, verifyStoredSession, type StoredDevice } from
 import { clearRecent, StatusTracker } from "./status.js";
 
 const SESSION_LOST_MESSAGE = "phone disconnected pair again";
+// Review I6: the pinned key no longer matches what the relay reports. Deliberately blunt --
+// this is the one case where pairing again is not just housekeeping.
+const KEY_CHANGED_MESSAGE = "ur dudu's key changed, pair again pls";
 
 function requireElement<T extends HTMLElement>(id: string): T {
   const element = document.getElementById(id);
@@ -86,9 +89,13 @@ async function handleDisconnect(): Promise<void> {
 
 async function bootstrap(): Promise<void> {
   try {
-    const device = await verifyStoredSession();
-    if (device) {
-      showPaired(device);
+    const verified = await verifyStoredSession();
+    if (verified.state === "paired") {
+      showPaired(verified.device);
+      return;
+    }
+    if (verified.state === "key-changed") {
+      showUnpaired(KEY_CHANGED_MESSAGE);
       return;
     }
   } catch {
