@@ -151,6 +151,198 @@ artifacts/SHA256SUMS.txt
 
 Do not commit or publicly upload either file.
 
+### Exact Mac rebuild procedure
+
+This is the procedure for rebuilding from the macOS authoring host. It is
+important to understand what “build” means on Mac:
+
+- macOS can run the relay tests and compile Windows-targeted .NET sources in a
+  packaging-disabled stub mode.
+- macOS cannot run WinUI, Windows App SDK's real XAML compiler/runtime path,
+  DPAPI, Inno Setup, the Windows installer, or the real Windows EXE.
+- Therefore a Mac cannot locally produce a releasable installer. The releasable
+  EXE must come from the green Windows GitHub Actions artifact.
+- Do not run `scripts/verify.ps1`, `scripts/publish-windows.ps1`, or a plain
+  `dotnet publish` on Mac and call the output a release build. Those commands
+  either require Windows-only tooling or produce output that has not passed the
+  Windows build/package gate.
+
+#### 1. Start in the repository and select the vendored tools
+
+Use the repository's toolchain under `work/`, not an arbitrary system .NET or
+PowerShell installation:
+
+```zsh
+export DUDU_REPO="$(git rev-parse --show-toplevel)"
+cd "$DUDU_REPO"
+export DUDU_DOTNET="$DUDU_REPO/work/dotnet-sdk/dotnet"
+export DUDU_PWSH="$DUDU_REPO/work/tools/pwsh/pwsh"
+
+test -x "$DUDU_DOTNET" || { echo "missing vendored dotnet: $DUDU_DOTNET" >&2; exit 1; }
+"$DUDU_DOTNET" --version
+node --version
+npm --version
+```
+
+The expected .NET version is `10.0.112`. If `work/dotnet-sdk/dotnet` is
+missing, stop and install/restore the repository's documented toolchain; do
+not silently substitute another SDK for a release investigation. The vendored
+PowerShell path is optional for the checks below and is not a Windows EXE
+builder.
+
+#### 2. Run the Mac-safe relay checks
+
+Install relay dependencies, typecheck, run the Vitest suite, and run the
+browser end-to-end suite:
+
+```zsh
+cd "$DUDU_REPO/relay"
+npm ci
+npm run typecheck
+DUDU_DOTNET="$DUDU_DOTNET" npm test -- --run
+npm run test:e2e
+cd "$DUDU_REPO"
+```
+
+The `DUDU_DOTNET` assignment is required because the relay's C# crypto
+interop tests spawn `dotnet`. Without it, a Mac with no system `dotnet` fails
+with `spawn dotnet ENOENT` even though the vendored SDK exists.
+
+#### 3. Compile the Windows projects in Mac stub mode
+
+First restore the solution with the vendored SDK:
+
+```zsh
+cd "$DUDU_REPO"
+"$DUDU_DOTNET" restore DuduDesktop.slnx
+```
+
+Then use these exact flags for Windows-targeted projects. The final four
+flags disable the Windows-only XAML/page discovery steps that cannot execute
+on macOS; omitting them causes misleading XAML compiler failures.
+
+```zsh
+export DUDU_MAC_STUB_FLAGS=(
+  -c Release
+  --no-restore
+  -p:RuntimeIdentifier=win-x64
+  -p:PlatformTarget=x64
+  -p:WindowsAppSDKSelfContained=false
+  -p:WindowsPackageType=None
+  -p:AppxGeneratePriEnabled=false
+  -p:GenerateAppInstallerFile=false
+  -p:AppxPackageSigningEnabled=false
+  -p:EnableCoreMrtTooling=false
+  -p:ExpandPriResources=false
+  -p:EnableDefaultApplicationDefinition=false
+  -p:EnableDefaultPageItems=false
+)
+
+"$DUDU_DOTNET" build src/Dudu.App/Dudu.App.csproj \
+  "${DUDU_MAC_STUB_FLAGS[@]}"
+"$DUDU_DOTNET" build tests/Dudu.App.Tests/Dudu.App.Tests.csproj \
+  "${DUDU_MAC_STUB_FLAGS[@]}"
+"$DUDU_DOTNET" build tests/Dudu.UiTests/Dudu.UiTests.csproj \
+  "${DUDU_MAC_STUB_FLAGS[@]}"
+"$DUDU_DOTNET" build tests/Dudu.WindowsHarness/Dudu.WindowsHarness.csproj \
+  "${DUDU_MAC_STUB_FLAGS[@]}"
+```
+
+Also run the host-runnable Core tests and the Infrastructure xUnit executable:
+
+```zsh
+"$DUDU_DOTNET" build tests/Dudu.Infrastructure.Tests/Dudu.Infrastructure.Tests.csproj -c Release
+"$DUDU_DOTNET" build tests/Dudu.Core.Tests/Dudu.Core.Tests.csproj -c Release
+
+"$DUDU_REPO/tests/Dudu.Infrastructure.Tests/bin/Release/net10.0-windows10.0.26100.0/Dudu.Infrastructure.Tests" \
+  -noLogo -noColor -longRunning 60
+"$DUDU_REPO/tests/Dudu.Core.Tests/bin/Release/net10.0/Dudu.Core.Tests" \
+  -noLogo -noColor -longRunning 60
+```
+
+The generated xUnit executables are the reliable Mac fallback when
+`dotnet test` reports zero tests for a Windows-targeted project under
+Microsoft Testing Platform. A zero-test result is not a passing test result.
+The Infrastructure run normally has a small expected skip count for DPAPI and
+the optional live relay test; it must have zero failures.
+
+If a RID-specific restore fails with `NETSDK1047`, restore that exact project
+for `win-x64`, then keep the generated lock file out of the source tree:
+
+```zsh
+"$DUDU_DOTNET" restore tests/Dudu.App.Tests/Dudu.App.Tests.csproj -r win-x64
+find "$DUDU_REPO" -name packages.lock.json -print
+```
+
+Move any generated `packages.lock.json` into the ignored
+`work/generated-package-locks/` scratch area before continuing. Never commit
+one. If Core/Infrastructure tests then fail with stale assembly or file-load
+errors after the RID builds, remove only the exact `bin/` and `obj/` directories
+for `src/Dudu.Core`, `src/Dudu.Infrastructure`, `tests/Dudu.Core.Tests`, and
+`tests/Dudu.Infrastructure.Tests`, rebuild those projects, and rerun the direct
+test executables.
+
+#### 4. Trigger the real Windows rebuild from Mac
+
+If the code is already on `main` and you only need a fresh installer, trigger
+the workflow manually:
+
+```zsh
+cd "$DUDU_REPO"
+gh workflow run windows-installer.yml --ref main
+```
+
+If code changed, inspect the diff, commit the intended files, and push the
+commit to `main`; the push triggers the same workflow. Do not push generated
+files or private assets. Then identify the new run and wait for both jobs:
+
+```zsh
+gh run list --workflow windows-installer.yml --limit 5 \
+  --json databaseId,headSha,status,conclusion,url
+gh run watch <run-id> --interval 10 --exit-status
+```
+
+Do not download an artifact from a queued, failed, or stale run. The run must
+show successful `Windows test suite (first-ever run)` and `Publish + package
+(win-x64)` jobs. The package job must include a successful installer smoke test
+and checksum step.
+
+#### 5. Download, verify, and promote exactly one EXE
+
+Download into a temporary directory, compare the published checksum with a
+fresh local hash, and only then replace the canonical ignored artifact:
+
+```zsh
+cd "$DUDU_REPO"
+export DUDU_RELEASE_TMP="$(mktemp -d /tmp/dudu-release-XXXXXX)"
+gh run download <run-id> \
+  --name DuduDesktop-1.0.0-win-x64-private \
+  --dir "$DUDU_RELEASE_TMP"
+
+export DUDU_DOWNLOADED="$DUDU_RELEASE_TMP/DuduDesktop-1.0.0-win-x64-private"
+export DUDU_EXE="$DUDU_DOWNLOADED/DuduDesktop-1.0.0-win-x64-private.exe"
+export DUDU_PUBLISHED_HASH="$(awk '{print $1}' "$DUDU_DOWNLOADED/SHA256SUMS.txt")"
+export DUDU_COMPUTED_HASH="$(shasum -a 256 "$DUDU_EXE" | awk '{print $1}')"
+test "$DUDU_PUBLISHED_HASH" = "$DUDU_COMPUTED_HASH" || {
+  echo "checksum mismatch; refusing to promote artifact" >&2
+  exit 1
+}
+
+mkdir -p "$DUDU_REPO/artifacts"
+mv "$DUDU_EXE" "$DUDU_REPO/artifacts/DuduDesktop-1.0.0-win-x64-private.exe"
+mv "$DUDU_DOWNLOADED/SHA256SUMS.txt" "$DUDU_REPO/artifacts/SHA256SUMS.txt"
+rmdir "$DUDU_DOWNLOADED" "$DUDU_RELEASE_TMP"
+
+test "$(find "$DUDU_REPO/artifacts" -maxdepth 1 -type f -name '*.exe' | wc -l | tr -d ' ')" -eq 1
+shasum -a 256 "$DUDU_REPO/artifacts/DuduDesktop-1.0.0-win-x64-private.exe"
+git status --short
+```
+
+The final `git status --short` may show unrelated user changes, but the
+artifact promotion itself must not add tracked files. The only retained
+release files are the one EXE and `SHA256SUMS.txt`; all other downloaded
+temporary files must be gone.
+
 ## Testing and platform limitations
 
 - New behavior needs regression coverage in the closest Core, Infrastructure,
