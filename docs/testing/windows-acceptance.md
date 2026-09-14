@@ -23,6 +23,26 @@ Windows build host, not a claim that the run happened. No file under `artifacts/
 | Performance gate (`scripts/run-performance-gates.ps1 -Executable artifacts/publish/win-x64/Dudu.App.exe`) | pending | — | — | — | `artifacts/performance/release.json` |
 | Eight-hour stability run (`dotnet run --project tests/Dudu.WindowsHarness -c Release -- --scenario long-run --hours 8 --output artifacts/stability/eight-hour.json`) | pending | — | — | — | `artifacts/stability/eight-hour.json` |
 | Full solution test pass (`dotnet test DuduDesktop.slnx -c Release`) | pending | — | — | — | `artifacts/test-results/` |
+| DPI 100% | pending | — | — | — | — |
+| DPI 125% | pending | — | — | — | — |
+| DPI 150% | pending | — | — | — | — |
+| DPI 200% | pending | — | — | — | — |
+| Single monitor | pending | — | — | — | — |
+| Multiple monitors | pending | — | — | — | — |
+| Monitor removal while running | pending | — | — | — | — |
+| Sleep/resume | pending | — | — | — | — |
+| Lock/unlock | pending | — | — | — | — |
+| Explorer restart | pending | — | — | — | — |
+| Fullscreen game/video suppression | pending | — | — | — | — |
+| Notification enabled | pending | — | — | — | — |
+| Notification unavailable (fallback to bubble) | pending | — | — | — | — |
+| Offline launch | pending | — | — | — | — |
+| Sign-in launch (launch-at-sign-in) | pending | — | — | — | — |
+| Backup/restore | pending | — | — | — | — |
+| Install | pending | — | — | — | — |
+| Upgrade | pending | — | — | — | — |
+| Uninstall | pending | — | — | — | — |
+| Eight-hour stability run | pending | — | — | — | `artifacts/stability/eight-hour.json` |
 
 Fill in "Windows build" with the OS build number (`winver`) and Dudu version actually exercised,
 "Timestamp" in UTC, "Tester" with a name or handle, and "Evidence path" with where the actual
@@ -83,3 +103,33 @@ thing:
 
 None of this substitutes for the actual Windows run. Treat every `pending` row above as exactly
 that until a tester replaces it with a real result.
+
+## Final acceptance checklist
+
+Copied verbatim from the implementation plan's Task 24 "Final acceptance checklist." None of
+these are checked yet — each is evidence to gather on a real Windows 11 24H2 x64 host, not a
+claim already verified.
+
+- [ ] Onboarding completes in under two minutes on a clean Windows 11 24H2 x64 account.
+- [ ] The overlay has transparent edges, no taskbar/Alt+Tab entry, alpha-aware input, DPI-safe
+      placement, and no focus theft.
+- [ ] Reminders, tasks, focus, countdowns, comfort, outfits, manual check-ins, and local notes
+      work with the network disabled.
+- [ ] Quiet hours, all pause modes, reduced motion, and fullscreen suppression gate unsolicited
+      behavior.
+- [ ] A mobile browser pairs once with a ten-minute one-time code and retains a secure HttpOnly
+      session.
+- [ ] Browser-to-desktop encrypted notes interoperate across P-256 ECDH, HKDF-SHA-256, and
+      AES-256-GCM.
+- [ ] An online desktop receives a normal remote note within 30 seconds.
+- [ ] The relay, logs, notifications, and packet capture never contain remote-note plaintext.
+- [ ] Duplicate delivery produces exactly one visible note.
+- [ ] Opening a note performs no network request and creates no read receipt.
+- [ ] Acknowledgment removes D1 ciphertext; undelivered messages expire at 30 days.
+- [ ] Database migrations back up first and preserve failed databases for recovery.
+- [ ] Missing artwork falls back to the original neutral pose.
+- [ ] CPU, memory, startup, allocation, accessibility, and eight-hour stability gates pass.
+- [ ] Current-user install, upgrade, uninstall, optional data deletion, and launch-at-sign-in pass
+      without elevation.
+- [ ] The repository, artwork, Worker URL, sender page, installer, and release tag remain
+      private.
