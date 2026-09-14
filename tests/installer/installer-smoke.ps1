@@ -29,6 +29,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$Installer = [IO.Path]::GetFullPath($Installer)
 $installRoot = Join-Path $env:LOCALAPPDATA "Programs\DuduDesktop"
 $dataRoot = Join-Path $env:LOCALAPPDATA "DuduDesktop"
 $exePath = Join-Path $installRoot "Dudu.App.exe"
@@ -41,9 +42,10 @@ $markerPath = Join-Path $dataRoot "marker.txt"
 $startupShortcutPath = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup\Dudu Desktop Companion.lnk"
 
 function Install-DuduDesktopSilently {
-    Start-Process $Installer -ArgumentList "/VERYSILENT", "/CURRENTUSER", "/NORESTART" -Wait
-    if ($LASTEXITCODE -ne 0) {
-        throw "Installer exited with code $LASTEXITCODE."
+    # Start-Process -Wait never sets $LASTEXITCODE; read the process's own exit code.
+    $process = Start-Process $Installer -ArgumentList "/VERYSILENT", "/CURRENTUSER", "/NORESTART" -Wait -PassThru
+    if ($process.ExitCode -ne 0) {
+        throw "Installer exited with code $($process.ExitCode)."
     }
 }
 
@@ -59,9 +61,9 @@ function Uninstall-DuduDesktopSilently {
         $arguments += "/DELETEUSERDATA=1"
     }
 
-    Start-Process $uninstallerPath -ArgumentList $arguments -Wait
-    if ($LASTEXITCODE -ne 0) {
-        throw "Uninstaller exited with code $LASTEXITCODE."
+    $process = Start-Process $uninstallerPath -ArgumentList $arguments -Wait -PassThru
+    if ($process.ExitCode -ne 0) {
+        throw "Uninstaller exited with code $($process.ExitCode)."
     }
 }
 
