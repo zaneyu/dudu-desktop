@@ -7,7 +7,8 @@ public static class ProductInfo
 
     /// <summary>
     /// Fallback relay base URL used when the <c>DUDU_RELAY_BASE_URL</c> environment variable is
-    /// unset. Left unset for now; Task 24's release runbook assigns the production relay URL.
+    /// unset. Baked in for the private v1 release so an installed copy needs no configuration;
+    /// the environment variable still overrides it (see docs/release.md §3).
     /// </summary>
-    public const string? DefaultRelayBaseUrl = null;
+    public const string? DefaultRelayBaseUrl = "https://dudu-relay.zaneyu2005.workers.dev/";
 }

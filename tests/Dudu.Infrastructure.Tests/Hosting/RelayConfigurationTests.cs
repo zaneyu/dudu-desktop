@@ -5,23 +5,23 @@ using Xunit;
 namespace Dudu.Infrastructure.Tests.Hosting;
 
 /// <summary>
-/// Review I9: running with no relay is a supported, documented configuration, so the rule that
-/// decides it must be executable and tested rather than buried in a WinUI-only composition file.
+/// Review I9: the relay-resolution rule (environment override, else the baked-in default) must be
+/// executable and tested rather than buried in a WinUI-only composition file.
 /// <see cref="RelayConfiguration"/> is linked into this project (see the csproj) precisely so
 /// these three cases run on every host.
 /// </summary>
 public sealed class RelayConfigurationTests
 {
     [Fact]
-    public void Unset_environment_variable_leaves_the_app_offline()
+    public void Unset_environment_variable_falls_back_to_the_baked_in_relay()
     {
-        // ProductInfo.DefaultRelayBaseUrl is deliberately null in this build, so an unset
-        // variable is the shipping default: fully local, no relay.
-        Assert.Null(ProductInfo.DefaultRelayBaseUrl);
+        // The private v1 build bakes the production relay in so an installed copy needs no
+        // configuration; the environment variable is only an override.
+        Assert.NotNull(ProductInfo.DefaultRelayBaseUrl);
 
         var options = RelayConfiguration.Resolve(_ => null);
 
-        Assert.Null(options.BaseUrl);
+        Assert.Equal(new Uri(ProductInfo.DefaultRelayBaseUrl), options.BaseUrl);
     }
 
     [Theory]
@@ -29,11 +29,11 @@ public sealed class RelayConfigurationTests
     [InlineData("ftp://relay.example.test/")]
     [InlineData("relay.example.test")]
     [InlineData("   ")]
-    public void A_value_that_is_not_an_absolute_http_url_leaves_the_app_offline(string value)
+    public void A_value_that_is_not_an_absolute_http_url_falls_back_to_the_baked_in_relay(string value)
     {
         var options = RelayConfiguration.Resolve(_ => value);
 
-        Assert.Null(options.BaseUrl);
+        Assert.Equal(new Uri(ProductInfo.DefaultRelayBaseUrl!), options.BaseUrl);
     }
 
     [Fact]
