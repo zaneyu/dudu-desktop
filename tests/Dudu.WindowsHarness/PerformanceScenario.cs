@@ -1,7 +1,5 @@
 using System.Diagnostics;
 using System.Globalization;
-using System.Runtime.InteropServices;
-using Dudu.App.Overlay;
 
 /// <summary>
 /// The five numbers task-23's performance gate cares about: how long the pet took to appear,
@@ -126,7 +124,7 @@ internal static class PerformanceScenario
 
         try
         {
-            var overlayHandle = await WaitForOverlayWindowAsync(process.Id, TimeSpan.FromSeconds(30));
+            var overlayHandle = await OverlayWindowLocator.WaitForOverlayWindowAsync(process.Id, TimeSpan.FromSeconds(30));
             var launchToOverlayMs = Stopwatch.GetElapsedTime(launchStarted).TotalMilliseconds;
             if (overlayHandle == 0)
             {
@@ -283,48 +281,6 @@ internal static class PerformanceScenario
         return (timestamp, bytes);
     }
 
-    private static async Task<nint> WaitForOverlayWindowAsync(int processId, TimeSpan timeout)
-    {
-        var deadline = Stopwatch.GetTimestamp() + (long)(Stopwatch.Frequency * timeout.TotalSeconds);
-        while (Stopwatch.GetTimestamp() < deadline)
-        {
-            var handle = FindOverlayWindow(processId);
-            if (handle != 0)
-            {
-                return handle;
-            }
-
-            await Task.Delay(100);
-        }
-
-        return 0;
-    }
-
-    private static nint FindOverlayWindow(int processId)
-    {
-        var found = (nint)0;
-        NativeMethods.EnumWindows((window, _) =>
-        {
-            NativeMethods.GetWindowThreadProcessId(window, out var ownerProcessId);
-            if (ownerProcessId != processId || !NativeMethods.IsWindowVisible(window))
-            {
-                return true;
-            }
-
-            Span<char> className = stackalloc char[256];
-            var length = NativeMethods.GetClassName(window, ref MemoryMarshal.GetReference(className), className.Length);
-            if (length == OverlayWindowHost.WindowClassName.Length
-                && className[..length].SequenceEqual(OverlayWindowHost.WindowClassName))
-            {
-                found = window;
-                return false;
-            }
-
-            return true;
-        }, 0);
-        return found;
-    }
-
     private static string? ReadOption(string[] args, string name)
     {
         var index = Array.IndexOf(args, name);
@@ -333,22 +289,4 @@ internal static class PerformanceScenario
 
     private static int? ReadIntOption(string[] args, string name) =>
         int.TryParse(ReadOption(args, name), CultureInfo.InvariantCulture, out var value) ? value : null;
-}
-
-file static partial class NativeMethods
-{
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern bool EnumWindows(EnumWindowsCallback callback, nint lParam);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern uint GetWindowThreadProcessId(nint window, out int processId);
-
-    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-    public static extern int GetClassName(nint window, ref char className, int maxCount);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool IsWindowVisible(nint window);
-
-    public delegate bool EnumWindowsCallback(nint window, nint lParam);
 }

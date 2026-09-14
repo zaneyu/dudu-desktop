@@ -1,8 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
-using System.Runtime.InteropServices;
 using Dudu.App.Hosting;
-using Dudu.App.Overlay;
 using Dudu.Infrastructure;
 using Dudu.Infrastructure.Data;
 using Microsoft.Extensions.DependencyInjection;
@@ -128,7 +126,7 @@ internal static class LongRunScenario
 
         try
         {
-            var overlayHandle = await WaitForOverlayWindowAsync(process.Id, TimeSpan.FromSeconds(30));
+            var overlayHandle = await OverlayWindowLocator.WaitForOverlayWindowAsync(process.Id, TimeSpan.FromSeconds(30));
             if (overlayHandle == 0)
             {
                 Console.Error.WriteLine("The pet overlay window never appeared within 30 seconds.");
@@ -140,8 +138,8 @@ internal static class LongRunScenario
             var sampleInterval = TimeSpan.FromMinutes(Math.Max(1d, sampleMinutes));
 
             process.Refresh();
-            var firstGdi = NativeMethods.GetGuiResources(process.Handle, GrGdiObjects);
-            var firstUser = NativeMethods.GetGuiResources(process.Handle, GrUserObjects);
+            var firstGdi = OverlayWindowLocator.GetGuiResources(process.Handle, GrGdiObjects);
+            var firstUser = OverlayWindowLocator.GetGuiResources(process.Handle, GrUserObjects);
             var firstWorkingSetBytes = process.WorkingSet64;
             var firstSampleTimestamp = Stopwatch.GetTimestamp();
 
@@ -163,8 +161,8 @@ internal static class LongRunScenario
                     break;
                 }
 
-                lastGdi = NativeMethods.GetGuiResources(process.Handle, GrGdiObjects);
-                lastUser = NativeMethods.GetGuiResources(process.Handle, GrUserObjects);
+                lastGdi = OverlayWindowLocator.GetGuiResources(process.Handle, GrGdiObjects);
+                lastUser = OverlayWindowLocator.GetGuiResources(process.Handle, GrUserObjects);
                 lastWorkingSetBytes = process.WorkingSet64;
                 lastSampleTimestamp = Stopwatch.GetTimestamp();
                 Console.WriteLine(
@@ -273,48 +271,6 @@ internal static class LongRunScenario
         return (duplicateNoteRows, duplicateReminderRows);
     }
 
-    private static async Task<nint> WaitForOverlayWindowAsync(int processId, TimeSpan timeout)
-    {
-        var deadline = Stopwatch.GetTimestamp() + (long)(Stopwatch.Frequency * timeout.TotalSeconds);
-        while (Stopwatch.GetTimestamp() < deadline)
-        {
-            var handle = FindOverlayWindow(processId);
-            if (handle != 0)
-            {
-                return handle;
-            }
-
-            await Task.Delay(100);
-        }
-
-        return 0;
-    }
-
-    private static nint FindOverlayWindow(int processId)
-    {
-        var found = (nint)0;
-        NativeMethods.EnumWindows((window, _) =>
-        {
-            NativeMethods.GetWindowThreadProcessId(window, out var ownerProcessId);
-            if (ownerProcessId != processId || !NativeMethods.IsWindowVisible(window))
-            {
-                return true;
-            }
-
-            Span<char> className = stackalloc char[256];
-            var length = NativeMethods.GetClassName(window, ref MemoryMarshal.GetReference(className), className.Length);
-            if (length == OverlayWindowHost.WindowClassName.Length
-                && className[..length].SequenceEqual(OverlayWindowHost.WindowClassName))
-            {
-                found = window;
-                return false;
-            }
-
-            return true;
-        }, 0);
-        return found;
-    }
-
     private static string? ReadOption(string[] args, string name)
     {
         var index = Array.IndexOf(args, name);
@@ -323,25 +279,4 @@ internal static class LongRunScenario
 
     private static double? ReadDoubleOption(string[] args, string name) =>
         double.TryParse(ReadOption(args, name), CultureInfo.InvariantCulture, out var value) ? value : null;
-}
-
-file static partial class NativeMethods
-{
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern bool EnumWindows(EnumWindowsCallback callback, nint lParam);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern uint GetWindowThreadProcessId(nint window, out int processId);
-
-    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-    public static extern int GetClassName(nint window, ref char className, int maxCount);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool IsWindowVisible(nint window);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern int GetGuiResources(nint hProcess, int uiFlags);
-
-    public delegate bool EnumWindowsCallback(nint window, nint lParam);
 }

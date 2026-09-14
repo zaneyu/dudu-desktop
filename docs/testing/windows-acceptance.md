@@ -78,6 +78,8 @@ thing:
   stable automation IDs and skip themselves cleanly (not via a stub) on this host.
 - Every XAML file this task touched was checked for well-formedness with a Python `xml.dom.minidom`
   parse, since this host cannot run WinUI's own XAML compiler.
+- `src/Dudu.App/Themes/*.xaml` were already high-contrast compliant before this task and were not
+  touched by it.
 
 None of this substitutes for the actual Windows run. Treat every `pending` row above as exactly
 that until a tester replaces it with a real result.

@@ -2,6 +2,7 @@ using System.ComponentModel;
 using Dudu.App.ViewModels;
 using Dudu.Core.Models;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 
 namespace Dudu.App.Pages;
@@ -106,7 +107,7 @@ public sealed partial class TasksFocusPage : Page
 
     private void RefreshFocusText()
     {
-        FocusCurrent.Text = ViewModel.ActiveFocus switch
+        var focusText = ViewModel.ActiveFocus switch
         {
             null => "nothing due now",
             { Status: FocusStatus.Running } focus => $"focus is running with {RemainingMinutes(focus)} remaining",
@@ -114,6 +115,8 @@ public sealed partial class TasksFocusPage : Page
             { Status: FocusStatus.Completed } => "last focus session completed le",
             _ => "last focus session ended early",
         };
+        FocusCurrent.Text = focusText;
+        AutomationProperties.SetName(FocusCurrent, focusText);
     }
 
     private static string RemainingMinutes(FocusSnapshot focus)

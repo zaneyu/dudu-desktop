@@ -257,6 +257,7 @@ public sealed partial class App : Application
 
     private static void ExitApplicationCore()
     {
+        (Current as App)?._performanceAllocationTimer?.Dispose();
         Current?.Exit();
     }
 }
