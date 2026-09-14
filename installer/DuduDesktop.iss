@@ -2,10 +2,13 @@
 ;
 ; This package installs only for the current Windows user, under
 ; {localappdata}\Programs\DuduDesktop, with no UAC elevation. It never
-; touches the current-user Startup shortcut owned by
+; creates the current-user Startup shortcut owned by
 ; StartupRegistrationService (Dudu Desktop Companion.lnk); that shortcut is
-; created and removed exclusively by the app's own in-app preference, both
-; at first run and across every upgrade of this installer.
+; created exclusively by the app's own in-app preference, at first run and
+; across every upgrade of this installer. Uninstall is the one exception
+; (review I7): the shortcut is deleted there, because nothing else can --
+; the app that owns it is being removed, and a leftover Startup shortcut
+; pointing at a deleted executable fails on every sign-in forever.
 ;
 ; Built with Inno Setup 7.1.0: `pwsh scripts/publish-windows.ps1` publishes
 ; src/Dudu.App then compiles this script with ISCC.exe.
@@ -59,8 +62,10 @@ Name: "{userdesktop}\Dudu Desktop"; Filename: "{app}\Dudu.App.exe"; Tasks: deskt
 ; No entry here ever references {userstartup}: the "launch at sign-in"
 ; shortcut (Dudu Desktop Companion.lnk) is owned entirely by
 ; StartupRegistrationService and the recipient's in-app preference. The
-; installer must neither create it nor delete it, on install, upgrade, or
-; uninstall — doing so here would fight the in-app toggle across upgrades.
+; installer must neither create nor delete it on install or upgrade — doing
+; so here would fight the in-app toggle across upgrades. Uninstall is
+; handled in [Code] (CurUninstallStepChanged), not here, because it must run
+; whatever the user chose about keeping their data.
 
 [Code]
 const
@@ -185,8 +190,26 @@ begin
   end;
 end;
 
+// Deletes the "launch at sign-in" shortcut StartupRegistrationService owns.
+// Unconditional on the keep-my-data choice (review I7): the shortcut is not
+// user data, it is a pointer to the executable being removed, and leaving it
+// behind means a failed launch on every subsequent sign-in. Exactly this one
+// path under {userstartup} is ever touched, and only if it exists.
+procedure DeleteStartupShortcut();
+var
+  ShortcutPath: string;
+begin
+  ShortcutPath := ExpandConstant('{userstartup}\Dudu Desktop Companion.lnk');
+  if FileExists(ShortcutPath) then
+    DeleteFile(ShortcutPath);
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
-  if (CurUninstallStep = usPostUninstall) and ShouldDeleteUserData then
-    DeleteUserData();
+  if CurUninstallStep = usPostUninstall then
+  begin
+    DeleteStartupShortcut();
+    if ShouldDeleteUserData then
+      DeleteUserData();
+  end;
 end;

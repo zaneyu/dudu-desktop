@@ -35,6 +35,10 @@ $exePath = Join-Path $installRoot "Dudu.App.exe"
 $uninstallerPath = Join-Path $installRoot "unins000.exe"
 $shortcutPath = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Dudu Desktop.lnk"
 $markerPath = Join-Path $dataRoot "marker.txt"
+# The "launch at sign-in" shortcut StartupRegistrationService owns. Review I7:
+# uninstall must delete it whatever the user chose about keeping their data,
+# otherwise every later sign-in tries to launch a removed executable.
+$startupShortcutPath = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup\Dudu Desktop Companion.lnk"
 
 function Install-DuduDesktopSilently {
     Start-Process $Installer -ArgumentList "/VERYSILENT", "/CURRENTUSER", "/NORESTART" -Wait
@@ -59,6 +63,17 @@ function Uninstall-DuduDesktopSilently {
     if ($LASTEXITCODE -ne 0) {
         throw "Uninstaller exited with code $LASTEXITCODE."
     }
+}
+
+function New-StartupShortcutStandIn {
+    # Stands in for the shortcut the app itself would have written when the
+    # recipient turned "launch at sign-in" on. The uninstaller only ever tests
+    # for and deletes this path, so a plain file is a faithful stand-in.
+    $startupDirectory = Split-Path -Parent $startupShortcutPath
+    if (-not (Test-Path $startupDirectory)) {
+        New-Item -ItemType Directory -Path $startupDirectory -Force | Out-Null
+    }
+    Set-Content -Path $startupShortcutPath -Value "dudu-installer-smoke-startup-shortcut" -NoNewline
 }
 
 function Invoke-SelfTest {
@@ -89,12 +104,16 @@ if (-not (Test-Path $markerPath)) {
 }
 
 # --- Phase 3: uninstall with data preserved, then reinstall ---
+New-StartupShortcutStandIn
 Uninstall-DuduDesktopSilently
 if (Test-Path $exePath) {
     throw "Application executable was not removed by uninstall."
 }
 if (-not (Test-Path $markerPath)) {
     throw "marker.txt did not survive an uninstall with data preserved."
+}
+if (Test-Path $startupShortcutPath) {
+    throw "Startup shortcut '$startupShortcutPath' was not removed by an uninstall that kept user data."
 }
 
 Install-DuduDesktopSilently
@@ -103,6 +122,7 @@ if (-not (Test-Path $markerPath)) {
 }
 
 # --- Phase 4: uninstall with /DELETEUSERDATA=1 removes only the data root ---
+New-StartupShortcutStandIn
 Uninstall-DuduDesktopSilently -DeleteUserData
 if (Test-Path $exePath) {
     throw "Application executable was not removed by uninstall."
@@ -110,6 +130,9 @@ if (Test-Path $exePath) {
 if (Test-Path $dataRoot) {
     throw "Data root '$dataRoot' was not removed by an uninstall with /DELETEUSERDATA=1."
 }
+if (Test-Path $startupShortcutPath) {
+    throw "Startup shortcut '$startupShortcutPath' was not removed by an uninstall with /DELETEUSERDATA=1."
+}
 
-Write-Host "Installer smoke test passed: clean install, upgrade, and both uninstall data choices all behaved correctly."
+Write-Host "Installer smoke test passed: clean install, upgrade, both uninstall data choices, and startup-shortcut removal all behaved correctly."
 exit 0

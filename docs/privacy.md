@@ -22,7 +22,7 @@ themselves.
 | Local notes (the bundled/custom love-note pool) and their display history | `local_notes`, `local_note_history` tables, `Database` | No | Until deleted | Same as above | Yes |
 | Mood check-ins (choice + optional free-text note) | `mood_check_ins` table, `Database` | No | Until deleted | Same as above | Yes |
 | Countdowns | `countdowns` table, `Database` | No | Until deleted | Same as above | Yes |
-| A received private note, still encrypted | `remote_envelopes` table, `Database` (`ciphertext`, `ephemeral_public_key`, `nonce`, `authentication_tag`, `hkdf_salt` — all opaque ciphertext/key material, never plaintext) | Arrived from the relay, ciphertext only | Deleted the moment it is acknowledged (`RemoteEnvelopeRepository.TryConsumeAsync`); never lingers past that | Automatic on acknowledgment, or via delete-local-data | Only if a backup snapshot happens to land between arrival and acknowledgment — the row is ciphertext, not plaintext, even then |
+| A received private note, still encrypted | `remote_envelopes` table, `Database` (`ciphertext`, `ephemeral_public_key`, `nonce`, `authentication_tag`, `hkdf_salt` — all opaque ciphertext/key material, never plaintext) | Arrived from the relay, ciphertext only | Kept until the note is **saved to the local jar** (`CompanionFeatureTransactionService.SaveRemoteNoteAndConsumeEnvelopeAsync` → `RemoteEnvelopeRepository.TryConsumeAsync`). Acknowledging the relay does **not** delete it: acknowledgment only tells the relay to drop its copy. A note that is never opened, or opened and not saved, keeps its ciphertext row indefinitely, and there is deliberately **no retention sweep** — silently deleting an unopened note would be data loss | Saving the note to the local jar, or delete-local-data | Yes — any backup snapshot taken while a received note is still unopened or unsaved contains its row. It is ciphertext, never plaintext, but it does persist across backups until the note is saved |
 | Record that a private note was already processed | `processed_remote_messages` table, `Database` (message ID + timestamp only, no content) | No | Until deleted | Delete-local-data | Yes |
 | A private note's decrypted text | Nowhere on disk — decrypted in memory only (`RemoteSyncService`/`EnvelopeCrypto.Decrypt`) for the duration of a reveal, then discarded when the process exits or the view model releases it | No | Not persisted at all | N/A — there is nothing to delete | No |
 | Asset pack selection | `asset_packs` table, `Database` | No | Until deleted | Delete-local-data | Yes |
@@ -30,7 +30,7 @@ themselves.
 | Relay device ID and bearer token (`relay-device-id-v1`, `relay-desktop-token-v1`) | `Secrets\*.bin`, DPAPI-protected | The token is presented to the relay on every authenticated call (that is its purpose); it is never logged (see `PrivacySafeLog`) | Until rotated, revoked, or deleted | Delete-local-data, or `DELETE /v1/devices/current` against the relay | No (same DPAPI reasoning as above) |
 | Database backups | `Backups\*.db` (`DatabaseBackupService`) | No | Rolling; pruned by the backup service's own retention policy | Delete-local-data deletes every `*.db` under `Backups` | N/A (this *is* the backup copy) — note a backup is a full snapshot, so it carries whatever plaintext rows above existed at snapshot time |
 | Application logs | `Logs` directory is created on startup (`AppHost`), but as of this task no on-disk log-file provider is wired up — diagnostics go through `ILoggerFactory`/`Trace` only (debugger/ETW), not a persisted file. If a future task adds a file sink here, it must use `PrivacySafeLog` (below) exclusively. | No | N/A today | N/A today | N/A today |
-| Relay: device identity, pairing codes, sender sessions | Cloudflare D1, `devices`/`pairing_codes`/`sender_sessions` tables (`relay/migrations/0001_identity.sql`) — only *hashes* of tokens/codes, never the raw value | Yes, by definition (it is the relay's own database) | Pairing codes and stale sessions are swept hourly (`relay/src/cleanup.ts`); devices persist until the user deletes the device | `DELETE /v1/devices/current`, or the hourly sweep for expired codes/sessions | N/A — this is server-side state, not a PC backup |
+| Relay: device identity, pairing codes, sender sessions | Cloudflare D1, `devices`/`pairing_codes`/`sender_sessions` tables (`relay/migrations/0001_identity.sql`) — only *hashes* of tokens/codes, never the raw value | Yes, by definition (it is the relay's own database) | Pairing codes and stale sessions are swept hourly (`relay/src/cleanup.ts`). The `devices` row itself is **never** swept: `cleanup.ts` has no `devices` sweep at all, so the row (public key + token hash) persists for the lifetime of the D1 database | `DELETE /v1/devices/current` revokes the device and deletes its sessions, pairing codes, and queued messages, but **keeps** the `devices` row (public key + token hash) in a revoked state — that soft revoke is what makes the old bearer token answer 401 forever instead of being reusable. There is no endpoint or sweep that hard-deletes the row | N/A — this is server-side state, not a PC backup |
 | Relay: queued message ciphertext + delivery status | D1 `messages`/`message_status` tables (`relay/migrations/0002_messages.sql`) — ciphertext and routing metadata only, never plaintext, never a read receipt | Yes (it is in transit) | `messages` rows are deleted on acknowledgment or after `MESSAGE_RETENTION_DAYS` (30 days); `message_status` rows expire on their own 24-hour clock | Desktop acknowledgment (`POST /v1/messages/:id/ack`), or the hourly sweep | N/A |
 
 ## What is deliberately never written anywhere
@@ -53,13 +53,19 @@ themselves.
   an unlocked session — can see it. End-to-end encryption protects the note in transit and at rest
   on the relay; it cannot protect against a compromised endpoint at the moment the recipient
   themselves is meant to read it. Nothing in this design claims otherwise.
-- **The relay cannot decrypt valid ciphertext.** The relay (Cloudflare Worker + D1) never holds the
-  desktop's private key, never receives plaintext, and has no code path that would let it derive
-  the note's content from what it stores. A full dump of D1 yields ciphertext, hashes, and routing
-  metadata — never a note's text. This is a boundary enforced by what keys exist where (ECDH
-  P-256 + HKDF-SHA-256 + AES-256-GCM, desktop-held private key only — see
-  `relay/protocol/README.md` and `src/Dudu.Infrastructure/Crypto/EncryptedEnvelope.cs`), not by
-  a promise the relay makes about its own behavior.
+- **The relay cannot decrypt ciphertext encrypted to the desktop's real key.** The relay
+  (Cloudflare Worker + D1) never holds the desktop's private key, never receives plaintext, and
+  has no code path that would let it derive the note's content from what it stores. A full dump of
+  D1 yields ciphertext, hashes, and routing metadata — never a note's text. This is a boundary
+  enforced by what keys exist where (ECDH P-256 + HKDF-SHA-256 + AES-256-GCM, desktop-held private
+  key only — see `protocol/README.md` and
+  `src/Dudu.Infrastructure/Crypto/EncryptedEnvelope.cs`), not by a promise the relay makes about
+  its own behavior. The assumption this rests on is stated plainly: the sender page encrypts to
+  whichever public key the relay hands it, so a relay that substituted its own key at pairing time
+  could read everything sent afterward. The sender pins the key it saw when it paired
+  (`sender-src/pairing.ts`, `verifyStoredSession`) and drops to an explicit "key changed, pair
+  again" warning rather than silently re-encrypting to a new one — which catches a later swap, not
+  a relay that was already lying at the moment of first pairing.
 - **A relay outage never blocks local functionality.** Reminders, tasks, focus sessions, and every
   other local-only entity above are scheduled and presented entirely locally; `AppHost` ticks the
   local reminder service before it ever attempts to start remote sync, and a remote-sync failure

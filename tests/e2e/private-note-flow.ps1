@@ -377,8 +377,14 @@ try {
         $outageHarnessProcess.BeginOutputReadLine()
         $outageHarnessProcess.BeginErrorReadLine()
 
-        if (-not $reminderPresentedSignal.Wait([TimeSpan]::FromSeconds(2 * $dueReminderSeconds))) {
-            $failures.Add("The outage-reminder harness never printed REMINDER-PRESENTED within $(2 * $dueReminderSeconds) seconds of a relay outage.")
+        # Review I8: `2 * $dueReminderSeconds` is 10 seconds, which is the reminder's own due
+        # delay and nothing else -- the harness still has to restore, build, start, and JIT
+        # before that clock is even meaningful, so the wait was timing the toolchain, not the
+        # behaviour under test. The fixed 60-second floor covers all of that; the multiple keeps
+        # the wait proportional if the due delay is ever raised.
+        $reminderWaitSeconds = 60 + 2 * $dueReminderSeconds
+        if (-not $reminderPresentedSignal.Wait([TimeSpan]::FromSeconds($reminderWaitSeconds))) {
+            $failures.Add("The outage-reminder harness never printed REMINDER-PRESENTED within $reminderWaitSeconds seconds of a relay outage.")
         } else {
             Write-Step "Harness presented the due reminder ($script:reminderPresentedId) with Wrangler down."
         }
