@@ -169,6 +169,7 @@ begin
     UninstallButton.Left := Form.ClientWidth - ScaleX(182);
     UninstallButton.Top := Form.ClientHeight - ScaleY(36);
     UninstallButton.ModalResult := mrOk;
+    UninstallButton.Default := True;
     Form.ActiveControl := UninstallButton;
 
     CancelButton := TNewButton.Create(Form);
@@ -179,7 +180,7 @@ begin
     CancelButton.Left := Form.ClientWidth - ScaleX(89);
     CancelButton.Top := Form.ClientHeight - ScaleY(36);
     CancelButton.ModalResult := mrCancel;
-    Form.CancelButton := CancelButton;
+    CancelButton.Cancel := True;
 
     if Form.ShowModal() = mrOk then
       ShouldDeleteUserData := not CheckBox.Checked
