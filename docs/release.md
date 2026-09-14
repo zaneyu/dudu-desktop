@@ -238,12 +238,16 @@ private channel.
   and must parse as an absolute `http`/`https` URI; an unset or invalid
   value falls back to the baked-in default. Only if both are missing does
   the app fall back to `OfflinePairingService` with no relay activated.
-- **First Windows run is pending.** This release was authored and verified
-  on a macOS host using a documented stub-build path (see this task's
-  report for exact commands); `scripts/verify.ps1`'s Windows-only steps
-  (WinUI publish, Inno Setup packaging, installer smoke test, FlaUI-based
-  UI tests, the performance gates against a real executable, and the
-  private-note end-to-end flow) have **not yet been executed on Windows**.
-  `docs/testing/windows-acceptance.md` tracks every row that still needs a
-  real Windows 11 24H2 x64 run before this release can be considered fully
-  verified.
+- **First Windows run: partially done, on CI only.** This release was
+  authored on a macOS host using a documented stub-build path. GitHub
+  Actions run 34815474329 (`.github/workflows/windows-installer.yml`,
+  `windows-latest` = Windows Server 2025 x64, 2026-09-14) has since executed
+  the WinUI publish, Inno Setup packaging, the installer smoke test
+  (including `--self-test`) and every `dotnet test` project — Core,
+  Infrastructure and, for the first time, `Dudu.App.Tests` — all green. The
+  FlaUI UI tests, the performance gates against a real executable, the
+  harness scenarios and the private-note end-to-end flow have **still not
+  been executed**: they need an interactive Windows desktop session, which
+  a hosted runner does not provide. `docs/testing/windows-acceptance.md`
+  tracks every row that still needs a real Windows 11 24H2 x64 run before
+  this release can be considered fully verified.

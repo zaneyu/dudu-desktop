@@ -8,9 +8,11 @@ long-run harness scenarios call `OperatingSystem.IsWindows()` and exit immediate
 any other OS, and `dotnet publish -r win-x64` for a WinUI project invokes a Windows-only native
 compiler that crashes under Rosetta/macOS.
 
-Every row below is **pending** — a placeholder for the tester who runs this checklist on a real
-Windows build host, not a claim that the run happened. No file under `artifacts/performance/` or
-`artifacts/stability/` exists in this repository, and none should be committed once they do (see
+Every row below is **pending** unless it names a GitHub Actions run — a placeholder for the
+tester who runs this checklist on a real Windows build host, not a claim that the run happened.
+The `passed` rows were produced by `.github/workflows/windows-installer.yml` on `windows-latest`
+(Windows Server 2025, x64, no interactive desktop), which is not a Windows 11 24H2 host. No file
+under `artifacts/performance/` or `artifacts/stability/` exists in this repository, and none should be committed once they do (see
 `.gitignore` / the repo's hard constraint against committing `artifacts/`).
 
 ## Evidence table
@@ -22,7 +24,7 @@ Windows build host, not a claim that the run happened. No file under `artifacts/
 | `FullJourneyTests.Full_companion_journey_persists_every_change_across_a_restart` | pending | — | — | — | `artifacts/ui-tests/full-journey.trx` |
 | Performance gate (`scripts/run-performance-gates.ps1 -Executable artifacts/publish/win-x64/Dudu.App.exe`) | pending | — | — | — | `artifacts/performance/release.json` |
 | Eight-hour stability run (`dotnet run --project tests/Dudu.WindowsHarness -c Release -- --scenario long-run --hours 8 --output artifacts/stability/eight-hour.json`) | pending | — | — | — | `artifacts/stability/eight-hour.json` |
-| Full solution test pass (`dotnet test DuduDesktop.slnx -c Release`) | pending | — | — | — | `artifacts/test-results/` |
+| Full solution test pass (`dotnet test DuduDesktop.slnx -c Release`) | passed | Windows Server 2025 (`windows-latest`, x64) | 2026-09-14 06:59 UTC | CI (unattended) | GitHub Actions run 34815474329, job "Windows test suite (first-ever run)": Core 58/58, Infrastructure 112 passed + 2 skipped, App.Tests 247/247 (per-project `dotnet test`, not the `.slnx` form) |
 | DPI 100% | pending | — | — | — | — |
 | DPI 125% | pending | — | — | — | — |
 | DPI 150% | pending | — | — | — | — |
