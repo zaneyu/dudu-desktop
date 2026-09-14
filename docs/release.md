@@ -49,10 +49,10 @@ git-ignored.
    ```
 
    The command prints a `database_id`. Open `relay/wrangler.jsonc` and
-   replace the placeholder `database_id` (`00000000-0000-0000-0000-000000000000`)
-   under the `DB` binding with that UUID. Leave `database_name` as
-   `dudu-relay` (or whatever name you created) and `migrations_dir` as
-   `"migrations"`.
+   set `database_id` under the `DB` binding to that UUID (the checked-in
+   file already carries the production database for this deployment).
+   Leave `database_name` as `dudu-relay` (or whatever name you created)
+   and `migrations_dir` as `"migrations"`.
 
    **Do this before deploying.** Deploying with the placeholder ID still
    unset fails the upload with Cloudflare API error 10181 ("D1 binding 'DB'
@@ -229,16 +229,15 @@ private channel.
   up in the git index. `--locked-mode` would require the checked-in lock
   file to exactly match the resolved graph on whichever host runs it, which
   this per-host-regeneration setup cannot satisfy.
-- **`DUDU_RELAY_BASE_URL`** is the environment variable that points the
-  desktop at a relay Worker (`src/Dudu.App/Hosting/WindowsCompanionProductionComposition.cs`,
-  `ResolveRelayOptions()`). It is read at startup and must parse as an
-  absolute `http`/`https` URI; if it is unset (or invalid) and
-  `Dudu.Core.ProductInfo.DefaultRelayBaseUrl` is also unset (it is `null` by
-  default — see `src/Dudu.Core/ProductInfo.cs`), the app falls back to
-  `OfflinePairingService` and no relay is activated. **Set
-  `DUDU_RELAY_BASE_URL` to the deployed Worker URL from §3 before first run
-  if remote love notes should work**; otherwise the desktop runs fully
-  offline by design.
+- **The relay URL is baked in.** `Dudu.Core.ProductInfo.DefaultRelayBaseUrl`
+  (`src/Dudu.Core/ProductInfo.cs`) carries the deployed private Worker URL
+  for the v1 release, so an installed copy needs no configuration. The
+  URL itself is private: keep it out of public repositories and share it
+  only with the recipient. `DUDU_RELAY_BASE_URL` remains an **override**
+  (`src/Dudu.App/Hosting/RelayConfiguration.cs`): it is read at startup
+  and must parse as an absolute `http`/`https` URI; an unset or invalid
+  value falls back to the baked-in default. Only if both are missing does
+  the app fall back to `OfflinePairingService` with no relay activated.
 - **First Windows run is pending.** This release was authored and verified
   on a macOS host using a documented stub-build path (see this task's
   report for exact commands); `scripts/verify.ps1`'s Windows-only steps
