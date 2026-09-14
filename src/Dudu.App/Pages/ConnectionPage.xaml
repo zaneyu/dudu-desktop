@@ -7,22 +7,22 @@
     <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
         <StackPanel MaxWidth="880" Margin="32" Spacing="24">
             <StackPanel Spacing="8">
-                <TextBlock Text="connection" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="ConnectionPageTitle" />
+                <TextBlock Text="connection" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="ConnectionPageTitle" AutomationProperties.Name="connection" />
                 <TextBlock Text="pairing is optional dudu stays useful offline" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
             </StackPanel>
 
             <StackPanel Spacing="12">
                 <TextBlock Text="pairing status" Style="{StaticResource SectionHeadingStyle}" />
-                <TextBlock x:Name="ConnectionAvailability" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionAvailability" />
-                <TextBlock x:Name="ConnectionPairingCode" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionPairingCode" />
-                <TextBlock x:Name="ConnectionCodeExpiry" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionCodeExpiry" />
-                <Button Content="create 10 min pairing code" Command="{x:Bind ViewModel.CreateCodeCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="ConnectionCreateCode" HorizontalAlignment="Left" />
+                <TextBlock x:Name="ConnectionAvailability" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionAvailability" AutomationProperties.Name="pairing availability" />
+                <TextBlock x:Name="ConnectionPairingCode" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionPairingCode" AutomationProperties.Name="pairing code" />
+                <TextBlock x:Name="ConnectionCodeExpiry" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionCodeExpiry" AutomationProperties.Name="pairing code expiry" />
+                <Button Content="create 10 min pairing code" Command="{x:Bind ViewModel.CreateCodeCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="ConnectionCreateCode" AutomationProperties.Name="create 10 min pairing code" HorizontalAlignment="Left" />
             </StackPanel>
 
             <StackPanel Spacing="12">
                 <TextBlock Text="paired sessions" Style="{StaticResource SectionHeadingStyle}" />
-                <TextBlock x:Name="ConnectionSessionCount" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionSessionCount" />
-                <ListView ItemsSource="{x:Bind ViewModel.Sessions, Mode=OneWay}" MaxHeight="180" AutomationProperties.AutomationId="ConnectionSessionsList">
+                <TextBlock x:Name="ConnectionSessionCount" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionSessionCount" AutomationProperties.Name="paired session count" />
+                <ListView ItemsSource="{x:Bind ViewModel.Sessions, Mode=OneWay}" MaxHeight="180" AutomationProperties.AutomationId="ConnectionSessionsList" AutomationProperties.Name="paired sessions list">
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="models:PairingSessionSummary">
                             <TextBlock Text="paired sender session" Margin="4" />
@@ -30,14 +30,20 @@
                     </ListView.ItemTemplate>
                 </ListView>
                 <StackPanel Spacing="8">
-                    <Button Content="revoke sender sessions" Command="{x:Bind ViewModel.RevokeSessionsCommand}" AutomationProperties.AutomationId="ConnectionRevokeSessions" />
-                    <Button Content="delete remote device data" Command="{x:Bind ViewModel.DeleteRemoteDeviceCommand}" AutomationProperties.AutomationId="ConnectionDeleteRemote" />
+                    <Button Content="revoke sender sessions" Command="{x:Bind ViewModel.RevokeSessionsCommand}" AutomationProperties.AutomationId="ConnectionRevokeSessions" AutomationProperties.Name="revoke sender sessions" />
+                    <Button Content="delete remote device data" Command="{x:Bind ViewModel.DeleteRemoteDeviceCommand}" AutomationProperties.AutomationId="ConnectionDeleteRemote" AutomationProperties.Name="delete remote device data" />
                 </StackPanel>
             </StackPanel>
 
             <StackPanel Spacing="4" AutomationProperties.LiveSetting="Polite">
-                <TextBlock Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" Foreground="{ThemeResource SuccessBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionStatusMessage" />
-                <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" Foreground="{ThemeResource ErrorBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionErrorMessage" />
+                <StackPanel Orientation="Horizontal" Spacing="6" Visibility="{x:Bind ViewModel.HasStatus, Mode=OneWay}">
+                    <FontIcon Glyph="&#xE73E;" Foreground="{ThemeResource SuccessBrush}" AutomationProperties.AccessibilityView="Raw" />
+                    <TextBlock Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" Foreground="{ThemeResource SuccessBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionStatusMessage" AutomationProperties.Name="status message" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Spacing="6" Visibility="{x:Bind ViewModel.HasError, Mode=OneWay}">
+                    <FontIcon Glyph="&#xEA39;" Foreground="{ThemeResource ErrorBrush}" AutomationProperties.AccessibilityView="Raw" />
+                    <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" Foreground="{ThemeResource ErrorBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionErrorMessage" AutomationProperties.Name="error message" />
+                </StackPanel>
             </StackPanel>
         </StackPanel>
     </ScrollViewer>

@@ -46,6 +46,47 @@ public sealed class AnimationEngineTests
     }
 
     [Fact]
+    public async Task Pause_suspends_frame_advancement_until_resume_is_called()
+    {
+        // Task 23 performance requirement: ambient animation ticks must suspend while hidden,
+        // fullscreen-suppressed, session-locked, or display-off (AnimationEngine.Pause/Resume).
+        // This proves Pause() blocks the frame loop independently of clock time -- advancing the
+        // manual clock while paused must not be enough on its own to reach the next frame -- and
+        // that Resume() releases exactly that suspension.
+        using var fixture = AnimationFixture.Create([100, 100, 100], loop: "loop", animationKey: "idle");
+        using var cancellation = new CancellationTokenSource();
+        var firstFramePresented = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondFramePresented = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Presenter.OnPresented = count =>
+        {
+            if (count == 1)
+            {
+                // Pausing here -- before the play loop ever waits on the clock for frame 1 --
+                // means the clock advance below has nothing registered to resolve.
+                fixture.Engine.Pause();
+                firstFramePresented.TrySetResult(true);
+            }
+            else if (count == 2)
+            {
+                secondFramePresented.TrySetResult(true);
+            }
+        };
+
+        var play = fixture.Engine.PlayAsync(TestPresentation("idle"), AnimationOptions.Default, cancellation.Token);
+        await firstFramePresented.Task.WaitAsync(TestContext.Current.CancellationToken);
+
+        fixture.Clock.AdvanceBy(100);
+        Assert.Single(fixture.Presenter.Frames);
+
+        fixture.Engine.Resume();
+        await secondFramePresented.Task.WaitAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(2, fixture.Presenter.Frames.Count);
+
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => play);
+    }
+
+    [Fact]
     public async Task A_replacement_cancels_the_previous_play_before_presenting_the_new_one()
     {
         using var fixture = AnimationFixture.Create([100], loop: "loop", animationKey: "idle");

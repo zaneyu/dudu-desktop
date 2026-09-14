@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Globalization;
+using System.Threading;
 using Dudu.App.Hosting;
 using Dudu.App.System;
 using Dudu.App.Windows;
@@ -19,6 +21,7 @@ public sealed partial class App : Application
     private string _launchArguments = string.Empty;
     private readonly DispatcherQueue _dispatcherQueue;
     private readonly AwaitableUiDispatcher _uiDispatcher;
+    private Timer? _performanceAllocationTimer;
 
     public App()
     {
@@ -49,6 +52,8 @@ public sealed partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        ApplyTextScaleOverrideFromEnvironment();
+        ApplyPerformanceAllocationReportingFromEnvironment();
         _launchArguments = args.Arguments ?? string.Empty;
         if (CompanionLaunchOptions.Parse(_launchArguments).SelfTest)
         {
@@ -176,6 +181,72 @@ public sealed partial class App : Application
         }
 
         settings.NavigateTo(destination);
+    }
+
+    /// <summary>
+    /// Test-only text-scaling hook for <c>tests/Dudu.UiTests</c>. When
+    /// <c>DUDU_TEXT_SCALE_PERCENT</c> is set to a positive integer, overrides the WinUI
+    /// <c>ControlContentThemeFontSize</c> theme resource by that percentage so standard
+    /// controls grow the way a Windows text-size accessibility setting would, without a
+    /// <c>ScaleTransform</c> (which would scale layout bounds instead of font metrics and
+    /// would not reproduce real clipping at larger point sizes).
+    /// </summary>
+    private void ApplyTextScaleOverrideFromEnvironment()
+    {
+        const double DefaultControlContentThemeFontSize = 15d;
+
+        var raw = Environment.GetEnvironmentVariable("DUDU_TEXT_SCALE_PERCENT");
+        if (string.IsNullOrWhiteSpace(raw)
+            || !int.TryParse(raw, CultureInfo.InvariantCulture, out var percent)
+            || percent <= 0
+            || percent == 100)
+        {
+            return;
+        }
+
+        Resources["ControlContentThemeFontSize"] = DefaultControlContentThemeFontSize * percent / 100.0;
+    }
+
+    /// <summary>
+    /// Test-only managed-allocation telemetry hook for
+    /// <c>tests/Dudu.WindowsHarness/PerformanceScenario.cs</c>. When
+    /// <c>DUDU_PERFORMANCE_ALLOCATION_REPORT</c> names a file path, appends a
+    /// <c>unixTimeMs,totalAllocatedBytes</c> line to it every 60 seconds, starting 60 seconds
+    /// after launch so the first sample is taken after startup allocation has settled ("after
+    /// warmup"). The harness reads the first and last lines to compute a slope in MB/hour; it
+    /// never reads this process's memory directly, since <see cref="GC.GetTotalAllocatedBytes"/>
+    /// only reports the calling process's own managed heap.
+    /// </summary>
+    private void ApplyPerformanceAllocationReportingFromEnvironment()
+    {
+        var reportPath = Environment.GetEnvironmentVariable("DUDU_PERFORMANCE_ALLOCATION_REPORT");
+        if (string.IsNullOrWhiteSpace(reportPath))
+        {
+            return;
+        }
+
+        var samplePeriod = TimeSpan.FromSeconds(60);
+        _performanceAllocationTimer = new Timer(
+            _ => AppendAllocationSample(reportPath),
+            state: null,
+            dueTime: samplePeriod,
+            period: samplePeriod);
+    }
+
+    private static void AppendAllocationSample(string reportPath)
+    {
+        try
+        {
+            var timestampUtcMilliseconds = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var totalAllocatedBytes = GC.GetTotalAllocatedBytes(precise: true);
+            File.AppendAllText(
+                reportPath,
+                string.Create(CultureInfo.InvariantCulture, $"{timestampUtcMilliseconds},{totalAllocatedBytes}\n"));
+        }
+        catch (IOException)
+        {
+            // Best-effort telemetry only; a transient write failure must never crash the app.
+        }
     }
 
     private static void ReportStartupFailure(Exception exception) =>

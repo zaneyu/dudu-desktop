@@ -339,7 +339,18 @@ public static class WindowsCompanionProductionComposition
                 },
                 presentationEnvironment: new DelegatingPresentationEnvironmentSink(
                     locked => presentationGateway?.SetSessionLocked(locked),
-                    fullscreenNow => presentationGateway?.SetFullscreen(fullscreenNow)),
+                    fullscreenNow => presentationGateway?.SetFullscreen(fullscreenNow),
+                    suppressed =>
+                    {
+                        if (suppressed)
+                        {
+                            animationEngine?.Pause();
+                        }
+                        else
+                        {
+                            animationEngine?.Resume();
+                        }
+                    }),
                 cancellationToken: cancellationToken);
             activeRuntime = runtime;
             host.AttachPresentationGateway(presentationGateway
@@ -477,6 +488,7 @@ public static class WindowsCompanionProductionComposition
                 ActionSurface = actionSurface,
                 OverlayCommands = overlayRouter,
             });
+            await FixtureRemoteNoteInstaller.InstallIfRequestedAsync(services, cancellationToken);
             return new ComposedPrimaryRuntime(runtime, animationEngine!, presenter, startup, services);
         }
         catch
@@ -639,14 +651,32 @@ public static class WindowsCompanionProductionComposition
     /// made before it is assigned are safely no-ops and every call made
     /// after <c>WindowsCompanionRuntime.StartAsync</c> runs reaches the real
     /// gateway.
+    /// Also drives <see cref="AnimationEngine.Pause"/>/<see cref="AnimationEngine.Resume"/>
+    /// from the same two signals (Task 15 ruling: reuse this hook rather than
+    /// add a second suppression path), suppressing ambient ticks while either
+    /// condition holds and resuming only once both have cleared.
     /// </summary>
     private sealed class DelegatingPresentationEnvironmentSink(
         Action<bool> setSessionLocked,
-        Action<bool> setFullscreen) : IPresentationEnvironmentSink
+        Action<bool> setFullscreen,
+        Action<bool> setAnimationSuppressed) : IPresentationEnvironmentSink
     {
-        public void SetSessionLocked(bool locked) => setSessionLocked(locked);
+        private bool _locked;
+        private bool _fullscreen;
 
-        public void SetFullscreen(bool fullscreen) => setFullscreen(fullscreen);
+        public void SetSessionLocked(bool locked)
+        {
+            setSessionLocked(locked);
+            _locked = locked;
+            setAnimationSuppressed(_locked || _fullscreen);
+        }
+
+        public void SetFullscreen(bool fullscreen)
+        {
+            setFullscreen(fullscreen);
+            _fullscreen = fullscreen;
+            setAnimationSuppressed(_locked || _fullscreen);
+        }
     }
 
     /// <summary>

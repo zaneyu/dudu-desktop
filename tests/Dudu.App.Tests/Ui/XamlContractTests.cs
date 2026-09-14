@@ -20,6 +20,13 @@ public sealed class XamlContractTests
         Assert.Contains("SystemColorHighlightTextColor", colors);
         Assert.Contains("private StackPanel StartupRecoveryPanel", stubs);
         Assert.Contains("private TextBlock StartupRecoveryMessage", stubs);
+        foreach (Match tag in Regex.Matches(
+            onboarding,
+            "<[A-Za-z][^<>]*AutomationProperties\\.AutomationId=\"[^\"]+\"[^<>]*>",
+            RegexOptions.Singleline))
+        {
+            Assert.Contains("AutomationProperties.Name=\"", tag.Value);
+        }
     }
 
     [Fact]
@@ -130,6 +137,13 @@ public sealed class XamlContractTests
             .ToArray();
         Assert.NotEmpty(automationIds);
         Assert.Equal(automationIds.Length, automationIds.Distinct(StringComparer.Ordinal).Count());
+        foreach (Match tag in Regex.Matches(
+            allPages,
+            "<[A-Za-z][^<>]*AutomationProperties\\.AutomationId=\"[^\"]+\"[^<>]*>",
+            RegexOptions.Singleline))
+        {
+            Assert.Contains("AutomationProperties.Name=\"", tag.Value);
+        }
         foreach (var page in pageContracts.Keys)
         {
             var xaml = File.ReadAllText(Path.Combine(pagesDirectory, $"{page}.xaml"));

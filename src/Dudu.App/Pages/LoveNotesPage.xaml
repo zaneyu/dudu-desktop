@@ -7,47 +7,53 @@
     <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
         <StackPanel MaxWidth="880" Margin="32" Spacing="24">
             <StackPanel Spacing="8">
-                <TextBlock Text="love notes" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="LoveNotesPageTitle" />
+                <TextBlock Text="love notes" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="LoveNotesPageTitle" AutomationProperties.Name="love notes" />
                 <TextBlock Text="keep notes here or open an encrypted one" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
             </StackPanel>
 
             <StackPanel Spacing="12">
                 <TextBlock Text="local note jar" Style="{StaticResource SectionHeadingStyle}" />
-                <TextBlock x:Name="LoveNotesDailyLimit" TextWrapping="Wrap" AutomationProperties.AutomationId="LoveNotesDailyLimit" />
-                <ListView ItemsSource="{x:Bind ViewModel.LocalNotes, Mode=OneWay}" SelectionChanged="LocalNoteList_SelectionChanged" MaxHeight="220" AutomationProperties.AutomationId="LoveNotesLocalList">
+                <TextBlock x:Name="LoveNotesDailyLimit" TextWrapping="Wrap" AutomationProperties.AutomationId="LoveNotesDailyLimit" AutomationProperties.Name="daily note limit" />
+                <ListView ItemsSource="{x:Bind ViewModel.LocalNotes, Mode=OneWay}" SelectionChanged="LocalNoteList_SelectionChanged" MaxHeight="220" AutomationProperties.AutomationId="LoveNotesLocalList" AutomationProperties.Name="local note jar list">
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="models:LocalLoveNote">
                             <TextBlock Text="{x:Bind Text}" TextWrapping="Wrap" Margin="4" />
                         </DataTemplate>
                     </ListView.ItemTemplate>
                 </ListView>
-                <TextBox Header="note" Text="{x:Bind ViewModel.DraftText, Mode=TwoWay}" TextWrapping="Wrap" AcceptsReturn="True" AutomationProperties.AutomationId="LoveNotesDraft" />
-                <CheckBox Content="include this note in dudus local choices" IsChecked="{x:Bind ViewModel.DraftEnabled, Mode=TwoWay}" AutomationProperties.AutomationId="LoveNotesDraftEnabled" />
+                <TextBox Header="note" Text="{x:Bind ViewModel.DraftText, Mode=TwoWay}" TextWrapping="Wrap" AcceptsReturn="True" AutomationProperties.AutomationId="LoveNotesDraft" AutomationProperties.Name="note" />
+                <CheckBox Content="include this note in dudus local choices" IsChecked="{x:Bind ViewModel.DraftEnabled, Mode=TwoWay}" AutomationProperties.AutomationId="LoveNotesDraftEnabled" AutomationProperties.Name="include this note in dudus local choices" />
                 <StackPanel Spacing="8">
-                    <Button Content="save note" Command="{x:Bind ViewModel.SaveLocalNoteCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="LoveNotesSave" />
-                    <Button Content="delete selected" Command="{x:Bind ViewModel.DeleteLocalNoteCommand}" CommandParameter="{x:Bind ViewModel.SelectedNote}" AutomationProperties.AutomationId="LoveNotesDelete" />
-                    <Button Content="let dudu choose" Command="{x:Bind ViewModel.ShowLocalNoteCommand}" AutomationProperties.AutomationId="LoveNotesChoose" />
+                    <Button Content="save note" Command="{x:Bind ViewModel.SaveLocalNoteCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="LoveNotesSave" AutomationProperties.Name="save note" />
+                    <Button Content="delete selected" Command="{x:Bind ViewModel.DeleteLocalNoteCommand}" CommandParameter="{x:Bind ViewModel.SelectedNote}" AutomationProperties.AutomationId="LoveNotesDelete" AutomationProperties.Name="delete selected" />
+                    <Button Content="let dudu choose" Command="{x:Bind ViewModel.ShowLocalNoteCommand}" AutomationProperties.AutomationId="LoveNotesChoose" AutomationProperties.Name="let dudu choose" />
                 </StackPanel>
             </StackPanel>
 
             <StackPanel Spacing="12">
                 <TextBlock Text="incoming notes" Style="{StaticResource SectionHeadingStyle}" />
-                <TextBlock x:Name="LoveNotesPendingCount" TextWrapping="Wrap" AutomationProperties.AutomationId="LoveNotesPendingCount" />
-                <ListView ItemsSource="{x:Bind ViewModel.PendingRemoteNotes, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.SelectedRemoteEnvelope, Mode=TwoWay}" MaxHeight="180" AutomationProperties.AutomationId="LoveNotesRemoteList">
+                <TextBlock x:Name="LoveNotesPendingCount" TextWrapping="Wrap" AutomationProperties.AutomationId="LoveNotesPendingCount" AutomationProperties.Name="pending notes count" />
+                <ListView ItemsSource="{x:Bind ViewModel.PendingRemoteNotes, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.SelectedRemoteEnvelope, Mode=TwoWay}" MaxHeight="180" AutomationProperties.AutomationId="LoveNotesRemoteList" AutomationProperties.Name="incoming notes list">
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="models:RemoteEnvelope">
                             <TextBlock Text="encrypted note received" Margin="4" />
                         </DataTemplate>
                     </ListView.ItemTemplate>
                 </ListView>
-                <Button Content="reveal selected note" Command="{x:Bind ViewModel.RevealRemoteNoteCommand}" CommandParameter="{x:Bind ViewModel.SelectedRemoteEnvelope}" IsEnabled="{x:Bind ViewModel.CanRevealRemoteNote, Mode=OneWay}" AutomationProperties.AutomationId="LoveNotesRevealSelected" HorizontalAlignment="Left" />
-                <TextBox Header="opened note" Text="{x:Bind ViewModel.OpenedRemoteNoteText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" AutomationProperties.AutomationId="LoveNotesOpened" />
-                <Button Content="save opened note to local jar" Command="{x:Bind ViewModel.SaveOpenedNoteCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="LoveNotesSaveOpened" HorizontalAlignment="Left" />
+                <Button Content="reveal selected note" Command="{x:Bind ViewModel.RevealRemoteNoteCommand}" CommandParameter="{x:Bind ViewModel.SelectedRemoteEnvelope}" IsEnabled="{x:Bind ViewModel.CanRevealRemoteNote, Mode=OneWay}" AutomationProperties.AutomationId="LoveNotesRevealSelected" AutomationProperties.Name="reveal selected note" HorizontalAlignment="Left" />
+                <TextBox Header="opened note" Text="{x:Bind ViewModel.OpenedRemoteNoteText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" AutomationProperties.AutomationId="LoveNotesOpened" AutomationProperties.Name="opened note" />
+                <Button Content="save opened note to local jar" Command="{x:Bind ViewModel.SaveOpenedNoteCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="LoveNotesSaveOpened" AutomationProperties.Name="save opened note to local jar" HorizontalAlignment="Left" />
             </StackPanel>
 
             <StackPanel Spacing="4" AutomationProperties.LiveSetting="Polite">
-                <TextBlock Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" Foreground="{ThemeResource SuccessBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="LoveNotesStatusMessage" />
-                <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" Foreground="{ThemeResource ErrorBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="LoveNotesErrorMessage" />
+                <StackPanel Orientation="Horizontal" Spacing="6" Visibility="{x:Bind ViewModel.HasStatus, Mode=OneWay}">
+                    <FontIcon Glyph="&#xE73E;" Foreground="{ThemeResource SuccessBrush}" AutomationProperties.AccessibilityView="Raw" />
+                    <TextBlock Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" Foreground="{ThemeResource SuccessBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="LoveNotesStatusMessage" AutomationProperties.Name="status message" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Spacing="6" Visibility="{x:Bind ViewModel.HasError, Mode=OneWay}">
+                    <FontIcon Glyph="&#xEA39;" Foreground="{ThemeResource ErrorBrush}" AutomationProperties.AccessibilityView="Raw" />
+                    <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" Foreground="{ThemeResource ErrorBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="LoveNotesErrorMessage" AutomationProperties.Name="error message" />
+                </StackPanel>
             </StackPanel>
         </StackPanel>
     </ScrollViewer>

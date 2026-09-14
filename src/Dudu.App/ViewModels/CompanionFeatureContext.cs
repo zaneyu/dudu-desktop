@@ -192,14 +192,34 @@ public abstract class FeatureViewModelBase : CommunityToolkit.Mvvm.ComponentMode
     public string? ErrorMessage
     {
         get => _errorMessage;
-        protected set => SetProperty(ref _errorMessage, value);
+        protected set
+        {
+            if (SetProperty(ref _errorMessage, value))
+            {
+                OnPropertyChanged(nameof(HasError));
+            }
+        }
     }
 
     public string? StatusMessage
     {
         get => _statusMessage;
-        protected set => SetProperty(ref _statusMessage, value);
+        protected set
+        {
+            if (SetProperty(ref _statusMessage, value))
+            {
+                OnPropertyChanged(nameof(HasStatus));
+            }
+        }
     }
+
+    /// <summary>True once an error is set. Pages pair this with a status icon
+    /// so meaning never rests on color alone.</summary>
+    public bool HasError => !string.IsNullOrWhiteSpace(_errorMessage);
+
+    /// <summary>True once a success status is set. Pages pair this with a
+    /// status icon so meaning never rests on color alone.</summary>
+    public bool HasStatus => !string.IsNullOrWhiteSpace(_statusMessage);
 
     protected async Task<bool> RunAsync(
         Func<Task> operation,

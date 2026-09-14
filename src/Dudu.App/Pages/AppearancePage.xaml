@@ -6,46 +6,52 @@
     <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
         <StackPanel MaxWidth="880" Margin="32" Spacing="24">
             <StackPanel Spacing="8">
-                <TextBlock Text="appearance" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="AppearancePageTitle" />
+                <TextBlock Text="appearance" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="AppearancePageTitle" AutomationProperties.Name="appearance" />
                 <TextBlock Text="keep dudu visible calm on ur screen" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
             </StackPanel>
 
             <StackPanel Spacing="12">
                 <TextBlock Text="look and motion" Style="{StaticResource SectionHeadingStyle}" />
-                <ComboBox x:Name="ThemeBox" Header="theme" SelectedIndex="0" SelectionChanged="ThemeBox_SelectionChanged" AutomationProperties.AutomationId="AppearanceTheme">
+                <ComboBox x:Name="ThemeBox" Header="theme" SelectedIndex="0" SelectionChanged="ThemeBox_SelectionChanged" AutomationProperties.AutomationId="AppearanceTheme" AutomationProperties.Name="theme">
                     <ComboBoxItem Content="use windows setting" Tag="System" />
                     <ComboBoxItem Content="light" Tag="Light" />
                     <ComboBoxItem Content="dark" Tag="Dark" />
                 </ComboBox>
-                <CheckBox Content="use reduced motion" IsChecked="{x:Bind ViewModel.ReducedMotion, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceReducedMotion" />
+                <CheckBox Content="use reduced motion" IsChecked="{x:Bind ViewModel.ReducedMotion, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceReducedMotion" AutomationProperties.Name="use reduced motion" />
                 <TextBlock Text="reduced motion uses static poses less movement" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
-                <Slider Header="pet size" Minimum="0.5" Maximum="2" SmallChange="0.1" Value="{x:Bind ViewModel.PetScale, Mode=TwoWay}" AutomationProperties.AutomationId="AppearancePetScale" />
-                <ComboBox Header="monitor" ItemsSource="{x:Bind ViewModel.MonitorOptions, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.MonitorDeviceName, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceMonitor" />
+                <Slider Header="pet size" Minimum="0.5" Maximum="2" SmallChange="0.1" Value="{x:Bind ViewModel.PetScale, Mode=TwoWay}" AutomationProperties.AutomationId="AppearancePetScale" AutomationProperties.Name="pet size" />
+                <ComboBox Header="monitor" ItemsSource="{x:Bind ViewModel.MonitorOptions, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.MonitorDeviceName, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceMonitor" AutomationProperties.Name="monitor" />
                 <StackPanel Spacing="8">
-                    <Button Content="save appearance" Command="{x:Bind ViewModel.SaveCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="AppearanceSave" />
-                    <Button Content="save pet placement" Command="{x:Bind ViewModel.SavePlacementCommand}" AutomationProperties.AutomationId="AppearanceSavePlacement" />
+                    <Button Content="save appearance" Command="{x:Bind ViewModel.SaveCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="AppearanceSave" AutomationProperties.Name="save appearance" />
+                    <Button Content="save pet placement" Command="{x:Bind ViewModel.SavePlacementCommand}" AutomationProperties.AutomationId="AppearanceSavePlacement" AutomationProperties.Name="save pet placement" />
                 </StackPanel>
             </StackPanel>
 
             <StackPanel Spacing="12">
                 <TextBlock Text="pet options" Style="{StaticResource SectionHeadingStyle}" />
-                <ComboBox Header="outfit" ItemsSource="{x:Bind ViewModel.OutfitOptions, Mode=OneWay}" IsEnabled="{x:Bind ViewModel.CanPersistOutfit, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceOutfit" />
-                <TextBlock Text="{x:Bind ViewModel.OutfitAvailabilityMessage, Mode=OneWay}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="AppearanceOutfitAvailability" />
-                <CheckBox Content="automatic seasonal mode" IsChecked="{x:Bind ViewModel.AutomaticSeasonalMode, Mode=TwoWay}" IsEnabled="{x:Bind ViewModel.CanConfigureSeasonalMode, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceSeasonalMode" />
-                <TextBlock Text="automatic seasonal mode is unavailable for now" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="AppearanceSeasonalAvailability" />
-                <CheckBox Content="keep dudu above other windows" IsChecked="{x:Bind ViewModel.AlwaysOnTop, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceAlwaysOnTop" />
-                <CheckBox Content="hide dudu during fullscreen work" IsChecked="{x:Bind ViewModel.HideDuringFullscreen, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceHideFullscreen" />
+                <ComboBox Header="outfit" ItemsSource="{x:Bind ViewModel.OutfitOptions, Mode=OneWay}" IsEnabled="{x:Bind ViewModel.CanPersistOutfit, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceOutfit" AutomationProperties.Name="outfit" />
+                <TextBlock Text="{x:Bind ViewModel.OutfitAvailabilityMessage, Mode=OneWay}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="AppearanceOutfitAvailability" AutomationProperties.Name="outfit availability" />
+                <CheckBox Content="automatic seasonal mode" IsChecked="{x:Bind ViewModel.AutomaticSeasonalMode, Mode=TwoWay}" IsEnabled="{x:Bind ViewModel.CanConfigureSeasonalMode, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceSeasonalMode" AutomationProperties.Name="automatic seasonal mode" />
+                <TextBlock Text="automatic seasonal mode is unavailable for now" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="AppearanceSeasonalAvailability" AutomationProperties.Name="automatic seasonal mode is unavailable for now" />
+                <CheckBox Content="keep dudu above other windows" IsChecked="{x:Bind ViewModel.AlwaysOnTop, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceAlwaysOnTop" AutomationProperties.Name="keep dudu above other windows" />
+                <CheckBox Content="hide dudu during fullscreen work" IsChecked="{x:Bind ViewModel.HideDuringFullscreen, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceHideFullscreen" AutomationProperties.Name="hide dudu during fullscreen work" />
             </StackPanel>
 
             <StackPanel Spacing="12">
                 <TextBlock Text="shortcut" Style="{StaticResource SectionHeadingStyle}" />
-                <TextBox Header="show or hide dudu" Text="{x:Bind ViewModel.GlobalShortcut, Mode=TwoWay}" PlaceholderText="Ctrl+Alt+D" AutomationProperties.AutomationId="AppearanceShortcut" />
-                <Button Content="save shortcut" Command="{x:Bind ViewModel.SaveShortcutCommand}" AutomationProperties.AutomationId="AppearanceSaveShortcut" HorizontalAlignment="Left" />
+                <TextBox Header="show or hide dudu" Text="{x:Bind ViewModel.GlobalShortcut, Mode=TwoWay}" PlaceholderText="Ctrl+Alt+D" AutomationProperties.AutomationId="AppearanceShortcut" AutomationProperties.Name="show or hide dudu" />
+                <Button Content="save shortcut" Command="{x:Bind ViewModel.SaveShortcutCommand}" AutomationProperties.AutomationId="AppearanceSaveShortcut" AutomationProperties.Name="save shortcut" HorizontalAlignment="Left" />
             </StackPanel>
 
             <StackPanel Spacing="4" AutomationProperties.LiveSetting="Polite">
-                <TextBlock Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" Foreground="{ThemeResource SuccessBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="AppearanceStatusMessage" />
-                <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" Foreground="{ThemeResource ErrorBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="AppearanceErrorMessage" />
+                <StackPanel Orientation="Horizontal" Spacing="6" Visibility="{x:Bind ViewModel.HasStatus, Mode=OneWay}">
+                    <FontIcon Glyph="&#xE73E;" Foreground="{ThemeResource SuccessBrush}" AutomationProperties.AccessibilityView="Raw" />
+                    <TextBlock Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" Foreground="{ThemeResource SuccessBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="AppearanceStatusMessage" AutomationProperties.Name="status message" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Spacing="6" Visibility="{x:Bind ViewModel.HasError, Mode=OneWay}">
+                    <FontIcon Glyph="&#xEA39;" Foreground="{ThemeResource ErrorBrush}" AutomationProperties.AccessibilityView="Raw" />
+                    <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" Foreground="{ThemeResource ErrorBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="AppearanceErrorMessage" AutomationProperties.Name="error message" />
+                </StackPanel>
             </StackPanel>
         </StackPanel>
     </ScrollViewer>

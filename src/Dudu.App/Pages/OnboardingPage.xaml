@@ -6,69 +6,69 @@
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel x:Name="PageRoot" MaxWidth="720" Padding="32" Spacing="16">
             <TextBlock Text="calm start with dudu" Style="{StaticResource PageTitleStyle}" />
-            <TextBlock x:Name="OnboardingProgress" AutomationProperties.AutomationId="OnboardingProgress" FontSize="14" Foreground="{ThemeResource TextSecondaryBrush}" />
+            <TextBlock x:Name="OnboardingProgress" AutomationProperties.AutomationId="OnboardingProgress" AutomationProperties.Name="onboarding progress" FontSize="14" Foreground="{ThemeResource TextSecondaryBrush}" />
             <Border Background="{ThemeResource BlushSurfaceBrush}" BorderBrush="{ThemeResource LavenderBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="24">
                 <StackPanel Spacing="16">
                     <StackPanel x:Name="RecipientStep" Spacing="12">
                         <TextBlock Text="what should dudu call you?" Style="{StaticResource SectionHeadingStyle}" />
                         <TextBlock Text="use a name that feels natural" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
-                        <TextBox x:Name="RecipientNameBox" Header="your name" AutomationProperties.AutomationId="OnboardingRecipientName" PlaceholderText="for example, mia" />
-                        <Button x:Name="RecommendedDefaultsButton" Content="use recommended defaults" AutomationProperties.AutomationId="OnboardingRecommendedDefaults" Click="RecommendedDefaultsButton_Click" />
+                        <TextBox x:Name="RecipientNameBox" Header="your name" AutomationProperties.AutomationId="OnboardingRecipientName" AutomationProperties.Name="your name" PlaceholderText="for example, mia" />
+                        <Button x:Name="RecommendedDefaultsButton" Content="use recommended defaults" AutomationProperties.AutomationId="OnboardingRecommendedDefaults" AutomationProperties.Name="use recommended defaults" Click="RecommendedDefaultsButton_Click" />
                     </StackPanel>
 
                     <StackPanel x:Name="AppearanceStep" Spacing="12" Visibility="Collapsed">
                         <TextBlock Text="choose a quiet look" Style="{StaticResource SectionHeadingStyle}" />
-                        <ComboBox x:Name="ThemeBox" Header="appearance" AutomationProperties.AutomationId="OnboardingTheme" SelectedIndex="0">
+                        <ComboBox x:Name="ThemeBox" Header="appearance" AutomationProperties.AutomationId="OnboardingTheme" AutomationProperties.Name="appearance" SelectedIndex="0">
                             <ComboBoxItem Content="use windows setting" Tag="System" />
                             <ComboBoxItem Content="light" Tag="Light" />
                             <ComboBoxItem Content="dark" Tag="Dark" />
                         </ComboBox>
-                        <CheckBox x:Name="ReducedMotionBox" Content="use reduced motion" AutomationProperties.AutomationId="OnboardingReducedMotion" />
+                        <CheckBox x:Name="ReducedMotionBox" Content="use reduced motion" AutomationProperties.AutomationId="OnboardingReducedMotion" AutomationProperties.Name="use reduced motion" />
                         <TextBlock Text="reduced motion keeps dudu expressive without extra movement" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                     </StackPanel>
 
                     <StackPanel x:Name="QuietHoursStep" Spacing="12" Visibility="Collapsed">
                         <TextBlock Text="set a quiet window" Style="{StaticResource SectionHeadingStyle}" />
-                        <CheckBox x:Name="QuietHoursBox" Content="quiet hours on" AutomationProperties.AutomationId="OnboardingQuietHoursEnabled" IsChecked="True" />
+                        <CheckBox x:Name="QuietHoursBox" Content="quiet hours on" AutomationProperties.AutomationId="OnboardingQuietHoursEnabled" AutomationProperties.Name="quiet hours on" IsChecked="True" />
                         <Grid ColumnSpacing="16">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
-                            <TextBox x:Name="QuietStartBox" Header="starts" Text="22:00" AutomationProperties.AutomationId="OnboardingQuietHoursStart" Grid.Column="0" />
-                            <TextBox x:Name="QuietEndBox" Header="ends" Text="07:00" AutomationProperties.AutomationId="OnboardingQuietHoursEnd" Grid.Column="1" />
+                            <TextBox x:Name="QuietStartBox" Header="starts" Text="22:00" AutomationProperties.AutomationId="OnboardingQuietHoursStart" AutomationProperties.Name="starts" Grid.Column="0" />
+                            <TextBox x:Name="QuietEndBox" Header="ends" Text="07:00" AutomationProperties.AutomationId="OnboardingQuietHoursEnd" AutomationProperties.Name="ends" Grid.Column="1" />
                         </Grid>
                         <TextBlock Text="dudu waits here before non-urgent prompts" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                     </StackPanel>
 
                     <StackPanel x:Name="RemindersStep" Spacing="12" Visibility="Collapsed">
                         <TextBlock Text="keep reminders gentle" Style="{StaticResource SectionHeadingStyle}" />
-                        <CheckBox x:Name="HydrationBox" Content="suggest water breaks" AutomationProperties.AutomationId="OnboardingHydrationReminders" IsChecked="True" />
-                        <CheckBox x:Name="BreakBox" Content="suggest short breaks" AutomationProperties.AutomationId="OnboardingBreakReminders" IsChecked="True" />
-                        <NumberBox x:Name="NoteLimitBox" Header="daily local note limit" AutomationProperties.AutomationId="OnboardingLocalNoteLimit" Minimum="0" Maximum="12" Value="3" SpinButtonPlacementMode="Compact" />
+                        <CheckBox x:Name="HydrationBox" Content="suggest water breaks" AutomationProperties.AutomationId="OnboardingHydrationReminders" AutomationProperties.Name="suggest water breaks" IsChecked="True" />
+                        <CheckBox x:Name="BreakBox" Content="suggest short breaks" AutomationProperties.AutomationId="OnboardingBreakReminders" AutomationProperties.Name="suggest short breaks" IsChecked="True" />
+                        <NumberBox x:Name="NoteLimitBox" Header="daily local note limit" AutomationProperties.AutomationId="OnboardingLocalNoteLimit" AutomationProperties.Name="daily local note limit" Minimum="0" Maximum="12" Value="3" SpinButtonPlacementMode="Compact" />
                     </StackPanel>
 
-                    <StackPanel x:Name="PlacementStep" Spacing="12" Visibility="Collapsed" AutomationProperties.AutomationId="OnboardingPlacementStep">
+                    <StackPanel x:Name="PlacementStep" Spacing="12" Visibility="Collapsed" AutomationProperties.AutomationId="OnboardingPlacementStep" AutomationProperties.Name="placement step">
                         <TextBlock Text="place dudu" Style="{StaticResource SectionHeadingStyle}" />
                         <TextBlock Text="drag dudu where u want it" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
-                        <Button x:Name="RecommendedPlacementButton" Content="use recommended placement" AutomationProperties.AutomationId="OnboardingRecommendedPlacement" Click="RecommendedPlacementButton_Click" />
-                        <Slider x:Name="PlacementScaleSlider" Header="pet size" AutomationProperties.AutomationId="OnboardingPetScale" Minimum="0.5" Maximum="2" SmallChange="0.1" Value="1" ValueChanged="PlacementScaleSlider_ValueChanged" />
-                        <CheckBox x:Name="HideFullscreenBox" Content="hide dudu during fullscreen work" AutomationProperties.AutomationId="OnboardingHideDuringFullscreen" IsChecked="True" />
-                        <CheckBox x:Name="LaunchAtSignInBox" Content="launch dudu when i sign in" AutomationProperties.AutomationId="OnboardingLaunchAtSignIn" IsChecked="True" />
+                        <Button x:Name="RecommendedPlacementButton" Content="use recommended placement" AutomationProperties.AutomationId="OnboardingRecommendedPlacement" AutomationProperties.Name="use recommended placement" Click="RecommendedPlacementButton_Click" />
+                        <Slider x:Name="PlacementScaleSlider" Header="pet size" AutomationProperties.AutomationId="OnboardingPetScale" AutomationProperties.Name="pet size" Minimum="0.5" Maximum="2" SmallChange="0.1" Value="1" ValueChanged="PlacementScaleSlider_ValueChanged" />
+                        <CheckBox x:Name="HideFullscreenBox" Content="hide dudu during fullscreen work" AutomationProperties.AutomationId="OnboardingHideDuringFullscreen" AutomationProperties.Name="hide dudu during fullscreen work" IsChecked="True" />
+                        <CheckBox x:Name="LaunchAtSignInBox" Content="launch dudu when i sign in" AutomationProperties.AutomationId="OnboardingLaunchAtSignIn" AutomationProperties.Name="launch dudu when i sign in" IsChecked="True" />
                     </StackPanel>
 
                     <StackPanel x:Name="PairingStep" Spacing="12" Visibility="Collapsed">
                         <TextBlock Text="pair later if you want" Style="{StaticResource SectionHeadingStyle}" />
                         <TextBlock Text="pairing lets someone send encrypted notes its optional" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
-                        <TextBlock x:Name="PairingStatus" AutomationProperties.AutomationId="OnboardingPairingStatus" Text="pairing is optional" TextWrapping="Wrap" />
-                        <Button x:Name="PairingCheckButton" Content="check pairing availability" AutomationProperties.AutomationId="OnboardingPairingCheck" Click="PairingCheckButton_Click" />
-                        <Button x:Name="SkipPairingButton" Content="skip for now" AutomationProperties.AutomationId="OnboardingSkipPairing" Click="SkipPairingButton_Click" />
+                        <TextBlock x:Name="PairingStatus" AutomationProperties.AutomationId="OnboardingPairingStatus" AutomationProperties.Name="pairing is optional" Text="pairing is optional" TextWrapping="Wrap" />
+                        <Button x:Name="PairingCheckButton" Content="check pairing availability" AutomationProperties.AutomationId="OnboardingPairingCheck" AutomationProperties.Name="check pairing availability" Click="PairingCheckButton_Click" />
+                        <Button x:Name="SkipPairingButton" Content="skip for now" AutomationProperties.AutomationId="OnboardingSkipPairing" AutomationProperties.Name="skip for now" Click="SkipPairingButton_Click" />
                     </StackPanel>
 
-                    <TextBlock x:Name="OnboardingValidationMessage" AutomationProperties.AutomationId="OnboardingValidationMessage" Foreground="{ThemeResource ErrorBrush}" TextWrapping="Wrap" />
+                    <TextBlock x:Name="OnboardingValidationMessage" AutomationProperties.AutomationId="OnboardingValidationMessage" AutomationProperties.Name="validation message" Foreground="{ThemeResource ErrorBrush}" TextWrapping="Wrap" />
                     <StackPanel x:Name="StartupRecoveryPanel" Spacing="8" Visibility="Collapsed">
-                        <TextBlock x:Name="StartupRecoveryMessage" AutomationProperties.AutomationId="OnboardingStartupRecoveryMessage" Foreground="{ThemeResource WarningBrush}" TextWrapping="Wrap" />
-                        <Button x:Name="RetryStartupButton" Content="retry startup registration" AutomationProperties.AutomationId="OnboardingRetryStartupRegistration" Click="RetryStartupButton_Click" />
+                        <TextBlock x:Name="StartupRecoveryMessage" AutomationProperties.AutomationId="OnboardingStartupRecoveryMessage" AutomationProperties.Name="startup recovery message" Foreground="{ThemeResource WarningBrush}" TextWrapping="Wrap" />
+                        <Button x:Name="RetryStartupButton" Content="retry startup registration" AutomationProperties.AutomationId="OnboardingRetryStartupRegistration" AutomationProperties.Name="retry startup registration" Click="RetryStartupButton_Click" />
                     </StackPanel>
                 </StackPanel>
             </Border>
@@ -79,9 +79,9 @@
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <Button x:Name="BackButton" Content="back" AutomationProperties.AutomationId="OnboardingBack" Click="BackButton_Click" Grid.Column="0" />
-                <Button x:Name="NextButton" Content="next" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="OnboardingNext" Click="NextButton_Click" Grid.Column="2" />
-                <Button x:Name="CompleteButton" Content="finish setup" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="OnboardingComplete" Click="CompleteButton_Click" Grid.Column="2" Visibility="Collapsed" />
+                <Button x:Name="BackButton" Content="back" AutomationProperties.AutomationId="OnboardingBack" AutomationProperties.Name="back" Click="BackButton_Click" Grid.Column="0" />
+                <Button x:Name="NextButton" Content="next" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="OnboardingNext" AutomationProperties.Name="next" Click="NextButton_Click" Grid.Column="2" />
+                <Button x:Name="CompleteButton" Content="finish setup" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="OnboardingComplete" AutomationProperties.Name="finish setup" Click="CompleteButton_Click" Grid.Column="2" Visibility="Collapsed" />
             </Grid>
         </StackPanel>
     </ScrollViewer>

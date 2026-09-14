@@ -50,7 +50,7 @@ public sealed record AnimationOptions
 
     public bool FadeReducedMotion { get; init; }
 
-    public TimeSpan ReducedMotionFadeDuration { get; init; } = TimeSpan.FromMilliseconds(120);
+    public TimeSpan ReducedMotionFadeDuration { get; init; } = TimeSpan.FromMilliseconds(90);
 }
 
 public sealed class AnimationEngine : IDisposable, IAsyncDisposable
@@ -81,6 +81,8 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
     private bool _presentationGateDisposed;
     private bool _repaintPending;
     private Task _repaintWorker = Task.CompletedTask;
+    private bool _isPaused;
+    private TaskCompletionSource<object?>? _pauseCompletion;
 
     public AnimationEngine(
         AssetPack pack,
@@ -172,6 +174,36 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
 
             ExitMutation();
         }
+    }
+
+    /// <summary>Suspends frame-loop waits so ambient ticks stop while hidden,
+    /// fullscreen-suppressed, session-locked, or the display is off. Leaves
+    /// the active presentation in place rather than cancelling or restarting
+    /// it, so callers never need a second suppression path: the existing
+    /// runtime hooks call this instead of duplicating gate logic.</summary>
+    public void Pause()
+    {
+        lock (_stateGate)
+        {
+            if (_disposed || _isPaused) return;
+            _isPaused = true;
+            _pauseCompletion = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+    }
+
+    /// <summary>Resumes frame-loop waits suspended by <see cref="Pause"/>.</summary>
+    public void Resume()
+    {
+        TaskCompletionSource<object?>? completion;
+        lock (_stateGate)
+        {
+            if (!_isPaused) return;
+            _isPaused = false;
+            completion = _pauseCompletion;
+            _pauseCompletion = null;
+        }
+
+        completion?.TrySetResult(null);
     }
 
     public void ReplacePack(AssetPack pack)
@@ -553,9 +585,26 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
 
     private async ValueTask WaitUntilAsync(long deadline, CancellationToken cancellationToken)
     {
+        await WaitWhilePausedAsync(cancellationToken).ConfigureAwait(false);
         while (_clock.Timestamp < deadline)
         {
             await _clock.DelayUntilAsync(deadline, cancellationToken).ConfigureAwait(false);
+            await WaitWhilePausedAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async ValueTask WaitWhilePausedAsync(CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            Task pauseTask;
+            lock (_stateGate)
+            {
+                if (!_isPaused || _pauseCompletion is null) return;
+                pauseTask = _pauseCompletion.Task;
+            }
+
+            await pauseTask.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -724,6 +773,13 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
 
             _disposed = true;
             lock (_repaintGate) _repaintPending = false;
+            if (_isPaused)
+            {
+                _isPaused = false;
+                _pauseCompletion?.TrySetResult(null);
+                _pauseCompletion = null;
+            }
+
             try
             {
                 _activeCancellation?.Cancel();

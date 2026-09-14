@@ -35,6 +35,16 @@ if (Array.IndexOf(args, "outage-reminder") >= 0)
     return await RunOutageReminderScenarioAsync(args);
 }
 
+if (Array.IndexOf(args, "performance") >= 0)
+{
+    return await PerformanceScenario.RunAsync(args);
+}
+
+if (Array.IndexOf(args, "long-run") >= 0)
+{
+    return await LongRunScenario.RunAsync(args);
+}
+
 if (!args.Contains("--scenario", StringComparer.Ordinal)
     || Array.IndexOf(args, "layered-window") < 0)
 {
