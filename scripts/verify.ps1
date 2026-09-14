@@ -1,3 +1,5 @@
+#Requires -Version 7.4
+
 <#
 .SYNOPSIS
     One-command verification for the Dudu Desktop private v1 release.
@@ -28,6 +30,10 @@
 #>
 
 $ErrorActionPreference = "Stop"
+# Explicit (not just the pwsh >= 7.4 default): a nonzero exit from any native
+# command below (dotnet, node, npm, nested pwsh) becomes a terminating error,
+# so this script stops on the first real failure instead of plowing ahead.
+$PSNativeCommandUseErrorActionPreference = $true
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $RepoRoot
@@ -114,6 +120,11 @@ function Assert-CleanWorkingTree {
     $status = git status --porcelain
     $violations = $status | Where-Object {
         $path = $_.Substring(3).Trim('"')
+        # A rename/copy entry reads "old/path -> new/path"; only the
+        # destination path is the one that still exists in the working tree.
+        if ($path -match " -> ") {
+            $path = ($path -split " -> ", 2)[1].Trim('"')
+        }
         -not ($path.StartsWith("work/") -or $path.StartsWith("outputs/"))
     }
     if ($violations) {

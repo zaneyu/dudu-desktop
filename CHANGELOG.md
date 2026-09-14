@@ -47,8 +47,6 @@ release cadences.
   location or remote data, always overridable.
 - A private, current-user Windows installer (Inno Setup) with checksum
   verification, in-place upgrade, and clean uninstall without elevation.
-- A one-command release verification script (`scripts/verify.ps1`) covering
-  build, test, relay, installer, performance, and end-to-end gates.
 
 ### Notes
 

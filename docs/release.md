@@ -15,8 +15,12 @@ the Worker, the sender page, the installer, or this release tag.
 - Inno Setup 7 installed at its default location
   (`%ProgramFiles%\Inno Setup 7\ISCC.exe`) — `scripts/publish-windows.ps1`
   throws a clear error if it is missing.
-- PowerShell 7 (`pwsh`) for every script in this runbook and in
-  `scripts/verify.ps1`.
+- PowerShell **7.4 or newer** (`pwsh --version`) for every script in this
+  runbook and in `scripts/verify.ps1`. `verify.ps1` declares
+  `#Requires -Version 7.4` and relies on
+  `$PSNativeCommandUseErrorActionPreference` (stable by default only from
+  7.4 onward) so a failing `dotnet`/`node`/`npm`/nested-`pwsh` call stops the
+  script immediately instead of silently continuing.
 - A Cloudflare account with Workers and D1 enabled, and the `wrangler` CLI
   (installed as a `relay/` dev dependency — invoke it as `npm exec wrangler`
   or `npx wrangler`, not a separately installed global).
@@ -78,6 +82,20 @@ git-ignored.
    ```powershell
    npm exec wrangler deploy
    ```
+
+   **Warning: do not try to "dry-run" or probe this with `-- --help`.**
+   Unlike `d1 create`, `d1 migrations apply`, and `secret put` — which all
+   take a mandatory positional argument and print help instead of running
+   when you append `-- --help` without one — `deploy` and `rollback` take no
+   required positional argument, so `npm exec wrangler deploy -- --help` (or
+   `rollback -- --help`) does **not** show help: it executes the real
+   command for real against whichever Cloudflare account `wrangler` is
+   currently authenticated as. This was confirmed the hard way while writing
+   this runbook (see this task's report for the full incident writeup); the
+   static-asset upload step runs before the D1 binding is validated, so a
+   deploy that fails on the placeholder `database_id` (§3 step 1) still
+   uploads assets first, even though it never publishes a live Worker
+   version.
 
 5. Roll back to the previous stable Worker version if a deploy misbehaves:
 
