@@ -16,28 +16,37 @@ public static class OverlayHitTest
         int windowY,
         IReadOnlyList<PixelRect>? explicitHitRegions = null)
     {
-        if (Contains(explicitHitRegions, windowX, windowY))
+        try
         {
-            return true;
-        }
+            if (Contains(explicitHitRegions, windowX, windowY))
+            {
+                return true;
+            }
 
-        if (!HasValidGeometry(width, height, stride)
-            || !double.IsFinite(scale) || scale <= 0
-            || windowX < 0 || windowY < 0)
+            if (!HasValidGeometry(width, height, stride)
+                || !double.IsFinite(scale) || scale <= 0
+                || windowX < 0 || windowY < 0)
+            {
+                return false;
+            }
+
+            var sourceX = (int)Math.Floor(SaturateToDouble(windowX) / scale);
+            var sourceY = (int)Math.Floor(SaturateToDouble(windowY) / scale);
+            if ((uint)sourceX >= (uint)width || (uint)sourceY >= (uint)height)
+            {
+                return false;
+            }
+
+            var alphaOffset = (long)sourceY * stride + (long)sourceX * 4 + 3;
+            return alphaOffset >= 0
+                && alphaOffset < premultipliedBgra.Length
+                && IsInteractive(premultipliedBgra[(int)alphaOffset]);
+        }
+        catch
         {
+            // Hit testing must never throw: fail to non-interactive.
             return false;
         }
-
-        var sourceX = (int)Math.Floor(windowX / scale);
-        var sourceY = (int)Math.Floor(windowY / scale);
-        if ((uint)sourceX >= (uint)width || (uint)sourceY >= (uint)height)
-        {
-            return false;
-        }
-
-        var alphaOffset = checked(sourceY * stride + sourceX * 4 + 3);
-        return alphaOffset < premultipliedBgra.Length
-            && IsInteractive(premultipliedBgra[alphaOffset]);
     }
 
     public static bool IsInteractive(
@@ -51,24 +60,37 @@ public static class OverlayHitTest
         int clientY,
         IReadOnlyList<PixelRect>? explicitHitRegions = null)
     {
-        if (Contains(explicitHitRegions, clientX, clientY))
+        try
         {
-            return true;
-        }
+            if (Contains(explicitHitRegions, clientX, clientY))
+            {
+                return true;
+            }
 
-        if (!HasValidGeometry(width, height, stride)
-            || clientWidth <= 0 || clientHeight <= 0
-            || clientX < 0 || clientY < 0
-            || clientX >= clientWidth || clientY >= clientHeight)
+            if (!HasValidGeometry(width, height, stride)
+                || clientWidth <= 0 || clientHeight <= 0
+                || clientX < 0 || clientY < 0
+                || clientX >= clientWidth || clientY >= clientHeight)
+            {
+                return false;
+            }
+
+            var sourceX = (int)((long)clientX * width / clientWidth);
+            var sourceY = (int)((long)clientY * height / clientHeight);
+            if ((uint)sourceX >= (uint)width || (uint)sourceY >= (uint)height)
+            {
+                return false;
+            }
+
+            var alphaOffset = (long)sourceY * stride + (long)sourceX * 4 + 3;
+            return alphaOffset >= 0
+                && alphaOffset < premultipliedBgra.Length
+                && IsInteractive(premultipliedBgra[(int)alphaOffset]);
+        }
+        catch
         {
             return false;
         }
-
-        var sourceX = (int)((long)clientX * width / clientWidth);
-        var sourceY = (int)((long)clientY * height / clientHeight);
-        var alphaOffset = checked(sourceY * stride + sourceX * 4 + 3);
-        return alphaOffset < premultipliedBgra.Length
-            && IsInteractive(premultipliedBgra[alphaOffset]);
     }
 
     public static byte AlphaAt(
@@ -80,25 +102,51 @@ public static class OverlayHitTest
         int windowX,
         int windowY)
     {
-        if (!HasValidGeometry(width, height, stride)
-            || !double.IsFinite(scale) || scale <= 0 || windowX < 0 || windowY < 0)
+        try
+        {
+            if (!HasValidGeometry(width, height, stride)
+                || !double.IsFinite(scale) || scale <= 0 || windowX < 0 || windowY < 0)
+            {
+                return 0;
+            }
+
+            var sourceX = (int)Math.Floor(SaturateToDouble(windowX) / scale);
+            var sourceY = (int)Math.Floor(SaturateToDouble(windowY) / scale);
+            if ((uint)sourceX >= (uint)width || (uint)sourceY >= (uint)height)
+            {
+                return 0;
+            }
+
+            var alphaOffset = (long)sourceY * stride + (long)sourceX * 4 + 3;
+            return alphaOffset >= 0 && alphaOffset < premultipliedBgra.Length
+                ? premultipliedBgra[(int)alphaOffset]
+                : (byte)0;
+        }
+        catch
         {
             return 0;
         }
-
-        var sourceX = (int)Math.Floor(windowX / scale);
-        var sourceY = (int)Math.Floor(windowY / scale);
-        if ((uint)sourceX >= (uint)width || (uint)sourceY >= (uint)height)
-        {
-            return 0;
-        }
-
-        var alphaOffset = checked(sourceY * stride + sourceX * 4 + 3);
-        return alphaOffset < premultipliedBgra.Length ? premultipliedBgra[alphaOffset] : (byte)0;
     }
 
-    private static bool Contains(IReadOnlyList<PixelRect>? regions, int x, int y) =>
-        regions is not null && regions.Any(region => region.Contains(x, y));
+    private static double SaturateToDouble(int value) => value;
+
+    private static bool Contains(IReadOnlyList<PixelRect>? regions, int x, int y)
+    {
+        if (regions is null) return false;
+        foreach (var region in regions)
+        {
+            try
+            {
+                if (region.Contains(x, y)) return true;
+            }
+            catch
+            {
+                // A malformed region never makes the point interactive.
+            }
+        }
+
+        return false;
+    }
 
     private static bool HasValidGeometry(int width, int height, int stride) =>
         width > 0 && height > 0 && width <= int.MaxValue / 4 && stride >= width * 4;
@@ -106,17 +154,39 @@ public static class OverlayHitTest
 
 public readonly record struct PixelRect(int X, int Y, int Width, int Height)
 {
-    public int Right => checked(X + Width);
+    public int Right => SaturateToInt((long)X + Width);
 
-    public int Bottom => checked(Y + Height);
+    public int Bottom => SaturateToInt((long)Y + Height);
 
     public bool IsValid => Width > 0 && Height > 0;
 
-    public bool Contains(int x, int y) =>
-        IsValid && x >= X && x < Right && y >= Y && y < Bottom;
+    public bool Contains(int x, int y)
+    {
+        try
+        {
+            if (!IsValid) return false;
+            return x >= X && x < Right && y >= Y && y < Bottom;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
-    public bool Contains(PixelRect other) =>
-        IsValid && other.IsValid
-        && other.X >= X && other.Y >= Y
-        && other.Right <= Right && other.Bottom <= Bottom;
+    public bool Contains(PixelRect other)
+    {
+        try
+        {
+            if (!IsValid || !other.IsValid) return false;
+            return other.X >= X && other.Y >= Y
+                && other.Right <= Right && other.Bottom <= Bottom;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static int SaturateToInt(long value) =>
+        value > int.MaxValue ? int.MaxValue : value < int.MinValue ? int.MinValue : (int)value;
 }

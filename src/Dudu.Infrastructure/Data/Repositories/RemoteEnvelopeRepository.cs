@@ -6,8 +6,12 @@ namespace Dudu.Infrastructure.Data.Repositories;
 
 public sealed class RemoteEnvelopeRepository : SqliteRepository, IRemoteEnvelopeRepository
 {
-    public RemoteEnvelopeRepository(Database database) : base(database) { }
-    internal RemoteEnvelopeRepository(Database database, SqliteTransactionContext context) : base(database, context) { }
+    private readonly TimeProvider _timeProvider;
+
+    /// <param name="timeProvider">Decides which scheduled envelopes are due for
+    /// <see cref="ListPendingAsync"/>. Defaults to the system clock.</param>
+    public RemoteEnvelopeRepository(Database database, TimeProvider? timeProvider = null) : base(database) { _timeProvider = timeProvider ?? TimeProvider.System; }
+    internal RemoteEnvelopeRepository(Database database, SqliteTransactionContext context, TimeProvider? timeProvider = null) : base(database, context) { _timeProvider = timeProvider ?? TimeProvider.System; }
     public async Task<RemoteEnvelope?> GetAsync(string messageId, CancellationToken cancellationToken)
     {
         await using var connection=await OpenAsync(cancellationToken); await using var command=connection.CreateCommand(); command.CommandText=Select+" WHERE message_id=$id;"; Add(command,"$id",messageId); await using var reader=await command.ExecuteReaderAsync(cancellationToken); return await reader.ReadAsync(cancellationToken)?Read(reader):null;
@@ -17,7 +21,12 @@ public sealed class RemoteEnvelopeRepository : SqliteRepository, IRemoteEnvelope
     {
         // processed_remote_messages is relay-delivery deduplication state, not user-read state.
         // Received ciphertext must remain visible until the user saves/consumes it.
-        var result=new List<RemoteEnvelope>(); await using var connection=await OpenAsync(cancellationToken); await using var command=connection.CreateCommand(); command.CommandText=Select+" ORDER BY received_utc;"; await using var reader=await command.ExecuteReaderAsync(cancellationToken); while(await reader.ReadAsync(cancellationToken))result.Add(Read(reader)); return result;
+        // Envelopes delivered early (a skewed sender/relay clock) stay stored but hidden until
+        // their deliver-after moment, so a scheduled note is never listed before it is due.
+        var now=_timeProvider.GetUtcNow();
+        var result=new List<RemoteEnvelope>(); await using var connection=await OpenAsync(cancellationToken); await using var command=connection.CreateCommand(); command.CommandText=Select+" ORDER BY received_utc;"; await using var reader=await command.ExecuteReaderAsync(cancellationToken);
+        while(await reader.ReadAsync(cancellationToken)){var envelope=Read(reader); if(!IsScheduledAfter(envelope.DeliverAfterUtc,now))result.Add(envelope);}
+        return result;
     }
 
     public async Task<bool> TryInsertAsync(RemoteEnvelope envelope, CancellationToken cancellationToken)
@@ -105,6 +114,32 @@ public sealed class RemoteEnvelopeRepository : SqliteRepository, IRemoteEnvelope
 
     public async Task DeleteAsync(string messageId, CancellationToken cancellationToken)
     { await using var connection=await OpenAsync(cancellationToken); await using var command=connection.CreateCommand(); command.CommandText="DELETE FROM remote_envelopes WHERE message_id=$id;"; Add(command,"$id",messageId); await command.ExecuteNonQueryAsync(cancellationToken); }
+
+    public async Task<int> PruneExpiredAsync(DateTimeOffset utcNow, TimeSpan retention, CancellationToken cancellationToken)
+    {
+        if (retention < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(retention));
+        // An envelope is only prunable once both its receipt and its deliver-after moment are older
+        // than the retention window: a future-scheduled note must survive even if it was received
+        // long ago. Comparisons are lexicographic over ISO-8601 roundtrip ("O") strings, which order
+        // chronologically when all values carry the same UTC offset — ReceivedUtc is normalized on
+        // write, and DeliverAfterUtc arrives verbatim from the relay in the same format.
+        var cutoff = Utc(utcNow - retention);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM remote_envelopes WHERE received_utc <= $cutoff AND (deliver_after_utc IS NULL OR deliver_after_utc <= $cutoff);";
+        Add(command, "$cutoff", cutoff);
+        return await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>True only for a parsable deliver-after later than <paramref name="now"/>. An
+    /// unparsable value is treated as due, matching RemoteSyncService.IsDeliveryDeferred, so a
+    /// malformed timestamp can never hide a note forever.</summary>
+    private static bool IsScheduledAfter(string? deliverAfterUtc, DateTimeOffset now) =>
+        !string.IsNullOrWhiteSpace(deliverAfterUtc)
+        && DateTimeOffset.TryParse(deliverAfterUtc, System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+            out var deliverAfter)
+        && deliverAfter > now;
 
     private const string Select="SELECT message_id,ciphertext,ephemeral_public_key,nonce,authentication_tag,deliver_after_utc,received_utc,hkdf_salt,created_utc FROM remote_envelopes";
     private const string InsertSql="INSERT INTO remote_envelopes (message_id,ciphertext,ephemeral_public_key,nonce,authentication_tag,deliver_after_utc,received_utc,hkdf_salt,created_utc) VALUES ($id,$ciphertext,$key,$nonce,$tag,$deliverAfter,$received,$salt,$createdUtc) ON CONFLICT(message_id) DO NOTHING;";

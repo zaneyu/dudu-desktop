@@ -111,6 +111,44 @@ $aboveAllocationLimit = New-PassingReport
 $aboveAllocationLimit.AllocationSlopeMegabytesPerHour = $script:AllocationSlopeMegabytesPerHourLimit + 0.01
 Assert-ContainsFailureMatching "allocation slope just ABOVE the limit fails (exceeds, >)" (Test-PerformanceThresholds -Report $aboveAllocationLimit) "allocation slope exceeds"
 
+# --- Report integrity: a passing-looking JSON file is not enough. ---
+$runId = "11111111-1111-1111-1111-111111111111"
+$startedUtc = [DateTimeOffset]::UtcNow.AddSeconds(-1)
+$validReport = [PSCustomObject]@{
+    schemaVersion = 1
+    runId = $runId
+    generatedUtc = [DateTimeOffset]::UtcNow.ToString("O")
+    durationSeconds = 12.5
+    harnessCompleted = $true
+    launchToFirstOverlayMs = 1500.0
+    idleCpuPercent = 0.4
+    animationCpuPercent = 1.2
+    peakWorkingSetBytes = 90.0 * 1024 * 1024
+    allocationSlopeMbPerHour = 0.3
+}
+Assert-FailureCount "a fresh completed report with a nonzero duration passes integrity checks" `
+    (Test-PerformanceReportShape -Json $validReport -ExpectedRunId $runId -StartedUtc $startedUtc) 0
+
+$staleReport = $validReport | Select-Object *
+$staleReport.generatedUtc = [DateTimeOffset]::UtcNow.AddMinutes(-10).ToString("O")
+Assert-ContainsFailureMatching "a stale report is rejected" `
+    (Test-PerformanceReportShape -Json $staleReport -ExpectedRunId $runId -StartedUtc $startedUtc) "stale"
+
+$zeroDurationReport = $validReport | Select-Object *
+$zeroDurationReport.durationSeconds = 0
+Assert-ContainsFailureMatching "a zero-duration report is rejected" `
+    (Test-PerformanceReportShape -Json $zeroDurationReport -ExpectedRunId $runId -StartedUtc $startedUtc) "durationSeconds"
+
+$incompleteReport = $validReport | Select-Object *
+$incompleteReport.harnessCompleted = $false
+Assert-ContainsFailureMatching "a report without harness success is rejected" `
+    (Test-PerformanceReportShape -Json $incompleteReport -ExpectedRunId $runId -StartedUtc $startedUtc) "harness completion"
+
+$malformedReport = $validReport | Select-Object *
+$malformedReport.animationCpuPercent = "not-a-number"
+Assert-ContainsFailureMatching "a malformed numeric field is rejected" `
+    (Test-PerformanceReportShape -Json $malformedReport -ExpectedRunId $runId -StartedUtc $startedUtc) "animationCpuPercent"
+
 # --- Every gate failing at once reports every gate, not just the first. ---
 $allFailing = @{
     LaunchToFirstOverlayMilliseconds = $script:StartupMillisecondsLimit + 1

@@ -150,7 +150,7 @@ public sealed class FocusServiceTests
             null);
         var clock = new FakeClock("2026-09-11T10:00:00Z");
         var repository = new InMemoryFocusRepository();
-        var service = new FocusService(repository, tasks, clock);
+        var service = new FocusService(repository, clock, tasks);
 
         var result = await service.StartAsync(taskId, TimeSpan.FromMinutes(25), TestContext.Current.CancellationToken);
 
@@ -172,10 +172,92 @@ public sealed class FocusServiceTests
             DateTimeOffset.UtcNow,
             DateTimeOffset.UtcNow,
             DateTimeOffset.UtcNow);
-        var service = new FocusService(new InMemoryFocusRepository(), tasks, new FakeClock("2026-09-11T10:00:00Z"));
+        var service = new FocusService(new InMemoryFocusRepository(), new FakeClock("2026-09-11T10:00:00Z"), tasks);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             service.StartAsync(taskId, TimeSpan.FromMinutes(25), TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task Single_constructor_accepts_an_optional_task_repository()
+    {
+        var repository = new InMemoryFocusRepository();
+        var clock = new FakeClock("2026-09-11T10:00:00Z");
+
+        var withoutTasks = new FocusService(repository, clock);
+        var started = await withoutTasks.StartAsync(null, TimeSpan.FromMinutes(25), TestContext.Current.CancellationToken);
+        Assert.Equal(TimeSpan.FromMinutes(25), started.Remaining);
+
+        var withTasks = new FocusService(repository, clock, taskRepository: null);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            withTasks.StartAsync(Guid.NewGuid(), TimeSpan.FromMinutes(25), TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public void Has_exactly_one_public_constructor_so_container_resolution_is_unambiguous()
+    {
+        var constructor = Assert.Single(typeof(FocusService).GetConstructors());
+        var optional = constructor.GetParameters().Where(parameter => parameter.IsOptional).ToArray();
+        Assert.Equal(typeof(ITaskRepository), Assert.Single(optional).ParameterType);
+    }
+
+    [Fact]
+    public async Task Start_rejects_durations_longer_than_24_hours()
+    {
+        var fixture = FocusFixture.Started(TimeSpan.FromMinutes(25));
+        await fixture.Service.EndAsync(fixture.SessionId, fixture.CancellationToken);
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            fixture.Service.StartAsync(null, TimeSpan.FromHours(24).Add(TimeSpan.FromSeconds(1)), fixture.CancellationToken));
+        var ok = await fixture.Service.StartAsync(null, TimeSpan.FromHours(24), fixture.CancellationToken);
+        Assert.Equal(TimeSpan.FromHours(24), ok.Remaining);
+    }
+
+    [Fact]
+    public async Task Extend_rejects_extensions_that_push_a_session_past_24_hours()
+    {
+        var fixture = FocusFixture.Started(TimeSpan.FromHours(23));
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            fixture.Service.ExtendAsync(fixture.SessionId, TimeSpan.FromHours(2), fixture.CancellationToken));
+
+        var extended = await fixture.Service.ExtendAsync(
+            fixture.SessionId, TimeSpan.FromMinutes(30), fixture.CancellationToken);
+        Assert.Equal(TimeSpan.FromHours(23.5), extended.Remaining);
+    }
+
+    [Fact]
+    public async Task Extend_rejects_a_paused_remainder_pushed_past_24_hours()
+    {
+        var clock = new FakeClock("2026-09-11T10:00:00Z");
+        var repository = new InMemoryFocusRepository();
+        var service = new FocusService(repository, clock);
+        var id = Guid.NewGuid();
+        await repository.SaveAsync(
+            new FocusSession(id, null, clock.UtcNow, null, TimeSpan.FromHours(23), FocusStatus.Paused, clock.UtcNow),
+            TestContext.Current.CancellationToken);
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            service.ExtendAsync(id, TimeSpan.FromHours(2), TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task Pause_caps_a_corrupt_far_future_end_time_at_24_hours()
+    {
+        var clock = new FakeClock("2026-09-11T10:00:00Z");
+        var repository = new InMemoryFocusRepository();
+        var service = new FocusService(repository, clock);
+        var id = Guid.NewGuid();
+        await repository.SaveAsync(
+            new FocusSession(
+                id, null, clock.UtcNow, clock.UtcNow.AddHours(48), TimeSpan.Zero,
+                FocusStatus.Running, clock.UtcNow),
+            TestContext.Current.CancellationToken);
+
+        var paused = await service.PauseAsync(id, TestContext.Current.CancellationToken);
+
+        Assert.Equal(TimeSpan.FromHours(24), paused.Remaining);
+        Assert.Equal(TimeSpan.FromHours(24), repository.Sessions[id].RemainingWhenPaused);
     }
 
     private sealed class FocusFixture
@@ -365,6 +447,17 @@ public sealed class FocusServiceTests
         {
             Tasks[task.Id] = task;
             return Task.CompletedTask;
+        }
+
+        public Task<bool> TryCompareAndSetAsync(TaskItem expected, TaskItem replacement, CancellationToken cancellationToken)
+        {
+            if (!Tasks.TryGetValue(expected.Id, out var current) || current != expected)
+            {
+                return Task.FromResult(false);
+            }
+
+            Tasks[replacement.Id] = replacement;
+            return Task.FromResult(true);
         }
     }
 }

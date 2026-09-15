@@ -15,6 +15,13 @@ public interface ITaskRepository
 
     Task SaveAsync(TaskItem task, CancellationToken cancellationToken);
 
+    Task<bool> TryCompareAndSetAsync(
+        TaskItem expected,
+        TaskItem replacement,
+        CancellationToken cancellationToken) =>
+        Task.FromException<bool>(new NotSupportedException(
+            "This task repository does not support compare-and-set updates."));
+
     Task DeleteAsync(Guid id, CancellationToken cancellationToken) =>
         Task.FromException(new NotSupportedException(
             "This task repository does not support task deletion."));

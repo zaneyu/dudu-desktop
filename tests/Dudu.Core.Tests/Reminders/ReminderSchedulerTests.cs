@@ -23,6 +23,29 @@ public sealed class ReminderSchedulerTests
     }
 
     [Fact]
+    public void Zero_length_quiet_window_does_not_defer_a_due_reminder()
+    {
+        var reminder = ReminderBuilder.AtLocalTime(22, 30)
+            .WithQuietHours(new QuietHours(true, new TimeOnly(22, 0), new TimeOnly(22, 0)))
+            .Build();
+        var nowUtc = DateTimeOffset.Parse("2026-09-11T22:30:00Z");
+
+        var next = ReminderScheduler.NextOccurrence(
+            reminder,
+            DateTimeOffset.Parse("2026-09-11T20:00:00Z"),
+            TimeZoneInfo.Utc);
+        var result = ReminderScheduler.Reconcile(
+            reminder,
+            nowUtc,
+            nowUtc,
+            TimeZoneInfo.Utc);
+
+        Assert.Equal(nowUtc, next);
+        Assert.Equal(nowUtc, Assert.Single(result.DueNow).DueUtc);
+        Assert.Equal(DateTimeOffset.Parse("2026-09-12T22:30:00Z"), result.NextUtc);
+    }
+
+    [Fact]
     public void Daily_recurrence_advances_after_a_due_occurrence()
     {
         var reminder = ReminderBuilder.AtLocalTime(9, 0).Build();
@@ -81,6 +104,24 @@ public sealed class ReminderSchedulerTests
     {
         var fixture = ReminderPolicyFixture.Load("expired_once");
         Assert.Null(fixture.NextOccurrence());
+    }
+
+    [Fact]
+    public void Completed_once_reminder_with_no_due_time_stays_completed()
+    {
+        var reminder = new Reminder(
+            "completed", "Completed", null, true, new RecurrenceRule.Once(), "UTC",
+            QuietHoursBehavior.DeliverImmediately, MissedOccurrencePolicy.LatestOnly, null);
+
+        Assert.Null(ReminderScheduler.NextOccurrence(
+            reminder, DateTimeOffset.Parse("2026-09-11T10:00:00Z"), TimeZoneInfo.Utc));
+        var result = ReminderScheduler.Reconcile(
+            reminder,
+            DateTimeOffset.Parse("2026-09-11T09:00:00Z"),
+            DateTimeOffset.Parse("2026-09-11T10:00:00Z"),
+            TimeZoneInfo.Utc);
+        Assert.Empty(result.DueNow);
+        Assert.Null(result.NextUtc);
     }
 
     [Fact]
@@ -143,6 +184,82 @@ public sealed class ReminderSchedulerTests
             FindPacificTimeZone());
 
         Assert.Equal(DateTimeOffset.Parse("2026-11-01T08:00:00Z"), result);
+    }
+
+    [Fact]
+    public void Save_boundary_rejects_an_empty_weekday_set()
+    {
+        var reminder = ReminderBuilder.Every(TimeSpan.FromHours(2)).Build() with
+        {
+            Rule = new RecurrenceRule.SelectedWeekdays(
+                Array.Empty<DayOfWeek>(),
+                new TimeOnly(9, 0)),
+        };
+
+        Assert.Throws<ArgumentException>(() => ReminderScheduler.ValidateForSave(reminder));
+    }
+
+    [Fact]
+    public void Save_boundary_rejects_a_min_value_due_time()
+    {
+        var reminder = ReminderBuilder.Every(TimeSpan.FromHours(2)).Build() with
+        {
+            NextDueUtc = DateTimeOffset.MinValue,
+        };
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => ReminderScheduler.ValidateForSave(reminder));
+    }
+
+    [Fact]
+    public void Save_boundary_rejects_a_missing_due_time_on_enabled_recurring_reminders()
+    {
+        var recurring = ReminderBuilder.Every(TimeSpan.FromHours(2)).Build() with { NextDueUtc = null };
+
+        Assert.Throws<ArgumentException>(() => ReminderScheduler.ValidateForSave(recurring));
+
+        var disabled = recurring with { Enabled = false };
+        ReminderScheduler.ValidateForSave(disabled);
+
+        var completedOnce = new Reminder(
+            "completed", "Completed", null, true, new RecurrenceRule.Once(), "UTC",
+            QuietHoursBehavior.DeliverImmediately, MissedOccurrencePolicy.LatestOnly, null);
+        ReminderScheduler.ValidateForSave(completedOnce);
+    }
+
+    [Fact]
+    public void Reconcile_reports_a_collapsed_window_through_the_collapse_hook()
+    {
+        var reminder = ReminderBuilder.Every(TimeSpan.FromHours(2)).Build();
+        var collapses = new List<string>();
+
+        var result = ReminderScheduler.Reconcile(
+            reminder,
+            DateTimeOffset.Parse("2026-09-11T08:00:00Z"),
+            DateTimeOffset.Parse("2026-09-11T18:00:00Z"),
+            TimeZoneInfo.Utc,
+            collapses.Add);
+
+        Assert.Single(result.DueNow);
+        var collapse = Assert.Single(collapses);
+        Assert.Contains("6 occurrences", collapse, StringComparison.Ordinal);
+        Assert.Contains(reminder.Id, collapse, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Reconcile_stays_silent_when_nothing_collapses()
+    {
+        var reminder = ReminderBuilder.Every(TimeSpan.FromHours(2)).Build();
+        var collapses = new List<string>();
+
+        var result = ReminderScheduler.Reconcile(
+            reminder,
+            DateTimeOffset.Parse("2026-09-11T18:00:00Z"),
+            DateTimeOffset.Parse("2026-09-11T18:00:00Z"),
+            TimeZoneInfo.Utc,
+            collapses.Add);
+
+        Assert.Single(result.DueNow);
+        Assert.Empty(collapses);
     }
 
     private static TimeZoneInfo FindPacificTimeZone()

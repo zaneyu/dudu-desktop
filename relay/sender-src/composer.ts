@@ -76,6 +76,16 @@ export class MessageComposer {
     this.updateCounter();
   }
 
+  /** Removes note text and local preview text before the page can enter browser history/bfcache. */
+  clearSensitiveDraft(): void {
+    this.elements.textArea.value = "";
+    this.elements.previewText.textContent = "";
+    this.elements.previewReaction.textContent = "";
+    this.elements.scheduleStatus.textContent = "";
+    this.draftMessageId = null;
+    this.updateCounter();
+  }
+
   private wire(): void {
     this.elements.textArea.addEventListener("input", () => {
       // Any edit to the text changes what would actually be sent, so the id must not survive

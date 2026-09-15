@@ -3,6 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="Cache-Control" content="no-store" />
     <title>dudu sender</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
@@ -14,7 +15,7 @@
       </header>
 
       <section id="unpaired-section" class="card">
-        <form id="pairing-form" novalidate>
+        <form id="pairing-form" novalidate autocomplete="off">
           <div class="field">
             <label for="pairing-code">Pairing code</label>
             <input
@@ -40,7 +41,7 @@
       <section id="paired-section" class="card" hidden>
         <p class="lede" id="paired-greeting">paired le 🥰</p>
 
-        <form id="composer-form">
+        <form id="composer-form" autocomplete="off">
           <div class="field">
             <label for="message-text">Message</label>
             <textarea
@@ -50,6 +51,10 @@
               rows="5"
               aria-describedby="char-counter"
               required
+              autocomplete="off"
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck="false"
             ></textarea>
             <p id="char-counter" class="counter">0 / 2000</p>
           </div>
@@ -91,6 +96,7 @@
         </section>
 
         <button type="button" id="disconnect-button">Disconnect this phone</button>
+        <p id="disconnect-status" data-testid="disconnect-status" class="status-line" aria-live="polite"></p>
       </section>
     </main>
     <script type="module" src="/dist/sender-src/main.js"></script>

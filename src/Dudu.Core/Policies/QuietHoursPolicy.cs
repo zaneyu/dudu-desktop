@@ -17,13 +17,16 @@ public static class QuietHoursPolicy
             return false;
         }
 
-        var local = TimeZoneInfo.ConvertTime(utc, timeZone);
-        var localTime = TimeOnly.FromDateTime(local.DateTime);
-
+        // A zero-length window (Start == End) means "no quiet hours", not
+        // "quiet all day". Treating it as always-quiet would suppress every
+        // notification with no possible delivery time.
         if (quietHours.Start == quietHours.End)
         {
-            return true;
+            return false;
         }
+
+        var local = TimeZoneInfo.ConvertTime(utc, timeZone);
+        var localTime = TimeOnly.FromDateTime(local.DateTime);
 
         return quietHours.Start < quietHours.End
             ? localTime >= quietHours.Start && localTime < quietHours.End
@@ -43,20 +46,22 @@ public static class QuietHoursPolicy
             return utc;
         }
 
-        var local = TimeZoneInfo.ConvertTime(utc, timeZone);
-        var localDate = DateOnly.FromDateTime(local.DateTime);
-        var localTime = TimeOnly.FromDateTime(local.DateTime);
-
-        if (quietHours.Start != quietHours.End && !IsQuiet(local, quietHours))
+        // A zero-length window carries no quiet time, so there is nothing to defer.
+        if (quietHours.Start == quietHours.End)
         {
             return utc;
         }
 
-        if (quietHours.Start == quietHours.End)
+        var local = TimeZoneInfo.ConvertTime(utc, timeZone);
+        var localDate = DateOnly.FromDateTime(local.DateTime);
+        var localTime = TimeOnly.FromDateTime(local.DateTime);
+
+        if (!IsQuiet(local, quietHours))
         {
-            localDate = localDate.AddDays(1);
+            return utc;
         }
-        else if (quietHours.Start > quietHours.End && localTime >= quietHours.Start)
+
+        if (quietHours.Start > quietHours.End && localTime >= quietHours.Start)
         {
             localDate = localDate.AddDays(1);
         }

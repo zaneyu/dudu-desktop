@@ -9,7 +9,8 @@ public sealed class LocalNoteSelector
     private readonly ILocalNoteRepository _repository;
     private readonly IClock _clock;
     private readonly IRandomSource _random;
-    private readonly int _dailyLimit;
+    private readonly IPreferencesRepository? _preferencesRepository;
+    private readonly int? _fixedDailyLimit;
 
     public LocalNoteSelector(
         ILocalNoteRepository repository,
@@ -30,7 +31,22 @@ public sealed class LocalNoteSelector
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
         _random = random ?? throw new ArgumentNullException(nameof(random));
         ArgumentNullException.ThrowIfNull(preferences);
-        _dailyLimit = Math.Max(0, preferences.LocalNoteDailyLimit);
+        _fixedDailyLimit = Math.Max(0, preferences.LocalNoteDailyLimit);
+    }
+
+    public LocalNoteSelector(
+        ILocalNoteRepository repository,
+        IClock clock,
+        IRandomSource random,
+        IPreferencesRepository preferencesRepository,
+        Preferences fallbackPreferences)
+    {
+        _repository = repository ?? throw new ArgumentNullException(nameof(repository));
+        _clock = clock ?? throw new ArgumentNullException(nameof(clock));
+        _random = random ?? throw new ArgumentNullException(nameof(random));
+        _preferencesRepository = preferencesRepository ?? throw new ArgumentNullException(nameof(preferencesRepository));
+        ArgumentNullException.ThrowIfNull(fallbackPreferences);
+        _fixedDailyLimit = Math.Max(0, fallbackPreferences.LocalNoteDailyLimit);
     }
 
     public async Task<LocalLoveNote?> SelectAsync(
@@ -39,12 +55,13 @@ public sealed class LocalNoteSelector
     {
         var shownUtc = _clock.UtcNow.ToUniversalTime();
         var localDate = LocalDate(shownUtc);
+        var dailyLimit = await ReadDailyLimitAsync(cancellationToken);
         if (!manualRequest)
         {
             var unsolicitedCount = await _repository.CountUnsolicitedShownAsync(
                 localDate,
                 cancellationToken);
-            if (unsolicitedCount >= _dailyLimit)
+            if (unsolicitedCount >= dailyLimit)
             {
                 return null;
             }
@@ -74,10 +91,18 @@ public sealed class LocalNoteSelector
             selected.Id,
             shownUtc,
             localDate,
-            _dailyLimit,
+            dailyLimit,
             unsolicited: !manualRequest,
             cancellationToken);
         return recorded ? selected : null;
+    }
+
+    private async Task<int> ReadDailyLimitAsync(CancellationToken cancellationToken)
+    {
+        var preferences = _preferencesRepository is null
+            ? null
+            : await _preferencesRepository.GetAsync(cancellationToken);
+        return Math.Max(0, preferences?.LocalNoteDailyLimit ?? _fixedDailyLimit ?? 0);
     }
 
     private int NextIndex(int exclusiveMax)

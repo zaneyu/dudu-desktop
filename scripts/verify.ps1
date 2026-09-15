@@ -23,7 +23,11 @@
     repeats this explanation so anyone rerunning the release understands why
     the restore step is unlocked. Assert-NoTrackedGeneratedArtifacts below
     enforces that nothing generated — no lock file anywhere, nothing under
-    work/ or outputs/ — is ever tracked.
+    work/ or outputs/ — is ever tracked. Reproducibility comes instead from
+    global.json pinning the SDK exactly (rollForward "disable"), exact package
+    versions in Directory.Packages.props, and scripts/publish-windows.ps1
+    recording the generated lock files, `dotnet --info`, and the transitive
+    package list under artifacts/release-metadata/ for every release build.
 
     Every check below is written so it can fail: this script is the
     acceptance contract for the release, not a status report.
@@ -204,7 +208,16 @@ try {
     pwsh scripts/run-performance-gates.ps1 `
         -Executable artifacts/publish/win-x64/Dudu.App.exe `
         -Output artifacts/performance/release.json
-    pwsh tests/e2e/private-note-flow.ps1 -RelayMode Local -NoteText "verification-secret-1042"
+    # A fresh secret every run: a static string would let a stale artifact (log, D1 dump,
+    # traffic capture) from an earlier run pass the "secret never leaked" checks by matching
+    # nothing, or — worse — collide with a previous run's leftovers. Never Write-Host this value.
+    $e2eNoteText = "verification-secret-" + [Guid]::NewGuid().ToString("N")
+    try {
+        pwsh tests/e2e/private-note-flow.ps1 -RelayMode Local -NoteText $e2eNoteText
+    }
+    finally {
+        Remove-Variable e2eNoteText
+    }
 
     Write-Host "== SHA-256 manifest ==" -ForegroundColor Cyan
     Write-Sha256Sums `

@@ -4,7 +4,11 @@
  * nothing here logs request data.
  */
 import { deleteStaleSenderSessions } from "./db/devices.js";
-import { deleteExpiredMessages, deleteExpiredMessageStatuses } from "./db/messages.js";
+import {
+  deleteExpiredMessageOwnership,
+  deleteExpiredMessages,
+  deleteExpiredMessageStatuses,
+} from "./db/messages.js";
 import { deleteExpiredPairingCodes } from "./db/pairings.js";
 import type { Env } from "./env.js";
 import { deleteStaleRateLimitBuckets, hourWindowStartUtc } from "./security/rateLimit.js";
@@ -19,6 +23,7 @@ export async function cleanupExpired(env: Env, now: Date): Promise<void> {
   const currentWindowStartIso = hourWindowStartUtc(now);
 
   await deleteExpiredMessages(env.DB, nowIso);
+  await deleteExpiredMessageOwnership(env.DB, nowIso);
   await deleteExpiredMessageStatuses(env.DB, nowIso);
   await deleteExpiredPairingCodes(env.DB, nowIso);
   await deleteStaleSenderSessions(env.DB, sessionCutoffIso);

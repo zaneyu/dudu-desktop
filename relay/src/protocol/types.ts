@@ -122,12 +122,15 @@ export interface RedeemPairingRequest {
 export interface RedeemPairingResponse {
   /** Base64URL-encoded P-256 SPKI public key of the paired device. */
   publicKey: string;
+  /** SHA-256 of the decoded SPKI bytes; sender verifies this independently before pinning. */
+  publicKeyFingerprint: string;
   deviceId: string;
 }
 
 export interface GetSenderDeviceResponse {
   /** Base64URL-encoded P-256 SPKI public key of the paired device. */
   publicKey: string;
+  deviceId: string;
   deviceCreatedUtc: string;
   publicKeyFingerprint: string;
 }

@@ -49,7 +49,8 @@ public sealed class CompanionFeatureContext
         Func<CancellationToken, Task>? deleteLocalDataAsync = null,
         Func<CancellationToken, Task>? deleteRemoteDataAsync = null,
         Func<string?, CancellationToken, Task>? applyOutfitAsync = null,
-        Func<string, CancellationToken, Task>? setGlobalShortcutAsync = null)
+        Func<string, CancellationToken, Task>? setGlobalShortcutAsync = null,
+        Func<string, CancellationToken, Task>? dismissReminderNotificationAsync = null)
     {
         Clock = clock ?? throw new ArgumentNullException(nameof(clock));
         PreferenceMutations = preferenceMutations ?? throw new ArgumentNullException(nameof(preferenceMutations));
@@ -90,16 +91,37 @@ public sealed class CompanionFeatureContext
                 "aiyo cant reveal notes relay offline")));
         BackupAsync = backupAsync ?? ((_) => Task.FromException(
             new NotSupportedException("oh no backup not ready yet")));
-        RestoreAsync = restoreAsync ?? ((_) => Task.FromException(
-            new NotSupportedException("cannot restore right now try later")));
-        DeleteLocalDataAsync = deleteLocalDataAsync ?? ((_) => Task.FromException(
-            new NotSupportedException("alala cant delete local data yet")));
+        RestoreAsync = async token =>
+        {
+            if (restoreAsync is null)
+            {
+                throw new NotSupportedException("cannot restore right now try later");
+            }
+
+            await PreferenceMutations.ExecuteAndReloadAsync(
+                restoreAsync,
+                Preferences.Default,
+                token);
+        };
+        DeleteLocalDataAsync = async token =>
+        {
+            if (deleteLocalDataAsync is null)
+            {
+                throw new NotSupportedException("alala cant delete local data yet");
+            }
+
+            await PreferenceMutations.ExecuteAndReloadAsync(
+                deleteLocalDataAsync,
+                Preferences.Default,
+                token);
+        };
         DeleteRemoteDataAsync = deleteRemoteDataAsync ?? ((_) => Task.FromException(
             new NotSupportedException("wait cant delete remote data yet")));
         ApplyOutfitAsync = applyOutfitAsync ?? ((_, _) => Task.FromException(
             new NotSupportedException("aiyo outfits not ready yet")));
         SetGlobalShortcutAsync = setGlobalShortcutAsync ?? ((_, _) => Task.FromException(
             new NotSupportedException("oh no shortcuts not ready yet")));
+        DismissReminderNotificationAsync = dismissReminderNotificationAsync ?? ((_, _) => Task.CompletedTask);
     }
 
     public IClock Clock { get; }
@@ -137,6 +159,9 @@ public sealed class CompanionFeatureContext
     public Func<CancellationToken, Task> DeleteRemoteDataAsync { get; }
     public Func<string?, CancellationToken, Task> ApplyOutfitAsync { get; }
     public Func<string, CancellationToken, Task> SetGlobalShortcutAsync { get; }
+    /// <summary>Best-effort removal of a reminder's toast after the user
+    /// acknowledged it (Done or Snooze).</summary>
+    public Func<string, CancellationToken, Task> DismissReminderNotificationAsync { get; }
 
     /// <summary>Serializes preference read/modify/write operations across
     /// feature pages. The shared current snapshot changes only after durable
@@ -182,6 +207,13 @@ public abstract class FeatureViewModelBase : CommunityToolkit.Mvvm.ComponentMode
     private bool _isBusy;
     private string? _errorMessage;
     private string? _statusMessage;
+    private readonly SemaphoreSlim _refreshGate = new(1, 1);
+    private long _refreshGeneration;
+
+    /// <summary>Optional UI-thread marshaler for ObservableCollection
+    /// mutation. Null (tests) runs inline; production sets an
+    /// AwaitableUiDispatcher-backed delegate.</summary>
+    public Func<Action, CancellationToken, Task>? UiDispatcher { get; set; }
 
     public bool IsBusy
     {
@@ -247,6 +279,54 @@ public abstract class FeatureViewModelBase : CommunityToolkit.Mvvm.ComponentMode
         {
             IsBusy = false;
         }
+    }
+
+    protected Task<bool> RunAsync(
+        Func<CancellationToken, Task> operation,
+        CancellationToken cancellationToken,
+        string? successMessage = null) =>
+        RunAsync(() => operation(cancellationToken), successMessage);
+
+    /// <summary>Serializes refresh work so overlapping page activations
+    /// cannot interleave collection mutation, and lets the latest request
+    /// win: a refresh superseded while it waited for the gate is skipped.
+    /// Awaits deliberately keep the caller's context so bound properties and
+    /// ObservableCollections are only touched on the UI thread.</summary>
+    protected async Task RunRefreshAsync(
+        Func<CancellationToken, Task> refresh,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(refresh);
+        var generation = Interlocked.Increment(ref _refreshGeneration);
+        await _refreshGate.WaitAsync(cancellationToken);
+        try
+        {
+            if (generation != Volatile.Read(ref _refreshGeneration))
+            {
+                return;
+            }
+
+            await RunAsync(() => refresh(cancellationToken));
+        }
+        finally
+        {
+            _refreshGate.Release();
+        }
+    }
+
+    /// <summary>Marshals ObservableCollection mutation onto the UI thread when
+    /// a dispatcher is configured; runs inline otherwise (tests).</summary>
+    protected async Task MutateAsync(Action mutation, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(mutation);
+        var dispatcher = UiDispatcher;
+        if (dispatcher is null)
+        {
+            mutation();
+            return;
+        }
+
+        await dispatcher(mutation, cancellationToken);
     }
 
     protected static string ToUserMessage(Exception exception) =>

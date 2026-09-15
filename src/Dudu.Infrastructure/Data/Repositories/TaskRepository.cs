@@ -61,6 +61,36 @@ public sealed class TaskRepository : SqliteRepository, ITaskRepository
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    public async Task<bool> TryCompareAndSetAsync(
+        TaskItem expected,
+        TaskItem replacement,
+        CancellationToken cancellationToken)
+    {
+        if (expected.Id != replacement.Id)
+        {
+            throw new ArgumentException("Task compare-and-set requires the same task ID.", nameof(replacement));
+        }
+
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE tasks SET title=$newTitle, notes=$newNotes, due_utc=$newDue,
+                is_completed=$newCompleted, created_utc=$newCreated, updated_utc=$newUpdated,
+                completed_utc=$newCompletedUtc
+            WHERE id=$id AND title=$oldTitle AND notes IS $oldNotes AND due_utc IS $oldDue
+                AND is_completed=$oldCompleted AND created_utc=$oldCreated AND updated_utc=$oldUpdated
+                AND completed_utc IS $oldCompletedUtc;
+            """;
+        Add(command, "$id", expected.Id.ToString("D"));
+        Add(command, "$oldTitle", expected.Title); Add(command, "$oldNotes", expected.Notes); Add(command, "$oldDue", Utc(expected.DueUtc));
+        Add(command, "$oldCompleted", expected.IsCompleted ? 1 : 0); Add(command, "$oldCreated", Utc(expected.CreatedUtc));
+        Add(command, "$oldUpdated", Utc(expected.UpdatedUtc)); Add(command, "$oldCompletedUtc", Utc(expected.CompletedUtc));
+        Add(command, "$newTitle", replacement.Title); Add(command, "$newNotes", replacement.Notes); Add(command, "$newDue", Utc(replacement.DueUtc));
+        Add(command, "$newCompleted", replacement.IsCompleted ? 1 : 0); Add(command, "$newCreated", Utc(replacement.CreatedUtc));
+        Add(command, "$newUpdated", Utc(replacement.UpdatedUtc)); Add(command, "$newCompletedUtc", Utc(replacement.CompletedUtc));
+        return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
+    }
+
     public async Task DeleteAsync(Guid id, CancellationToken cancellationToken)
     {
         await using var connection = await OpenAsync(cancellationToken);

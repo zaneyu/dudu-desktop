@@ -85,7 +85,7 @@ public sealed class DatabaseBackupService
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        if (!await IsValidBackupAsync(path, cancellationToken))
+        if (!await IsSqliteBackupAsync(path, cancellationToken))
         {
             throw new InvalidDataException($"SQLite backup failed its integrity check: {path}");
         }
@@ -102,9 +102,13 @@ public sealed class DatabaseBackupService
     public async Task<RestoreResult> RestoreLatestValidAsync(
         CancellationToken cancellationToken = default)
     {
+        // Backup filenames embed the creation timestamp (yyyyMMddHHmmssfff-guid), so ordering by
+        // filename is ordering by creation time. File mtimes are deliberately not used: copies,
+        // restores, and coarse filesystem timestamp granularity can all make mtime disagree with
+        // which backup is actually newest.
         var candidates = Directory.Exists(_options.BackupDirectory)
             ? Directory.GetFiles(_options.BackupDirectory, "*.db")
-                .OrderByDescending(File.GetLastWriteTimeUtc)
+                .OrderByDescending(Path.GetFileName, StringComparer.Ordinal)
             : Enumerable.Empty<string>();
 
         var found = false;
@@ -144,10 +148,17 @@ public sealed class DatabaseBackupService
                     Pooling = false,
                 }.ToString());
             await connection.OpenAsync(cancellationToken);
-            await using var command = connection.CreateCommand();
-            command.CommandText = "PRAGMA integrity_check;";
-            var value = Convert.ToString(await command.ExecuteScalarAsync(cancellationToken));
-            return string.Equals(value, "ok", StringComparison.OrdinalIgnoreCase);
+            if (!await IsSqliteIntegrityOkAsync(connection, cancellationToken))
+            {
+                return false;
+            }
+
+            var schemaVersion = await ReadSchemaVersionAsync(connection, cancellationToken);
+            var currentSchemaVersion = new MigrationRunner(_options).Migrations.Max(migration => migration.Version);
+            // Backups from an older schema are accepted: the next startup migrates them forward.
+            // Only backups from a newer (unknown) schema — or with no schema version at all — are
+            // rejected, since the current migrations cannot interpret them.
+            return schemaVersion.HasValue && schemaVersion.Value <= currentSchemaVersion;
         }
         catch (SqliteException)
         {
@@ -244,9 +255,9 @@ public sealed class DatabaseBackupService
     {
         var valid = new List<string>();
         foreach (var path in Directory.GetFiles(_options.BackupDirectory, "*.db")
-                     .OrderByDescending(File.GetLastWriteTimeUtc))
+                     .OrderByDescending(Path.GetFileName, StringComparer.Ordinal))
         {
-            if (await IsValidBackupAsync(path, cancellationToken))
+            if (await IsSqliteBackupAsync(path, cancellationToken))
             {
                 valid.Add(path);
             }
@@ -254,7 +265,18 @@ public sealed class DatabaseBackupService
 
         foreach (var path in valid.Skip(Math.Max(0, _options.BackupRetentionCount)))
         {
-            File.Delete(path);
+            try
+            {
+                if (File.Exists(path))
+                {
+                    _deleteFile(path);
+                }
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                // Rotation is best effort: a locked or unreadable file must not fail the backup
+                // that was just created. The next rotation retries the leftover file.
+            }
         }
     }
 
@@ -315,5 +337,58 @@ public sealed class DatabaseBackupService
         await command.ExecuteNonQueryAsync(cancellationToken);
         await connection.CloseAsync();
         SqliteConnection.ClearAllPools();
+    }
+
+    private Task<bool> IsSqliteBackupAsync(
+        string backupPath,
+        CancellationToken cancellationToken) =>
+        IsSqliteBackupCoreAsync(backupPath, cancellationToken);
+
+    private static async Task<bool> IsSqliteBackupCoreAsync(
+        string backupPath,
+        CancellationToken cancellationToken)
+    {
+        if (!File.Exists(backupPath)) return false;
+        try
+        {
+            await using var connection = new SqliteConnection(
+                new SqliteConnectionStringBuilder
+                {
+                    DataSource = backupPath,
+                    Mode = SqliteOpenMode.ReadOnly,
+                    Pooling = false,
+                }.ToString());
+            await connection.OpenAsync(cancellationToken);
+            return await IsSqliteIntegrityOkAsync(connection, cancellationToken);
+        }
+        catch (SqliteException) { return false; }
+        catch (IOException) { return false; }
+    }
+
+    private static async Task<bool> IsSqliteIntegrityOkAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA integrity_check;";
+        var value = Convert.ToString(await command.ExecuteScalarAsync(cancellationToken));
+        return string.Equals(value, "ok", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static async Task<int?> ReadSchemaVersionAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken)
+    {
+        await using var table = connection.CreateCommand();
+        table.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='schema_version';";
+        if (Convert.ToInt32(await table.ExecuteScalarAsync(cancellationToken)) == 0)
+        {
+            return null;
+        }
+
+        await using var version = connection.CreateCommand();
+        version.CommandText = "SELECT MAX(version) FROM schema_version;";
+        var value = await version.ExecuteScalarAsync(cancellationToken);
+        return value is null or DBNull ? null : Convert.ToInt32(value);
     }
 }

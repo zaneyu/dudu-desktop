@@ -1,4 +1,8 @@
-import { deleteMessagesStatement, deleteMessageStatusesStatement } from "./messages.js";
+import {
+  deleteMessageOwnershipStatement,
+  deleteMessagesStatement,
+  deleteMessageStatusesStatement,
+} from "./messages.js";
 
 /** Persistence for the `devices` and `sender_sessions` tables. No plaintext tokens or keys. */
 
@@ -91,10 +95,13 @@ export interface RotateKeyParams {
 
 /**
  * Statements for one atomic key rotation: replace the device's public key and desktop-token
- * hash, revoke every active sender session for the device, and delete its queued messages (the
+ * hash, revoke every active sender session for the device, delete its queued messages (the
  * old ciphertext was encrypted to the key being replaced, so it can never be decrypted by the
- * device again). `message_status` rows are deliberately left alone: with no `messages` row left,
- * `findMessageStateForSession` already reports any non-delivered one as `"expired"`.
+ * device again), and delete its `message_ownership` rows for the same reason — a wiped queue
+ * must not leave ownership records that would let a later resubmit of a recycled id resolve
+ * as "same sender" (or 409 a legitimate retry) against ciphertext that no longer exists.
+ * `message_status` rows go too: every sender session that could read them is revoked here, and a
+ * leftover row would shadow the status row of a re-paired sender reusing the same id.
  */
 export function buildRotateKeyStatements(
   db: D1Database,
@@ -110,6 +117,8 @@ export function buildRotateKeyStatements(
       )
       .bind(params.revokedUtc, params.deviceId),
     deleteMessagesStatement(db, params.deviceId),
+    deleteMessageStatusesStatement(db, params.deviceId),
+    deleteMessageOwnershipStatement(db, params.deviceId),
   ];
 }
 
@@ -128,6 +137,7 @@ export function buildDeleteDeviceStatements(db: D1Database, deviceId: string, re
     db.prepare(`UPDATE devices SET revoked_utc = ?1 WHERE id = ?2`).bind(revokedUtc, deviceId),
     deleteMessagesStatement(db, deviceId),
     deleteMessageStatusesStatement(db, deviceId),
+    deleteMessageOwnershipStatement(db, deviceId),
     db.prepare(`DELETE FROM sender_sessions WHERE device_id = ?1`).bind(deviceId),
     db.prepare(`DELETE FROM pairing_codes WHERE device_id = ?1`).bind(deviceId),
   ];

@@ -15,6 +15,24 @@ export async function insertPairingCode(
     .run();
 }
 
+/**
+ * Caps the number of live pairing codes per device: deletes every still-unredeemed code for the
+ * device before a fresh one is minted, so at most one active code exists at a time. Without
+ * this, repeated minting would accumulate a growing set of simultaneously-valid codes, widening
+ * the guessing surface (each live code is an independent redeem oracle) and leaving stale codes
+ * redeemable long after the user moved on. Consumed codes are history and are left alone for
+ * the scheduled expiry sweep.
+ */
+export async function deleteUnredeemedPairingCodesForDevice(
+  db: D1Database,
+  deviceId: string,
+): Promise<void> {
+  await db
+    .prepare(`DELETE FROM pairing_codes WHERE device_id = ?1 AND consumed_utc IS NULL`)
+    .bind(deviceId)
+    .run();
+}
+
 export interface PairingAttemptResult {
   attemptCount: number;
   /** True once this attempt pushed `attempt_count` past `MAX_PAIRING_ATTEMPTS`. */

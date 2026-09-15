@@ -35,7 +35,16 @@ public sealed class FullscreenDetector
 {
     public const int EdgeTolerancePixels = 2;
 
+    /// <summary>
+    /// Consecutive native failures after which detection gives up and reports "not fullscreen".
+    /// At the 250ms poll this is roughly five seconds: long enough to ride out a transient
+    /// failure during a game, short enough that a machine where the query always fails does not
+    /// keep the pet hidden forever.
+    /// </summary>
+    public const int FailClosedLimit = 20;
+
     private readonly IFullscreenNativeApi _native;
+    private int _consecutiveFailures;
 
     public FullscreenDetector(IFullscreenNativeApi? native = null)
     {
@@ -49,6 +58,7 @@ public sealed class FullscreenDetector
             var foreground = _native.GetForegroundWindow();
             if (foreground == 0)
             {
+                Interlocked.Exchange(ref _consecutiveFailures, 0);
                 return false;
             }
 
@@ -59,9 +69,12 @@ public sealed class FullscreenDetector
             if (!_native.TryGetExtendedFrameBounds(foreground, out var frame)
                 || !_native.TryGetMonitorBounds(foreground, out var monitor, out var workArea))
             {
+                Interlocked.Exchange(ref _consecutiveFailures, 0);
                 return false;
             }
 
+            var isDudu = _native.IsDuduWindow(foreground);
+            Interlocked.Exchange(ref _consecutiveFailures, 0);
             return IsForegroundFullscreen(new FullscreenWindowSnapshot(
                 foreground,
                 shell,
@@ -71,12 +84,18 @@ public sealed class FullscreenDetector
                 workArea,
                 isCloaked,
                 isMinimized,
-                _native.IsDuduWindow(foreground)));
+                isDudu));
         }
         catch
         {
-            // A failed native query must never suppress the user's desktop.
-            return false;
+            // Fail-closed, matching AppLifecycleCoordinator and the fullscreen
+            // poll: a detection error is treated as fullscreen so the pet hides
+            // rather than covering a game or presentation. A window that simply
+            // cannot be measured (Try* returns false) is not an error. After
+            // FailClosedLimit consecutive errors detection is treated as broken
+            // and fails open so the pet is not hidden indefinitely; the first
+            // successful query resets the count.
+            return Interlocked.Increment(ref _consecutiveFailures) <= FailClosedLimit;
         }
     }
 

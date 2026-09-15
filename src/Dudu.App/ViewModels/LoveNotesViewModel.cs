@@ -18,12 +18,12 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
     public LoveNotesViewModel(CompanionFeatureContext context)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
-        RefreshCommand = new AsyncRelayCommand(() => RefreshAsync(CancellationToken.None));
-        SaveLocalNoteCommand = new AsyncRelayCommand(() => SaveLocalNoteAsync(CancellationToken.None));
-        DeleteLocalNoteCommand = new AsyncRelayCommand<LocalLoveNote>(DeleteLocalNoteAsync);
-        RevealRemoteNoteCommand = new AsyncRelayCommand<RemoteEnvelope>(RevealRemoteNoteAsync);
-        SaveOpenedNoteCommand = new AsyncRelayCommand<object?>(SaveOpenedNoteAsync);
-        ShowLocalNoteCommand = new AsyncRelayCommand(ShowLocalNoteAsync);
+        RefreshCommand = new AsyncRelayCommand((CancellationToken ct) => RefreshAsync(ct));
+        SaveLocalNoteCommand = new AsyncRelayCommand((CancellationToken ct) => SaveLocalNoteAsync(ct));
+        DeleteLocalNoteCommand = new AsyncRelayCommand<LocalLoveNote>((item, ct) => DeleteLocalNoteAsync(item, ct));
+        RevealRemoteNoteCommand = new AsyncRelayCommand<RemoteEnvelope>((item, ct) => RevealRemoteNoteAsync(item, ct));
+        SaveOpenedNoteCommand = new AsyncRelayCommand<object?>((item, ct) => SaveOpenedNoteAsync(item, ct));
+        ShowLocalNoteCommand = new AsyncRelayCommand((CancellationToken ct) => ShowLocalNoteAsync(ct));
     }
 
     public IAsyncRelayCommand RefreshCommand { get; }
@@ -63,22 +63,27 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
 
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
     {
-        await RunAsync(async () =>
+        await RunRefreshAsync(async ct =>
         {
-            LocalNotes.Clear();
-            foreach (var note in await _context.LocalNotes.ListAsync(cancellationToken)) LocalNotes.Add(note);
-            PendingRemoteNotes.Clear();
-            foreach (var envelope in await _context.RemoteEnvelopes.ListPendingAsync(cancellationToken)) PendingRemoteNotes.Add(envelope);
-            if (SelectedRemoteEnvelope is not null
-                && PendingRemoteNotes.All(item => item.MessageId != SelectedRemoteEnvelope.MessageId))
+            var notes = await _context.LocalNotes.ListAsync(ct);
+            var envelopes = await _context.RemoteEnvelopes.ListPendingAsync(ct);
+            await MutateAsync(() =>
             {
-                SelectedRemoteEnvelope = null;
-            }
-            OnPropertyChanged(nameof(UnopenedRemoteNoteCount));
-            OnPropertyChanged(nameof(UnopenedRemoteNoteCountText));
-            OnPropertyChanged(nameof(DailyLocalNoteLimit));
-            OnPropertyChanged(nameof(DailyLocalNoteLimitText));
-        });
+                LocalNotes.Clear();
+                foreach (var note in notes) LocalNotes.Add(note);
+                PendingRemoteNotes.Clear();
+                foreach (var envelope in envelopes) PendingRemoteNotes.Add(envelope);
+                if (SelectedRemoteEnvelope is not null
+                    && PendingRemoteNotes.All(item => item.MessageId != SelectedRemoteEnvelope.MessageId))
+                {
+                    SelectedRemoteEnvelope = null;
+                }
+                OnPropertyChanged(nameof(UnopenedRemoteNoteCount));
+                OnPropertyChanged(nameof(UnopenedRemoteNoteCountText));
+                OnPropertyChanged(nameof(DailyLocalNoteLimit));
+                OnPropertyChanged(nameof(DailyLocalNoteLimitText));
+            }, ct);
+        }, cancellationToken);
     }
 
     public Task SaveLocalNoteAsync(CancellationToken cancellationToken = default) =>
@@ -90,7 +95,7 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
                 ? new LocalLoveNote(Guid.NewGuid().ToString("N"), text, DraftEnabled)
                 : SelectedNote with { Text = text, Enabled = DraftEnabled };
             await _context.LocalNotes.SaveToJarAsync(note, cancellationToken);
-            Replace(note);
+            await MutateAsync(() => Replace(note), cancellationToken);
             SelectedNote = note;
         }, "oki saved to the note jar");
 
@@ -100,8 +105,11 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
         return RunAsync(async () =>
         {
             await _context.LocalNotes.DeleteAsync(note.Id, cancellationToken);
-            LocalNotes.Remove(note);
-            if (SelectedNote?.Id == note.Id) SelectedNote = null;
+            await MutateAsync(() =>
+            {
+                LocalNotes.Remove(note);
+                if (SelectedNote?.Id == note.Id) SelectedNote = null;
+            }, cancellationToken);
         }, "okkk note deleted le");
     }
 
@@ -155,9 +163,12 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
                 envelope.MessageId,
                 _context.Clock.UtcNow.ToUniversalTime(),
                 cancellationToken);
-            Replace(note);
-            PendingRemoteNotes.Remove(envelope);
-            if (SelectedRemoteEnvelope?.MessageId == envelope.MessageId) SelectedRemoteEnvelope = null;
+            await MutateAsync(() =>
+            {
+                Replace(note);
+                PendingRemoteNotes.Remove(envelope);
+                if (SelectedRemoteEnvelope?.MessageId == envelope.MessageId) SelectedRemoteEnvelope = null;
+            }, cancellationToken);
             OpenedRemoteEnvelope = null;
             OpenedRemoteNoteText = null;
             OnPropertyChanged(nameof(HasOpenedRemoteNote));

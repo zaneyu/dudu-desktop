@@ -590,6 +590,80 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Restore_reloads_preferences_after_the_database_replacement()
+    {
+        var fixture = FeatureFixture.Create(restoreAsync: _ => Task.CompletedTask);
+        fixture.Preferences.Current = Preferences.Default with { Theme = AppTheme.Dark };
+
+        await fixture.Context.RestoreAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(AppTheme.Dark, fixture.Context.CurrentPreferences.Theme);
+    }
+
+    [Fact]
+    public async Task Local_deletion_reloads_clean_default_preferences()
+    {
+        var fixture = FeatureFixture.Create(deleteLocalDataAsync: _ => Task.CompletedTask);
+        fixture.Preferences.Current = null;
+
+        await fixture.Context.DeleteLocalDataAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(Preferences.Default, fixture.Context.CurrentPreferences);
+    }
+
+    [Fact]
+    public async Task Restore_serializes_concurrent_preference_edits_and_reapplies_restored_state()
+    {
+        var restoreEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseRestore = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var restored = Preferences.Default with { Theme = AppTheme.Dark, LocalNoteDailyLimit = 7 };
+        FeatureFixture? fixture = null;
+        fixture = FeatureFixture.Create(restoreAsync: async _ =>
+        {
+            fixture!.Preferences.Current = restored;
+            restoreEntered.TrySetResult();
+            await releaseRestore.Task;
+        });
+
+        var restore = fixture.Context.RestoreAsync(TestContext.Current.CancellationToken);
+        await restoreEntered.Task.WaitAsync(TestContext.Current.CancellationToken);
+        var edit = fixture.Context.UpdatePreferencesAsync(
+            current => current with { ReducedMotion = true },
+            TestContext.Current.CancellationToken);
+        Assert.False(edit.IsCompleted);
+
+        releaseRestore.TrySetResult();
+        await restore;
+        await edit;
+
+        Assert.Equal(AppTheme.Dark, fixture.Context.CurrentPreferences.Theme);
+        Assert.Equal(7, fixture.Context.CurrentPreferences.LocalNoteDailyLimit);
+        Assert.True(fixture.Context.CurrentPreferences.ReducedMotion);
+        Assert.Equal(fixture.Context.CurrentPreferences, fixture.Preferences.Current);
+        Assert.Equal(fixture.Context.CurrentPreferences, fixture.RuntimePreferences.Current);
+    }
+
+    [Fact]
+    public async Task Editing_a_reminder_uses_its_stored_timezone_for_next_due()
+    {
+        var fixture = FeatureFixture.Create();
+        var viewModel = new RemindersViewModel(fixture.Context)
+        {
+            SelectedReminder = fixture.Reminder with
+            {
+                Rule = new RecurrenceRule.Daily(new TimeOnly(9, 0)),
+                LocalTimeZoneId = "UTC",
+            },
+        };
+
+        await viewModel.SaveAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            DateTimeOffset.Parse("2026-09-13T09:00:00Z"),
+            fixture.Reminders.Items.Single(item => item.Id == fixture.Reminder.Id).NextDueUtc);
+    }
+
+    [Fact]
     public async Task Reminder_default_commit_precedes_runtime_publish_and_failure_keeps_old_state()
     {
         var fixture = FeatureFixture.Create();
@@ -931,7 +1005,7 @@ public sealed class FeatureViewModelTests
             var countdowns = new FakeCountdownRepository();
             var checkIns = new FakeCheckInRepository();
             var taskService = new TaskService(tasks, clock);
-            var focusService = new FocusService(focusSessions, tasks, clock);
+            var focusService = new FocusService(focusSessions, clock, tasks);
             var checkInService = new CheckInService(checkIns, clock);
             var noteSelector = new LocalNoteSelector(localNotes, clock, new FixedRandom(), preferences);
             var pause = PauseState.None;
@@ -1025,10 +1099,10 @@ public sealed class FeatureViewModelTests
         public List<Reminder> Items { get; } = [];
         public Task<IReadOnlyList<Reminder>> ListAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<Reminder>>(Items);
         public Task<IReadOnlyList<Reminder>> LoadDueAsync(DateTimeOffset utcNow, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<Reminder>>(Items);
-        public Task RecordOccurrencesAndAdvanceAsync(Reminder reminder, IReadOnlyList<ReminderOccurrence> occurrences, DateTimeOffset? nextDueUtc, CancellationToken cancellationToken)
+        public Task<bool> RecordOccurrencesAndAdvanceAsync(Reminder reminder, IReadOnlyList<ReminderOccurrence> occurrences, DateTimeOffset? nextDueUtc, CancellationToken cancellationToken)
         {
             events.Add("repository.complete");
-            return Task.CompletedTask;
+            return Task.FromResult(true);
         }
         public Task SaveAsync(Reminder reminder, CancellationToken cancellationToken = default)
         {
@@ -1076,11 +1150,12 @@ public sealed class FeatureViewModelTests
         }
         public Task<bool> TryInsertAndMarkProcessedAsync(RemoteEnvelope envelope, DateTimeOffset processedUtc, CancellationToken cancellationToken) => Task.FromResult(true);
         public Task DeleteAsync(string messageId, CancellationToken cancellationToken) { Pending.RemoveAll(item => item.MessageId == messageId); return Task.CompletedTask; }
+        public Task<int> PruneExpiredAsync(DateTimeOffset utcNow, TimeSpan retention, CancellationToken cancellationToken) => Task.FromResult(0);
     }
 
     private sealed class FakePreferencesRepository : IPreferencesRepository
     {
-        public Preferences? Current { get; private set; }
+        public Preferences? Current { get; set; }
         public bool FailNextSave { get; set; }
         public List<Preferences> SaveHistory { get; } = [];
         public Task<Preferences?> GetAsync(CancellationToken cancellationToken) => Task.FromResult(Current);
@@ -1119,6 +1194,12 @@ public sealed class FeatureViewModelTests
         public Task<IReadOnlyList<TaskItem>> ListActiveAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<TaskItem>>(_tasks.Values.Where(item => !item.IsCompleted).ToArray());
         public Task<IReadOnlyList<TaskItem>> ListCompletedAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<TaskItem>>(_tasks.Values.Where(item => item.IsCompleted).ToArray());
         public Task SaveAsync(TaskItem task, CancellationToken cancellationToken) { _tasks[task.Id] = task; return Task.CompletedTask; }
+        public Task<bool> TryCompareAndSetAsync(TaskItem expected, TaskItem replacement, CancellationToken cancellationToken)
+        {
+            if (!_tasks.TryGetValue(expected.Id, out var current) || current != expected) return Task.FromResult(false);
+            _tasks[replacement.Id] = replacement;
+            return Task.FromResult(true);
+        }
         public Task DeleteAsync(Guid id, CancellationToken cancellationToken) { _tasks.Remove(id); return Task.CompletedTask; }
     }
 

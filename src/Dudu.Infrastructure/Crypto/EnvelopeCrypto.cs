@@ -32,6 +32,14 @@ public sealed class EnvelopeValidationException : Exception
 /// relay's TypeScript implementation (see protocol/README.md). Byte decoding and every
 /// validation rule live here so callers never have to re-derive the contract themselves.
 /// </summary>
+/// <remarks>
+/// TRUST MODEL (no sender authentication): AES-GCM proves an envelope was encrypted for this
+/// desktop by someone holding its public key and that it was not modified afterwards, but
+/// anyone can hold the public key — the relay never vouches for who sent a message. Every
+/// payload field is therefore untrusted until validated below (kind/reaction allow-lists, text
+/// and size ceilings, createdUtc window), and callers must never act on envelope content beyond
+/// storing and displaying the note.
+/// </remarks>
 public static class EnvelopeCrypto
 {
     public const string HkdfInfo = "DuduDesktop:message:v1";
@@ -44,6 +52,12 @@ public static class EnvelopeCrypto
     private const int MaximumPayloadUtf8Bytes = 4096;
     private const int MaximumTextScalarValues = 2000;
     private const int MaximumCreatedUtcSkewMinutes = 5;
+
+    /// <summary>
+    /// The oldest createdUtc still accepted. Mirrors the relay's 30-day ciphertext retention:
+    /// anything older cannot be a fresh delivery, only a replay or a long-delayed redelivery.
+    /// </summary>
+    private const int MaximumCreatedUtcAgeDays = 30;
 
     private static readonly Regex MessageIdPattern = new(
         "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
@@ -87,16 +101,27 @@ public static class EnvelopeCrypto
             throw new EnvelopeValidationException("createdUtc is too far in the future.");
         }
 
-        var ephemeralPublicKeyBytes = DecodeBase64Url(envelope.EphemeralPublicKey, "ephemeralPublicKey");
-        using var ephemeralPublicKey = ECDiffieHellman.Create();
-        try
+        // The relay keeps ciphertext until max(createdUtc, deliverAfterUtc) + 30 days and lets a
+        // note be scheduled up to 30 days after creation, so age is measured from when the note
+        // became due. deliverAfterUtc is bound into the AAD, so the relay cannot stretch it; it is
+        // still clamped to createdUtc + 30 days so a forged envelope cannot extend its own window.
+        var dueUtc = createdUtc;
+        if (!string.IsNullOrEmpty(envelope.DeliverAfterUtc)
+            && DateTimeOffset.TryParse(
+                envelope.DeliverAfterUtc,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                out var deliverAfterUtc)
+            && deliverAfterUtc > createdUtc)
         {
-            ephemeralPublicKey.ImportSubjectPublicKeyInfo(ephemeralPublicKeyBytes, out _);
+            var latestSchedule = createdUtc.AddDays(MaximumCreatedUtcAgeDays);
+            dueUtc = deliverAfterUtc < latestSchedule ? deliverAfterUtc : latestSchedule;
         }
-        catch (CryptographicException exception)
+
+        if (dueUtc < now.AddDays(-MaximumCreatedUtcAgeDays))
         {
             throw new EnvelopeValidationException(
-                "ephemeralPublicKey is not a valid P-256 SPKI key.", exception);
+                $"The note has been due for longer than the {MaximumCreatedUtcAgeDays}-day retention window.");
         }
 
         var salt = DecodeBase64Url(envelope.HkdfSalt, "hkdfSalt");
@@ -119,68 +144,109 @@ public static class EnvelopeCrypto
                 $"ciphertext must be between {MinimumCiphertextLength} and {MaximumCiphertextLength} bytes.");
         }
 
-        using var recipient = ECDiffieHellman.Create();
-        recipient.ImportPkcs8PrivateKey(pkcs8PrivateKey, out _);
-        var sharedSecret = recipient.DeriveRawSecretAgreement(ephemeralPublicKey.PublicKey);
-
-        var key = HKDF.DeriveKey(
-            HashAlgorithmName.SHA256,
-            sharedSecret,
-            outputLength: 32,
-            salt,
-            Encoding.UTF8.GetBytes(HkdfInfo));
-
-        var additionalAuthenticatedData = BuildAdditionalAuthenticatedData(envelope);
-        var ciphertext = ciphertextAndTag.AsSpan(0, ciphertextAndTag.Length - TagLength);
-        var tag = ciphertextAndTag.AsSpan(ciphertextAndTag.Length - TagLength);
-        var plaintext = new byte[ciphertext.Length];
-
-        using var aesGcm = new AesGcm(key, TagLength);
-        aesGcm.Decrypt(nonce, ciphertext, tag, plaintext, additionalAuthenticatedData);
-
-        if (plaintext.Length > MaximumPayloadUtf8Bytes)
-        {
-            throw new EnvelopeValidationException(
-                $"Decrypted payload exceeds {MaximumPayloadUtf8Bytes} UTF-8 bytes.");
-        }
-
-        RemoteMessagePayload payload;
+        // Cheap length checks above run before any EC work, so malformed junk is rejected without
+        // a public-key import or an ECDH agreement.
+        var ephemeralPublicKeyBytes = DecodeBase64Url(envelope.EphemeralPublicKey, "ephemeralPublicKey");
+        using var ephemeralPublicKey = ECDiffieHellman.Create();
         try
         {
-            payload = JsonSerializer.Deserialize(plaintext, EnvelopeJsonContext.Default.RemoteMessagePayload)
-                ?? throw new EnvelopeValidationException("Decrypted payload is null.");
+            ephemeralPublicKey.ImportSubjectPublicKeyInfo(ephemeralPublicKeyBytes, out _);
         }
-        catch (JsonException exception)
-        {
-            throw new EnvelopeValidationException("Decrypted payload is not valid JSON.", exception);
-        }
-
-        // System.Text.Json does not enforce nullable reference annotations, so every one of
-        // these can still arrive as JSON null (or be absent) on a well-formed envelope. Each
-        // must be rejected as a validation failure here, before it reaches a HashSet lookup or
-        // a string member below and throws an exception type the caller does not expect.
-        if (payload.Kind is null || payload.Text is null || payload.Reaction is null)
-        {
-            throw new EnvelopeValidationException("Decrypted payload is missing kind, text, or reaction.");
-        }
-
-        if (payload.Kind != "note")
-        {
-            throw new EnvelopeValidationException($"Unsupported payload kind '{payload.Kind}'.");
-        }
-
-        if (!AllowedReactions.Contains(payload.Reaction))
-        {
-            throw new EnvelopeValidationException($"Unknown reaction '{payload.Reaction}'.");
-        }
-
-        if (payload.Text.EnumerateRunes().Count() > MaximumTextScalarValues)
+        catch (CryptographicException exception)
         {
             throw new EnvelopeValidationException(
-                $"text exceeds {MaximumTextScalarValues} Unicode scalar values.");
+                "ephemeralPublicKey is not a valid P-256 SPKI key.", exception);
         }
 
-        return payload;
+        using var recipient = ECDiffieHellman.Create();
+        recipient.ImportPkcs8PrivateKey(pkcs8PrivateKey, out _);
+
+        // Key material below is zeroed on every exit (success or failure) so a decrypted
+        // plaintext, the message key, and the raw ECDH secret never linger on the managed heap
+        // past this call. (The returned payload strings are caller-owned and unavoidably live on.)
+        byte[]? sharedSecret = null;
+        byte[]? key = null;
+        byte[]? plaintext = null;
+        try
+        {
+            sharedSecret = recipient.DeriveRawSecretAgreement(ephemeralPublicKey.PublicKey);
+
+            key = HKDF.DeriveKey(
+                HashAlgorithmName.SHA256,
+                sharedSecret,
+                outputLength: 32,
+                salt,
+                Encoding.UTF8.GetBytes(HkdfInfo));
+
+            var additionalAuthenticatedData = BuildAdditionalAuthenticatedData(envelope);
+            var ciphertext = ciphertextAndTag.AsSpan(0, ciphertextAndTag.Length - TagLength);
+            var tag = ciphertextAndTag.AsSpan(ciphertextAndTag.Length - TagLength);
+            plaintext = new byte[ciphertext.Length];
+
+            using var aesGcm = new AesGcm(key, TagLength);
+            aesGcm.Decrypt(nonce, ciphertext, tag, plaintext, additionalAuthenticatedData);
+
+            if (plaintext.Length > MaximumPayloadUtf8Bytes)
+            {
+                throw new EnvelopeValidationException(
+                    $"Decrypted payload exceeds {MaximumPayloadUtf8Bytes} UTF-8 bytes.");
+            }
+
+            RemoteMessagePayload payload;
+            try
+            {
+                payload = JsonSerializer.Deserialize(plaintext, EnvelopeJsonContext.Default.RemoteMessagePayload)
+                    ?? throw new EnvelopeValidationException("Decrypted payload is null.");
+            }
+            catch (JsonException exception)
+            {
+                throw new EnvelopeValidationException("Decrypted payload is not valid JSON.", exception);
+            }
+
+            // System.Text.Json does not enforce nullable reference annotations, so every one of
+            // these can still arrive as JSON null (or be absent) on a well-formed envelope. Each
+            // must be rejected as a validation failure here, before it reaches a HashSet lookup or
+            // a string member below and throws an exception type the caller does not expect.
+            if (payload.Kind is null || payload.Text is null || payload.Reaction is null)
+            {
+                throw new EnvelopeValidationException("Decrypted payload is missing kind, text, or reaction.");
+            }
+
+            if (payload.Kind != "note")
+            {
+                throw new EnvelopeValidationException($"Unsupported payload kind '{payload.Kind}'.");
+            }
+
+            if (!AllowedReactions.Contains(payload.Reaction))
+            {
+                throw new EnvelopeValidationException($"Unknown reaction '{payload.Reaction}'.");
+            }
+
+            if (payload.Text.EnumerateRunes().Count() > MaximumTextScalarValues)
+            {
+                throw new EnvelopeValidationException(
+                    $"text exceeds {MaximumTextScalarValues} Unicode scalar values.");
+            }
+
+            return payload;
+        }
+        finally
+        {
+            if (sharedSecret is not null)
+            {
+                CryptographicOperations.ZeroMemory(sharedSecret);
+            }
+
+            if (key is not null)
+            {
+                CryptographicOperations.ZeroMemory(key);
+            }
+
+            if (plaintext is not null)
+            {
+                CryptographicOperations.ZeroMemory(plaintext);
+            }
+        }
     }
 
     private static byte[] BuildAdditionalAuthenticatedData(EncryptedEnvelope envelope)

@@ -9,6 +9,8 @@ namespace Dudu.App.Overlay;
 /// </summary>
 public sealed class OwnerActionQueue : IDisposable
 {
+    public static readonly TimeSpan InvokeTimeout = TimeSpan.FromSeconds(5);
+
     private readonly ConcurrentQueue<QueuedOwnerAction> _actions = new();
     private readonly object _gate = new();
     private readonly Func<bool> _isOwnerThread;
@@ -26,7 +28,7 @@ public sealed class OwnerActionQueue : IDisposable
         _execute = execute ?? (action => action.Run());
     }
 
-    public Task InvokeAsync(Action action, CancellationToken cancellationToken = default)
+    public async Task InvokeAsync(Action action, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(action);
         var completion = new TaskCompletionSource<bool>(
@@ -47,10 +49,10 @@ public sealed class OwnerActionQueue : IDisposable
             exception => Complete(completion, exception),
             cancellationToken);
         TryPost(queued);
-        return completion.Task;
+        await completion.Task.WaitAsync(InvokeTimeout, cancellationToken).ConfigureAwait(false);
     }
 
-    public Task<TResult> InvokeAsync<TResult>(
+    public async Task<TResult> InvokeAsync<TResult>(
         Func<TResult> action,
         CancellationToken cancellationToken = default)
     {
@@ -72,7 +74,7 @@ public sealed class OwnerActionQueue : IDisposable
             exception => Complete(completion, exception),
             cancellationToken);
         TryPost(queued);
-        return completion.Task;
+        return await completion.Task.WaitAsync(InvokeTimeout, cancellationToken).ConfigureAwait(false);
     }
 
     public void Post(Action action, Action<Exception>? rejection = null)

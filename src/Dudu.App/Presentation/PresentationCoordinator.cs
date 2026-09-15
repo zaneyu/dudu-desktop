@@ -5,6 +5,7 @@ using Dudu.App.Notifications;
 using Dudu.App.System;
 using Dudu.Core.Abstractions;
 using Dudu.Core.Models;
+using Dudu.Core.Notes;
 using Dudu.Core.Pet;
 
 namespace Dudu.App.Presentation;
@@ -24,7 +25,8 @@ public interface IPresentationEnvironmentSink
 
 /// <summary>
 /// The one presentation gateway. Every unsolicited event (a remote note
-/// arriving, a reminder becoming due) passes through
+/// arriving, a reminder becoming due, or an automatically selected local
+/// note) passes through
 /// <see cref="PublishAsync"/>; <see cref="TickAsync"/> drains at most one
 /// queued item per call, driven by the existing 30-second reminder
 /// scheduler via <see cref="AppHost"/> — there is no new timer. Explicit
@@ -43,8 +45,11 @@ public sealed class PresentationCoordinator :
     private readonly Func<bool> _isQuietHours;
     private readonly Func<PauseState> _pauseState;
     private readonly SemaphoreSlim _petGate;
+    private readonly AmbientScheduler? _ambientScheduler;
+    private readonly LocalNoteSelector? _localNoteSelector;
     private readonly object _gate = new();
     private readonly HashSet<string> _presentingIds = new(StringComparer.Ordinal);
+    private readonly Func<bool> _isFullscreenNow;
     private bool _sessionLocked;
     private bool _fullscreen;
 
@@ -62,7 +67,10 @@ public sealed class PresentationCoordinator :
         Func<AnimationOptions> options,
         Func<bool> isQuietHours,
         Func<PauseState> pauseState,
-        SemaphoreSlim petGate)
+        SemaphoreSlim petGate,
+        AmbientScheduler? ambientScheduler = null,
+        LocalNoteSelector? localNoteSelector = null,
+        Func<bool>? isFullscreenNow = null)
     {
         _policy = policy ?? throw new ArgumentNullException(nameof(policy));
         _notifications = notifications ?? throw new ArgumentNullException(nameof(notifications));
@@ -72,6 +80,15 @@ public sealed class PresentationCoordinator :
         _isQuietHours = isQuietHours ?? throw new ArgumentNullException(nameof(isQuietHours));
         _pauseState = pauseState ?? throw new ArgumentNullException(nameof(pauseState));
         _petGate = petGate ?? throw new ArgumentNullException(nameof(petGate));
+        _ambientScheduler = ambientScheduler;
+        _localNoteSelector = localNoteSelector;
+        _isFullscreenNow = isFullscreenNow ?? (() => { lock (_gate) return _fullscreen; });
+        if ((_ambientScheduler is null) != (_localNoteSelector is null))
+        {
+            throw new ArgumentException(
+                "The ambient scheduler and local-note selector must be supplied together.",
+                nameof(ambientScheduler));
+        }
     }
 
     public void SetSessionLocked(bool locked)
@@ -156,7 +173,15 @@ public sealed class PresentationCoordinator :
 
         try
         {
-            await PresentAsync(item, cancellationToken);
+            if (!await PresentAsync(item, cancellationToken))
+            {
+                _policy.Requeue(item);
+            }
+        }
+        catch
+        {
+            _policy.Requeue(item);
+            throw;
         }
         finally
         {
@@ -175,9 +200,10 @@ public sealed class PresentationCoordinator :
     {
         var now = DateTimeOffset.UtcNow;
         DurableNotification? toPresent;
+        SuppressionSnapshot environment;
         lock (_gate)
         {
-            var environment = CaptureEnvironment(now);
+            environment = CaptureEnvironment(now);
             var decision = _policy.Decide(
                 environment.NowQuiet,
                 environment.Fullscreen,
@@ -193,21 +219,65 @@ public sealed class PresentationCoordinator :
             }
         }
 
-        if (toPresent is null)
+        if (toPresent is not null)
+        {
+            try
+            {
+                if (!await PresentAsync(toPresent, cancellationToken))
+                {
+                    _policy.Requeue(toPresent);
+                }
+            }
+            catch
+            {
+                _policy.Requeue(toPresent);
+                throw;
+            }
+            finally
+            {
+                lock (_gate)
+                {
+                    _presentingIds.Remove(toPresent.Key);
+                }
+            }
+
+            return;
+        }
+
+        if (_ambientScheduler is null
+            || _localNoteSelector is null
+            || environment.NowQuiet
+            || environment.Fullscreen
+            || environment.Paused
+            || environment.SessionLocked
+            || environment.FocusActive)
         {
             return;
         }
 
-        try
+        var ambient = _ambientScheduler.TryGetNextEvent(
+            environment.Paused,
+            environment.FocusActive,
+            environment.Fullscreen,
+            environment.SessionLocked,
+            environment.NowQuiet);
+        if (ambient is not PetEvent.AmbientRequested ambientRequest)
         {
-            await PresentAsync(toPresent, cancellationToken);
+            return;
         }
-        finally
+
+        var note = await _localNoteSelector.SelectAsync(
+            manualRequest: false,
+            cancellationToken);
+        if (note is not null)
         {
-            lock (_gate)
-            {
-                _presentingIds.Remove(toPresent.Key);
-            }
+            // Route the selected note through the same gateway so the
+            // existing environment checks, deduplication, playback gate,
+            // and retry queue remain authoritative.
+            await PublishAsync(
+                DurableNotification.LocalNote(note, ambientRequest.AnimationKey),
+                bypassSuppression: false,
+                cancellationToken);
         }
     }
 
@@ -221,26 +291,43 @@ public sealed class PresentationCoordinator :
     /// nothing to do with pet state and must not block an explicit user
     /// action behind a possibly-slow toast call.
     /// </summary>
-    private async Task PresentAsync(DurableNotification item, CancellationToken cancellationToken)
+    private async Task<bool> PresentAsync(DurableNotification item, CancellationToken cancellationToken)
     {
         await _petGate.WaitAsync(cancellationToken);
         PetPresentation presentation;
+        var succeeded = true;
         try
         {
             var petEvent = ToPetEvent(item);
             presentation = _pet.Handle(petEvent);
-            await ObserveAsync(
-                _playAsync(presentation, _options(), cancellationToken),
+            if (item.Kind == PresentationItemKind.LocalNote)
+            {
+                presentation = presentation with
+                {
+                    BubbleTitle = item.Title,
+                    BubbleBody = item.Body,
+                };
+            }
+            succeeded &= await ObserveAsync(
+                () => _playAsync(presentation, _options(), cancellationToken),
                 "presentation-playback");
         }
         finally
         {
+            if (item.Kind == PresentationItemKind.LocalNote)
+            {
+                _pet.Handle(new PetEvent.PresentationAcknowledged());
+                _pet.Handle(new PetEvent.AmbientDismissed(
+                    item.AnimationKey ?? throw new InvalidOperationException(
+                        "A local note presentation has no animation key.")));
+            }
             _petGate.Release();
         }
 
-        await ObserveAsync(
-            ShowNotificationAsync(item, cancellationToken),
+        succeeded &= await ObserveAsync(
+            () => ShowNotificationAsync(item, cancellationToken),
             "presentation-notification");
+        return succeeded;
     }
 
     private Task ShowNotificationAsync(DurableNotification item, CancellationToken cancellationToken) =>
@@ -258,42 +345,76 @@ public sealed class PresentationCoordinator :
 
     private static PetEvent ToPetEvent(DurableNotification item) => item.Kind switch
     {
-        PresentationItemKind.RemoteNote => new PetEvent.RemoteNoteArrived(item.Id),
-        PresentationItemKind.Reminder => new PetEvent.ReminderDue(item.Id),
-        _ => throw new ArgumentOutOfRangeException(nameof(item), item.Kind, "Unsupported presentation item kind."),
+            PresentationItemKind.RemoteNote => new PetEvent.RemoteNoteArrived(item.Id),
+            PresentationItemKind.Reminder => new PetEvent.ReminderDue(item.Id),
+            PresentationItemKind.LocalNote => new PetEvent.AmbientRequested(
+                item.AnimationKey ?? throw new InvalidOperationException(
+                    "A local note presentation has no animation key.")),
+            _ => throw new ArgumentOutOfRangeException(nameof(item), item.Kind, "Unsupported presentation item kind."),
     };
 
     private SuppressionSnapshot CaptureEnvironment(DateTimeOffset now)
     {
-        bool sessionLocked;
-        bool fullscreen;
-        lock (_gate)
+        try
         {
-            sessionLocked = _sessionLocked;
-            fullscreen = _fullscreen;
-        }
+            // Live re-sample: the pushed _fullscreen flag is reconciled with a
+            // current read on every decision so PublishAsync/TickAsync never
+            // act on a stale poll. Any read failure is fail-closed (hidden).
+            var liveFullscreen = ReadFullscreenFailClosed();
+            bool sessionLocked;
+            lock (_gate)
+            {
+                sessionLocked = _sessionLocked;
+                if (liveFullscreen != _fullscreen)
+                {
+                    _fullscreen = liveFullscreen;
+                }
+            }
 
-        var paused = PausePolicy.IsSuppressed(_pauseState(), now, fullscreen);
-        var focusActive = _pet.Current.State == PetState.Focus;
-        return new SuppressionSnapshot(_isQuietHours(), fullscreen, paused, sessionLocked, focusActive);
+            var paused = PausePolicy.IsSuppressed(_pauseState(), now, liveFullscreen);
+            var focusActive = _pet.Current.State == PetState.Focus;
+            return new SuppressionSnapshot(_isQuietHours(), liveFullscreen, paused, sessionLocked, focusActive);
+        }
+        catch (Exception exception)
+        {
+            // Single fail-closed policy: any environment fault suppresses.
+            Trace.TraceError("Dudu presentation environment read failed: {0}", exception);
+            return new SuppressionSnapshot(NowQuiet: true, Fullscreen: true, Paused: true, SessionLocked: true, FocusActive: true);
+        }
+    }
+
+    private bool ReadFullscreenFailClosed()
+    {
+        try
+        {
+            return _isFullscreenNow();
+        }
+        catch (Exception exception)
+        {
+            Trace.TraceError("Dudu fullscreen re-sample failed: {0}", exception);
+            return true;
+        }
     }
 
     private static bool IsSuppressed(SuppressionSnapshot snapshot) =>
         snapshot.NowQuiet || snapshot.Fullscreen || snapshot.Paused
         || snapshot.SessionLocked || snapshot.FocusActive;
 
-    private static async Task ObserveAsync(Task task, string operation)
+    private static async Task<bool> ObserveAsync(Func<Task> operation, string name)
     {
         try
         {
-            await task;
+            await operation();
+            return true;
         }
         catch (OperationCanceledException)
         {
+            return false;
         }
         catch (Exception exception)
         {
-            Trace.TraceError("Dudu {0} failed: {1}", operation, exception);
+            Trace.TraceError("Dudu {0} failed: {1}", name, exception);
+            return false;
         }
     }
 

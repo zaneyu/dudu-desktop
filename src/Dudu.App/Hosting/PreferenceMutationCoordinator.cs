@@ -28,6 +28,64 @@ public sealed class PreferenceMutationCoordinator
 
     public Preferences Current => Volatile.Read(ref _current);
 
+    /// <summary>Reloads the authoritative preference row after an operation
+    /// that replaced or deleted the database. A missing row means the caller
+    /// has requested a clean local state, so the supplied defaults are used.
+    /// </summary>
+    public async Task<Preferences> ReloadAsync(
+        Preferences defaults,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(defaults);
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            return await ReloadCoreAsync(defaults, cancellationToken);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Serializes a database replacement/deletion with every preference
+    /// mutation, then reloads and reapplies the authoritative row before
+    /// releasing the gate. This prevents a writer that started with the old
+    /// in-memory snapshot from overwriting restored or reset state.
+    /// </summary>
+    public async Task<Preferences> ExecuteAndReloadAsync(
+        Func<CancellationToken, Task> operation,
+        Preferences defaults,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        ArgumentNullException.ThrowIfNull(defaults);
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            await operation(cancellationToken);
+            return await ReloadCoreAsync(defaults, cancellationToken);
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private async Task<Preferences> ReloadCoreAsync(
+        Preferences defaults,
+        CancellationToken cancellationToken)
+    {
+        var reloaded = await _repository.GetAsync(cancellationToken) ?? defaults;
+        // Publish the durable snapshot before applying it. If the runtime
+        // surface is temporarily unavailable, the next mutation still starts
+        // from restored/deleted state rather than stale memory.
+        Volatile.Write(ref _current, reloaded);
+        await _applyRuntimeAsync(reloaded, cancellationToken);
+        return reloaded;
+    }
+
     public Task<Preferences> UpdateAsync(
         Func<Preferences, Preferences> update,
         CancellationToken cancellationToken = default) =>

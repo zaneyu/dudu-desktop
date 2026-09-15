@@ -12,7 +12,10 @@ public sealed record NotificationRequest(
     string Title,
     string? Body,
     string? ActivationArguments,
-    IReadOnlyList<NotificationButton> Buttons);
+    IReadOnlyList<NotificationButton> Buttons,
+    string? Tag = null,
+    string? Group = null,
+    DateTimeOffset? ExpirationTime = null);
 
 /// <summary>
 /// The narrow seam between <see cref="AppNotificationService"/> and the
@@ -25,4 +28,9 @@ public interface INotificationSink
     Task<bool> TryRegisterAsync(CancellationToken cancellationToken);
 
     Task ShowAsync(NotificationRequest request, CancellationToken cancellationToken);
+
+    /// <summary>Removes a previously shown notification (including its Action
+    /// Center copy). A no-op for sinks that cannot address shown toasts.</summary>
+    Task RemoveAsync(string tag, string group, CancellationToken cancellationToken) =>
+        Task.CompletedTask;
 }

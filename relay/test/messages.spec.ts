@@ -49,6 +49,24 @@ describe("encrypted message queue", () => {
     expect(await paired.desktop.poll()).toEqual([]);
   });
 
+  it("compares offset deliver-after timestamps by instant, not string order", async () => {
+    const paired = await pairedFixture();
+    const deliveryInstant = new Date(Date.now() + 5 * 60_000);
+    // The -14:00 spelling is lexically earlier than the current UTC spelling while representing a
+    // future instant. The old SQL string comparison returned this envelope immediately.
+    const local = new Date(deliveryInstant.getTime() - 14 * 60 * 60_000)
+      .toISOString()
+      .slice(0, 19);
+    const offsetTimestamp = `${local}-14:00`;
+    const envelope = await validEnvelope({
+      messageId: crypto.randomUUID(),
+      deliverAfterUtc: offsetTimestamp,
+    });
+
+    expect((await paired.sender.postMessage(envelope)).status).toBe(202);
+    expect(await paired.desktop.poll()).toEqual([]);
+  });
+
   it("bounds one poll page by serialized bytes, and returns the remainder after the ack", async () => {
     // Review C1: the desktop rejects any relay response over 64 KiB, and twenty envelopes at the
     // maximum 6144-byte ciphertext are ~168 KiB -- so a full row-capped page was unreadable, and
@@ -146,6 +164,54 @@ describe("encrypted message queue", () => {
     const response = await second.sender.postMessage(secondEnvelope);
 
     expect(response.status).toBe(409);
+  });
+
+  it("rejects a conflicting envelope even when the same sender session reuses the id", async () => {
+    const paired = await pairedFixture();
+    const messageId = crypto.randomUUID();
+    const firstEnvelope = await validEnvelope({ messageId });
+    const conflictingEnvelope = await validEnvelope({ messageId });
+
+    expect((await paired.sender.postMessage(firstEnvelope)).status).toBe(202);
+    expect((await paired.sender.postMessage(conflictingEnvelope)).status).toBe(409);
+    expect(await messageCiphertext(messageId)).toBe(firstEnvelope.ciphertext);
+  });
+
+  it("keeps idempotency ownership after sender status retention deletes the status row", async () => {
+    const paired = await pairedFixture();
+    const messageId = crypto.randomUUID();
+    const envelope = await validEnvelope({ messageId });
+    expect((await paired.sender.postMessage(envelope)).status).toBe(202);
+
+    await env.DB.prepare("DELETE FROM message_status WHERE id = ?1").bind(messageId).run();
+
+    expect((await paired.sender.postMessage(envelope)).status).toBe(200);
+    expect((await paired.sender.postMessage(await validEnvelope({ messageId }))).status).toBe(409);
+    expect(await messageCiphertext(messageId)).toBe(envelope.ciphertext);
+
+    expect((await paired.desktop.ack(messageId)).status).toBe(204);
+    expect(await messageCiphertext(messageId)).toBeNull();
+    expect((await paired.sender.postMessage(envelope)).status).toBe(200);
+  });
+
+  it("does not return one message to concurrent desktop polls twice", async () => {
+    const paired = await pairedFixtureWithMessage();
+    const [first, second] = await Promise.all([paired.desktop.poll(), paired.desktop.poll()]);
+
+    expect([first, second].filter((page) => page.length === 1)).toHaveLength(1);
+    expect([first, second].filter((page) => page.length === 0)).toHaveLength(1);
+    expect((await paired.desktop.ack(paired.messageId)).status).toBe(204);
+    expect(await paired.desktop.poll()).toEqual([]);
+  });
+
+  it("redelivers a claimed message after its crash-recovery lease expires", async () => {
+    const paired = await pairedFixtureWithMessage();
+    expect((await paired.desktop.poll()).map((message) => message.messageId)).toEqual([paired.messageId]);
+    await env.DB.prepare("UPDATE messages SET delivery_claim_expires_utc = ?1 WHERE id = ?2")
+      .bind(new Date(Date.now() - 1000).toISOString(), paired.messageId)
+      .run();
+
+    expect((await paired.desktop.poll()).map((message) => message.messageId)).toEqual([paired.messageId]);
   });
 
   it("rejects the losing sender when the same message id is submitted concurrently", async () => {

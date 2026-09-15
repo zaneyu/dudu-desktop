@@ -119,6 +119,42 @@ describe("device registration and pairing", () => {
     expect(response.status).toBe(403);
   });
 
+  it("does not issue device credentials on non-loopback plaintext HTTP", async () => {
+    const response = await exports.default.fetch(
+      new Request("http://public.example/v1/devices/register", {
+        method: "POST",
+        headers: jsonHeaders({ "CF-Connecting-IP": randomTestIp() }),
+        body: JSON.stringify({ publicKey: TEST_PUBLIC_KEY }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).not.toContain("desktopToken");
+  });
+
+  it("rejects bearer-authenticated device requests on non-loopback plaintext HTTP", async () => {
+    const registration = await registerDevice();
+    const response = await exports.default.fetch(
+      new Request("http://public.example/v1/devices/current", {
+        headers: { Authorization: `Bearer ${registration.desktopToken}` },
+      }),
+    );
+
+    expect(response.status).toBe(401);
+  });
+
+  it("allows plaintext device setup only on loopback for local development", async () => {
+    const response = await exports.default.fetch(
+      new Request("http://localhost/v1/devices/register", {
+        method: "POST",
+        headers: jsonHeaders({ "CF-Connecting-IP": randomTestIp() }),
+        body: JSON.stringify({ publicKey: TEST_PUBLIC_KEY }),
+      }),
+    );
+
+    expect(response.status).toBe(201);
+  });
+
   it("disconnect revokes the sender session and clears the cookie", async () => {
     const registration = await registerDevice();
     const pairing = await createPairingCode(registration.desktopToken);

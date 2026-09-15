@@ -4,7 +4,13 @@
  */
 import { ApiHttpError, ApiNetworkError } from "./api.js";
 import { MessageComposer, type ComposerElements } from "./composer.js";
-import { disconnect, pairWithCode, verifyStoredSession, type StoredDevice } from "./pairing.js";
+import {
+  disconnect,
+  pairWithCode,
+  PairingAuthenticityError,
+  verifyStoredSession,
+  type StoredDevice,
+} from "./pairing.js";
 import { clearRecent, StatusTracker } from "./status.js";
 
 const SESSION_LOST_MESSAGE = "phone disconnected pair again";
@@ -25,6 +31,7 @@ const pairedSection = requireElement<HTMLElement>("paired-section");
 const pairingForm = requireElement<HTMLFormElement>("pairing-form");
 const pairingCodeInput = requireElement<HTMLInputElement>("pairing-code");
 const pairingStatus = requireElement<HTMLElement>("pairing-status");
+const disconnectStatus = requireElement<HTMLElement>("disconnect-status");
 const disconnectButton = requireElement<HTMLButtonElement>("disconnect-button");
 const recentList = requireElement<HTMLElement>("recent-statuses");
 
@@ -72,7 +79,14 @@ async function handlePair(code: string): Promise<void> {
     showPaired(device);
   } catch (error) {
     if (error instanceof ApiHttpError) {
-      pairingStatus.textContent = error.status === 410 ? "code expired try a new one" : "aiyo that code didnt work";
+      pairingStatus.textContent =
+        error.status === 410
+          ? "code expired try a new one"
+          : error.status === 429
+            ? "too many tries wait about an hour then try again"
+            : "aiyo that code didnt work";
+    } else if (error instanceof PairingAuthenticityError) {
+      pairingStatus.textContent = "aiyo device fingerprint didnt match pair again";
     } else if (error instanceof ApiNetworkError) {
       pairingStatus.textContent = "aiyo couldnt reach it try again";
     } else {
@@ -82,9 +96,20 @@ async function handlePair(code: string): Promise<void> {
 }
 
 async function handleDisconnect(): Promise<void> {
-  await disconnect();
-  clearRecent();
-  showUnpaired();
+  disconnectStatus.textContent = "disconnecting";
+  disconnectButton.disabled = true;
+  try {
+    await disconnect();
+    clearRecent();
+    showUnpaired();
+  } catch (error) {
+    disconnectStatus.textContent =
+      error instanceof ApiNetworkError || error instanceof ApiHttpError
+        ? "aiyo couldnt disconnect try again"
+        : "aiyo something broke try again";
+  } finally {
+    disconnectButton.disabled = false;
+  }
 }
 
 async function bootstrap(): Promise<void> {
@@ -115,3 +140,8 @@ disconnectButton.addEventListener("click", () => {
 });
 
 void bootstrap();
+
+window.addEventListener("pagehide", () => {
+  pairingCodeInput.value = "";
+  composer.clearSensitiveDraft();
+});

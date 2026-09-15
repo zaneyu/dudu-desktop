@@ -110,6 +110,42 @@ public sealed class WindowsCompanionBootstrapTests
         Assert.Equal(1, runtime.Disposals);
     }
 
+    [Fact]
+    public async Task Concurrent_start_and_dispose_are_single_flight()
+    {
+        var shared = new SharedTransportState();
+        var factoryEntered = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFactory = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var runtime = new FakeRuntime();
+        await using var bootstrap = new WindowsCompanionBootstrap(
+            async cancellationToken =>
+            {
+                factoryEntered.TrySetResult(true);
+                await releaseFactory.Task.WaitAsync(cancellationToken);
+                return runtime;
+            },
+            new FakeTransport(shared));
+
+        var firstStart = bootstrap.StartAsync(TestContext.Current.CancellationToken);
+        var secondStart = bootstrap.StartAsync(TestContext.Current.CancellationToken);
+        await factoryEntered.Task.WaitAsync(TestContext.Current.CancellationToken);
+
+        var firstDispose = bootstrap.DisposeAsync().AsTask();
+        var secondDispose = bootstrap.DisposeAsync().AsTask();
+        Assert.False(firstDispose.IsCompleted);
+        Assert.False(secondDispose.IsCompleted);
+
+        releaseFactory.TrySetResult(true);
+        Assert.True(await firstStart);
+        Assert.True(await secondStart);
+        await Task.WhenAll(firstDispose, secondDispose);
+
+        Assert.Equal(1, runtime.Starts);
+        Assert.Equal(1, runtime.Disposals);
+    }
+
     private sealed class FakeRuntime : IPrimaryAppRuntime
     {
         public TaskCompletionSource<bool> Activation { get; } = new(

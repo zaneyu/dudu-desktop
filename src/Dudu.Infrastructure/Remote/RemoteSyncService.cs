@@ -1,4 +1,5 @@
 using System.Buffers.Text;
+using System.Globalization;
 using System.Security.Cryptography;
 using Dudu.Core.Abstractions;
 using Dudu.Core.Models;
@@ -18,8 +19,21 @@ namespace Dudu.Infrastructure.Remote;
 /// </summary>
 public sealed class RemoteSyncService : IAsyncDisposable
 {
-    private static readonly TimeSpan SteadyPollInterval = TimeSpan.FromSeconds(15);
-    private static readonly TimeSpan StopTimeout = TimeSpan.FromSeconds(5);
+    /// <summary>
+    /// Per-envelope wire-size bound (sum of the Base64URL field lengths, which approximate bytes).
+    /// The relay caps a poll page at 48 KiB / 20 envelopes and a single envelope at ~8.6 KB, so a
+    /// well-formed page can never trip this; anything larger is a poison envelope that is acked
+    /// and skipped (advance past it) instead of stalling the queue or bloating local storage.
+    /// </summary>
+    internal const int MaxEnvelopeWireBytes = 12_288;
+
+    /// <summary>Invalid (undecryptable) envelopes stored and reported per UTC day; the rest are
+    /// acked and dropped. Envelopes are processed sequentially by one loop, so the counter needs
+    /// no lock.</summary>
+    internal const int InvalidEnvelopeDailyQuota = 3;
+
+    private DateOnly _invalidEnvelopeDay;
+    private int _invalidEnvelopeCount;
 
     private readonly IRelayClient _relay;
     private readonly IRemoteEnvelopeRepository _envelopes;
@@ -32,8 +46,11 @@ public sealed class RemoteSyncService : IAsyncDisposable
     private readonly ILogger<RemoteSyncService> _logger;
 
     private readonly object _lifecycleGate = new();
+    private readonly SemaphoreSlim _registrationGate = new(1, 1);
     private CancellationTokenSource? _loopCts;
     private Task? _loopTask;
+    private Task? _stopTask;
+    private bool _disposed;
     private volatile PairingAvailability _state = PairingAvailability.Offline;
     private volatile PairingStatusReason _statusReason = PairingStatusReason.None;
 
@@ -122,6 +139,19 @@ public sealed class RemoteSyncService : IAsyncDisposable
     {
         lock (_lifecycleGate)
         {
+            if (_disposed)
+            {
+                return Task.FromException(new ObjectDisposedException(nameof(RemoteSyncService)));
+            }
+
+            // A start racing a stop observes the stop as its result. It must
+            // not silently create a replacement loop before the stop caller
+            // has finished draining the old one.
+            if (_stopTask is { IsCompleted: false } stopping)
+            {
+                return stopping;
+            }
+
             if (_loopTask is { IsCompleted: false })
             {
                 return Task.CompletedTask;
@@ -149,29 +179,67 @@ public sealed class RemoteSyncService : IAsyncDisposable
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        Task? loopTask;
+        Task stopTask;
         lock (_lifecycleGate)
         {
-            _loopCts?.Cancel();
-            loopTask = _loopTask;
-            _loopTask = null;
+            if (_stopTask?.IsCompleted == true)
+            {
+                _stopTask = null;
+            }
+
+            if (_stopTask is not null)
+            {
+                stopTask = _stopTask;
+            }
+            else
+            {
+                _loopCts?.Cancel();
+                var loopTask = _loopTask;
+                var loopCts = _loopCts;
+                _loopTask = null;
+                var completion = new TaskCompletionSource<bool>(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+                _stopTask = completion.Task;
+                _ = DrainLoopAsync(loopTask, loopCts, completion);
+                stopTask = completion.Task;
+            }
         }
 
-        if (loopTask is null)
-        {
-            return;
-        }
+        // Do not return on a timeout: returning while the task is still alive
+        // permits a concurrent start to resurrect polling during teardown.
+        await stopTask;
+    }
 
+    private async Task DrainLoopAsync(
+        Task? loopTask,
+        CancellationTokenSource? loopCts,
+        TaskCompletionSource<bool> completion)
+    {
         try
         {
-            await loopTask.WaitAsync(StopTimeout, CancellationToken.None);
+            if (loopTask is not null)
+            {
+                try { await loopTask; }
+                catch (Exception) { }
+            }
         }
-        catch (Exception)
+        finally
         {
-            // Shutdown never fails. A TimeoutException (the loop is mid-delay), an
-            // OperationCanceledException, or -- review I1 -- a stale fault left by an earlier
-            // loop iteration are all expected here; a fault was already handed to _reportError
-            // when it happened, and awaiting it here is only to observe it.
+            loopCts?.Dispose();
+            lock (_lifecycleGate)
+            {
+                if (ReferenceEquals(_loopCts, loopCts))
+                {
+                    _loopCts = null;
+                }
+
+                if (ReferenceEquals(_stopTask, completion.Task))
+                {
+                    _stopTask = null;
+                }
+            }
+
+            completion.TrySetResult(true);
         }
     }
 
@@ -183,7 +251,9 @@ public sealed class RemoteSyncService : IAsyncDisposable
             {
                 await PollOnceAsync(cancellationToken);
                 _backoff.Reset();
-                await Task.Delay(SteadyPollInterval, cancellationToken);
+                // Steady cadence is jittered ±20% (not a fixed interval) so a fleet of healthy
+                // desktops does not poll the relay in lockstep.
+                await Task.Delay(_backoff.SteadyDelay(), cancellationToken);
                 continue;
             }
             catch (OperationCanceledException)
@@ -288,9 +358,27 @@ public sealed class RemoteSyncService : IAsyncDisposable
         byte[] privateKeyPkcs8,
         CancellationToken cancellationToken)
     {
+        if (EstimateWireBytes(wire) > MaxEnvelopeWireBytes)
+        {
+            // Poison envelope: far larger than any well-formed page member. It can never decrypt
+            // into a valid note (EnvelopeCrypto caps ciphertext at 6 KiB), so ack-and-advance past
+            // it instead of letting one bloated row stall the whole queue behind it.
+            _reportError?.Invoke(
+                "remote-sync-oversize",
+                new InvalidOperationException(
+                    $"Envelope {wire.MessageId} exceeds the per-envelope size bound."));
+            if (Guid.TryParse(wire.MessageId, out var oversizedId))
+            {
+                PrivacySafeLog.EnvelopeRejected(_logger, oversizedId, "oversize");
+            }
+
+            await AcknowledgeWithRepairTrackingAsync(wire.MessageId, cancellationToken);
+            return;
+        }
+
         if (await _envelopes.IsProcessedAsync(wire.MessageId, cancellationToken))
         {
-            await _relay.AcknowledgeAsync(wire.MessageId, cancellationToken);
+            await AcknowledgeWithRepairTrackingAsync(wire.MessageId, cancellationToken);
             return;
         }
 
@@ -313,19 +401,17 @@ public sealed class RemoteSyncService : IAsyncDisposable
         // plaintext, do not notify, and acknowledge, so a poison message drains instead of being
         // redelivered forever.
         var decrypted = true;
+        var deferred = false;
         RemoteEnvelope? stored = null;
         try
         {
             EnvelopeCrypto.Decrypt(envelope, privateKeyPkcs8, _clock.UtcNow);
             stored = BuildStoredEnvelope(wire, _clock.UtcNow);
+            deferred = IsDeliveryDeferred(wire.DeliverAfterUtc, _clock.UtcNow);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
             decrypted = false;
-            _reportError?.Invoke(
-                "remote-sync-decrypt",
-                new InvalidOperationException(
-                    $"Envelope {wire.MessageId} failed to decrypt or validate ({exception.GetType().Name})."));
             if (Guid.TryParse(wire.MessageId, out var messageId))
             {
                 // Exception type only -- never the message, which for a decode failure can echo
@@ -333,14 +419,61 @@ public sealed class RemoteSyncService : IAsyncDisposable
                 PrivacySafeLog.EnvelopeRejected(_logger, messageId, exception.GetType().Name);
             }
 
-            stored = TryBuildStoredEnvelope(wire);
+            // Quota: anyone holding a sender session can push junk. Keep (and report) only the
+            // first few invalid envelopes per UTC day; beyond that, ack and drop without storing
+            // so junk can neither fill the database nor flood the error reporter.
+            var withinQuota = TryConsumeInvalidEnvelopeQuota(_clock.UtcNow, out var firstOverQuota);
+            if (withinQuota)
+            {
+                _reportError?.Invoke(
+                    "remote-sync-decrypt",
+                    new InvalidOperationException(
+                        $"Envelope {wire.MessageId} failed to decrypt or validate ({exception.GetType().Name})."));
+                stored = TryBuildStoredEnvelope(wire);
+            }
+            else
+            {
+                if (firstOverQuota)
+                {
+                    _reportError?.Invoke(
+                        "remote-sync-invalid-quota",
+                        new InvalidOperationException(
+                            $"More than {InvalidEnvelopeDailyQuota} invalid envelopes today; further ones are dropped."));
+                }
+
+                stored = null;
+            }
+        }
+
+        var storedByThisPoll = false;
+        if (deferred && stored is not null)
+        {
+            // Scheduled for the future: the relay normally withholds such envelopes until they are
+            // due, but a skewed sender/relay clock can still deliver one early. Persist the
+            // ciphertext WITHOUT marking it processed, and deliberately skip both notify and ack:
+            // notifying now would surface the note before its scheduled time, and acking now would
+            // delete the relay copy before it was ever presented. The relay redelivers after its
+            // delivery claim lapses, and the due poll then stores-marks-notifies-acks as usual.
+            try
+            {
+                await _envelopes.TryInsertAsync(stored, cancellationToken);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                throw new RemoteSyncException("Failed to stage a deferred envelope locally.", exception);
+            }
+
+            return;
         }
 
         if (stored is not null)
         {
             try
             {
-                await _envelopes.TryInsertAndMarkProcessedAsync(stored, _clock.UtcNow, cancellationToken);
+                storedByThisPoll = await _envelopes.TryInsertAndMarkProcessedAsync(
+                    stored,
+                    _clock.UtcNow,
+                    cancellationToken);
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
@@ -348,12 +481,83 @@ public sealed class RemoteSyncService : IAsyncDisposable
             }
         }
 
-        if (decrypted)
+        if (decrypted && storedByThisPoll)
         {
             await _sink.NotifyAsync(Guid.ParseExact(wire.MessageId, "D"), cancellationToken);
         }
 
-        await _relay.AcknowledgeAsync(wire.MessageId, cancellationToken);
+        await AcknowledgeWithRepairTrackingAsync(wire.MessageId, cancellationToken);
+    }
+
+    /// <summary>
+    /// True when the envelope carries a parsable deliver-after timestamp later than now. An
+    /// unparsable timestamp is treated as due: the relay already filters on its own clock, so a
+    /// garbage value here is a malformed-but-present note, not a scheduling directive.
+    /// </summary>
+    private static bool IsDeliveryDeferred(string? deliverAfterUtc, DateTimeOffset now)
+    {
+        if (string.IsNullOrWhiteSpace(deliverAfterUtc))
+        {
+            return false;
+        }
+
+        if (!DateTimeOffset.TryParse(
+                deliverAfterUtc,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                out var deliverAfter))
+        {
+            return false;
+        }
+
+        return deliverAfter > now;
+    }
+
+    /// <summary>Counts one invalid envelope against today's (UTC) quota. Returns true while
+    /// within quota; <paramref name="firstOverQuota"/> is true only for the first envelope past it.
+    /// In-memory by design: a restart resets the count, which still bounds junk per process run.
+    /// </summary>
+    private bool TryConsumeInvalidEnvelopeQuota(DateTimeOffset now, out bool firstOverQuota)
+    {
+        var day = DateOnly.FromDateTime(now.UtcDateTime);
+        if (day != _invalidEnvelopeDay)
+        {
+            _invalidEnvelopeDay = day;
+            _invalidEnvelopeCount = 0;
+        }
+
+        _invalidEnvelopeCount++;
+        firstOverQuota = _invalidEnvelopeCount == InvalidEnvelopeDailyQuota + 1;
+        return _invalidEnvelopeCount <= InvalidEnvelopeDailyQuota;
+    }
+
+    /// <summary>Approximate wire size of one envelope: Base64URL characters stand in for bytes.
+    /// </summary>
+    private static int EstimateWireBytes(RelayEnvelope wire) =>
+        wire.MessageId.Length
+        + wire.CreatedUtc.Length
+        + (wire.DeliverAfterUtc?.Length ?? 0)
+        + wire.EphemeralPublicKey.Length
+        + wire.HkdfSalt.Length
+        + wire.Nonce.Length
+        + wire.Ciphertext.Length;
+
+    /// <summary>
+    /// Acknowledges one envelope, tracking credential death: an ack rejected with 401 means the
+    /// stored bearer token is dead (same as a 401 on poll), so the service must report
+    /// NeedsRepair rather than backing off and retrying with the same credential.
+    /// </summary>
+    private async Task AcknowledgeWithRepairTrackingAsync(string messageId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _relay.AcknowledgeAsync(messageId, cancellationToken);
+        }
+        catch (RelayUnauthorizedException)
+        {
+            _state = PairingAvailability.NeedsRepair;
+            throw;
+        }
     }
 
     /// <summary>Decrypts a previously stored envelope in memory. No network I/O.</summary>
@@ -384,7 +588,11 @@ public sealed class RemoteSyncService : IAsyncDisposable
         var keyMaterial = await _keyService.GetOrCreateAsync(cancellationToken);
         try
         {
-            var payload = EnvelopeCrypto.Decrypt(envelope, keyMaterial.PrivateKeyPkcs8);
+            // Freshness is judged at the moment the note was received, not now. The poll path
+            // already enforced the createdUtc window with that same clock reading; re-checking it
+            // against the current clock would make a note kept unsaved for 30+ days (or revealed
+            // after a clock change) permanently unrevealable.
+            var payload = EnvelopeCrypto.Decrypt(envelope, keyMaterial.PrivateKeyPkcs8, stored.ReceivedUtc);
             return new RevealedRemoteNote(payload.Text, payload.Reaction);
         }
         finally
@@ -416,8 +624,18 @@ public sealed class RemoteSyncService : IAsyncDisposable
             return 0;
         }
 
-        var device = await _relay.GetDeviceAsync(cancellationToken);
-        return device.ActiveSenderSessions;
+        try
+        {
+            var device = await _relay.GetDeviceAsync(cancellationToken);
+            return device.ActiveSenderSessions;
+        }
+        catch (RelayUnauthorizedException)
+        {
+            // Includes the GetDevice-404 translation (device row gone server-side): the stored
+            // credential is dead, so converge on NeedsRepair like every other authenticated call.
+            _state = PairingAvailability.NeedsRepair;
+            throw;
+        }
     }
 
     /// <summary>
@@ -444,38 +662,76 @@ public sealed class RemoteSyncService : IAsyncDisposable
         }
     }
 
-    /// <summary>Permanently unpairs this desktop: deletes the remote device, then all local
-    /// pairing state (token, device id, and the desktop's own key material).</summary>
-    public async Task RevokeDeviceAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Unpairs this desktop: deletes the remote device, then the local registration (device id,
+    /// token, staged token). The next registration creates a fresh relay device.
+    /// <para>
+    /// A relay answer of 404 or 401 means the device or its credential is already gone, so local
+    /// cleanup still runs. This is the repair path out of NeedsRepair. Transient failures
+    /// (unavailable, protocol) propagate and leave local state untouched, so the call can be retried.
+    /// </para>
+    /// <para>
+    /// The ECDH private key is kept unless <paramref name="destroyEncryptionKey"/> is true.
+    /// Destroying it makes every stored, unrevealed note permanently unreadable, so only a caller
+    /// that has the user's explicit confirmation may pass true.
+    /// </para>
+    /// </summary>
+    public async Task RevokeDeviceAsync(
+        CancellationToken cancellationToken,
+        bool destroyEncryptionKey = false)
     {
-        await _relay.DeleteDeviceAsync(cancellationToken);
+        try
+        {
+            await _relay.DeleteDeviceAsync(cancellationToken);
+        }
+        catch (Exception exception) when (exception is RelayNotFoundException or RelayUnauthorizedException)
+        {
+            // Already gone server-side, or the credential is dead and can never delete it.
+        }
+
+        // Device id first: it is the registration completion marker, so a failure part-way
+        // leaves a state that EnsureRegisteredAsync treats as unregistered.
         await _secretStore.DeleteAsync(RelaySecretKeys.DeviceId, cancellationToken);
         await _secretStore.DeleteAsync(RelaySecretKeys.DesktopToken, cancellationToken);
-        await _secretStore.DeleteAsync(DesktopKeyService.SecretStoreKey, cancellationToken);
+        await _secretStore.DeleteAsync(RelaySecretKeys.DesktopTokenStaging, cancellationToken);
+        if (destroyEncryptionKey)
+        {
+            await _secretStore.DeleteAsync(DesktopKeyService.SecretStoreKey, cancellationToken);
+        }
+
         _state = PairingAvailability.Offline;
+        _statusReason = PairingStatusReason.None;
     }
 
     private async Task EnsureRegisteredAsync(CancellationToken cancellationToken)
     {
-        // Registration writes the token before the id, and the id is the completion marker.
-        // Check both anyway so an installation left by an older/partial build self-heals on the
-        // next startup instead of treating a device id without its bearer token as registered.
-        if (await HasSecretAsync(RelaySecretKeys.DeviceId, cancellationToken)
-            && await HasSecretAsync(RelaySecretKeys.DesktopToken, cancellationToken))
-        {
-            return;
-        }
-
-        var keyMaterial = await _keyService.GetOrCreateAsync(cancellationToken);
+        await _registrationGate.WaitAsync(cancellationToken);
         try
         {
-            await _relay.RegisterAsync(keyMaterial.PublicKeySpkiBase64Url, cancellationToken);
+            // Registration writes the token before the id, and the id is the completion marker.
+            // Check both anyway so an installation left by an older/partial build self-heals on the
+            // next startup instead of treating a device id without its bearer token as registered.
+            if (await HasSecretAsync(RelaySecretKeys.DeviceId, cancellationToken)
+                && await HasSecretAsync(RelaySecretKeys.DesktopToken, cancellationToken))
+            {
+                return;
+            }
+
+            var keyMaterial = await _keyService.GetOrCreateAsync(cancellationToken);
+            try
+            {
+                await _relay.RegisterAsync(keyMaterial.PublicKeySpkiBase64Url, cancellationToken);
+            }
+            finally
+            {
+                // Same M3 rule as PollOnceAsync/RevealAsync/DisconnectSendersAsync: the PKCS#8 copy
+                // this call owns never outlives the call.
+                CryptographicOperations.ZeroMemory(keyMaterial.PrivateKeyPkcs8);
+            }
         }
         finally
         {
-            // Same M3 rule as PollOnceAsync/RevealAsync/DisconnectSendersAsync: the PKCS#8 copy
-            // this call owns never outlives the call.
-            CryptographicOperations.ZeroMemory(keyMaterial.PrivateKeyPkcs8);
+            _registrationGate.Release();
         }
     }
 
@@ -525,7 +781,11 @@ public sealed class RemoteSyncService : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        lock (_lifecycleGate)
+        {
+            _disposed = true;
+        }
+
         await StopAsync(CancellationToken.None);
-        _loopCts?.Dispose();
     }
 }

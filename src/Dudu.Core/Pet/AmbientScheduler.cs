@@ -33,16 +33,33 @@ public sealed class AmbientScheduler
 
         _minimumInterval = ambientMinimumInterval;
         _quietHours = quietHours ?? new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue);
-        NextEligibleUtc = _clock.UtcNow;
+
+        // A fresh scheduler has shown nothing yet, so the first ambient moment is
+        // one minimum interval out — not immediately at startup, which would greet
+        // the user with motion before the app has even settled.
+        NextEligibleUtc = _clock.UtcNow + _minimumInterval;
     }
 
     public DateTimeOffset NextEligibleUtc { get; private set; }
 
+    /// <summary>
+    /// Attempts to produce the next ambient pet moment.
+    /// </summary>
+    /// <param name="quietHoursOverride">
+    /// Explicit quiet-hours verdict from the caller. When null, the scheduler consults
+    /// <see cref="QuietHoursPolicy"/> itself; when set, the caller's value wins.
+    /// Callers must derive the override from the same policy (same preferences, clock,
+    /// and time zone) — a stale <c>false</c> would bypass quiet hours and a stale
+    /// <c>true</c> would suppress ambience that should play. The only audited caller is
+    /// PresentationCoordinator, which passes its per-tick <c>NowQuiet</c> snapshot taken
+    /// from the same quiet-hours source on the same tick.
+    /// </param>
     public PetEvent? TryGetNextEvent(
         bool paused,
         bool focusActive,
         bool fullscreen,
-        bool sessionLocked)
+        bool sessionLocked,
+        bool? quietHoursOverride = null)
     {
         var now = _clock.UtcNow;
         if (paused || focusActive || fullscreen || sessionLocked)
@@ -51,7 +68,10 @@ public sealed class AmbientScheduler
         }
 
         if (now < NextEligibleUtc
-            || QuietHoursPolicy.IsQuiet(now, _quietHours, _clock.LocalTimeZone))
+            || (quietHoursOverride ?? QuietHoursPolicy.IsQuiet(
+                now,
+                _quietHours,
+                _clock.LocalTimeZone)))
         {
             return null;
         }

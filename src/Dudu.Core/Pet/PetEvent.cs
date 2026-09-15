@@ -4,6 +4,8 @@ public abstract record PetEvent
 {
     public sealed record ComfortRequested : PetEvent;
 
+    public sealed record ComfortDismissed : PetEvent;
+
     public sealed record RemoteNoteArrived : PetEvent
     {
         public string MessageId { get; }

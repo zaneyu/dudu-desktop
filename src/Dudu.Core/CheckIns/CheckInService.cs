@@ -1,3 +1,4 @@
+using System.Text;
 using Dudu.Core.Abstractions;
 using Dudu.Core.Models;
 using Dudu.Core.Time;
@@ -6,6 +7,8 @@ namespace Dudu.Core.CheckIns;
 
 public sealed class CheckInService
 {
+    private const int MaxNoteScalars = 2_000;
+
     private readonly ICheckInRepository _repository;
     private readonly IClock _clock;
 
@@ -89,7 +92,19 @@ public sealed class CheckInService
     private static string? NormalizeNote(string? note)
     {
         var normalized = note?.Trim();
-        return string.IsNullOrEmpty(normalized) ? null : normalized;
+        if (string.IsNullOrEmpty(normalized))
+        {
+            return null;
+        }
+
+        if (normalized.EnumerateRunes().Count() > MaxNoteScalars)
+        {
+            throw new ArgumentException(
+                $"Check-in note cannot exceed {MaxNoteScalars} Unicode scalar values.",
+                nameof(note));
+        }
+
+        return normalized;
     }
 
     private static void ValidateChoice(MoodChoice choice)

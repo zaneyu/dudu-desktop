@@ -30,4 +30,24 @@ public sealed class QuietHoursPolicyTests
 
         Assert.Equal(DateTimeOffset.Parse("2026-09-12T07:00:00Z"), result);
     }
+
+    [Theory]
+    [InlineData("2026-09-11T00:00:00Z")]
+    [InlineData("2026-09-11T12:00:00Z")]
+    [InlineData("2026-09-11T23:59:00Z")]
+    public void Zero_length_window_means_no_quiet_hours(string utc)
+    {
+        var zeroWindow = new QuietHours(Enabled: true, Start: new TimeOnly(22, 0), End: new TimeOnly(22, 0));
+
+        Assert.False(QuietHoursPolicy.IsQuiet(DateTimeOffset.Parse(utc), zeroWindow, Utc));
+    }
+
+    [Fact]
+    public void NextAllowedUtc_leaves_times_inside_a_zero_length_window_alone()
+    {
+        var zeroWindow = new QuietHours(Enabled: true, Start: new TimeOnly(22, 0), End: new TimeOnly(22, 0));
+        var now = DateTimeOffset.Parse("2026-09-11T23:00:00Z");
+
+        Assert.Equal(now, QuietHoursPolicy.NextAllowedUtc(now, zeroWindow, Utc));
+    }
 }

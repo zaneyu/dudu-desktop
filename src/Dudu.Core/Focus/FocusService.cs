@@ -6,32 +6,25 @@ namespace Dudu.Core.Focus;
 
 public sealed class FocusService
 {
+    /// <summary>
+    /// Upper bound for a single focus stint, including extensions and paused remainder.
+    /// Focus is a sprint timer, not a calendar block; anything longer is a corrupt
+    /// or abusive value that would skew remaining-time displays and expiry sweeps.
+    /// </summary>
+    public static readonly TimeSpan MaxDuration = TimeSpan.FromHours(24);
+
     private readonly IFocusSessionRepository _repository;
     private readonly ITaskRepository? _taskRepository;
     private readonly IClock _clock;
 
-    public FocusService(IFocusSessionRepository repository, IClock clock)
-    {
-        _repository = repository;
-        _clock = clock;
-    }
-
-    public FocusService(
-        IFocusSessionRepository repository,
-        ITaskRepository taskRepository,
-        IClock clock)
-    {
-        _repository = repository;
-        _taskRepository = taskRepository;
-        _clock = clock;
-    }
-
     public FocusService(
         IFocusSessionRepository repository,
         IClock clock,
-        ITaskRepository taskRepository)
-        : this(repository, taskRepository, clock)
+        ITaskRepository? taskRepository = null)
     {
+        _repository = repository ?? throw new ArgumentNullException(nameof(repository));
+        _clock = clock ?? throw new ArgumentNullException(nameof(clock));
+        _taskRepository = taskRepository;
     }
 
     public async Task<FocusSnapshot> StartAsync(
@@ -42,6 +35,13 @@ public sealed class FocusService
         if (duration <= TimeSpan.Zero)
         {
             throw new ArgumentOutOfRangeException(nameof(duration), "aiyo focus duration must be positive");
+        }
+
+        if (duration > MaxDuration)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(duration),
+                $"aiyo focus duration must not exceed {MaxDuration.TotalHours} hours");
         }
 
         if (taskId is not null)
@@ -96,6 +96,10 @@ public sealed class FocusService
             throw new InvalidOperationException("wait cant pause an expired focus session");
         }
 
+        // RemainingWhenPaused is persisted and later trusted by ResumeAsync, so clamp
+        // a corrupt far-future EndsUtc here instead of storing an unbounded remainder.
+        remaining = CapRemaining(remaining);
+
         var paused = session with
         {
             EndsUtc = null,
@@ -116,14 +120,15 @@ public sealed class FocusService
         var session = await GetRequiredAsync(id, cancellationToken);
         EnsureStatus(session, FocusStatus.Paused, "resume");
         var now = UtcNow();
-        if (session.RemainingWhenPaused <= TimeSpan.Zero)
+        var remaining = CapRemaining(session.RemainingWhenPaused);
+        if (remaining <= TimeSpan.Zero)
         {
             throw new InvalidOperationException("aiyo no time left to resume focus");
         }
 
         var resumed = session with
         {
-            EndsUtc = now.Add(session.RemainingWhenPaused),
+            EndsUtc = now.Add(remaining),
             RemainingWhenPaused = TimeSpan.Zero,
             Status = FocusStatus.Running,
             UpdatedUtc = now,
@@ -146,6 +151,13 @@ public sealed class FocusService
             throw new ArgumentOutOfRangeException(nameof(extension), "oh no focus extension must be positive");
         }
 
+        if (extension > MaxDuration)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(extension),
+                $"oh no focus extension must not exceed {MaxDuration.TotalHours} hours");
+        }
+
         var session = await GetRequiredAsync(id, cancellationToken);
         var now = UtcNow();
         FocusSession extended;
@@ -161,12 +173,26 @@ public sealed class FocusService
                 EndsUtc = session.EndsUtc.Value.Add(extension),
                 UpdatedUtc = now,
             };
+            if (extended.EndsUtc.Value - session.StartedUtc > MaxDuration)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(extension),
+                    "oh no that extension would push the session past 24 hours");
+            }
         }
         else if (session.Status == FocusStatus.Paused)
         {
+            var remaining = CapRemaining(session.RemainingWhenPaused).Add(extension);
+            if (remaining > MaxDuration)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(extension),
+                    "oh no that extension would push the paused remainder past 24 hours");
+            }
+
             extended = session with
             {
-                RemainingWhenPaused = session.RemainingWhenPaused.Add(extension),
+                RemainingWhenPaused = remaining,
                 UpdatedUtc = now,
             };
         }
@@ -252,15 +278,18 @@ public sealed class FocusService
         return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
     }
 
+    private static TimeSpan CapRemaining(TimeSpan remaining) =>
+        remaining > MaxDuration ? MaxDuration : remaining;
+
     private static FocusSnapshot ToSnapshot(FocusSession session, DateTimeOffset now) =>
         new(
             session.Id,
             session.TaskId,
             session.Status,
             session.Status == FocusStatus.Paused
-                ? session.RemainingWhenPaused
+                ? CapRemaining(session.RemainingWhenPaused)
                 : session.Status == FocusStatus.Running
-                    ? RemainingForRunning(session, now)
+                    ? CapRemaining(RemainingForRunning(session, now))
                     : TimeSpan.Zero);
 
     private static void EnsureStatus(FocusSession session, FocusStatus expected, string transition)

@@ -1,4 +1,6 @@
+using System.Security.AccessControl;
 using System.Security.Cryptography;
+using System.Security.Principal;
 using System.Text;
 using System.Text.RegularExpressions;
 using Dudu.Core.Abstractions;
@@ -13,6 +15,17 @@ public sealed class SecretStoreException : Exception
     }
 }
 
+/// <summary>
+/// DPAPI (CurrentUser scope) file-backed secret store. Ciphertext files live under
+/// <c>_directory</c>, whose ACL is restricted to the current user on every write.
+/// </summary>
+/// <remarks>
+/// SAME-USER LIMITATION: DPAPI CurrentUser scope and the directory ACL both trust the OS user
+/// boundary. Any process running as the same Windows user can read these files -- this store
+/// protects secrets from other users and from offline disk access, but it is not a sandbox
+/// boundary against same-user malware. Key material held in memory (see RelayClient,
+/// RemoteSyncService) is zeroed promptly for the same reason: defense in depth, not isolation.
+/// </remarks>
 public sealed class DpapiSecretStore : ISecretStore
 {
     private static readonly Regex KeyPattern = new(
@@ -37,6 +50,7 @@ public sealed class DpapiSecretStore : ISecretStore
         cancellationToken.ThrowIfCancellationRequested();
 
         Directory.CreateDirectory(_directory);
+        RestrictDirectoryToCurrentUser(_directory);
         var path = GetPath(key);
         var temporaryPath = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         var plaintext = value.ToArray();
@@ -85,13 +99,17 @@ public sealed class DpapiSecretStore : ISecretStore
     {
         EnsureWindows();
         ValidateKey(key);
-        var path = GetPath(key);
-        if (!File.Exists(path))
+        byte[] protectedBytes;
+        try
         {
+            protectedBytes = await File.ReadAllBytesAsync(GetPath(key), cancellationToken);
+        }
+        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+        {
+            // No exists-then-read race: a secret deleted concurrently simply reads as absent.
             return null;
         }
 
-        var protectedBytes = await File.ReadAllBytesAsync(path, cancellationToken);
         var entropy = Encoding.UTF8.GetBytes("DuduDesktop:v1:" + key);
         try
         {
@@ -129,11 +147,59 @@ public sealed class DpapiSecretStore : ISecretStore
         EnsureWindows();
         ValidateKey(key);
         cancellationToken.ThrowIfCancellationRequested();
-        File.Delete(GetPath(key));
+        var path = GetPath(key);
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception exception) when (exception is FileNotFoundException or DirectoryNotFoundException)
+        {
+            // Delete is idempotent: a missing file -- or a missing secrets directory, when no
+            // secret was ever written -- is already the desired end state, including under a
+            // concurrent delete racing this one.
+        }
+
         return Task.CompletedTask;
     }
 
     private string GetPath(string key) => Path.Combine(_directory, key + ".bin");
+
+    /// <summary>
+    /// Defense-in-depth on top of DPAPI (which already binds ciphertext to the Windows user):
+    /// strips inherited ACEs from the secrets directory and grants full control to the current
+    /// user only, so other local users cannot even list the file names. Best-effort: if
+    /// hardening fails the write still proceeds under DPAPI protection rather than failing
+    /// closed and wedging registration.
+    /// </summary>
+    private static void RestrictDirectoryToCurrentUser(string directory)
+    {
+        try
+        {
+            var identity = WindowsIdentity.GetCurrent()?.Name;
+            if (string.IsNullOrWhiteSpace(identity))
+            {
+                return;
+            }
+
+            var security = new DirectorySecurity();
+            security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+            security.AddAccessRule(new FileSystemAccessRule(
+                identity,
+                FileSystemRights.FullControl,
+                InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
+                PropagationFlags.None,
+                AccessControlType.Allow));
+            new DirectoryInfo(directory).SetAccessControl(security);
+        }
+        catch (Exception exception) when (exception is UnauthorizedAccessException
+            or IOException
+            or PlatformNotSupportedException
+            or InvalidOperationException
+            or IdentityNotMappedException)
+        {
+            // Best effort (see above): DPAPI remains the primary protection.
+        }
+    }
 
     private static void ValidateKey(string key)
     {

@@ -73,6 +73,7 @@ $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 $relayDir = Join-Path $repoRoot "relay"
 $harnessProject = Join-Path $repoRoot "tests\Dudu.WindowsHarness\Dudu.WindowsHarness.csproj"
 $infrastructureTestsProject = Join-Path $repoRoot "tests\Dudu.Infrastructure.Tests\Dudu.Infrastructure.Tests.csproj"
+$deploymentSmokeScript = Join-Path $repoRoot "tests\e2e\relay-deployment-smoke.ps1"
 
 $relayBaseUrl = "http://127.0.0.1:8787"
 $d1DatabaseName = "dudu-relay-test"  # placeholder name `wrangler.jsonc` binds for local dev; see its comment.
@@ -95,6 +96,45 @@ $harnessExitCode = $null
 function Write-Step {
     param([string]$Message)
     Write-Host "[private-note-flow] $Message"
+}
+
+function Clear-SensitiveFile {
+    <#
+        Overwrites a temp file that may contain the note plaintext (harness transcript's reveal
+        line, D1 dump, captured traffic) with random bytes before deleting it, so a crash-then-
+        inspect of the temp directory cannot recover the secret. Best effort: scrub failures
+        never fail the run; the directory removal below still runs.
+    #>
+    param([string]$Path)
+    try {
+        if (Test-Path -LiteralPath $Path -PathType Leaf) {
+            $length = (Get-Item -LiteralPath $Path).Length
+            if ($length -gt 0) {
+                $random = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+                try {
+                    $bytes = New-Object byte[] ([Math]::Min($length, 1MB))
+                    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+                    try {
+                        $remaining = $length
+                        while ($remaining -gt 0) {
+                            $chunk = [Math]::Min($bytes.Length, $remaining)
+                            $random.GetBytes($bytes, 0, $chunk)
+                            $stream.Write($bytes, 0, $chunk)
+                            $remaining -= $chunk
+                        }
+                        $stream.Flush()
+                    } finally {
+                        $stream.Close()
+                    }
+                } finally {
+                    $random.Dispose()
+                }
+            }
+            Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+        }
+    } catch {
+        # Best-effort scrub only; the work-directory removal below still runs.
+    }
 }
 
 function Wait-ForHttpReady {
@@ -148,6 +188,12 @@ try {
 
     Wait-ForHttpReady -Url $relayBaseUrl -TimeoutSeconds 30
     Write-Step "Wrangler is serving $relayBaseUrl."
+
+    Write-Step "Running the no-credentials relay deployment smoke probe."
+    & pwsh $deploymentSmokeScript -BaseUrl $relayBaseUrl -AllowHttp
+    if ($LASTEXITCODE -ne 0) {
+        throw "The local relay deployment smoke probe failed with exit code $LASTEXITCODE."
+    }
 
     # --- Step 2: launch the Windows harness's remote-note scenario ------------------------------
     Write-Step "Launching tests/Dudu.WindowsHarness -- --scenario remote-note."
@@ -290,22 +336,29 @@ try {
         $failures.Add("The note text appeared in a raw D1 'messages' dump.")
     }
 
-    Write-Step "Confirming no leftover ciphertext remains in D1 after acknowledgment."
-    Push-Location $relayDir
-    try {
-        $countOutput = & npx wrangler d1 execute $d1DatabaseName --local --json --command "SELECT COUNT(*) AS remaining FROM messages;" 2>$null
-    } finally {
-        Pop-Location
-    }
+    Write-Step "Waiting for acknowledgment to remove the ciphertext from D1."
     $remainingCount = $null
-    try {
-        $parsedCount = $countOutput | ConvertFrom-Json
-        $remainingCount = $parsedCount[0].results[0].remaining
-    } catch {
-        $failures.Add("Could not parse the D1 remaining-message count; raw output: $countOutput")
+    $ackDeadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $ackDeadline) {
+        Push-Location $relayDir
+        try {
+            $countOutput = & npx wrangler d1 execute $d1DatabaseName --local --json --command "SELECT COUNT(*) AS remaining FROM messages;" 2>$null
+        } finally {
+            Pop-Location
+        }
+        try {
+            $parsedCount = $countOutput | ConvertFrom-Json
+            $remainingCount = [int]$parsedCount[0].results[0].remaining
+            if ($remainingCount -eq 0) { break }
+        } catch {
+            $remainingCount = $null
+        }
+        Start-Sleep -Milliseconds 500
     }
-    if ($null -ne $remainingCount -and [int]$remainingCount -ne 0) {
-        $failures.Add("D1 still has $remainingCount row(s) in 'messages' after acknowledgment; ciphertext was not deleted.")
+    if ($null -eq $remainingCount) {
+        $failures.Add("Could not parse the D1 remaining-message count after waiting for acknowledgment.")
+    } elseif ($remainingCount -ne 0) {
+        $failures.Add("D1 still has $remainingCount row(s) in 'messages' after the 30-second acknowledgment wait; ciphertext was not deleted.")
     }
 
     Write-Step "Checking captured HTTP request bodies for plaintext leakage."
@@ -419,6 +472,11 @@ finally {
     }
     Get-EventSubscriber -ErrorAction SilentlyContinue | Unregister-Event -ErrorAction SilentlyContinue
     try {
+        # Scrub-then-delete: the transcript holds the revealed line and the D1/traffic files
+        # hold ciphertext that must not linger in %TEMP% after the run, on success or failure.
+        Clear-SensitiveFile -Path $harnessTranscriptPath
+        Clear-SensitiveFile -Path $d1DumpPath
+        Clear-SensitiveFile -Path $trafficCapturePath
         Remove-Item -Path $workDir -Recurse -Force -ErrorAction SilentlyContinue
     } catch {
         # Best-effort cleanup only; nothing under $workDir should carry plaintext or secrets by

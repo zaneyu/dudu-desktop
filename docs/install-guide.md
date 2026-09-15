@@ -37,3 +37,6 @@ password is needed.
 ## Requirements
 
 Windows 11 (64-bit, Intel/AMD). Not for Windows on ARM, macOS, or Windows 10.
+
+The release installer is unsigned. Verify the SHA-256 line in
+`SHA256SUMS.txt` before choosing **Run anyway** in SmartScreen.

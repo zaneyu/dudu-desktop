@@ -58,4 +58,56 @@ public sealed class FullscreenDetectorTests
         Assert.False(FullscreenDetector.IsForegroundFullscreen(
             new FullscreenWindowSnapshot(42, 1, 2, new PixelRect(3, 0, 1917, 1080), Monitor, WorkArea)));
     }
+    [Fact]
+    public void Native_query_failure_fails_closed_as_fullscreen()
+    {
+        Assert.True(new FullscreenDetector(new ThrowingNativeApi()).IsForegroundFullscreen());
+    }
+
+    [Fact]
+    public void Persistent_native_failure_eventually_fails_open_so_the_pet_is_not_hidden_forever()
+    {
+        var detector = new FullscreenDetector(new ThrowingNativeApi());
+        for (var i = 0; i < FullscreenDetector.FailClosedLimit; i++)
+        {
+            Assert.True(detector.IsForegroundFullscreen());
+        }
+
+        Assert.False(detector.IsForegroundFullscreen());
+        Assert.False(detector.IsForegroundFullscreen());
+    }
+
+    [Fact]
+    public void A_successful_query_resets_the_failure_count()
+    {
+        var native = new ThrowingNativeApi();
+        var detector = new FullscreenDetector(native);
+        for (var i = 0; i < FullscreenDetector.FailClosedLimit + 3; i++)
+        {
+            detector.IsForegroundFullscreen();
+        }
+
+        native.Fail = false;
+        Assert.False(detector.IsForegroundFullscreen());
+        native.Fail = true;
+        Assert.True(detector.IsForegroundFullscreen());
+    }
+
+    private sealed class ThrowingNativeApi : IFullscreenNativeApi
+    {
+        public bool Fail { get; set; } = true;
+        public nint GetForegroundWindow() => Fail ? throw new InvalidOperationException("native failed") : 0;
+        public nint GetShellWindow() => 0;
+        public nint GetDesktopWindow() => 0;
+        public bool IsIconic(nint hwnd) => false;
+        public bool IsDuduWindow(nint hwnd) => false;
+        public bool TryGetCloaked(nint hwnd, out bool cloaked) { cloaked = false; return true; }
+        public bool TryGetExtendedFrameBounds(nint hwnd, out PixelRect bounds) { bounds = default; return false; }
+        public bool TryGetMonitorBounds(nint hwnd, out PixelRect monitorBounds, out PixelRect workArea)
+        {
+            monitorBounds = default;
+            workArea = default;
+            return false;
+        }
+    }
 }

@@ -21,40 +21,88 @@ public sealed class StartupRegistrationService : IAsyncDisposable
     private readonly string _installedExecutable;
     private readonly string _shortcutPath;
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly object _disposeSync = new();
+    private readonly bool _available;
+    private readonly string? _initializationError;
     private bool _enabled;
     private bool _disposed;
+    private Task? _disposeTask;
 
     public StartupRegistrationService(
         string? installedExecutable = null,
         string? startupDirectory = null,
         IStartupLinkWriter? writer = null)
     {
-        _installedExecutable = Path.GetFullPath(
-            installedExecutable
-            ?? Environment.ProcessPath
-            ?? throw new InvalidOperationException("The installed executable path is unavailable."));
-        var startup = startupDirectory
-            ?? Environment.GetFolderPath(Environment.SpecialFolder.Startup);
-        if (string.IsNullOrWhiteSpace(startup))
+        string? executable = null;
+        string? shortcut = null;
+        string? error = null;
+        var available = false;
+        try
         {
-            throw new InvalidOperationException("The current-user Startup folder is unavailable.");
+            executable = Path.GetFullPath(
+                installedExecutable
+                ?? Environment.ProcessPath
+                ?? throw new InvalidOperationException("The installed executable path is unavailable."));
+            var startup = startupDirectory
+                ?? Environment.GetFolderPath(Environment.SpecialFolder.Startup);
+            if (string.IsNullOrWhiteSpace(startup))
+            {
+                throw new InvalidOperationException("The current-user Startup folder is unavailable.");
+            }
+
+            shortcut = Path.Combine(startup, ShortcutFileName);
+            available = true;
+        }
+        catch (Exception exception)
+        {
+            // Lazy-degrade: never fail construction (and thus bootstrap).
+            // The service reports disabled; writes throw a degraded error
+            // that StartupSettingsService turns into NeedsReconciliation.
+            error = exception.Message;
         }
 
-        _shortcutPath = Path.Combine(startup, ShortcutFileName);
+        _installedExecutable = executable ?? string.Empty;
+        _shortcutPath = shortcut ?? string.Empty;
         _writer = writer ?? new WindowsStartupLinkWriter();
-        _enabled = File.Exists(_shortcutPath);
+        _available = available;
+        _initializationError = error;
+        if (available)
+        {
+            try
+            {
+                _enabled = File.Exists(_shortcutPath);
+            }
+            catch
+            {
+                _enabled = false;
+            }
+        }
     }
 
     public string ShortcutPath => _shortcutPath;
 
-    public bool IsEnabled => _enabled;
+    public bool IsAvailable => _available;
+
+    public string? InitializationError => _initializationError;
+
+    public bool IsEnabled => Volatile.Read(ref _enabled);
 
     public async Task SetEnabledAsync(bool enabled, CancellationToken cancellationToken = default)
     {
+        if (!_available)
+        {
+            throw new InvalidOperationException(
+                "Startup registration is unavailable on this machine."
+                + (_initializationError is null ? string.Empty : $" {_initializationError}"));
+        }
+
         await _gate.WaitAsync(cancellationToken);
         try
         {
-            if (_disposed) throw new ObjectDisposedException(nameof(StartupRegistrationService));
+            if (Volatile.Read(ref _disposed))
+            {
+                throw new ObjectDisposedException(nameof(StartupRegistrationService));
+            }
             if (enabled)
             {
                 if (_enabled) return;
@@ -70,7 +118,7 @@ public sealed class StartupRegistrationService : IAsyncDisposable
                 await _writer.DeleteAsync(_shortcutPath, cancellationToken);
             }
 
-            _enabled = enabled;
+            Volatile.Write(ref _enabled, enabled);
         }
         finally
         {
@@ -80,13 +128,23 @@ public sealed class StartupRegistrationService : IAsyncDisposable
 
     public ValueTask DisposeAsync()
     {
-        if (!_disposed)
+        lock (_disposeSync)
         {
-            _disposed = true;
-            _gate.Dispose();
-        }
+            if (_disposeTask is null)
+            {
+                Volatile.Write(ref _disposed, true);
+                _disposeTask = DrainAndDisposeAsync();
+            }
 
-        return ValueTask.CompletedTask;
+            return new ValueTask(_disposeTask);
+        }
+    }
+
+    private async Task DrainAndDisposeAsync()
+    {
+        await _gate.WaitAsync();
+        _gate.Release();
+        _gate.Dispose();
     }
 }
 

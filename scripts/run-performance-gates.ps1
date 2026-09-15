@@ -131,6 +131,72 @@ function ConvertTo-PerformanceReportHashtable {
     }
 }
 
+function Test-PerformanceReportShape {
+    <# Reject stale, incomplete, malformed, or untimed reports. #>
+    param(
+        [Parameter(Mandatory = $true)][PSCustomObject]$Json,
+        [Parameter(Mandatory = $true)][string]$ExpectedRunId,
+        [Parameter(Mandatory = $true)][DateTimeOffset]$StartedUtc
+    )
+
+    $failures = @()
+    $properties = @($Json.PSObject.Properties.Name)
+    foreach ($required in @(
+        "schemaVersion", "runId", "generatedUtc", "durationSeconds", "harnessCompleted",
+        "launchToFirstOverlayMs", "idleCpuPercent", "animationCpuPercent",
+        "peakWorkingSetBytes", "allocationSlopeMbPerHour"
+    )) {
+        if ($required -notin $properties) { $failures += "performance report is missing '$required'" }
+    }
+    if ($failures.Count -gt 0) { return $failures }
+
+    if (($Json.schemaVersion -isnot [int]) -and ($Json.schemaVersion -isnot [long])) {
+        $failures += "performance report schemaVersion is not an integer"
+    } elseif ([int64]$Json.schemaVersion -ne 1) {
+        $failures += "performance report schemaVersion is unsupported"
+    }
+    if ([string]$Json.runId -ne $ExpectedRunId) {
+        $failures += "performance report runId does not match this harness invocation"
+    }
+    if ($Json.harnessCompleted -ne $true) {
+        $failures += "performance report does not prove harness completion"
+    }
+
+    $generatedUtc = [DateTimeOffset]::MinValue
+    if (-not [DateTimeOffset]::TryParse(
+            [string]$Json.generatedUtc,
+            [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::RoundtripKind,
+            [ref]$generatedUtc)) {
+        $failures += "performance report generatedUtc is not a valid timestamp"
+    } else {
+        $nowUtc = [DateTimeOffset]::UtcNow
+        if ($generatedUtc -lt $StartedUtc.AddSeconds(-5)) {
+            $failures += "performance report is stale (generated before this harness invocation)"
+        }
+        if ($generatedUtc -gt $nowUtc.AddMinutes(5)) {
+            $failures += "performance report generatedUtc is in the future"
+        }
+    }
+
+    foreach ($field in @(
+        "durationSeconds", "launchToFirstOverlayMs", "idleCpuPercent", "animationCpuPercent",
+        "peakWorkingSetBytes", "allocationSlopeMbPerHour"
+    )) {
+        $value = 0.0
+        try { $value = [double]$Json.$field } catch { $failures += "performance report '$field' is not numeric"; continue }
+        if ([double]::IsNaN($value) -or [double]::IsInfinity($value)) {
+            $failures += "performance report '$field' is not finite"
+        } elseif ($value -lt 0) {
+            $failures += "performance report '$field' is negative"
+        }
+    }
+    if ([double]$Json.durationSeconds -le 0) {
+        $failures += "performance report durationSeconds must be greater than zero"
+    }
+    return $failures
+}
+
 # Dot-source guard: tests/scripts/run-performance-gates.tests.ps1 dot-sources
 # this file to load Test-PerformanceThresholds without running the harness
 # or requiring -Executable. $MyInvocation.InvocationName is '.' only when
@@ -149,16 +215,27 @@ if ([string]::IsNullOrWhiteSpace($Executable)) {
 
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $harnessProject = Join-Path $repoRoot "tests/Dudu.WindowsHarness"
+$runStartedUtc = [DateTimeOffset]::UtcNow
+$runId = [Guid]::NewGuid().ToString("D")
 
 if ([string]::IsNullOrWhiteSpace($Output)) {
     $Output = Join-Path $repoRoot "artifacts/performance/performance-report.json"
+}
+
+if (Test-Path -LiteralPath $Output -PathType Container) {
+    throw "Performance report output '$Output' is a directory."
+}
+if (Test-Path -LiteralPath $Output -PathType Leaf) {
+    # A failed harness must not leave a previous passing report for this run to accept.
+    Remove-Item -LiteralPath $Output -Force
 }
 
 $harnessArgs = @(
     "run", "--project", $harnessProject, "-c", "Release", "--",
     "--scenario", "performance",
     "--executable", $Executable,
-    "--output", $Output
+    "--output", $Output,
+    "--run-id", $runId
 )
 if ($IdleSeconds -gt 0) {
     $harnessArgs += @("--idle-seconds", $IdleSeconds)
@@ -171,13 +248,25 @@ Write-Host "Running: dotnet $($harnessArgs -join ' ')"
 & dotnet @harnessArgs
 $harnessExitCode = $LASTEXITCODE
 
+$failures = @()
+if ($harnessExitCode -ne 0) {
+    $failures += "performance harness exited with code $harnessExitCode"
+}
+
 if (-not (Test-Path $Output)) {
     throw "The harness did not write a performance report to '$Output' (exit code $harnessExitCode)."
 }
 
-$reportJson = Get-Content -Raw -Path $Output | ConvertFrom-Json
+$reportJson = $null
+try {
+    $reportJson = Get-Content -Raw -LiteralPath $Output | ConvertFrom-Json
+}
+catch {
+    throw "The performance report at '$Output' is not valid JSON."
+}
+$failures += @(Test-PerformanceReportShape -Json $reportJson -ExpectedRunId $runId -StartedUtc $runStartedUtc)
 $report = ConvertTo-PerformanceReportHashtable -Json $reportJson
-$failures = Test-PerformanceThresholds -Report $report
+$failures += @(Test-PerformanceThresholds -Report $report)
 
 if ($failures.Count -eq 0) {
     Write-Host "All performance gates passed ($Output)."

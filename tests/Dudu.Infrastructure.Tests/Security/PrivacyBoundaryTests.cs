@@ -473,6 +473,9 @@ public sealed class PrivacyBoundaryTests
 
         public Task DeleteAsync(string messageId, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("DeleteAsync must not run in this test.");
+
+        public Task<int> PruneExpiredAsync(DateTimeOffset utcNow, TimeSpan retention, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("PruneExpiredAsync must not run in this test.");
     }
 
     /// <summary>An <see cref="IRemoteNoteArrivalSink"/> double for the corrupted-key test: no

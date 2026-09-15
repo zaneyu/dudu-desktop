@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Dudu.App.Overlay;
 using Dudu.App.Animation;
 using Dudu.App.Presentation;
@@ -26,11 +27,13 @@ public sealed class WindowsCompanionBootstrap : IAsyncDisposable
     private readonly SingleInstanceCoordinator _singleInstance;
     private readonly Func<CancellationToken, Task<IPrimaryAppRuntime>> _runtimeFactory;
     private readonly object _activationGate = new();
+    private readonly object _lifecycleGate = new();
     private readonly Queue<AppActivation> _pendingActivations = new();
     private IPrimaryAppRuntime? _runtime;
-    private bool _started;
     private bool _runtimeReady;
     private bool _disposed;
+    private Task<bool>? _startTask;
+    private Task? _disposeTask;
 
     public WindowsCompanionBootstrap(
         Func<CancellationToken, Task<IPrimaryAppRuntime>> runtimeFactory,
@@ -42,11 +45,27 @@ public sealed class WindowsCompanionBootstrap : IAsyncDisposable
 
     public bool IsPrimary => _singleInstance.IsPrimary;
 
-    public async Task<bool> StartAsync(CancellationToken cancellationToken = default)
+    public Task<bool> StartAsync(CancellationToken cancellationToken = default)
     {
-        if (_disposed) throw new ObjectDisposedException(nameof(WindowsCompanionBootstrap));
-        if (_started) return true;
+        lock (_lifecycleGate)
+        {
+            if (_disposed)
+            {
+                return Task.FromException<bool>(
+                    new ObjectDisposedException(nameof(WindowsCompanionBootstrap)));
+            }
 
+            if (_startTask is null)
+            {
+                _startTask = StartCoreAsync(cancellationToken);
+            }
+
+            return WaitForCallerAsync(_startTask, cancellationToken);
+        }
+    }
+
+    private async Task<bool> StartCoreAsync(CancellationToken cancellationToken)
+    {
         if (!await _singleInstance.TryAcquireAsync(cancellationToken))
         {
             // The secondary has already sent its one-byte activation. It must
@@ -71,7 +90,6 @@ public sealed class WindowsCompanionBootstrap : IAsyncDisposable
                 _runtimeReady = true;
                 pending = _pendingActivations.ToArray();
                 _pendingActivations.Clear();
-                _started = true;
             }
 
             foreach (var activation in pending)
@@ -92,10 +110,16 @@ public sealed class WindowsCompanionBootstrap : IAsyncDisposable
         }
         catch
         {
-            if (_runtime is not null)
+            try
             {
-                await _runtime.DisposeAsync();
-                _runtime = null;
+                if (_runtime is not null)
+                {
+                    await _runtime.DisposeAsync();
+                }
+            }
+            catch (Exception exception)
+            {
+                Trace.TraceError("Dudu partial bootstrap runtime cleanup failed: {0}", exception);
             }
 
             lock (_activationGate)
@@ -105,29 +129,68 @@ public sealed class WindowsCompanionBootstrap : IAsyncDisposable
                 _pendingActivations.Clear();
             }
 
-            await _singleInstance.DisposeAsync();
+            try { await _singleInstance.DisposeAsync(); }
+            catch (Exception exception)
+            {
+                Trace.TraceError("Dudu partial bootstrap instance cleanup failed: {0}", exception);
+            }
             throw;
         }
     }
 
     public async ValueTask DisposeAsync()
     {
-        if (_disposed) return;
-        _disposed = true;
-        if (_runtime is not null)
+        Task disposeTask;
+        lock (_lifecycleGate)
         {
-            await _runtime.DisposeAsync();
-            _runtime = null;
+            if (_disposeTask is null)
+            {
+                _disposed = true;
+                _disposeTask = DisposeCoreAsync(_startTask);
+            }
+
+            disposeTask = _disposeTask;
         }
 
+        await disposeTask;
+    }
+
+    private async Task DisposeCoreAsync(Task<bool>? startTask)
+    {
+        if (startTask is not null)
+        {
+            try { await startTask; }
+            catch { }
+        }
+
+        IPrimaryAppRuntime? runtime;
         lock (_activationGate)
         {
+            runtime = _runtime;
+            _runtime = null;
             _runtimeReady = false;
             _pendingActivations.Clear();
         }
 
-        await _singleInstance.DisposeAsync();
+        try
+        {
+            if (runtime is not null)
+            {
+                await runtime.DisposeAsync();
+            }
+        }
+        finally
+        {
+            await _singleInstance.DisposeAsync();
+        }
     }
+
+    private static async Task<bool> WaitForCallerAsync(
+        Task<bool> operation,
+        CancellationToken cancellationToken) =>
+        cancellationToken.CanBeCanceled
+            ? await operation.WaitAsync(cancellationToken)
+            : await operation;
 
     private Task RouteActivationAsync(AppActivation activation)
     {
@@ -136,7 +199,14 @@ public sealed class WindowsCompanionBootstrap : IAsyncDisposable
         {
             if (!_runtimeReady || _runtime is null)
             {
-                _pendingActivations.Enqueue(activation);
+                // Coalesce pre-ready activations at 1: every activation is
+                // currently OpenHome, so queuing more only replays identical
+                // work after StartAsync.
+                if (_pendingActivations.Count == 0)
+                {
+                    _pendingActivations.Enqueue(activation);
+                }
+
                 return Task.CompletedTask;
             }
 
@@ -262,12 +332,16 @@ public sealed class WindowsCompanionEventSource : ICompanionEventSource
     private readonly FullscreenDetector _fullscreen;
     private readonly TimeSpan _pollInterval;
     private readonly object _gate = new();
+    private readonly object _callbackSync = new();
+    private readonly SemaphoreSlim _callbackGate = new(1, 1);
+    private readonly HashSet<Task> _callbackTasks = new();
     private CancellationTokenSource? _stop;
     private Task? _pollTask;
     private ICompanionEventSink? _sink;
     private nint _ownerWindow;
     private bool _lastFullscreen;
     private bool _registered;
+    private bool _callbacksClosed;
 
     public WindowsCompanionEventSource(
         FullscreenDetector? fullscreen = null,
@@ -299,11 +373,21 @@ public sealed class WindowsCompanionEventSource : ICompanionEventSource
             _registered = PInvoke.WTSRegisterSessionNotification(
                 ToHwnd(ownerWindow),
                 NotifyForThisSession);
-            _lastFullscreen = _fullscreen.IsForegroundFullscreen();
+            try
+            {
+                _lastFullscreen = _fullscreen.IsForegroundFullscreen();
+            }
+            catch
+            {
+                // Fail-closed: a broken initial sample hides rather than shows.
+                _lastFullscreen = true;
+            }
             _pollTask = PollFullscreenAsync(_stop.Token);
         }
 
-        await sink.OnFullscreenChangedAsync(_lastFullscreen, cancellationToken);
+        await RunCallbackAsync(
+            () => sink.OnFullscreenChangedAsync(_lastFullscreen, cancellationToken),
+            cancellationToken);
     }
 
     public bool HandleWindowMessage(uint message, nint wParam, nint lParam)
@@ -321,35 +405,35 @@ public sealed class WindowsCompanionEventSource : ICompanionEventSource
                 switch (unchecked((uint)wParam))
                 {
                     case WtsSessionLock:
-                        _ = Observe(sink.OnSessionLockedAsync());
+                        TrackCallback(() => sink.OnSessionLockedAsync(), "session-lock");
                         handled = true;
                         break;
                     case WtsSessionUnlock:
-                        _ = Observe(sink.OnSessionUnlockedAsync());
+                        TrackCallback(() => sink.OnSessionUnlockedAsync(), "session-unlock");
                         handled = true;
                         break;
                 }
                 break;
             case WmDisplayChange:
-                _ = Observe(sink.OnDisplayChangedAsync());
+                TrackCallback(() => sink.OnDisplayChangedAsync(), "display-change");
                 handled = true;
                 break;
             case WmPowerBroadcast:
                 if (unchecked((uint)wParam) == PbtApmsuspend)
                 {
-                    _ = Observe(sink.OnSuspendAsync());
+                    TrackCallback(() => sink.OnSuspendAsync(), "suspend");
                     handled = true;
                 }
                 else if (unchecked((uint)wParam) is PbtResumeSuspend or PbtResumeAutomatic)
                 {
-                    _ = Observe(sink.OnResumeAsync());
+                    TrackCallback(() => sink.OnResumeAsync(), "resume");
                     handled = true;
                 }
                 break;
             default:
                 if (message == TrayIconService.TaskbarCreatedMessage)
                 {
-                    _ = Observe(sink.OnTaskbarCreatedAsync());
+                    TrackCallback(() => sink.OnTaskbarCreatedAsync(), "taskbar-created");
                     handled = true;
                 }
                 break;
@@ -375,6 +459,7 @@ public sealed class WindowsCompanionEventSource : ICompanionEventSource
 
             _registered = false;
             _sink = null;
+            _callbacksClosed = true;
         }
 
         if (stop is not null)
@@ -388,6 +473,8 @@ public sealed class WindowsCompanionEventSource : ICompanionEventSource
 
             stop.Dispose();
         }
+
+        await DrainCallbacksAsync();
     }
 
     private async Task PollFullscreenAsync(CancellationToken cancellationToken)
@@ -395,21 +482,115 @@ public sealed class WindowsCompanionEventSource : ICompanionEventSource
         using var timer = new PeriodicTimer(_pollInterval);
         while (await timer.WaitForNextTickAsync(cancellationToken))
         {
-            var fullscreen = _fullscreen.IsForegroundFullscreen();
+            bool fullscreen;
+            try
+            {
+                // Live re-sample on every tick; fail-closed to hidden on error
+                // so a broken query never leaves the pet over fullscreen.
+                fullscreen = _fullscreen.IsForegroundFullscreen();
+            }
+            catch (Exception exception)
+            {
+                global::System.Diagnostics.Trace.TraceError(
+                    "Dudu fullscreen poll failed: {0}", exception);
+                fullscreen = true;
+            }
+
             ICompanionEventSink? sink;
             lock (_gate) sink = _sink;
             if (sink is not null && fullscreen != _lastFullscreen)
             {
                 _lastFullscreen = fullscreen;
-                await sink.OnFullscreenChangedAsync(fullscreen, cancellationToken);
+                // Do not serialize the poll behind _callbackGate: a slow
+                // session/suspend callback must not delay fullscreen hiding.
+                // Fire-and-forget with tracking so DisposeAsync still drains.
+                TrackCallbackWithoutGate(
+                    () => sink.OnFullscreenChangedAsync(fullscreen, cancellationToken),
+                    "fullscreen-poll");
             }
         }
     }
 
-    private static async Task Observe(Task task)
+    private void TrackCallback(Func<Task> callback, string operation)
+    {
+        Task task;
+        lock (_gate)
+        {
+            if (_callbacksClosed || _sink is null)
+            {
+                return;
+            }
+
+            task = RunCallbackAsync(callback, CancellationToken.None);
+            lock (_callbackSync)
+            {
+                _callbackTasks.Add(task);
+            }
+        }
+
+        _ = ForgetCallbackAsync(task, operation);
+    }
+
+    private void TrackCallbackWithoutGate(Func<Task> callback, string operation)
+    {
+        Task task;
+        lock (_gate)
+        {
+            if (_callbacksClosed || _sink is null)
+            {
+                return;
+            }
+
+            task = callback();
+            lock (_callbackSync)
+            {
+                _callbackTasks.Add(task);
+            }
+        }
+
+        _ = ForgetCallbackAsync(task, operation);
+    }
+
+    private async Task ForgetCallbackAsync(Task task, string operation)
     {
         try { await task; }
-        catch { }
+        catch (Exception exception)
+        {
+            global::System.Diagnostics.Trace.TraceError(
+                "Dudu native callback '{0}' failed: {1}", operation, exception);
+        }
+        finally
+        {
+            lock (_callbackSync)
+            {
+                _callbackTasks.Remove(task);
+            }
+        }
+    }
+
+    private async Task RunCallbackAsync(Func<Task> callback, CancellationToken cancellationToken)
+    {
+        await _callbackGate.WaitAsync(cancellationToken);
+        try
+        {
+            await callback();
+        }
+        finally
+        {
+            _callbackGate.Release();
+        }
+    }
+
+    private async Task DrainCallbacksAsync()
+    {
+        while (true)
+        {
+            Task[] pending;
+            lock (_callbackSync) pending = _callbackTasks.ToArray();
+            if (pending.Length == 0) return;
+            try { await Task.WhenAll(pending); }
+            catch { }
+        }
     }
 
     private static unsafe HWND ToHwnd(nint hwnd) => new((void*)hwnd);
@@ -426,7 +607,13 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
     private readonly bool _initialUserVisible;
     private readonly Func<Preferences, CancellationToken, Task>? _onPreferencesChanged;
     private readonly IPresentationEnvironmentSink? _presentationEnvironment;
-    private bool _started;
+    private readonly object _lifecycleGate = new();
+    private readonly object _callbackSync = new();
+    private readonly HashSet<Task> _callbackTasks = new();
+    private Task<bool>? _startTask;
+    private Task? _disposeTask;
+    private bool _callbacksClosed;
+    private bool _disposed;
 
     public WindowsCompanionRuntime(
         AppHost host,
@@ -481,6 +668,8 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         isFullscreen ??= fullscreen.IsForegroundFullscreen;
         var events = new WindowsCompanionEventSource(fullscreen);
         OverlayWindowHost? overlay = null;
+        TrayIconService? tray = null;
+        GlobalHotkeyService? hotkey = null;
         AppLifecycleCoordinator? lifecycle = null;
         try
         {
@@ -497,8 +686,8 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
             var handler = trayCommandHandler
                 ?? (command => trayCommandHandlerFactory!(lifecycle
                     ?? throw new InvalidOperationException("Lifecycle is not composed."))(command));
-            var tray = new TrayIconService(commandHandler: handler);
-            var hotkey = new GlobalHotkeyService();
+            tray = new TrayIconService(commandHandler: handler);
+            hotkey = new GlobalHotkeyService();
             lifecycle = new AppLifecycleCoordinator(
                 host,
                 new OverlayLifecycleAdapter(overlay),
@@ -528,16 +717,50 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         }
         catch
         {
+            var lifecycleCleanupFailed = false;
             if (lifecycle is not null)
             {
-                await lifecycle.DisposeAsync();
+                try { await lifecycle.DisposeAsync(); }
+                catch (Exception exception)
+                {
+                    lifecycleCleanupFailed = true;
+                    Trace.TraceError("Dudu partial startup lifecycle cleanup failed: {0}", exception);
+                }
             }
-            else if (overlay is not null)
+            if (lifecycle is null || lifecycleCleanupFailed)
             {
-                await overlay.DisposeAsync();
+                try
+                {
+                    if (overlay is not null) await overlay.DisposeAsync();
+                }
+                catch (Exception exception)
+                {
+                    Trace.TraceError("Dudu partial startup overlay cleanup failed: {0}", exception);
+                }
             }
 
-            await events.DisposeAsync();
+            try { hotkey?.Dispose(); }
+            catch (Exception exception)
+            {
+                Trace.TraceError("Dudu partial startup hotkey cleanup failed: {0}", exception);
+            }
+            if (lifecycle is null || lifecycleCleanupFailed)
+            {
+                if (tray is not null)
+                {
+                    try { await tray.DisposeAsync(); }
+                    catch (Exception exception)
+                    {
+                        Trace.TraceError("Dudu partial startup tray cleanup failed: {0}", exception);
+                    }
+                }
+            }
+
+            try { await events.DisposeAsync(); }
+            catch (Exception exception)
+            {
+                Trace.TraceError("Dudu partial startup event cleanup failed: {0}", exception);
+            }
             throw;
         }
     }
@@ -574,13 +797,29 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         return _overlay.InvokeOnOwnerAsync(() => _hotkey.SetGesture(gesture), cancellationToken);
     }
 
-    public async Task StartAsync(CancellationToken cancellationToken = default)
+    public Task StartAsync(CancellationToken cancellationToken = default)
     {
-        if (_started) return;
-        await _host.StartAsync(cancellationToken);
-        _hotkey.Triggered += OnHotkeyTriggered;
+        lock (_lifecycleGate)
+        {
+            if (_disposed)
+            {
+                return Task.FromException(
+                    new ObjectDisposedException(nameof(WindowsCompanionRuntime)));
+            }
+
+            _startTask ??= StartCoreAsync(cancellationToken);
+            return cancellationToken.CanBeCanceled
+                ? _startTask.WaitAsync(cancellationToken)
+                : _startTask;
+        }
+    }
+
+    private async Task<bool> StartCoreAsync(CancellationToken cancellationToken)
+    {
         try
         {
+            await _host.StartAsync(cancellationToken);
+            _hotkey.Triggered += OnHotkeyTriggered;
             await _overlay.InvokeOnOwnerAsync(() =>
             {
                 _hotkey.AttachOwnerWindow(_overlay.Handle);
@@ -594,13 +833,31 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                 _lifecycle.SetUserVisibleAsync,
                 _initialUserVisible,
                 cancellationToken);
-            _started = true;
+            return true;
         }
         catch
         {
             _hotkey.Triggered -= OnHotkeyTriggered;
-            await _events.DisposeAsync();
-            await _lifecycle.DisposeAsync();
+            try { await _events.DisposeAsync(); }
+            catch (Exception exception)
+            {
+                Trace.TraceError("Dudu partial runtime event cleanup failed: {0}", exception);
+            }
+            try { await _overlay.InvokeOnOwnerAsync(_hotkey.Dispose); }
+            catch (Exception exception)
+            {
+                Trace.TraceError("Dudu partial runtime hotkey cleanup failed: {0}", exception);
+                try { _hotkey.Dispose(); }
+                catch (Exception fallbackException)
+                {
+                    Trace.TraceError("Dudu partial runtime hotkey fallback dispose failed: {0}", fallbackException);
+                }
+            }
+            try { await _lifecycle.DisposeAsync(); }
+            catch (Exception exception)
+            {
+                Trace.TraceError("Dudu partial runtime lifecycle cleanup failed: {0}", exception);
+            }
             throw;
         }
     }
@@ -613,20 +870,95 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
             _ => throw new ArgumentOutOfRangeException(nameof(activation)),
         };
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        if (!_started)
+        lock (_lifecycleGate)
         {
-            await _events.DisposeAsync();
-            await _lifecycle.DisposeAsync();
-            return;
+            if (_disposeTask is null)
+            {
+                _disposed = true;
+                _disposeTask = DisposeCoreAsync(_startTask);
+            }
+
+            return new ValueTask(_disposeTask);
+        }
+    }
+
+    private async Task DisposeCoreAsync(Task<bool>? startTask)
+    {
+        if (startTask is not null)
+        {
+            try { await startTask; }
+            catch { }
         }
 
-        await _events.DisposeAsync();
+        lock (_callbackSync) _callbacksClosed = true;
+        try { await _events.DisposeAsync(); }
+        catch (Exception exception)
+        {
+            Trace.TraceError("Dudu runtime event shutdown failed: {0}", exception);
+        }
         _hotkey.Triggered -= OnHotkeyTriggered;
-        await _overlay.InvokeOnOwnerAsync(_hotkey.Dispose);
-        await _lifecycle.DisposeAsync();
-        _started = false;
+        try { await _overlay.InvokeOnOwnerAsync(_hotkey.Dispose); }
+        catch (Exception exception)
+        {
+            Trace.TraceError("Dudu runtime hotkey shutdown failed: {0}", exception);
+            try { _hotkey.Dispose(); }
+            catch (Exception fallbackException)
+            {
+                Trace.TraceError("Dudu runtime hotkey fallback dispose failed: {0}", fallbackException);
+            }
+        }
+        await DrainCallbacksAsync();
+        try { await _lifecycle.DisposeAsync(); }
+        catch (Exception exception)
+        {
+            Trace.TraceError("Dudu runtime lifecycle shutdown failed: {0}", exception);
+        }
+    }
+
+    private void TrackCallback(Func<Task> callback, string operation)
+    {
+        Task task;
+        lock (_callbackSync)
+        {
+            if (_callbacksClosed)
+            {
+                return;
+            }
+
+            task = callback();
+            _callbackTasks.Add(task);
+        }
+        _ = ObserveTrackedCallbackAsync(task, operation);
+    }
+
+    private async Task ObserveTrackedCallbackAsync(Task callback, string operation)
+    {
+        try
+        {
+            await callback;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            Trace.TraceError("Dudu native callback '{0}' failed: {1}", operation, exception);
+        }
+        lock (_callbackSync) _callbackTasks.Remove(callback);
+    }
+
+    private async Task DrainCallbacksAsync()
+    {
+        while (true)
+        {
+            Task[] pending;
+            lock (_callbackSync) pending = _callbackTasks.ToArray();
+            if (pending.Length == 0) return;
+            try { await Task.WhenAll(pending); }
+            catch { }
+        }
     }
 
     public Task OnSessionLockedAsync(CancellationToken cancellationToken = default)
@@ -671,19 +1003,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
     }
 
     private void OnHotkeyTriggered(object? sender, EventArgs args) =>
-        _ = Observe(_lifecycle.OnHotkeyAsync());
-
-    private static async Task Observe(Task task)
-    {
-        try { await task; }
-        catch (OperationCanceledException) { }
-        catch (Exception exception)
-        {
-            global::System.Diagnostics.Trace.TraceError(
-                "Dudu hotkey callback failed: {0}",
-                exception);
-        }
-    }
+        TrackCallback(() => _lifecycle.OnHotkeyAsync(), "hotkey");
 }
 
 internal static class StartupVisibilityGate

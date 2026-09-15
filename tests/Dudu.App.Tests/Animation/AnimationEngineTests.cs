@@ -260,13 +260,14 @@ public sealed class AnimationEngineTests
     }
 
     [Fact]
-    public async Task Presenter_fault_disposes_rendering_resources_and_preserves_the_original_exception()
+    public async Task Presenter_fault_preserves_the_original_exception_and_engine_recovers()
     {
-        using var fixture = AnimationFixture.Create([100], loop: "once", animationKey: "idle");
+        using var fixture = AnimationFixture.Create([100], loop: "once", animationKey: "idle", immediateClock: true);
         var composer = fixture.Composer;
+        var presenter = new FaultingFramePresenter();
         using var engine = new AnimationEngine(
             fixture.Pack,
-            new FaultingFramePresenter(),
+            presenter,
             fixture.Clock,
             composer);
 
@@ -276,8 +277,16 @@ public sealed class AnimationEngineTests
             TestContext.Current.CancellationToken));
 
         Assert.Equal("presenter failed", exception.Message);
-        Assert.True(composer.IsDisposed);
-        Assert.Equal(1, composer.DisposeCount);
+        Assert.False(composer.IsDisposed);
+
+        // A playback fault must not latch the engine as disposed, and the
+        // faulted predecessor must not poison the replacement playback.
+        presenter.Fail = false;
+        await engine.PlayAsync(
+            TestPresentation("idle"),
+            AnimationOptions.Default,
+            TestContext.Current.CancellationToken).WaitAsync(TestContext.Current.CancellationToken);
+        Assert.True(presenter.Presented > 0);
     }
 
     [Fact]
@@ -568,8 +577,20 @@ public sealed class AnimationEngineTests
 
     private sealed class FaultingFramePresenter : IFramePresenter
     {
-        public ValueTask PresentAsync(RenderedFrame frame, CancellationToken cancellationToken) =>
-            throw new InvalidOperationException("presenter failed");
+        public bool Fail { get; set; } = true;
+
+        public int Presented { get; private set; }
+
+        public ValueTask PresentAsync(RenderedFrame frame, CancellationToken cancellationToken)
+        {
+            if (Fail)
+            {
+                throw new InvalidOperationException("presenter failed");
+            }
+
+            Presented++;
+            return ValueTask.CompletedTask;
+        }
     }
 
     private sealed class ConcurrencyTrackingPresenter : IFramePresenter

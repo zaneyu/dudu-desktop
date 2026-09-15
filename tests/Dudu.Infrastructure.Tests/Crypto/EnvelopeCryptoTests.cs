@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Buffers.Text;
 using System.Diagnostics;
 using System.Security.Cryptography;
@@ -44,6 +45,24 @@ public sealed class EnvelopeCryptoTests
     }
 
     [Fact]
+    public void Decrypt_rejects_bad_lengths_before_importing_the_ephemeral_key()
+    {
+        // Cheap length checks run before any EC work: an envelope with both a garbage key and a
+        // wrong-length nonce is rejected for the nonce, proving no key import was attempted first.
+        using var recipient = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
+        var envelope = CryptoFixture.EncryptFor(recipient.ExportSubjectPublicKeyInfo(), "private hello");
+        envelope = envelope with
+        {
+            EphemeralPublicKey = Base64Url.EncodeToString(new byte[91]),
+            Nonce = Base64Url.EncodeToString(new byte[3]),
+        };
+
+        var exception = Assert.Throws<EnvelopeValidationException>(() =>
+            EnvelopeCrypto.Decrypt(envelope, recipient.ExportPkcs8PrivateKey()));
+        Assert.Contains("nonce", exception.Message);
+    }
+
+    [Fact]
     public void Decrypt_rejects_a_non_v1_protocol_version()
     {
         using var recipient = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
@@ -76,6 +95,56 @@ public sealed class EnvelopeCryptoTests
 
         Assert.Throws<EnvelopeValidationException>(() =>
             EnvelopeCrypto.Decrypt(envelope, recipient.ExportPkcs8PrivateKey()));
+    }
+
+    [Fact]
+    public void Decrypt_rejects_a_created_timestamp_older_than_thirty_days()
+    {
+        // Mirrors the relay's 30-day ciphertext retention: anything older cannot be a fresh
+        // delivery, only a replay or a long-delayed redelivery.
+        using var recipient = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
+        var envelope = CryptoFixture.EncryptFor(
+            recipient.ExportSubjectPublicKeyInfo(),
+            "private hello",
+            createdUtc: DateTimeOffset.UtcNow.AddDays(-31));
+
+        Assert.Throws<EnvelopeValidationException>(() =>
+            EnvelopeCrypto.Decrypt(envelope, recipient.ExportPkcs8PrivateKey()));
+    }
+
+    [Fact]
+    public void Decrypt_measures_age_from_delivery_time_for_a_scheduled_note()
+    {
+        // A note scheduled 29 days out that only reaches a desktop 5 days after it became due
+        // was created 34 days ago; it must still decrypt rather than be dropped as a replay.
+        using var recipient = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
+        var now = DateTimeOffset.UtcNow;
+        var created = now.AddDays(-34);
+        var envelope = CryptoFixture.EncryptFor(
+            recipient.ExportSubjectPublicKeyInfo(),
+            "happy anniversary",
+            createdUtc: created,
+            deliverAfterUtc: created.AddDays(29).ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture));
+
+        var payload = EnvelopeCrypto.Decrypt(envelope, recipient.ExportPkcs8PrivateKey(), now);
+
+        Assert.Equal("happy anniversary", payload.Text);
+    }
+
+    [Fact]
+    public void Decrypt_clamps_a_far_future_schedule_when_checking_age()
+    {
+        using var recipient = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
+        var now = DateTimeOffset.UtcNow;
+        var created = now.AddDays(-61);
+        var envelope = CryptoFixture.EncryptFor(
+            recipient.ExportSubjectPublicKeyInfo(),
+            "replayed",
+            createdUtc: created,
+            deliverAfterUtc: created.AddDays(365).ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture));
+
+        Assert.Throws<EnvelopeValidationException>(() =>
+            EnvelopeCrypto.Decrypt(envelope, recipient.ExportPkcs8PrivateKey(), now));
     }
 
     [Fact]
@@ -214,6 +283,55 @@ public sealed class EnvelopeCryptoTests
 
         Assert.Equal(first.PublicKeySpkiBase64Url, second.PublicKeySpkiBase64Url);
         Assert.Single(store.Values);
+    }
+
+    [Fact]
+    public async Task Concurrent_first_use_key_initialization_persists_one_reusable_key()
+    {
+        var store = new BlockingFirstReadSecretStore();
+        var service = new DesktopKeyService(store);
+
+        var first = service.GetOrCreateAsync(TestContext.Current.CancellationToken);
+        await store.FirstRead.Task.WaitAsync(TestContext.Current.CancellationToken);
+        var second = service.GetOrCreateAsync(TestContext.Current.CancellationToken);
+        store.Release.TrySetResult(true);
+
+        var keys = await Task.WhenAll(first, second);
+
+        Assert.Equal(keys[0].PublicKeySpkiBase64Url, keys[1].PublicKeySpkiBase64Url);
+        Assert.Equal(1, store.SetCount);
+    }
+
+    private sealed class BlockingFirstReadSecretStore : Dudu.Core.Abstractions.ISecretStore
+    {
+        private readonly InMemorySecretStore _inner = new();
+        private int _reads;
+
+        public TaskCompletionSource<bool> FirstRead { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<bool> Release { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int SetCount { get; private set; }
+
+        public async Task<byte[]?> GetAsync(string key, CancellationToken cancellationToken = default)
+        {
+            if (Interlocked.Increment(ref _reads) == 1)
+            {
+                FirstRead.TrySetResult(true);
+                await Release.Task.WaitAsync(cancellationToken);
+            }
+
+            return await _inner.GetAsync(key, cancellationToken);
+        }
+
+        public Task SetAsync(string key, ReadOnlyMemory<byte> value, CancellationToken cancellationToken = default)
+        {
+            SetCount++;
+            return _inner.SetAsync(key, value, cancellationToken);
+        }
+
+        public Task DeleteAsync(string key, CancellationToken cancellationToken = default) =>
+            _inner.DeleteAsync(key, cancellationToken);
     }
 
     [Fact]

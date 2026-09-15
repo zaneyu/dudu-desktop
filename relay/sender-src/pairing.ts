@@ -5,12 +5,16 @@
  * trusting that cache.
  */
 import { disconnectSender as apiDisconnectSender, getSenderDevice, redeemPairing } from "./api.js";
+import { importRecipientPublicKey } from "./crypto.js";
+import { base64UrlToBytes, sha256Hex } from "../src/security/tokens.js";
 
 const STORAGE_KEY = "dudu.sender.device.v1";
 
 export interface StoredDevice {
   deviceId: string;
   publicKey: string;
+  /** Optional only for pre-fingerprint localStorage records; new pairings always set it. */
+  publicKeyFingerprint?: string;
 }
 
 function isStoredDevice(value: unknown): value is StoredDevice {
@@ -18,7 +22,11 @@ function isStoredDevice(value: unknown): value is StoredDevice {
     return false;
   }
   const candidate = value as Record<string, unknown>;
-  return typeof candidate.deviceId === "string" && typeof candidate.publicKey === "string";
+  return (
+    typeof candidate.deviceId === "string" &&
+    typeof candidate.publicKey === "string" &&
+    (candidate.publicKeyFingerprint === undefined || typeof candidate.publicKeyFingerprint === "string")
+  );
 }
 
 export function loadStoredDevice(): StoredDevice | null {
@@ -44,10 +52,29 @@ export function clearStoredDevice(): void {
 
 export async function pairWithCode(code: string): Promise<StoredDevice> {
   const result = await redeemPairing(code);
-  const device: StoredDevice = { deviceId: result.deviceId, publicKey: result.publicKey };
+  const keyBytes = base64UrlToBytes(result.publicKey);
+  if (!keyBytes) {
+    throw new PairingAuthenticityError("The relay returned an invalid device key.");
+  }
+  try {
+    await importRecipientPublicKey(result.publicKey);
+  } catch {
+    throw new PairingAuthenticityError("The relay returned an invalid device key.");
+  }
+  const localFingerprint = await sha256Hex(keyBytes);
+  if (localFingerprint !== result.publicKeyFingerprint) {
+    throw new PairingAuthenticityError("The relay returned a mismatched device fingerprint.");
+  }
+  const device: StoredDevice = {
+    deviceId: result.deviceId,
+    publicKey: result.publicKey,
+    publicKeyFingerprint: localFingerprint,
+  };
   storeDevice(device);
   return device;
 }
+
+export class PairingAuthenticityError extends Error {}
 
 /**
  * The outcome of confirming a cached pairing: still good, gone, or -- the case review I6 added --
@@ -76,11 +103,29 @@ export async function verifyStoredSession(): Promise<StoredSessionState> {
     clearStoredDevice();
     return { state: "unpaired" };
   }
-  if (current.publicKey !== stored.publicKey) {
+  const currentKeyBytes = base64UrlToBytes(current.publicKey);
+  if (!currentKeyBytes) {
     clearStoredDevice();
     return { state: "key-changed" };
   }
-  return { state: "paired", device: { deviceId: stored.deviceId, publicKey: stored.publicKey } };
+  const currentFingerprint = await sha256Hex(currentKeyBytes);
+  const storedFingerprint =
+    stored.publicKeyFingerprint ??
+    await sha256Hex(base64UrlToBytes(stored.publicKey) ?? new Uint8Array());
+  if (
+    current.publicKey !== stored.publicKey ||
+    current.publicKeyFingerprint !== currentFingerprint ||
+    storedFingerprint !== currentFingerprint ||
+    current.deviceId !== stored.deviceId
+  ) {
+    clearStoredDevice();
+    return { state: "key-changed" };
+  }
+  const upgraded = { ...stored, publicKeyFingerprint: currentFingerprint };
+  if (stored.publicKeyFingerprint === undefined) {
+    storeDevice(upgraded);
+  }
+  return { state: "paired", device: upgraded };
 }
 
 export async function disconnect(): Promise<void> {

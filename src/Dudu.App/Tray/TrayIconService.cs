@@ -24,10 +24,11 @@ public interface ITrayNativeApi
     TrayCommand? TrackPopupMenu(nint ownerWindow, IReadOnlyList<TrayCommand> commands) => null;
 }
 
-public sealed class TrayIconService : IDisposable
+public sealed class TrayIconService : IDisposable, IAsyncDisposable
 {
     public const uint CallbackMessage = PInvoke.WM_APP + 20;
     public const uint TaskbarCreatedFallbackMessage = 0x8001;
+    public static readonly TimeSpan OwnerDispatchTimeout = TimeSpan.FromSeconds(5);
 
     public static uint TaskbarCreatedMessage => OperatingSystem.IsWindows()
         ? PInvoke.RegisterWindowMessage("TaskbarCreated")
@@ -100,7 +101,7 @@ public sealed class TrayIconService : IDisposable
             else if (message == 0x0111 /* WM_COMMAND */)
             {
                 var commandIndex = (int)(unchecked((nuint)wParam) & 0xffff);
-                if (commandIndex is > 0 and <= 7)
+                if (commandIndex > 0 && commandIndex <= Commands.Count)
                 {
                     command = Commands[commandIndex - 1];
                 }
@@ -154,8 +155,8 @@ public sealed class TrayIconService : IDisposable
     {
         if (NeedsOwnerDispatch())
         {
-            _ownerDispatcher!(() => Recreate()).GetAwaiter().GetResult();
-            return;
+            throw new InvalidOperationException(
+                "Tray Recreate must run on its owner thread; use RecreateAsync from other threads.");
         }
 
         lock (_gate)
@@ -165,14 +166,59 @@ public sealed class TrayIconService : IDisposable
         }
     }
 
+    public async Task RecreateAsync(CancellationToken cancellationToken = default)
+    {
+        Func<Action, Task>? dispatcher;
+        lock (_gate)
+        {
+            ThrowIfDisposed();
+            if (!NeedsOwnerDispatch())
+            {
+                RecreateOnOwnerThread();
+                return;
+            }
+
+            dispatcher = _ownerDispatcher;
+        }
+
+        await dispatcher!(() => Recreate())
+            .WaitAsync(OwnerDispatchTimeout, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     public void Dispose()
     {
         if (NeedsOwnerDispatch())
         {
-            _ownerDispatcher!(() => Dispose()).GetAwaiter().GetResult();
-            return;
+            throw new InvalidOperationException(
+                "Tray Dispose must run on its owner thread; use DisposeAsync from other threads.");
         }
 
+        DisposeOnOwnerThread();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        Func<Action, Task>? dispatcher;
+        lock (_gate)
+        {
+            if (_disposed) return;
+            if (!NeedsOwnerDispatch())
+            {
+                DisposeOnOwnerThread();
+                return;
+            }
+
+            dispatcher = _ownerDispatcher;
+        }
+
+        await dispatcher!(() => Dispose())
+            .WaitAsync(OwnerDispatchTimeout)
+            .ConfigureAwait(false);
+    }
+
+    private void DisposeOnOwnerThread()
+    {
         lock (_gate)
         {
             if (_disposed) return;

@@ -38,6 +38,51 @@ public sealed class DpapiSecretStoreTests
     }
 
     [Fact]
+    public async Task Get_with_no_secrets_directory_returns_null_and_deleted_secret_reads_as_absent()
+    {
+        RequireWindowsDpapi();
+        using var directory = new TemporaryDirectory();
+        Directory.Delete(directory.Path, recursive: true);
+        var store = new DpapiSecretStore(directory.Path);
+
+        Assert.Null(await store.GetAsync("missing", TestContext.Current.CancellationToken));
+
+        await store.SetAsync("relay-token", Encoding.UTF8.GetBytes("secret"), TestContext.Current.CancellationToken);
+        await store.DeleteAsync("relay-token", TestContext.Current.CancellationToken);
+
+        Assert.False(File.Exists(Path.Combine(directory.Path, "relay-token.bin")));
+        Assert.Null(await store.GetAsync("relay-token", TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task Delete_with_no_secrets_directory_yet_is_idempotent()
+    {
+        RequireWindowsDpapi();
+        using var directory = new TemporaryDirectory();
+        // Never write: the secrets directory itself does not exist yet.
+        Directory.Delete(directory.Path, recursive: true);
+        var store = new DpapiSecretStore(directory.Path);
+
+        await store.DeleteAsync("missing", TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task Secrets_directory_acl_is_restricted_to_the_current_user()
+    {
+        RequireWindowsDpapi();
+        using var directory = new TemporaryDirectory();
+        var store = new DpapiSecretStore(directory.Path);
+
+        await store.SetAsync(
+            "relay-token",
+            Encoding.UTF8.GetBytes("desktop-capability-token"),
+            TestContext.Current.CancellationToken);
+
+        var security = new DirectoryInfo(directory.Path).GetAccessControl();
+        Assert.True(security.AreAccessRulesProtected, "inherited ACEs must be stripped");
+    }
+
+    [Fact]
     public async Task Corrupt_secret_raises_without_deleting_the_file()
     {
         RequireWindowsDpapi();

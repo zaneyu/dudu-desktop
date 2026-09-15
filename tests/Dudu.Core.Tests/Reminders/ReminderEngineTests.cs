@@ -1,4 +1,5 @@
 using Dudu.Core.Abstractions;
+using Dudu.Core.Focus;
 using Dudu.Core.Models;
 using Dudu.Core.Reminders;
 using Dudu.Core.Time;
@@ -98,6 +99,42 @@ public sealed class ReminderEngineTests
         Assert.Single(repository.RecordedOccurrences);
     }
 
+    [Fact]
+    public async Task Tick_does_not_notify_when_a_concurrent_edit_wins_the_advance_race()
+    {
+        var events = new List<string>();
+        var repository = new FakeReminderRepository([DueReminder()], events)
+        {
+            AdvanceResult = false,
+        };
+        var sink = new FakeReminderDueSink(events);
+        var engine = new ReminderEngine(new FakeClock(Now), repository, sink);
+
+        await engine.TickAsync(TestContext.Current.CancellationToken);
+
+        Assert.Empty(sink.Notifications);
+    }
+
+    [Fact]
+    public async Task Tick_reconciles_an_expired_focus_session()
+    {
+        var focusRepository = new FakeFocusSessionRepository();
+        var expired = new FocusSession(
+            Guid.NewGuid(), null, Now.AddMinutes(-25), Now, TimeSpan.Zero,
+            FocusStatus.Running, Now.AddMinutes(-25));
+        await focusRepository.SaveAsync(expired, TestContext.Current.CancellationToken);
+        var engine = new ReminderEngine(
+            new FakeClock(Now),
+            new FakeReminderRepository([], []),
+            new FakeReminderDueSink([]),
+            new FocusService(focusRepository, new FakeClock(Now)));
+
+        await engine.TickAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(FocusStatus.Completed, (await focusRepository.GetAsync(
+            expired.Id, TestContext.Current.CancellationToken))!.Status);
+    }
+
     private static Reminder DueReminder()
     {
         return new Reminder(
@@ -110,6 +147,45 @@ public sealed class ReminderEngineTests
             QuietHoursBehavior.DeliverImmediately,
             MissedOccurrencePolicy.LatestOnly,
             Now);
+    }
+
+    [Fact]
+    public async Task Tick_falls_back_to_utc_for_a_corrupt_time_zone_without_skipping_neighbors()
+    {
+        var events = new List<string>();
+        var corrupt = DueReminder() with
+        {
+            Id = "corrupt-zone",
+            LocalTimeZoneId = "Bogus/Not-A-Zone",
+        };
+        var repository = new FakeReminderRepository([corrupt, DueReminder()], events);
+        var sink = new FakeReminderDueSink(events);
+        var engine = new ReminderEngine(new FakeClock(Now), repository, sink);
+
+        await engine.TickAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, sink.Notifications.Count);
+        Assert.Contains(sink.Notifications, occurrence => occurrence.ReminderId == "corrupt-zone");
+        Assert.Contains(sink.Notifications, occurrence => occurrence.ReminderId == "engine-reminder");
+    }
+
+    [Fact]
+    public async Task Tick_skips_a_corrupt_schedule_without_skipping_neighbors()
+    {
+        var events = new List<string>();
+        var corrupt = DueReminder() with
+        {
+            Id = "corrupt-interval",
+            Rule = new RecurrenceRule.Interval(TimeSpan.Zero),
+        };
+        var repository = new FakeReminderRepository([corrupt, DueReminder()], events);
+        var sink = new FakeReminderDueSink(events);
+        var engine = new ReminderEngine(new FakeClock(Now), repository, sink);
+
+        await engine.TickAsync(TestContext.Current.CancellationToken);
+
+        var notification = Assert.Single(sink.Notifications);
+        Assert.Equal("engine-reminder", notification.ReminderId);
     }
 
     private sealed class FakeClock(DateTimeOffset utcNow) : IClock
@@ -127,6 +203,8 @@ public sealed class ReminderEngineTests
 
         public bool CancelRecord { get; init; }
 
+        public bool AdvanceResult { get; init; } = true;
+
         public CancellationToken LoadToken { get; private set; }
 
         public CancellationToken RecordToken { get; private set; }
@@ -142,7 +220,7 @@ public sealed class ReminderEngineTests
             return Task.FromResult(reminders);
         }
 
-        public Task RecordOccurrencesAndAdvanceAsync(
+        public Task<bool> RecordOccurrencesAndAdvanceAsync(
             Reminder reminder,
             IReadOnlyList<ReminderOccurrence> occurrences,
             DateTimeOffset? nextDueUtc,
@@ -161,6 +239,43 @@ public sealed class ReminderEngineTests
             }
 
             RecordedOccurrences = occurrences;
+            return Task.FromResult(AdvanceResult);
+        }
+    }
+
+    private sealed class FakeFocusSessionRepository : IFocusSessionRepository
+    {
+        private readonly Dictionary<Guid, FocusSession> _sessions = [];
+
+        public Task<FocusSession?> GetAsync(Guid id, CancellationToken cancellationToken) =>
+            Task.FromResult(_sessions.GetValueOrDefault(id));
+
+        public Task<FocusSession?> GetActiveAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(_sessions.Values.FirstOrDefault(item => item.Status is FocusStatus.Running or FocusStatus.Paused));
+
+        public Task<IReadOnlyList<FocusSession>> ListHistoryAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<FocusSession>>(_sessions.Values.Where(item => item.Status is not (FocusStatus.Running or FocusStatus.Paused)).ToArray());
+
+        public Task<bool> TryCreateActiveAsync(FocusSession session, CancellationToken cancellationToken)
+        {
+            _sessions[session.Id] = session;
+            return Task.FromResult(true);
+        }
+
+        public Task<bool> TryCompareAndSetAsync(FocusSession expected, FocusSession replacement, CancellationToken cancellationToken)
+        {
+            if (!_sessions.TryGetValue(expected.Id, out var current) || current != expected)
+            {
+                return Task.FromResult(false);
+            }
+
+            _sessions[replacement.Id] = replacement;
+            return Task.FromResult(true);
+        }
+
+        public Task SaveAsync(FocusSession session, CancellationToken cancellationToken)
+        {
+            _sessions[session.Id] = session;
             return Task.CompletedTask;
         }
     }

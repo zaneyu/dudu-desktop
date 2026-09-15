@@ -44,4 +44,55 @@ public sealed class RelayConfigurationTests
 
         Assert.Equal(new Uri("https://relay.example.test/"), options.BaseUrl);
     }
+
+    [Theory]
+    [InlineData("http://127.0.0.1:8787/")]
+    [InlineData("http://localhost:8787/")]
+    [InlineData("http://[::1]:8787/")]
+    public void Explicit_loopback_http_is_allowed_for_development(string value)
+    {
+        var options = RelayConfiguration.Resolve(name =>
+            name == RelayConfiguration.BaseUrlEnvironmentVariable ? value : null);
+
+        Assert.Equal(new Uri(value), options.BaseUrl);
+    }
+
+    [Fact]
+    public void Public_http_is_rejected_instead_of_being_used_for_relay_traffic()
+    {
+        var options = RelayConfiguration.Resolve(name =>
+            name == RelayConfiguration.BaseUrlEnvironmentVariable
+                ? "http://relay.example.test/"
+                : null);
+
+        Assert.Equal(new Uri(ProductInfo.DefaultRelayBaseUrl!), options.BaseUrl);
+    }
+
+    [Fact]
+    public void Resolve_reports_the_configured_origin_without_secrets()
+    {
+        // Startup logging takes the origin only (scheme + host + port): the relay credential is
+        // a bearer token that never appears in the URL, and any path or query is stripped.
+        string? logged = null;
+        var options = RelayConfiguration.Resolve(_ => null, origin => logged = origin);
+
+        Assert.Equal(
+            new Uri(ProductInfo.DefaultRelayBaseUrl!).GetLeftPart(UriPartial.Authority),
+            logged);
+        Assert.Equal(new Uri(ProductInfo.DefaultRelayBaseUrl!), options.BaseUrl);
+    }
+
+    [Fact]
+    public void Resolve_reports_the_environment_override_origin()
+    {
+        string? logged = null;
+        var options = RelayConfiguration.Resolve(
+            name => name == RelayConfiguration.BaseUrlEnvironmentVariable
+                ? "https://relay.example.test/some/path?query=1"
+                : null,
+            origin => logged = origin);
+
+        Assert.Equal(new Uri("https://relay.example.test/some/path?query=1"), options.BaseUrl);
+        Assert.Equal("https://relay.example.test", logged);
+    }
 }

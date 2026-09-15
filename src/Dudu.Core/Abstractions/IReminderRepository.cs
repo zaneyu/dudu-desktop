@@ -13,7 +13,7 @@ public interface IReminderRepository
         DateTimeOffset utcNow,
         CancellationToken cancellationToken);
 
-    Task RecordOccurrencesAndAdvanceAsync(
+    Task<bool> RecordOccurrencesAndAdvanceAsync(
         Reminder reminder,
         IReadOnlyList<ReminderOccurrence> occurrences,
         DateTimeOffset? nextDueUtc,

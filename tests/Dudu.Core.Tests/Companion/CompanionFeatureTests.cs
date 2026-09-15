@@ -25,6 +25,23 @@ public sealed class CompanionFeatureTests
     }
 
     [Fact]
+    public async Task Local_note_selector_reads_the_persisted_limit_on_each_request()
+    {
+        var clock = new FakeClock("2026-09-11T10:00:00Z");
+        var notes = new InMemoryLocalNoteRepository([
+            new LocalLoveNote("one", "one", true),
+            new LocalLoveNote("two", "two", true)]);
+        var preferences = new MutablePreferencesRepository(Preferences.Default with { LocalNoteDailyLimit = 1 });
+        var selector = new LocalNoteSelector(
+            notes, clock, new FixedRandomSource(), preferences, Preferences.Default);
+
+        Assert.NotNull(await selector.SelectAsync(false, TestContext.Current.CancellationToken));
+        preferences.Current = Preferences.Default with { LocalNoteDailyLimit = 0 };
+
+        Assert.Null(await selector.SelectAsync(false, TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
     public async Task Check_in_summary_never_calls_a_remote_dependency()
     {
         var repository = new SpyCheckInRepository();
@@ -346,7 +363,7 @@ public sealed class CompanionFeatureTests
                 return Task.FromResult(_shown.Count(item =>
                     item.IsUnsolicited && item.LocalDate == localDate));
             }
-        }
+    }
 
         public Task<IReadOnlyList<string>> GetMostRecentShownIdsAsync(
             int count,
@@ -473,6 +490,20 @@ public sealed class CompanionFeatureTests
             return Task.FromResult<IReadOnlyList<MoodCheckIn>>(_checkIns
                 .Where(checkIn => checkIn.CreatedUtc >= sinceUtc)
                 .ToArray());
+        }
+    }
+
+    private sealed class MutablePreferencesRepository(Preferences current) : IPreferencesRepository
+    {
+        public Preferences? Current { get; set; } = current;
+
+        public Task<Preferences?> GetAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(Current);
+
+        public Task SaveAsync(Preferences preferences, CancellationToken cancellationToken)
+        {
+            Current = preferences;
+            return Task.CompletedTask;
         }
     }
 

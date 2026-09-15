@@ -41,9 +41,9 @@ under `artifacts/performance/` or `artifacts/stability/` exists in this reposito
 | Offline launch | pending | — | — | — | — |
 | Sign-in launch (launch-at-sign-in) | pending | — | — | — | — |
 | Backup/restore | pending | — | — | — | — |
-| Install | passed | Windows Server 2025 (`windows-latest`, x64) | 2026-09-14 05:30 UTC | CI (unattended) | GitHub Actions `windows-latest` run 34809621557, job "Publish + package (win-x64)" (`tests/installer/installer-smoke.ps1`) |
-| Upgrade | passed | Windows Server 2025 (`windows-latest`, x64) | 2026-09-14 05:30 UTC | CI (unattended) | GitHub Actions `windows-latest` run 34809621557, job "Publish + package (win-x64)" (`tests/installer/installer-smoke.ps1`) |
-| Uninstall | passed | Windows Server 2025 (`windows-latest`, x64) | 2026-09-14 05:30 UTC | CI (unattended) | GitHub Actions `windows-latest` run 34809621557, job "Publish + package (win-x64)" (`tests/installer/installer-smoke.ps1`) |
+| Install | pending | — | — | — | `tests/installer/installer-smoke.ps1` (isolated per-run root; requires a new green Windows run) |
+| Upgrade | pending | — | — | — | `tests/installer/installer-smoke.ps1` (add `-ExerciseRunningApp` on an interactive Windows desktop) |
+| Uninstall | pending | — | — | — | `tests/installer/installer-smoke.ps1` (isolated data deletion and outside-sentinel check; requires a new green Windows run) |
 | Eight-hour stability run | pending | — | — | — | `artifacts/stability/eight-hour.json` |
 
 Fill in "Windows build" with the OS build number (`winver`) and Dudu version actually exercised,
@@ -54,7 +54,9 @@ ones, so this file always reflects the latest run per scenario.
 ## How to run each gate on Windows
 
 1. Publish a release candidate: `pwsh scripts/publish-windows.ps1` (produces
-   `artifacts/publish/win-x64/Dudu.App.exe`).
+   `artifacts/publish/win-x64/Dudu.App.exe` and
+   `artifacts/DuduDesktop-<version>-win-x64-private.exe`; `-Version 2.3.4`
+   stamps both the assembly and the Inno `AppVersion`/output filename).
 2. UI automation and accessibility:
    ```powershell
    dotnet test tests/Dudu.UiTests/Dudu.UiTests.csproj --filter "FullyQualifiedName~AccessibilityTests|FullyQualifiedName~FullJourneyTests" `
@@ -71,7 +73,10 @@ ones, so this file always reflects the latest run per scenario.
    (`tests/Dudu.WindowsHarness/PerformanceScenario.cs`) and its PowerShell mirror
    (`Test-PerformanceThresholds` in `scripts/run-performance-gates.ps1`) passes: startup under
    3000 ms, idle CPU under 1%, animation CPU under 3%, peak working set under 200 MB, and an
-   allocation slope no greater than 1 MB/hour.
+   allocation slope no greater than 1 MB/hour. The wrapper also requires a
+   fresh, schema-valid, nonzero-duration report whose run ID matches this
+   invocation and whose harness exits successfully; a stale report cannot
+   satisfy the gate.
 4. Eight-hour stability run:
    ```powershell
    dotnet run --project tests/Dudu.WindowsHarness -c Release -- --scenario long-run --hours 8 --output artifacts/stability/eight-hour.json
@@ -83,6 +88,29 @@ ones, so this file always reflects the latest run per scenario.
    regression in the database's own primary-key guarantees — see that file's doc comment for why
    it cannot detect an application-level "same notification shown twice" bug.
 5. Full solution pass: `dotnet test DuduDesktop.slnx -c Release`.
+
+6. Deployment smoke (for a deployed Worker; use `-AllowHttp` only for local
+   Wrangler):
+
+   ```powershell
+   pwsh tests/e2e/relay-deployment-smoke.ps1 -BaseUrl https://<private-relay-host>
+   ```
+
+   This performs no authenticated or mutating operation. It checks that the
+   sender page is live, `/v1/*` reaches the Worker, unauthenticated boundaries
+   return their expected statuses, and the privacy response headers are set.
+
+7. Isolated installer smoke on an interactive Windows desktop:
+
+   ```powershell
+   pwsh tests/installer/installer-smoke.ps1 `
+     -Installer artifacts/DuduDesktop-1.0.0-win-x64-private.exe `
+     -ExerciseRunningApp
+   ```
+
+   The script never uses the operator's canonical Dudu data root or Startup
+   shortcut. It installs beneath a unique temp root, sets `DUDU_DATA_ROOT` for
+   the run, and verifies a sibling sentinel survives `/DELETEUSERDATA=1`.
 
 ## What was verified on the macOS authoring host instead
 

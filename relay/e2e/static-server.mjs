@@ -36,7 +36,13 @@ const server = createServer((request, response) => {
       }
       const body = await readFile(filePath);
       const contentType = MIME_TYPES[path.extname(filePath)] ?? "application/octet-stream";
-      response.writeHead(200, { "Content-Type": contentType });
+      response.writeHead(200, {
+        "Content-Type": contentType,
+        "Cache-Control": "no-store",
+        "Pragma": "no-cache",
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "no-referrer",
+      });
       response.end(body);
     } catch {
       response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });

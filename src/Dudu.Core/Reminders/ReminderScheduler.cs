@@ -5,6 +5,42 @@ namespace Dudu.Core.Reminders;
 
 public static class ReminderScheduler
 {
+    /// <summary>
+    /// Creation/update boundary guard. Call this before persisting a reminder so
+    /// corrupt schedules (an empty weekday set that would never fire, a
+    /// <see cref="DateTimeOffset.MinValue"/> sentinel that would sort before every
+    /// real due time, or a missing due time on an enabled recurring reminder) are
+    /// rejected loudly instead of rotting in the store.
+    /// </summary>
+    public static void ValidateForSave(Reminder reminder)
+    {
+        ArgumentNullException.ThrowIfNull(reminder);
+
+        if (reminder.Rule is RecurrenceRule.SelectedWeekdays selected
+            && selected.Days.Count == 0)
+        {
+            throw new ArgumentException(
+                "A selected-weekdays reminder must include at least one day.",
+                nameof(reminder));
+        }
+
+        if (reminder.NextDueUtc == DateTimeOffset.MinValue)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(reminder),
+                "NextDueUtc must not be DateTimeOffset.MinValue; use null for a completed reminder.");
+        }
+
+        if (reminder.NextDueUtc is null
+            && reminder.Enabled
+            && reminder.Rule is not RecurrenceRule.Once)
+        {
+            throw new ArgumentException(
+                "An enabled recurring reminder must have a NextDueUtc.",
+                nameof(reminder));
+        }
+    }
+
     public static DateTimeOffset? NextOccurrence(
         Reminder reminder,
         DateTimeOffset nowUtc,
@@ -20,13 +56,18 @@ public static class ReminderScheduler
 
         nowUtc = nowUtc.ToUniversalTime();
 
+        if (reminder.NextDueUtc is null)
+        {
+            return null;
+        }
+
         if (reminder.SnoozedUntilUtc is { } snoozedUntilUtc
             && snoozedUntilUtc >= nowUtc)
         {
             return snoozedUntilUtc.ToUniversalTime();
         }
 
-        var nextDueUtc = reminder.NextDueUtc.ToUniversalTime();
+        var nextDueUtc = reminder.NextDueUtc.Value.ToUniversalTime();
         if (nextDueUtc > nowUtc)
         {
             return ApplyQuietHours(reminder, nextDueUtc, timeZone);
@@ -72,7 +113,8 @@ public static class ReminderScheduler
         Reminder reminder,
         DateTimeOffset fromUtc,
         DateTimeOffset throughUtc,
-        TimeZoneInfo timeZone)
+        TimeZoneInfo timeZone,
+        Action<string>? onCollapsed = null)
     {
         ArgumentNullException.ThrowIfNull(reminder);
         ArgumentNullException.ThrowIfNull(timeZone);
@@ -87,7 +129,7 @@ public static class ReminderScheduler
                 NextOccurrence(reminder, throughUtc, timeZone));
         }
 
-        var latestIntendedUtc = LatestIntendedOccurrence(reminder, fromUtc, throughUtc, timeZone);
+        var (latestIntendedUtc, windowCount) = LatestIntendedOccurrence(reminder, fromUtc, throughUtc, timeZone);
         var dueNow = Array.Empty<ReminderOccurrence>();
         if (latestIntendedUtc is { } intendedUtc)
         {
@@ -100,6 +142,17 @@ public static class ReminderScheduler
                 dueNow = ReminderOccurrencePolicy
                     .Select(reminder, [occurrence])
                     .ToArray();
+
+                // A sleep-length window can span many missed occurrences that the
+                // LatestOnly policy folds into a single delivery. Surface that so
+                // operators can see collapse happening instead of wondering where
+                // the missed occurrences went.
+                if (dueNow.Length > 0 && windowCount > dueNow.Length)
+                {
+                    onCollapsed?.Invoke(
+                        $"Reminder '{reminder.Id}' collapsed {windowCount} occurrences " +
+                        $"between {fromUtc:O} and {throughUtc:O} to the latest only.");
+                }
             }
         }
 
@@ -111,15 +164,25 @@ public static class ReminderScheduler
         return new ReminderReconciliation(dueNow, nextUtc);
     }
 
-    private static DateTimeOffset? LatestIntendedOccurrence(
+    private static (DateTimeOffset? Latest, int WindowCount) LatestIntendedOccurrence(
         Reminder reminder,
         DateTimeOffset fromUtc,
         DateTimeOffset throughUtc,
         TimeZoneInfo timeZone)
     {
-        var nextDueUtc = reminder.NextDueUtc.ToUniversalTime();
+        if (reminder.NextDueUtc is null)
+        {
+            return (null, 0);
+        }
+
+        var nextDueUtc = reminder.NextDueUtc.Value.ToUniversalTime();
         var snoozedUntilUtc = reminder.SnoozedUntilUtc?.ToUniversalTime();
         DateTimeOffset? latest = null;
+        var windowCount = 0;
+
+        // A base occurrence already counted here must not be counted again by the
+        // rule arms below; the count tracks distinct intended instants only.
+        var baseCounted = false;
 
         // NextDueUtc may itself be a persisted quiet-hour deferral rather than
         // a recurrence boundary. It is still the pending occurrence to deliver.
@@ -128,6 +191,8 @@ public static class ReminderScheduler
             && nextDueUtc <= throughUtc)
         {
             latest = nextDueUtc;
+            windowCount++;
+            baseCounted = true;
         }
 
         if (snoozedUntilUtc is { } snooze
@@ -135,18 +200,19 @@ public static class ReminderScheduler
             && snooze <= throughUtc)
         {
             latest = snooze;
+            windowCount++;
         }
 
         if (reminder.Rule is RecurrenceRule.Once)
         {
             if (snoozedUntilUtc is not null)
             {
-                return latest;
+                return (latest, windowCount);
             }
 
             return nextDueUtc >= fromUtc && nextDueUtc <= throughUtc
-                ? nextDueUtc
-                : latest;
+                ? (nextDueUtc, windowCount)
+                : (latest, windowCount);
         }
 
         switch (reminder.Rule)
@@ -167,6 +233,12 @@ public static class ReminderScheduler
                     latest = Max(latest, intervalDue);
                 }
 
+                windowCount += CountInterval(
+                    nextDueUtc,
+                    interval.Period,
+                    fromUtc,
+                    throughUtc,
+                    excludeAnchor: snoozedUntilUtc is not null || baseCounted);
                 break;
 
             case RecurrenceRule.Daily daily:
@@ -177,7 +249,11 @@ public static class ReminderScheduler
                     fromUtc,
                     throughUtc,
                     timeZone,
-                    snoozedUntilUtc));
+                    snoozedUntilUtc,
+                    baseCounted ? nextDueUtc : null,
+                    snoozedUntilUtc,
+                    out var dailyCount));
+                windowCount += dailyCount;
                 break;
 
             case RecurrenceRule.SelectedWeekdays selected:
@@ -188,11 +264,15 @@ public static class ReminderScheduler
                     fromUtc,
                     throughUtc,
                     timeZone,
-                    snoozedUntilUtc));
+                    snoozedUntilUtc,
+                    baseCounted ? nextDueUtc : null,
+                    snoozedUntilUtc,
+                    out var weekdayCount));
+                windowCount += weekdayCount;
                 break;
         }
 
-        return latest;
+        return (latest, windowCount);
     }
 
     private static DateTimeOffset? LatestLocalOccurrence(
@@ -202,13 +282,17 @@ public static class ReminderScheduler
         DateTimeOffset fromUtc,
         DateTimeOffset throughUtc,
         TimeZoneInfo timeZone,
-        DateTimeOffset? snoozedUntilUtc)
+        DateTimeOffset? snoozedUntilUtc,
+        DateTimeOffset? alreadyCounted,
+        DateTimeOffset? snoozeCounted,
+        out int windowCount)
     {
         var fromLocalDate = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(fromUtc, timeZone).DateTime)
             .AddDays(-1);
         var throughLocalDate = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(throughUtc, timeZone).DateTime)
             .AddDays(1);
         DateTimeOffset? latest = null;
+        windowCount = 0;
 
         for (var localDate = fromLocalDate;
              localDate <= throughLocalDate;
@@ -232,6 +316,12 @@ public static class ReminderScheduler
                 continue;
             }
 
+            if (candidate == alreadyCounted || candidate == snoozeCounted)
+            {
+                continue;
+            }
+
+            windowCount++;
             latest = Max(latest, candidate);
         }
 
@@ -281,7 +371,12 @@ public static class ReminderScheduler
             throw new ArgumentOutOfRangeException(nameof(reminder), "An interval recurrence must be greater than zero.");
         }
 
-        var nextDueUtc = reminder.NextDueUtc.ToUniversalTime();
+        if (reminder.NextDueUtc is null)
+        {
+            return null;
+        }
+
+        var nextDueUtc = reminder.NextDueUtc.Value.ToUniversalTime();
         var elapsed = nowUtc - nextDueUtc;
         var intervals = elapsed.Ticks / period.Ticks + 1;
         var next = nextDueUtc + TimeSpan.FromTicks(period.Ticks * intervals);
@@ -314,6 +409,40 @@ public static class ReminderScheduler
 
         var intervals = (throughUtc - firstDueUtc).Ticks / period.Ticks;
         return firstDueUtc + TimeSpan.FromTicks(period.Ticks * intervals);
+    }
+
+    private static int CountInterval(
+        DateTimeOffset firstDueUtc,
+        TimeSpan period,
+        DateTimeOffset fromUtc,
+        DateTimeOffset throughUtc,
+        bool excludeAnchor)
+    {
+        if (firstDueUtc > throughUtc)
+        {
+            return 0;
+        }
+
+        var lastOffset = (throughUtc - firstDueUtc).Ticks / period.Ticks;
+        long firstOffset = 0;
+        if (firstDueUtc < fromUtc)
+        {
+            firstOffset = ((fromUtc - firstDueUtc).Ticks + period.Ticks - 1) / period.Ticks;
+        }
+
+        var count = lastOffset - firstOffset + 1;
+        if (count <= 0)
+        {
+            return 0;
+        }
+
+        // The anchor instant (k = 0) was already counted by the base/snooze arm.
+        if (excludeAnchor && firstOffset == 0)
+        {
+            count--;
+        }
+
+        return count > int.MaxValue ? int.MaxValue : (int)count;
     }
 
     private static DateTimeOffset? Max(DateTimeOffset? left, DateTimeOffset? right)

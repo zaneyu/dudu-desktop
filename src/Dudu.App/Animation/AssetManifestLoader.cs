@@ -74,6 +74,12 @@ public static class AssetManifestLoader
         var root = Path.GetDirectoryName(manifestPath)
             ?? throw new AssetManifestException("The manifest path has no root directory.");
 
+        var totalBytes = SumReferencedBytes(root, manifest, errors);
+        if (totalBytes > AssetManifestContract.MaxPackBytes)
+        {
+            errors.Add($"Asset pack references {totalBytes} bytes; the limit is {AssetManifestContract.MaxPackBytes} bytes.");
+        }
+
         foreach (var (outfitKey, outfit) in manifest.Outfits.OrderBy(pair => pair.Key, StringComparer.Ordinal))
         {
             if (outfit is null)
@@ -148,6 +154,13 @@ public static class AssetManifestLoader
             return;
         }
 
+        var fileBytes = new FileInfo(fullPath).Length;
+        if (fileBytes > AssetManifestContract.MaxFileBytes)
+        {
+            errors.Add($"{field} is {fileBytes} bytes; a single frame must not exceed {AssetManifestContract.MaxFileBytes} bytes: {relativePath}.");
+            return;
+        }
+
         try
         {
             await using var stream = File.OpenRead(fullPath);
@@ -192,6 +205,61 @@ public static class AssetManifestLoader
         {
             errors.Add($"{field} could not be read: {relativePath} ({exception.Message}).");
         }
+    }
+
+    private static long SumReferencedBytes(
+        string root,
+        AssetManifest manifest,
+        ICollection<string> errors)
+    {
+        // Bytes are only observable here where files are read, so the pack-total
+        // cap lives in the loader while the per-animation caps live in the contract.
+        // Each path is counted once even when shared between animations.
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        long total = 0;
+        foreach (var outfit in manifest.Outfits.Values)
+        {
+            if (outfit?.Animations is null)
+            {
+                continue;
+            }
+
+            foreach (var animation in outfit.Animations.Values)
+            {
+                if (animation is null)
+                {
+                    continue;
+                }
+
+                foreach (var file in animation.Frames
+                    .Where(frame => frame is not null)
+                    .Select(frame => frame!.File)
+                    .Append(animation.ReducedMotion))
+                {
+                    if (!AssetManifestContract.IsSafeRelativePath(file))
+                    {
+                        continue;
+                    }
+
+                    var fullPath = Path.GetFullPath(Path.Combine(root, file!));
+                    if (!seen.Add(fullPath) || !File.Exists(fullPath))
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        total += new FileInfo(fullPath).Length;
+                    }
+                    catch (IOException exception)
+                    {
+                        errors.Add($"Asset file size could not be read: {file} ({exception.Message}).");
+                    }
+                }
+            }
+        }
+
+        return total;
     }
 
     private static bool IsReparseSafe(string root, string path)

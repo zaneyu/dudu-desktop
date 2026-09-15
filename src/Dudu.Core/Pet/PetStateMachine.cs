@@ -4,9 +4,23 @@ namespace Dudu.Core.Pet;
 
 public sealed class PetStateMachine
 {
+    /// <summary>
+    /// Upper bound for queued reminder/note ids. The pending sets are only used
+    /// for a single coalesced display card, so anything beyond the newest N is
+    /// dropped (oldest first) instead of growing without bound across a session.
+    /// </summary>
+    public const int MaxPendingItems = 50;
+
+    private readonly object _sync = new();
     private readonly HashSet<string> _dueReminderIds = new(StringComparer.Ordinal);
+    private readonly List<string> _dueReminderOrder = [];
     private readonly HashSet<string> _remoteMessageIds = new(StringComparer.Ordinal);
+    private readonly List<string> _remoteMessageOrder = [];
     private PetPresentation _current;
+
+    // Comfort has no auto-timeout by design: a hug must not be yanked mid-display
+    // by a timer. It persists until ComfortDismissed, Dismissed("comfort"), or an
+    // acknowledgement while the comfort card is showing.
     private bool _comfortActive;
     private string? _focusId;
     private string? _focusTransition;
@@ -19,7 +33,31 @@ public sealed class PetStateMachine
         _current = initial;
     }
 
-    public PetPresentation Current => _current;
+    public PetPresentation Current
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _current;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Number of pending reminder/note ids backing the coalesced display cards.
+    /// Exposed for diagnostics and tests; the display itself stays a single card.
+    /// </summary>
+    public int PendingCount
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _dueReminderIds.Count + _remoteMessageIds.Count;
+            }
+        }
+    }
 
     public static PetStateMachine CreateIdle()
     {
@@ -30,18 +68,31 @@ public sealed class PetStateMachine
     {
         ArgumentNullException.ThrowIfNull(petEvent);
 
+        lock (_sync)
+        {
+            return HandleCore(petEvent);
+        }
+    }
+
+    private PetPresentation HandleCore(PetEvent petEvent)
+    {
+
         switch (petEvent)
         {
             case PetEvent.ComfortRequested:
                 _comfortActive = true;
                 break;
 
+            case PetEvent.ComfortDismissed:
+                _comfortActive = false;
+                break;
+
             case PetEvent.RemoteNoteArrived remoteNote:
-                _remoteMessageIds.Add(remoteNote.MessageId);
+                AddPending(_remoteMessageIds, _remoteMessageOrder, remoteNote.MessageId);
                 break;
 
             case PetEvent.ReminderDue reminder:
-                _dueReminderIds.Add(reminder.ReminderId);
+                AddPending(_dueReminderIds, _dueReminderOrder, reminder.ReminderId);
                 break;
 
             case PetEvent.FocusStarted focus:
@@ -105,6 +156,11 @@ public sealed class PetStateMachine
                     _focusTransition = null;
                 }
 
+                if (_current.State == PetState.Comfort)
+                {
+                    _comfortActive = false;
+                }
+
                 break;
 
             default:
@@ -122,14 +178,23 @@ public sealed class PetStateMachine
             return Present(PetState.Comfort, "comfort-hug");
         }
 
+        // Pending notes and reminders each coalesce into a single display card
+        // no matter how many ids are queued behind it.
         if (!IsFocusActive() && _remoteMessageIds.Count > 0)
         {
-            return new(PetState.RemoteNote, "note-arrival", "A note arrived 💌", null, true);
+            var body = _remoteMessageIds.Count > 1
+                ? $"{_remoteMessageIds.Count} notes waiting"
+                : null;
+            return new(PetState.RemoteNote, "note-arrival", "A note arrived 💌", body, true);
         }
 
         if (!IsFocusActive() && _dueReminderIds.Count > 0)
         {
-            return Present(PetState.Reminder, "reminder");
+            var body = _dueReminderIds.Count > 1
+                ? $"{_dueReminderIds.Count} reminders due"
+                : null;
+            var presentation = Present(PetState.Reminder, "reminder");
+            return body is null ? presentation : presentation with { BubbleBody = body };
         }
 
         if (_focusTransition is not null)
@@ -155,15 +220,33 @@ public sealed class PetStateMachine
         return Present(PetState.Idle, "idle");
     }
 
+    private void AddPending(HashSet<string> ids, List<string> order, string id)
+    {
+        if (!ids.Add(id))
+        {
+            return;
+        }
+
+        order.Add(id);
+        while (ids.Count > MaxPendingItems)
+        {
+            var oldest = order[0];
+            order.RemoveAt(0);
+            ids.Remove(oldest);
+        }
+    }
+
     private void Dismiss(string itemId)
     {
         if (_remoteMessageIds.Remove(itemId))
         {
+            _remoteMessageOrder.Remove(itemId);
             return;
         }
 
         if (_dueReminderIds.Remove(itemId))
         {
+            _dueReminderOrder.Remove(itemId);
             return;
         }
 

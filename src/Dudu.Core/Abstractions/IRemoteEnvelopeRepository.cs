@@ -28,4 +28,10 @@ public interface IRemoteEnvelopeRepository
     Task<bool> TryInsertAndMarkProcessedAsync(RemoteEnvelope envelope, DateTimeOffset processedUtc, CancellationToken cancellationToken);
 
     Task DeleteAsync(string messageId, CancellationToken cancellationToken);
+
+    /// <summary>Deletes unconsumed envelopes that have been deliverable for longer than
+    /// <paramref name="retention"/>, bounding local ciphertext accumulation when the user never
+    /// opens a note. Returns the number of envelopes removed. Processed-message deduplication rows
+    /// are intentionally kept, so a pruned id can never resurrect as a "new" message.</summary>
+    Task<int> PruneExpiredAsync(DateTimeOffset utcNow, TimeSpan retention, CancellationToken cancellationToken);
 }

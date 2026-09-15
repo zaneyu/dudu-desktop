@@ -71,7 +71,10 @@ public sealed class TaskService
             UpdatedUtc = UtcNow(),
         };
 
-        await _repository.SaveAsync(updated, cancellationToken);
+        if (!await _repository.TryCompareAndSetAsync(task, updated, cancellationToken))
+        {
+            throw new InvalidOperationException("Task changed before it could be saved.");
+        }
         return updated;
     }
 
@@ -98,7 +101,10 @@ public sealed class TaskService
             UpdatedUtc = UtcNow(),
         };
 
-        await _repository.SaveAsync(updated, cancellationToken);
+        if (!await _repository.TryCompareAndSetAsync(task, updated, cancellationToken))
+        {
+            throw new InvalidOperationException("Task changed before it could be saved.");
+        }
         return updated;
     }
 
@@ -118,7 +124,10 @@ public sealed class TaskService
             UpdatedUtc = now,
         };
 
-        await _repository.SaveAsync(completed, cancellationToken);
+        if (!await _repository.TryCompareAndSetAsync(task, completed, cancellationToken))
+        {
+            throw new InvalidOperationException("Task changed before it could be completed.");
+        }
         return completed;
     }
 

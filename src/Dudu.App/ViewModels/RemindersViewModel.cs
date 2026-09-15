@@ -33,12 +33,12 @@ public sealed class RemindersViewModel : FeatureViewModelBase
         _context = context ?? throw new ArgumentNullException(nameof(context));
         _hydrationEnabled = context.CurrentPreferences.HydrationRemindersEnabled;
         _breakEnabled = context.CurrentPreferences.BreakRemindersEnabled;
-        RefreshCommand = new AsyncRelayCommand(() => RefreshAsync(CancellationToken.None));
-        SaveCommand = new AsyncRelayCommand(() => SaveAsync(CancellationToken.None));
-        CompleteCommand = new AsyncRelayCommand<Reminder>(CompleteAsync);
-        SnoozeCommand = new AsyncRelayCommand<Reminder>(SnoozeAsync);
+        RefreshCommand = new AsyncRelayCommand((CancellationToken ct) => RefreshAsync(ct));
+        SaveCommand = new AsyncRelayCommand((CancellationToken ct) => SaveAsync(ct));
+        CompleteCommand = new AsyncRelayCommand<Reminder>((item, ct) => CompleteAsync(item, ct));
+        SnoozeCommand = new AsyncRelayCommand<Reminder>((item, ct) => SnoozeAsync(item, ct));
         SaveReminderPreferencesCommand = new AsyncRelayCommand(
-            () => SaveReminderPreferencesAsync(CancellationToken.None));
+            (CancellationToken ct) => SaveReminderPreferencesAsync(ct));
     }
 
     public IAsyncRelayCommand RefreshCommand { get; }
@@ -124,19 +124,23 @@ public sealed class RemindersViewModel : FeatureViewModelBase
 
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
     {
-        await RunAsync(async () =>
+        await RunRefreshAsync(async ct =>
         {
             var preferences = _context.CurrentPreferences;
-            HydrationRemindersEnabled = preferences.HydrationRemindersEnabled;
-            BreakRemindersEnabled = preferences.BreakRemindersEnabled;
-            Reminders.Clear();
-            foreach (var reminder in await _context.Reminders.ListAsync(cancellationToken))
+            var items = await _context.Reminders.ListAsync(ct);
+            await MutateAsync(() =>
             {
-                Reminders.Add(reminder);
-            }
+                HydrationRemindersEnabled = preferences.HydrationRemindersEnabled;
+                BreakRemindersEnabled = preferences.BreakRemindersEnabled;
+                Reminders.Clear();
+                foreach (var reminder in items)
+                {
+                    Reminders.Add(reminder);
+                }
 
-            SelectedReminder ??= Reminders.FirstOrDefault();
-        });
+                SelectedReminder ??= Reminders.FirstOrDefault();
+            }, ct);
+        }, cancellationToken);
     }
 
     public Task SaveAsync(CancellationToken cancellationToken = default) =>
@@ -146,10 +150,13 @@ public sealed class RemindersViewModel : FeatureViewModelBase
             if (title.Length == 0) throw new ArgumentException("aiyo add a title first", nameof(Title));
             var rule = BuildRule();
             var now = _context.Clock.UtcNow.ToUniversalTime();
-            var nextDue = NextDueUtc(rule, now);
+            var zone = SelectedReminder is null
+                ? TimeZoneInfo.Local
+                : ResolveTimeZone(SelectedReminder.LocalTimeZoneId);
+            var nextDue = NextDueUtc(rule, now, zone);
             var reminder = SelectedReminder is null
                 ? new Reminder(Guid.NewGuid().ToString("N"), title, Normalize(Details), Enabled, rule,
-                    TimeZoneInfo.Local.Id, QuietHoursBehavior, MissedOccurrencePolicy.LatestOnly, nextDue,
+                    zone.Id, QuietHoursBehavior, MissedOccurrencePolicy.LatestOnly, nextDue,
                     QuietHours: _context.CurrentPreferences.QuietHours)
                 : SelectedReminder with
                 {
@@ -162,7 +169,8 @@ public sealed class RemindersViewModel : FeatureViewModelBase
                     QuietHours = _context.CurrentPreferences.QuietHours,
                 };
             await _context.ReminderWriter.SaveAsync(reminder, cancellationToken);
-            Replace(reminder);
+            var saved = reminder;
+            await MutateAsync(() => Replace(saved), cancellationToken);
             SelectedReminder = reminder;
         }, "oki reminder saved");
 
@@ -172,12 +180,17 @@ public sealed class RemindersViewModel : FeatureViewModelBase
         return RunAsync(async () =>
         {
             var now = _context.Clock.UtcNow.ToUniversalTime();
-            var zone = TimeZoneInfo.Local;
+            var zone = ResolveTimeZone(reminder.LocalTimeZoneId);
             var next = ReminderScheduler.NextOccurrence(reminder with { SnoozedUntilUtc = null }, now, zone);
             var occurrence = new ReminderOccurrence(reminder.Id, now);
-            await _context.Reminders.RecordOccurrencesAndAdvanceAsync(reminder, [occurrence], next, cancellationToken);
+            if (!await _context.Reminders.RecordOccurrencesAndAdvanceAsync(reminder, [occurrence], next, cancellationToken))
+            {
+                throw new InvalidOperationException("oh no reminder changed before saving");
+            }
             await _context.PresentPetAsync(new Dudu.Core.Pet.PetEvent.Dismissed(reminder.Id), cancellationToken);
-            Replace(reminder with { NextDueUtc = next ?? DateTimeOffset.MaxValue, SnoozedUntilUtc = null });
+            var updated = reminder with { NextDueUtc = next, SnoozedUntilUtc = null };
+            await MutateAsync(() => Replace(updated), cancellationToken);
+            await _context.DismissReminderNotificationAsync(reminder.Id, cancellationToken);
         }, "yayyy done le good job");
     }
 
@@ -188,7 +201,8 @@ public sealed class RemindersViewModel : FeatureViewModelBase
         {
             var snoozed = reminder with { SnoozedUntilUtc = _context.Clock.UtcNow.ToUniversalTime().AddMinutes(15) };
             await _context.ReminderWriter.SaveAsync(snoozed, cancellationToken);
-            Replace(snoozed);
+            await MutateAsync(() => Replace(snoozed), cancellationToken);
+            await _context.DismissReminderNotificationAsync(reminder.Id, cancellationToken);
         }, "otayyy snoozed for 15 min");
     }
 
@@ -203,11 +217,16 @@ public sealed class RemindersViewModel : FeatureViewModelBase
 
             // These stable IDs make toggle changes an upsert, not a duplicate
             // or a stale disabled default left behind by initial hydration.
-            foreach (var reminder in (await _context.Reminders.ListAsync(cancellationToken))
-                .Where(item => item.Id is "default-hydration" or "default-break"))
+            var defaults = (await _context.Reminders.ListAsync(cancellationToken))
+                .Where(item => item.Id is "default-hydration" or "default-break")
+                .ToArray();
+            await MutateAsync(() =>
             {
-                Replace(reminder);
-            }
+                foreach (var reminder in defaults)
+                {
+                    Replace(reminder);
+                }
+            }, cancellationToken);
         }, "done le reminder prefs saved");
 
     private RecurrenceRule BuildRule() => ScheduleKind switch
@@ -219,17 +238,17 @@ public sealed class RemindersViewModel : FeatureViewModelBase
         _ => new RecurrenceRule.Once(),
     };
 
-    private DateTimeOffset NextDueUtc(RecurrenceRule rule, DateTimeOffset now)
+    private DateTimeOffset NextDueUtc(RecurrenceRule rule, DateTimeOffset now, TimeZoneInfo zone)
     {
         if (rule is RecurrenceRule.Interval interval) return now.Add(interval.Period);
-        var localNow = TimeZoneInfo.ConvertTime(now, TimeZoneInfo.Local);
+        var localNow = TimeZoneInfo.ConvertTime(now, zone);
         var localDate = localNow.Date.Date + LocalTime.ToTimeSpan();
         if (localDate <= localNow.DateTime) localDate = localDate.AddDays(1);
         if (rule is RecurrenceRule.SelectedWeekdays weekdays)
         {
             while (!weekdays.Days.Contains(localDate.DayOfWeek)) localDate = localDate.AddDays(1);
         }
-        return new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(localDate, DateTimeKind.Unspecified), TimeZoneInfo.Local));
+        return new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(localDate, DateTimeKind.Unspecified), zone));
     }
 
     private void Replace(Reminder reminder)
@@ -248,4 +267,12 @@ public sealed class RemindersViewModel : FeatureViewModelBase
     }
 
     private static string? Normalize(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static TimeZoneInfo ResolveTimeZone(string timeZoneId)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(timeZoneId);
+        try { return TimeZoneInfo.FindSystemTimeZoneById(timeZoneId); }
+        catch (TimeZoneNotFoundException) when (string.Equals(timeZoneId, "UTC", StringComparison.OrdinalIgnoreCase))
+        { return TimeZoneInfo.Utc; }
+    }
 }

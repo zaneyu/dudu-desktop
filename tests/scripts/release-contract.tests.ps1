@@ -1,0 +1,87 @@
+<#
+.SYNOPSIS
+    Cross-platform contract checks for release/installer hardening.
+
+.DESCRIPTION
+    These checks do not run Windows installers. They verify the maintained pins and the source
+    contracts that are easy to regress in a text-only review: version forwarding, private asset
+    preflight, isolated smoke-test paths, absence of image-wide process killing, and the pinned
+    Inno Setup digest mechanism.
+#>
+$ErrorActionPreference = "Stop"
+
+# The vendored PowerShell used by the Mac-safe release checks does not always
+# auto-import the filesystem and utility modules before the first cmdlet call.
+Import-Module Microsoft.PowerShell.Utility -ErrorAction SilentlyContinue
+Import-Module Microsoft.PowerShell.Management -ErrorAction SilentlyContinue
+
+$repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "../.."))
+$script:FailureCount = 0
+$script:CaseCount = 0
+
+function Assert-True {
+    param([string]$Name, [bool]$Condition)
+    $script:CaseCount++
+    if ($Condition) { Write-Host "PASS: $Name" } else { Write-Host "FAIL: $Name"; $script:FailureCount++ }
+}
+
+function Assert-Contains {
+    param([string]$Name, [string]$Text, [string]$Pattern)
+    Assert-True $Name ($Text -match $Pattern)
+}
+
+$pinPath = Join-Path $repoRoot "installer/inno-setup-pinned.json"
+$pin = Get-Content -Raw -LiteralPath $pinPath | ConvertFrom-Json
+Assert-True "Inno pin has the maintained 7.1.0 version" ($pin.version -eq "7.1.0")
+Assert-True "Inno pin uses the expected x64 filename" ($pin.fileName -eq "innosetup-7.1.0-x64.exe")
+Assert-True "Inno pin has a 64-character SHA-256 digest" ($pin.sha256 -match '^[0-9a-f]{64}$')
+Assert-True "Inno pin uses an HTTPS GitHub release URL" ($pin.url -match '^https://github\.com/.+/releases/download/.+/' + [Regex]::Escape($pin.fileName) + '$')
+
+$iss = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "installer/DuduDesktop.iss")
+$publish = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "scripts/publish-windows.ps1")
+$verify = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "scripts/verify.ps1")
+$e2e = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "tests/e2e/private-note-flow.ps1")
+$workflow = Get-Content -Raw -LiteralPath (Join-Path $repoRoot ".github/workflows/windows-installer.yml")
+$smoke = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "tests/installer/installer-smoke.ps1")
+$innoScript = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "scripts/install-inno-setup.ps1")
+
+Assert-Contains "Inno has a default AppVersion define" $iss '#ifndef AppVersion'
+Assert-Contains "Inno receives AppVersion from the compiler define" $iss 'AppVersion=\{#AppVersion\}'
+Assert-Contains "Inno output filename includes the compiler version" $iss 'OutputBaseFilename=DuduDesktop-\{#AppVersion\}-win-x64-private'
+Assert-Contains "publish forwards Version to Inno" $publish '"/DAppVersion=\$Version"'
+Assert-Contains "publish preflights the private asset pack" $publish 'Assert-PrivateReleaseAssetPack'
+Assert-Contains "publish checks the exact file manifest before ISCC" $publish 'Assert-PublishManifest'
+Assert-Contains "verify generates a per-run e2e secret" $verify '\[Guid\]::NewGuid'
+Assert-True "verify carries no static e2e secret" ($verify -notmatch 'verification-secret-1042')
+Assert-Contains "e2e scrubs secret-bearing temp files" $e2e 'Clear-SensitiveFile'
+Assert-True "workflow pins every action to a commit SHA" (($workflow | Select-String 'uses:\s+\S+@v\d+\s*$' -AllMatches).Matches.Count -eq 0)
+Assert-Contains "workflow attests build provenance" $workflow 'attest-build-provenance'
+Assert-Contains "workflow publishes the hash to the job summary" $workflow 'GITHUB_STEP_SUMMARY'
+Assert-True "workflow pins every action to a full 40-char SHA" (@([regex]::Matches($workflow, '(?m)^\s*-?\s*uses:\s*(\S+)') | Where-Object { $_.Groups[1].Value -notmatch '@[0-9a-f]{40}$' }).Count -eq 0)
+Assert-Contains "workflow serializes runs with a concurrency group" $workflow '(?m)^concurrency:'
+Assert-Contains "workflow has minimal top-level permissions" $workflow '(?m)^permissions:\s*\r?\n\s+contents:\s*read\s*$'
+Assert-Contains "workflow re-verifies the stored artifact hash in a separate job" $workflow 'actions/download-artifact@'
+Assert-Contains "workflow uploads release metadata" $workflow 'artifacts/release-metadata/'
+$globalJson = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "global.json") | ConvertFrom-Json
+Assert-True "global.json pins the SDK exactly (rollForward disable)" ($globalJson.sdk.rollForward -eq "disable")
+$packagesProps = [xml](Get-Content -Raw -LiteralPath (Join-Path $repoRoot "Directory.Packages.props"))
+Assert-True "Directory.Packages.props has no floating/range versions" (@($packagesProps.Project.ItemGroup.PackageVersion | Where-Object { $_.Version -notmatch '^\d+(\.\d+){1,3}$' }).Count -eq 0)
+Assert-Contains "publish records lock files and dotnet --info" $publish 'Write-ReleaseMetadata'
+Assert-Contains "smoke test uses the app data-root override" $smoke 'DUDU_DATA_ROOT'
+Assert-Contains "smoke test uses an isolated installer directory" $smoke '"dudu-installer-smoke-\$runId"'
+Assert-Contains "smoke test creates an outside sentinel" $smoke 'dudu-installer-smoke-sentinel-\$runId'
+Assert-Contains "smoke test can exercise a running app during upgrade" $smoke 'ExerciseRunningApp'
+Assert-True "installer contains no image-wide Dudu taskkill" ($iss -notmatch 'taskkill\s+/IM\s+Dudu\.App\.exe')
+Assert-Contains "Inno download verifies before Start-Process" $innoScript 'Assert-PinnedInnoSetupFile -Path \$downloadPath'
+
+$manifest = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "src/Dudu.App/Assets/Packs/private-dudu/manifest.json") | ConvertFrom-Json
+Assert-True "private release manifest declares privateUseOnly" ($manifest.privateUseOnly -eq $true)
+Assert-True "private release pack contains asset files" (@(Get-ChildItem -LiteralPath (Join-Path $repoRoot "src/Dudu.App/Assets/Packs/private-dudu") -Recurse -File).Count -gt 1)
+
+Write-Host ""
+if ($script:FailureCount -gt 0) {
+    Write-Host "release-contract.tests.ps1: FAIL ($script:FailureCount of $script:CaseCount cases failed)"
+    exit 1
+}
+Write-Host "release-contract.tests.ps1: PASS ($script:CaseCount cases)"
+exit 0

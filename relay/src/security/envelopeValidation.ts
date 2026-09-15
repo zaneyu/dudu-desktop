@@ -2,8 +2,10 @@
  * Server-side envelope validation for `POST /v1/messages`. Wraps `validateEnvelopeShape` from
  * `sender-src/crypto.ts` (the one runtime-neutral implementation of the wire contract) rather
  * than re-implementing any of its rules, and adds only what that function cannot check without
- * request-time context: the `deliverAfterUtc` scheduling cap, and the byte-size inspection needed
- * to return 413 instead of 422 for oversized fields.
+ * request-time context: the strict `createdUtc` Z shape and its `[now - 1h, now + 5min]`
+ * acceptance window, the `deliverAfterUtc` scheduling cap and its must-not-precede-`createdUtc`
+ * ordering, and the byte-size inspection needed to return 413 instead of 422 for oversized
+ * fields.
  *
  * `validateEnvelopeShape` already enforces: protocol version, canonical UUID `messageId`,
  * `createdUtc` parsability and its five-minute future skew, Base64URL form, the 32-byte salt and
@@ -49,6 +51,28 @@ export class EnvelopeTooLargeError extends Error {}
 export class EnvelopeSemanticError extends Error {}
 
 const MAXIMUM_DELIVER_AFTER_MS = MESSAGE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+
+/**
+ * Strict `createdUtc` shape: full UTC ISO-8601 with a `Z` designator and optional fractional
+ * seconds (what `Date.toISOString()` emits), e.g. `2026-01-02T03:04:05.678Z`. Loose
+ * `Date.parse` inputs — date-only strings, offsets, missing timezone — are rejected even when
+ * they denote a valid instant: a canonical wire timestamp must not depend on the parser's
+ * fallback heuristics. `deliverAfterUtc` intentionally keeps offset support (a sender may spell
+ * a future instant with its local offset, and the comparison below is by instant, not string),
+ * but it must still parse and must not precede `createdUtc`.
+ */
+const STRICT_ISO8601_Z_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
+
+/**
+ * How far back a `createdUtc` may lie: one hour. Together with the five-minute future skew
+ * below, the acceptance window is `[now - 1h, now + 5min]`. The future bound matches
+ * `MAXIMUM_CREATED_UTC_SKEW_MINUTES` (already enforced inside `validateEnvelopeShape` against
+ * `Date.now()`); the past bound is new here — a days-old `createdUtc` on a freshly submitted
+ * envelope is either a replay or a broken clock, and expiry math anchored to it would silently
+ * shorten (or, for `deliverAfterUtc`, distort) retention.
+ */
+const MAXIMUM_CREATED_UTC_AGE_MS = 60 * 60 * 1000;
+const MAXIMUM_CREATED_UTC_SKEW_MS = 5 * 60 * 1000;
 
 /**
  * Validates an incoming, not-yet-trusted request body as an `EncryptedEnvelopeV1`. Throws one of
@@ -100,10 +124,41 @@ export async function validateIncomingEnvelope(body: unknown, now: Date): Promis
     if (Number.isNaN(deliverAfterMs)) {
       throw new EnvelopeSemanticError("deliverAfterUtc is not a parsable timestamp.");
     }
+    const createdMs = Date.parse(envelope.createdUtc);
+    if (deliverAfterMs < createdMs) {
+      throw new EnvelopeSemanticError("deliverAfterUtc is before createdUtc.");
+    }
     if (deliverAfterMs > now.getTime() + MAXIMUM_DELIVER_AFTER_MS) {
       throw new EnvelopeSemanticError(`deliverAfterUtc is more than ${MESSAGE_RETENTION_DAYS} days ahead.`);
     }
   }
 
+  // Request-time bounds `validateEnvelopeShape` cannot check without `now`: strict Z shape plus
+  // the [now - 1h, now + 5min] acceptance window for `createdUtc`.
+  if (!STRICT_ISO8601_Z_PATTERN.test(envelope.createdUtc)) {
+    throw new EnvelopeSemanticError("createdUtc must be strict ISO-8601 UTC (Z) form.");
+  }
+  const createdMs = Date.parse(envelope.createdUtc);
+  if (Number.isNaN(createdMs) || !isRealCalendarInstant(envelope.createdUtc, createdMs)) {
+    throw new EnvelopeSemanticError("createdUtc must be strict ISO-8601 UTC (Z) form.");
+  }
+  if (
+    createdMs < now.getTime() - MAXIMUM_CREATED_UTC_AGE_MS ||
+    createdMs > now.getTime() + MAXIMUM_CREATED_UTC_SKEW_MS
+  ) {
+    throw new EnvelopeSemanticError("createdUtc is outside the acceptable clock window.");
+  }
+
   return envelope;
+}
+
+/**
+ * `Date.parse` rolls impossible fields over (`2026-02-30` becomes March 2, `T24:00:00` the next
+ * day) instead of rejecting them. A pattern-matched value is a real instant only if formatting
+ * the parsed time reproduces it, with the fraction padded to milliseconds.
+ */
+function isRealCalendarInstant(value: string, parsedMs: number): boolean {
+  const [, fraction = ""] = /(?:\.(\d{1,3}))?Z$/.exec(value) ?? [];
+  const canonical = `${value.slice(0, 19)}.${fraction.padEnd(3, "0")}Z`;
+  return new Date(parsedMs).toISOString() === canonical;
 }

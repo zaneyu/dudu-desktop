@@ -16,14 +16,26 @@ public sealed partial class TasksFocusPage : Page
         ViewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         InitializeComponent();
         DataContext = ViewModel;
-        ViewModel.PropertyChanged += ViewModel_PropertyChanged;
         Loaded += Page_Loaded;
+        Unloaded += Page_Unloaded;
     }
 
     public TasksFocusViewModel ViewModel { get; }
 
+    // SettingsWindow caches this page and swaps it in and out of the content
+    // frame, so Loaded/Unloaded fire on every visit. The view-model
+    // subscription is live only while the page is in the tree; the page's own
+    // Loaded/Unloaded handlers stay attached so revisits still refresh.
+    private void Page_Unloaded(object sender, RoutedEventArgs args)
+    {
+        if (IsLoaded) return; // a re-load already won the out-of-order race
+        ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
+    }
+
     private async void Page_Loaded(object sender, RoutedEventArgs args)
     {
+        ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
+        ViewModel.PropertyChanged += ViewModel_PropertyChanged;
         await ViewModel.RefreshAsync();
         SyncTaskEditor();
         RefreshFocusText();

@@ -8,47 +8,92 @@ on:
 permissions:
   contents: read
 
+# One release build per ref at a time. cancel-in-progress is false so a running build is never
+# killed between upload and verification; GitHub still replaces an older *pending* run with the
+# newest push, which is what we want (only the latest main is releasable).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   installer:
     name: Publish + package (win-x64)
+    # Do not publish a releasable installer until the complete test job is green.
+    needs: tests
     runs-on: windows-latest
     timeout-minutes: 60
+    # attestations/id-token are scoped to this job (not the workflow) so the test job
+    # cannot mint provenance.
+    permissions:
+      contents: read
+      attestations: write
+      id-token: write
+    outputs:
+      installer-sha256: ${{ steps.checksum.outputs.sha256 }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-dotnet@v4
+      # global.json pins the SDK with rollForward "disable": setup-dotnet installs exactly that
+      # version and the dotnet host refuses any other, so a newer preinstalled runner SDK can
+      # never be picked up silently.
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           global-json-file: global.json
 
       - name: Install Inno Setup 7
         shell: pwsh
+        run: pwsh scripts/install-inno-setup.ps1 -DownloadDirectory "$env:RUNNER_TEMP\dudu-inno"
+
+      - name: Verify Inno Setup compiler
+        shell: pwsh
         run: |
-          $url = "https://github.com/jrsoftware/issrc/releases/download/is-7_1_0/innosetup-7.1.0-x64.exe"
-          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\innosetup.exe"
-          Start-Process "$env:RUNNER_TEMP\innosetup.exe" -ArgumentList "/VERYSILENT","/ALLUSERS","/SUPPRESSMSGBOXES","/NORESTART" -Wait
           $iscc = Join-Path $env:ProgramFiles "Inno Setup 7\ISCC.exe"
           if (-not (Test-Path $iscc)) { throw "ISCC.exe missing at $iscc" }
           & $iscc /? | Select-Object -First 2
 
+      # Directory.Build.props sets RestorePackagesWithLockFile=true, so this restore generates a
+      # packages.lock.json per project. They are never committed (AGENTS.md); publish-windows.ps1
+      # copies the generated set into the release-metadata artifact below.
       - name: Restore
         run: dotnet restore DuduDesktop.slnx
 
       - name: Publish and package
         shell: pwsh
+        # publish-windows.ps1 fails before ISCC.exe if the publish tree has any file outside its
+        # allowlist, and writes artifacts/release-metadata/ (publish manifest with per-file
+        # SHA-256, dotnet --info, transitive package list, generated lock files).
         run: pwsh scripts/publish-windows.ps1 -Version 1.0.0
 
       - name: Installer smoke test
         shell: pwsh
         run: pwsh tests/installer/installer-smoke.ps1 -Installer artifacts/DuduDesktop-1.0.0-win-x64-private.exe
 
+      - name: Performance gates
+        shell: pwsh
+        run: pwsh scripts/run-performance-gates.ps1 -Executable artifacts/publish/win-x64/Dudu.App.exe -Output artifacts/performance/release.json
+
       - name: Checksum
+        id: checksum
         shell: pwsh
         run: |
           $h = (Get-FileHash artifacts/DuduDesktop-1.0.0-win-x64-private.exe -Algorithm SHA256).Hash.ToLowerInvariant()
           "$h  DuduDesktop-1.0.0-win-x64-private.exe" | Set-Content -NoNewline artifacts/SHA256SUMS.txt
           Get-Content artifacts/SHA256SUMS.txt
+          "sha256=$h" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
-      - uses: actions/upload-artifact@v4
+      # GitHub only issues artifact attestations for PRIVATE repositories on GitHub Enterprise
+      # Cloud; on a personal Free/Pro account this step fails. It is therefore opt-in: set the
+      # repository variable DUDU_ENABLE_ATTESTATION=true only once the repo lives somewhere that
+      # supports private attestations (GitHub's private Sigstore instance). Never make the repo
+      # public to get it: public-repo attestations go to the public Sigstore transparency log.
+      - name: Attest build provenance
+        id: attest
+        if: vars.DUDU_ENABLE_ATTESTATION == 'true'
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: artifacts/DuduDesktop-1.0.0-win-x64-private.exe
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: DuduDesktop-1.0.0-win-x64-private
           path: |
@@ -57,15 +102,64 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: DuduDesktop-1.0.0-release-metadata
+          path: artifacts/release-metadata/
+          if-no-files-found: error
+          retention-days: 90
+
+  verify-artifact:
+    name: Verify uploaded installer + publish checksum
+    needs: installer
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      # Fresh runner, no checkout, no build tools: recompute the hash from the artifact as GitHub
+      # stored it and require it to equal the hash the build job computed. Only then is the hash
+      # written to the run summary, which stays readable independently of the artifact bundle
+      # (and after the artifact's 30-day retention expires).
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: DuduDesktop-1.0.0-win-x64-private
+          path: downloaded
+      - name: Compare checksums and write run summary
+        env:
+          BUILD_SHA256: ${{ needs.installer.outputs.installer-sha256 }}
+        run: |
+          set -euo pipefail
+          cd downloaded
+          actual=$(sha256sum DuduDesktop-1.0.0-win-x64-private.exe | cut -d' ' -f1)
+          manifest=$(cut -d' ' -f1 SHA256SUMS.txt)
+          if [ "$actual" != "$BUILD_SHA256" ] || [ "$manifest" != "$BUILD_SHA256" ]; then
+            echo "::error::Installer hash mismatch (build=$BUILD_SHA256 artifact=$actual SHA256SUMS=$manifest)"
+            exit 1
+          fi
+          sha256sum -c SHA256SUMS.txt
+          {
+            echo "## DuduDesktop-1.0.0-win-x64-private.exe"
+            echo
+            echo "SHA-256 (build job, re-verified from the stored artifact):"
+            echo
+            echo "\`$actual\`"
+            echo
+            echo "Compare the hash the recipient computes (\`Get-FileHash -Algorithm SHA256\`) against this value, not only against the SHA256SUMS.txt shipped inside the artifact."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   tests:
-    name: Windows test suite (first-ever run)
+    name: Windows and relay test suite
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           global-json-file: global.json
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.21.0
       - run: dotnet restore DuduDesktop.slnx
       - run: dotnet build DuduDesktop.slnx -c Release --no-restore
       # One step per project with its own timeout so a hang names its project
@@ -92,3 +186,14 @@ jobs:
         if: always()
         run: pwsh scripts/find-hung-tests.ps1 -Project tests/Dudu.App.Tests/Dudu.App.Tests.csproj -TimeoutSeconds 90
         timeout-minutes: 25
+      - name: Relay dependencies and unit tests
+        if: always()
+        working-directory: relay
+        run: |
+          npm ci
+          npm run typecheck
+          npm test -- --run
+      - name: Relay browser E2E
+        if: always()
+        working-directory: relay
+        run: npm run test:e2e

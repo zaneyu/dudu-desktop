@@ -112,7 +112,7 @@ public sealed record NotificationActivation(
         string key,
         out string value)
     {
-        if (values.TryGetValue(key, out var found) && !string.IsNullOrWhiteSpace(found))
+        if (values.TryGetValue(key, out var found) && IsConstrainedId(found))
         {
             value = found;
             return true;
@@ -120,5 +120,31 @@ public sealed record NotificationActivation(
 
         value = string.Empty;
         return false;
+    }
+
+    /// <summary>Constrains toast argument ids to a safe alphabet so a crafted
+    /// activation cannot inject path/query content downstream. Non-empty,
+    /// max 128 chars, ASCII letters/digits plus '-' and '_' only.</summary>
+    private static bool IsConstrainedId(string? candidate)
+    {
+        if (string.IsNullOrWhiteSpace(candidate) || candidate.Length > 128)
+        {
+            return false;
+        }
+
+        foreach (var ch in candidate)
+        {
+            if ((ch >= 'A' && ch <= 'Z')
+                || (ch >= 'a' && ch <= 'z')
+                || (ch >= '0' && ch <= '9')
+                || ch == '-' || ch == '_')
+            {
+                continue;
+            }
+
+            return false;
+        }
+
+        return true;
     }
 }

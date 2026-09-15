@@ -38,7 +38,11 @@ public sealed class LocalDataMaintenanceService
 
     public async Task DeleteAllUserDataAsync(CancellationToken cancellationToken = default)
     {
-        using (await _database.EnterMaintenanceAsync(cancellationToken))
+        // The maintenance lease is held for the entire wipe — rows, reseed, and file deletions.
+        // Releasing it before deleting backups/secrets/restore artifacts would let a concurrent
+        // writer recreate rows or files between the transactional delete and the file sweep,
+        // leaving recoverable copies behind after "delete local data" reported success.
+        using var maintenance = await _database.EnterMaintenanceAsync(cancellationToken);
         {
             await using var connection = new SqliteConnection(
                 new SqliteConnectionStringBuilder
@@ -46,6 +50,11 @@ public sealed class LocalDataMaintenanceService
                     DataSource = _options.DatabasePath,
                     Mode = SqliteOpenMode.ReadWrite,
                     ForeignKeys = true,
+                    // The WAL sidecars are removed below. Do not return this
+                    // maintenance connection to the pool after its dispose;
+                    // a pooled handle can keep the deleted WAL attached to
+                    // the next connection and cause a disk I/O error.
+                    Pooling = false,
                 }.ToString());
             await connection.OpenAsync(cancellationToken);
             Database.ConfigureConnection(connection);
@@ -85,6 +94,7 @@ public sealed class LocalDataMaintenanceService
         }
 
         DeleteFiles(_options.BackupDirectory, "*.db", cancellationToken);
+        DeleteRestoreArtifacts(cancellationToken);
         DeleteFiles(_secretsDirectory, "*.bin", cancellationToken);
     }
 
@@ -98,6 +108,30 @@ public sealed class LocalDataMaintenanceService
         {
             cancellationToken.ThrowIfCancellationRequested();
             File.Delete(path);
+        }
+    }
+
+    private void DeleteRestoreArtifacts(CancellationToken cancellationToken)
+    {
+        var directory = Path.GetDirectoryName(_options.DatabasePath);
+        if (directory is null || !Directory.Exists(directory)) return;
+
+        var databasePath = Path.GetFullPath(_options.DatabasePath);
+        var prefixes = new[]
+        {
+            databasePath + ".restore-",
+            databasePath + ".restore-old-",
+            databasePath + ".restore-failed-",
+        };
+        foreach (var path in Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (path.Equals(databasePath + "-wal", StringComparison.OrdinalIgnoreCase)
+                || path.Equals(databasePath + "-shm", StringComparison.OrdinalIgnoreCase)
+                || prefixes.Any(prefix => path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+            {
+                File.Delete(path);
+            }
         }
     }
 }

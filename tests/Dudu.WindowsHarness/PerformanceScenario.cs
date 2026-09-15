@@ -8,6 +8,11 @@ using System.Globalization;
 /// (see <c>DUDU_PERFORMANCE_ALLOCATION_REPORT</c> in <c>App.xaml.cs</c>).
 /// </summary>
 internal readonly record struct PerformanceReport(
+    int SchemaVersion,
+    string RunId,
+    DateTimeOffset GeneratedUtc,
+    double DurationSeconds,
+    bool HarnessCompleted,
     double LaunchToFirstOverlayMilliseconds,
     double IdleCpuPercent,
     double AnimationCpuPercent,
@@ -16,6 +21,11 @@ internal readonly record struct PerformanceReport(
 {
     public string ToJson() => string.Create(CultureInfo.InvariantCulture, $$"""
         {
+          "schemaVersion": {{SchemaVersion}},
+          "runId": "{{RunId}}",
+          "generatedUtc": "{{GeneratedUtc.ToString("O", CultureInfo.InvariantCulture)}}",
+          "durationSeconds": {{DurationSeconds}},
+          "harnessCompleted": {{(HarnessCompleted ? "true" : "false")}},
           "launchToFirstOverlayMs": {{LaunchToFirstOverlayMilliseconds}},
           "idleCpuPercent": {{IdleCpuPercent}},
           "animationCpuPercent": {{AnimationCpuPercent}},
@@ -106,6 +116,7 @@ internal static class PerformanceScenario
 
         var outputPath = ReadOption(args, "--output")
             ?? Path.Combine("artifacts", "performance", "performance-report.json");
+        var runId = ReadOption(args, "--run-id") ?? Guid.NewGuid().ToString("D");
         var idleSeconds = ReadIntOption(args, "--idle-seconds") ?? (int)TimeSpan.FromMinutes(5).TotalSeconds;
         var animationSeconds = ReadIntOption(args, "--animation-seconds") ?? (int)TimeSpan.FromMinutes(3).TotalSeconds;
 
@@ -150,11 +161,16 @@ internal static class PerformanceScenario
             Console.WriteLine($"Allocation slope: {allocationSlope:F2} MB/hour");
 
             var report = new PerformanceReport(
-                launchToOverlayMs,
-                idleCpuPercent,
-                animationCpuPercent,
-                peakWorkingSetBytes,
-                allocationSlope);
+                SchemaVersion: 1,
+                RunId: runId,
+                GeneratedUtc: DateTimeOffset.UtcNow,
+                DurationSeconds: Stopwatch.GetElapsedTime(launchStarted).TotalSeconds,
+                HarnessCompleted: true,
+                LaunchToFirstOverlayMilliseconds: launchToOverlayMs,
+                IdleCpuPercent: idleCpuPercent,
+                AnimationCpuPercent: animationCpuPercent,
+                PeakWorkingSetBytes: peakWorkingSetBytes,
+                AllocationSlopeMegabytesPerHour: allocationSlope);
 
             var outputDirectory = Path.GetDirectoryName(Path.GetFullPath(outputPath));
             if (!string.IsNullOrEmpty(outputDirectory))

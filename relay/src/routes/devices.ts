@@ -7,7 +7,7 @@ import {
   insertDevice,
   type DeviceRecord,
 } from "../db/devices.js";
-import { insertPairingCode } from "../db/pairings.js";
+import { insertPairingCode, deleteUnredeemedPairingCodesForDevice } from "../db/pairings.js";
 import type { Env } from "../env.js";
 import { JsonBodyTooLargeError, readJsonBody, UnsupportedMediaTypeError } from "../http/body.js";
 import {
@@ -19,17 +19,29 @@ import {
   unauthorized,
   unsupportedMediaType,
 } from "../http/responses.js";
-import { enforceRateLimit, clientIpFromRequest } from "../security/rateLimit.js";
+import { clientIpFromRequest, enforceRateLimit, GLOBAL_RATE_LIMIT_KEY } from "../security/rateLimit.js";
+import { isSecureTransport } from "../security/transport.js";
 import {
   base64UrlToBytes,
   generateCapabilityToken,
   generatePairingCode,
   hmacSha256Hex,
+  isPlausibleCapabilityToken,
   sha256Hex,
   sha256HexOfText,
 } from "../security/tokens.js";
 
 const REGISTER_RATE_LIMIT_PER_HOUR = 5;
+/** IP-independent cap on registrations across all callers, so rotating source addresses cannot
+ * mint unbounded device rows. A single-couple deployment registers a handful of times at most. */
+const GLOBAL_REGISTER_RATE_LIMIT_PER_HOUR = 20;
+/**
+ * Per-device hourly caps, keyed by device id (not IP) via the existing rate-limit helper: mint
+ * and rotation are authenticated actions, so the identity that benefits is the right unit to
+ * throttle. Rotation is the tighter of the two — it revokes sessions and wipes the queue.
+ */
+const PAIRING_CODE_MINT_RATE_LIMIT_PER_HOUR = 10;
+const ROTATE_KEY_RATE_LIMIT_PER_HOUR = 5;
 const PAIRING_CODE_VALIDITY_MS = 10 * 60_000;
 
 /** Validates `publicKey` as a Base64URL-encoded P-256 SPKI public key, without importing it for
@@ -45,9 +57,17 @@ async function parsePublicKeyOrThrow(publicKey: unknown): Promise<string> {
 
 /** Authenticates a device by its `Authorization: Bearer <desktopToken>` header. */
 export async function authenticateDevice(request: Request, env: Env): Promise<DeviceRecord | null> {
+  if (!isSecureTransport(request)) {
+    return null;
+  }
   const header = request.headers.get("Authorization") ?? "";
   const match = /^Bearer (.+)$/.exec(header);
   if (!match) {
+    return null;
+  }
+  // Length/charset precheck before hashing: only a 43–44 character Base64URL value can be a
+  // token this relay minted. Garbage never reaches the SHA-256 or the device lookup.
+  if (!isPlausibleCapabilityToken(match[1])) {
     return null;
   }
   const desktopTokenHash = await sha256HexOfText(match[1]);
@@ -55,6 +75,9 @@ export async function authenticateDevice(request: Request, env: Env): Promise<De
 }
 
 export async function registerDevice(request: Request, env: Env): Promise<Response> {
+  if (!isSecureTransport(request)) {
+    return badRequest("Device credentials require HTTPS outside loopback.");
+  }
   const allowed = await enforceRateLimit(
     env.DB,
     "register-device",
@@ -62,6 +85,11 @@ export async function registerDevice(request: Request, env: Env): Promise<Respon
     REGISTER_RATE_LIMIT_PER_HOUR,
   );
   if (!allowed) {
+    return tooManyRequests();
+  }
+  // Global check second, so a caller already over its per-IP cap does not also drain the
+  // shared budget.
+  if (!(await enforceRateLimit(env.DB, "register-device", GLOBAL_RATE_LIMIT_KEY, GLOBAL_REGISTER_RATE_LIMIT_PER_HOUR))) {
     return tooManyRequests();
   }
 
@@ -129,6 +157,19 @@ export async function rotateDeviceKey(request: Request, env: Env): Promise<Respo
     return unauthorized();
   }
 
+  // Per-device rotation cap, checked before the body is even read: rotation revokes every
+  // sender session and wipes the queued ciphertext, so a compromised-or-looping client must
+  // not be able to fire it unboundedly.
+  const allowed = await enforceRateLimit(
+    env.DB,
+    "rotate-key",
+    device.id,
+    ROTATE_KEY_RATE_LIMIT_PER_HOUR,
+  );
+  if (!allowed) {
+    return tooManyRequests();
+  }
+
   let body: unknown;
   try {
     body = await readJsonBody(request);
@@ -154,8 +195,8 @@ export async function rotateDeviceKey(request: Request, env: Env): Promise<Respo
   const newDesktopTokenHash = await sha256HexOfText(newDesktopToken);
   const revokedUtc = new Date().toISOString();
 
-  // Task 18 appends a `DELETE FROM messages WHERE device_id = ?` statement to this same batch
-  // (via buildRotateKeyStatements) once the messages table exists, keeping rotation atomic.
+  // One atomic batch (see `buildRotateKeyStatements`): new key/token, revoked sender sessions,
+  // and the wiped queue together with its status and ownership rows.
   await env.DB.batch(
     buildRotateKeyStatements(env.DB, {
       deviceId: device.id,
@@ -173,9 +214,23 @@ export async function createDevicePairingCode(request: Request, env: Env): Promi
   if (!device) {
     return unauthorized();
   }
+  // Per-device mint cap, before any minting work: each mint invalidates the previous code, so
+  // without a cap a looping client could churn codes (and sessions) without bound.
+  const allowed = await enforceRateLimit(
+    env.DB,
+    "pairing-code-mint",
+    device.id,
+    PAIRING_CODE_MINT_RATE_LIMIT_PER_HOUR,
+  );
+  if (!allowed) {
+    return tooManyRequests();
+  }
   const code = generatePairingCode();
   const codeHash = await hmacSha256Hex(env.PAIRING_CODE_PEPPER, code);
   const expiresUtc = new Date(Date.now() + PAIRING_CODE_VALIDITY_MS).toISOString();
+  // Cap live codes at one: minting a fresh code retires every still-unredeemed predecessor, so
+  // repeated minting can never accumulate a set of simultaneously-valid redeem oracles.
+  await deleteUnredeemedPairingCodesForDevice(env.DB, device.id);
   await insertPairingCode(env.DB, { codeHash, deviceId: device.id, expiresUtc });
   return jsonResponse({ code, expiresUtc }, 201);
 }

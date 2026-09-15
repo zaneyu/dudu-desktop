@@ -18,8 +18,19 @@ public sealed class AwaitableUiDispatcher
         cancellationToken.ThrowIfCancellationRequested();
         if (_hasThreadAccess())
         {
-            callback();
-            return Task.CompletedTask;
+            try
+            {
+                callback();
+                return Task.CompletedTask;
+            }
+            catch (OperationCanceledException exception)
+            {
+                return Task.FromCanceled(exception.CancellationToken);
+            }
+            catch (Exception exception)
+            {
+                return Task.FromException(exception);
+            }
         }
 
         var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

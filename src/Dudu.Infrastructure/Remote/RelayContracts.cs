@@ -11,6 +11,14 @@ internal static class RelaySecretKeys
 {
     public const string DesktopToken = "relay-desktop-token-v1";
     public const string DeviceId = "relay-device-id-v1";
+
+    /// <summary>
+    /// Staging slot for a freshly rotated bearer token: the new token is written here first and
+    /// copied to <see cref="DesktopToken"/> only once the staging write has succeeded, so a failed
+    /// rotation never leaves a half-written active credential. Dots are avoided because the DPAPI
+    /// store restricts key names to <c>^[a-z0-9-]{1,64}$</c>.
+    /// </summary>
+    public const string DesktopTokenStaging = "relay-desktop-token-v1-staging";
 }
 
 internal sealed record RegisterDeviceRequestDto(

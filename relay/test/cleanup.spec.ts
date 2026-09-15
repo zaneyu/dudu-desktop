@@ -43,20 +43,19 @@ describe("hourly cleanup", () => {
     expect(statusRow).toBeNull();
   });
 
-  it("expires a queued (never-delivered) status row 24h after creation, well before the 30-day ciphertext retention", async () => {
+  it("keeps an undelivered message's status queued while its ciphertext is retained", async () => {
     const paired = await pairedFixtureWithMessage();
 
-    // 25h out: past the status row's 24h-from-creation expiry, but nowhere near the ciphertext's
-    // 30-day retention window. If `message_status.expires_utc` had been set to the 30-day value
-    // instead of createdUtc+24h, this sweep would not delete it and the status check below would
-    // still return 200, not 404.
+    // 25h out (a desktop offline for a day): the status row now lives as long as the ciphertext,
+    // so the sender must still see "queued", not "expired" or 404.
     await cleanupExpired(testEnv, new Date(Date.now() + 25 * 60 * 60 * 1000));
 
     expect(await messageCiphertext(paired.messageId)).not.toBeNull();
     const statusResponse = await fetchWorker(`/v1/messages/${paired.messageId}/status`, {
       headers: { Cookie: paired.sessionCookie },
     });
-    expect(statusResponse.status).toBe(404);
+    expect(statusResponse.status).toBe(200);
+    expect(await statusResponse.json()).toEqual({ status: "queued" });
   });
 
   it("keeps a scheduled queued status until after its delivery window", async () => {

@@ -74,13 +74,18 @@ export async function getSenderDevice(): Promise<GetSenderDeviceResponse | null>
   throw new ApiHttpError(response.status, await parseErrorBody(response));
 }
 
-/** Best-effort: the caller clears local pairing state regardless of what this does. */
+/** Clears local pairing state only after the relay confirms revocation with HTTP 204. */
 export async function disconnectSender(): Promise<void> {
+  let response: Response;
   try {
-    await fetch("/v1/sender/disconnect", { method: "POST", credentials: "same-origin" });
+    response = await fetch("/v1/sender/disconnect", { method: "POST", credentials: "same-origin" });
   } catch {
-    // Local state is cleared by the caller either way; a network failure here is not fatal.
+    throw new ApiNetworkError("Could not reach the relay.");
   }
+  if (response.status === 204) {
+    return;
+  }
+  throw new ApiHttpError(response.status, await parseErrorBody(response));
 }
 
 export async function postMessage(envelope: EncryptedEnvelopeV1): Promise<PostMessageResponse> {

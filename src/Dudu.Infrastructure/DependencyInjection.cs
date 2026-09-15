@@ -53,14 +53,19 @@ public static class DependencyInjection
             provider.GetRequiredService<CompanionFeatureTransactionService>());
         services.AddSingleton<IClock, SystemClock>();
         services.AddSingleton<IRandomSource, CryptographicRandomSource>();
-        services.AddSingleton<Preferences>(static _ => DefaultPreferences());
+        services.AddSingleton<Preferences>(static _ => Preferences.Default);
         services.AddSingleton<IReminderDueSink, NullReminderDueSink>();
 
         services.AddSingleton<CheckInService>();
         services.AddSingleton<FocusService>();
         services.AddSingleton<TaskService>();
         services.AddSingleton<ReminderEngine>();
-        services.AddSingleton<LocalNoteSelector>();
+        services.AddSingleton<LocalNoteSelector>(static provider => new LocalNoteSelector(
+            provider.GetRequiredService<ILocalNoteRepository>(),
+            provider.GetRequiredService<IClock>(),
+            provider.GetRequiredService<IRandomSource>(),
+            provider.GetRequiredService<IPreferencesRepository>(),
+            provider.GetRequiredService<Preferences>()));
         services.AddSingleton<AmbientScheduler>();
         services.AddSingleton(static _ => PetStateMachine.CreateIdle());
 
@@ -104,16 +109,6 @@ public static class DependencyInjection
         services.AddSingleton<TInterface>(static provider =>
             provider.GetRequiredService<TImplementation>());
     }
-
-    private static Preferences DefaultPreferences() => new(
-        AppTheme.System,
-        new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-        ReducedMotion: false,
-        LocalNoteDailyLimit: 3,
-        LaunchAtSignIn: true,
-        AlwaysOnTop: false,
-        HidePetDuringFullscreen: true,
-        AmbientMinimumInterval: TimeSpan.FromMinutes(15));
 
     private sealed class CryptographicRandomSource : IRandomSource
     {

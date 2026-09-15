@@ -154,7 +154,13 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
 
     public nint Handle => (nint)_window.Value;
 
-    public bool IsVisible { get; private set; }
+    // Desired visibility is written synchronously by Show/Hide so cross-thread
+    // readers (lifecycle adapter, coordinator) never observe a stale value
+    // while the owner action is still queued. The owner action applies the
+    // latest desired state, so out-of-order show/hide posts converge.
+    private volatile bool _desiredVisible;
+
+    public bool IsVisible => _desiredVisible;
 
     internal Task<OverlayWindowHost> CreationTask => _created.Task;
 
@@ -180,18 +186,30 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         return _presenter.PresentAsync(frame, cancellationToken);
     }
 
-    public void Show() => PostToOwner(() =>
+    public void Show()
     {
-        IsVisible = true;
-        _ = PInvoke.ShowWindow(_window, SHOW_WINDOW_CMD.SW_SHOWNOACTIVATE);
-    });
+        _desiredVisible = true;
+        PostToOwner(ApplyDesiredVisibility);
+    }
 
-    public void Hide() => PostToOwner(() =>
+    public void Hide()
     {
-        IsVisible = false;
-        _ = PInvoke.ShowWindow(_window, SHOW_WINDOW_CMD.SW_HIDE);
-        ReleasePointerCapture();
-    });
+        _desiredVisible = false;
+        PostToOwner(ApplyDesiredVisibility);
+    }
+
+    private void ApplyDesiredVisibility()
+    {
+        if (_desiredVisible)
+        {
+            _ = PInvoke.ShowWindow(_window, SHOW_WINDOW_CMD.SW_SHOWNOACTIVATE);
+        }
+        else
+        {
+            _ = PInvoke.ShowWindow(_window, SHOW_WINDOW_CMD.SW_HIDE);
+            ReleasePointerCapture();
+        }
+    }
 
     public void SetPlacement(PetPlacement placement)
     {
@@ -467,7 +485,8 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
 
             if (result < 0)
             {
-                FailOnOwnerThread(LastWin32Error("GetMessage"));
+                // GetMessage failure ends the loop; teardown runs in OwnerThreadMain.
+                ReportDiagnostic(LastWin32Error("GetMessage"));
                 break;
             }
 
@@ -650,7 +669,9 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         }
         catch (Exception exception)
         {
-            FailOnOwnerThread(exception);
+            // Owner-drain faults are per-action diagnostics; only window
+            // creation failures tear down the host.
+            ReportDiagnostic(exception);
         }
     }
 
@@ -680,15 +701,32 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
 
     private void HandleMessage(uint message, WPARAM wParam, LPARAM lParam)
     {
-        if (_ownerMessageRouter.Dispatch(message))
+        try
         {
+            if (_ownerMessageRouter.Dispatch(message))
+            {
+                return;
+            }
+        }
+        catch (Exception exception)
+        {
+            ReportDiagnostic(exception);
             return;
         }
 
-        _systemMessageHandler?.Invoke(message, (nint)wParam.Value, (nint)lParam.Value);
-
-        switch (message)
+        try
         {
+            _systemMessageHandler?.Invoke(message, (nint)wParam.Value, (nint)lParam.Value);
+        }
+        catch (Exception exception)
+        {
+            ReportDiagnostic(exception);
+        }
+
+        try
+        {
+            switch (message)
+            {
             case WmLButtonDown:
                 if (TryArmActionSurfacePointer(lParam)) break;
                 _petBodyPointerArmed = BeginDrag(lParam);
@@ -751,6 +789,12 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                     PInvoke.PostQuitMessage(0);
                 }
                 break;
+            }
+        }
+        catch (Exception exception)
+        {
+            // Per-message containment: report and continue the message loop.
+            ReportDiagnostic(exception);
         }
     }
 
@@ -848,12 +892,6 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         PInvoke.PostQuitMessage(0);
     }
 
-    private void FailOnOwnerThread(Exception exception)
-    {
-        ReportDiagnostic(exception);
-        ShutdownOnOwnerThread();
-    }
-
     private static (int X, int Y) GetClientPoint(LPARAM lParam)
     {
         var value = unchecked((long)lParam.Value);
@@ -873,20 +911,28 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
 
                 if (message == WmNcHitTest)
                 {
-                    var point = GetClientPoint(lParam);
-                    return new LRESULT(host.IsInteractive(
-                        point.X - host._windowBounds.X,
-                        point.Y - host._windowBounds.Y)
-                        ? HTCLIENT
-                        : HTTRANSPARENT);
+                    try
+                    {
+                        var point = GetClientPoint(lParam);
+                        return new LRESULT(host.IsInteractive(
+                            point.X - host._windowBounds.X,
+                            point.Y - host._windowBounds.Y)
+                            ? HTCLIENT
+                            : HTTRANSPARENT);
+                    }
+                    catch (Exception exception)
+                    {
+                        host.ReportDiagnostic(exception);
+                        return new LRESULT(HTTRANSPARENT);
+                    }
                 }
 
                 host.HandleMessage(message, wParam, lParam);
             }
             catch (Exception exception)
             {
-                host.FailOnOwnerThread(exception);
-                return new LRESULT(0);
+                // Per-message containment: report and continue to DefWindowProc.
+                host.ReportDiagnostic(exception);
             }
         }
 

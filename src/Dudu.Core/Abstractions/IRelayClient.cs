@@ -89,6 +89,18 @@ public sealed class RelayProtocolException : RemoteSyncException
 }
 
 /// <summary>
+/// The relay returned HTTP 404: an unknown (or another device's) message id on acknowledge, or a
+/// device row that no longer exists on a device query. Never carries ids or tokens.
+/// </summary>
+public sealed class RelayNotFoundException : RemoteSyncException
+{
+    public RelayNotFoundException(string message = "The relay did not find the requested resource.")
+        : base(message)
+    {
+    }
+}
+
+/// <summary>
 /// The desktop's authenticated surface onto the relay Worker. Every member takes a
 /// <see cref="CancellationToken"/> and never logs or echoes tokens, keys, ciphertext, plaintext,
 /// or pairing codes.

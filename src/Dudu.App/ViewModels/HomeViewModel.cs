@@ -22,18 +22,18 @@ public sealed class HomeViewModel : FeatureViewModelBase
     public HomeViewModel(CompanionFeatureContext context)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
-        RefreshCommand = new AsyncRelayCommand(() => RefreshAsync(CancellationToken.None));
-        PetCommand = new AsyncRelayCommand(() => PetAsync(CancellationToken.None));
-        PauseForOneHourCommand = new AsyncRelayCommand(() =>
-            SetPauseAsync(PausePolicy.ForOneHour(_context.Clock.UtcNow), CancellationToken.None));
-        ResumeCommand = new AsyncRelayCommand(() =>
-            SetPauseAsync(PauseState.None, CancellationToken.None));
-        CreateCountdownCommand = new AsyncRelayCommand(() =>
-            SaveCountdownAsync(CancellationToken.None));
+        RefreshCommand = new AsyncRelayCommand((CancellationToken ct) => RefreshAsync(ct));
+        PetCommand = new AsyncRelayCommand((CancellationToken ct) => PetAsync(ct));
+        PauseForOneHourCommand = new AsyncRelayCommand((CancellationToken ct) =>
+            SetPauseAsync(PausePolicy.ForOneHour(_context.Clock.UtcNow), ct));
+        ResumeCommand = new AsyncRelayCommand((CancellationToken ct) =>
+            SetPauseAsync(PauseState.None, ct));
+        CreateCountdownCommand = new AsyncRelayCommand((CancellationToken ct) =>
+            SaveCountdownAsync(ct));
         SelectCountdownCommand = new RelayCommand<Countdown>(SelectCountdown);
-        DeleteCountdownCommand = new AsyncRelayCommand<Countdown>(DeleteCountdownAsync);
-        RecordCheckInCommand = new AsyncRelayCommand(() =>
-            RecordCheckInAsync(CancellationToken.None));
+        DeleteCountdownCommand = new AsyncRelayCommand<Countdown>((item, ct) => DeleteCountdownAsync(item, ct));
+        RecordCheckInCommand = new AsyncRelayCommand((CancellationToken ct) =>
+            RecordCheckInAsync(ct));
     }
 
     public IAsyncRelayCommand RefreshCommand { get; }
@@ -97,7 +97,9 @@ public sealed class HomeViewModel : FeatureViewModelBase
 
     public string NextReminderText => NextReminder is null
         ? "no reminders yet ah"
-        : $"next reminder {NextReminder.Title} at {NextReminder.NextDueUtc.ToLocalTime():g}";
+        : NextReminder.NextDueUtc is { } nextDue
+            ? $"next reminder {NextReminder.Title} at {nextDue.ToLocalTime():g}"
+            : "no reminders yet ah";
 
     public string ActiveFocusText => ActiveFocus is null
         ? "no focus running ah"
@@ -155,30 +157,37 @@ public sealed class HomeViewModel : FeatureViewModelBase
 
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
     {
-        await RunAsync(async () =>
+        await RunRefreshAsync(async ct =>
         {
-            var reminders = await _context.Reminders.ListAsync(cancellationToken);
-            NextReminder = reminders
-                .Where(reminder => reminder.Enabled)
-                .OrderBy(reminder => reminder.NextDueUtc)
-                .FirstOrDefault();
-            ActiveFocus = await _context.FocusService.GetCurrentAsync(cancellationToken);
-
-            Countdowns.Clear();
-            foreach (var countdown in await _context.Countdowns.ListAsync(cancellationToken))
+            var reminders = await _context.Reminders.ListAsync(ct);
+            var focus = await _context.FocusService.GetCurrentAsync(ct);
+            var countdowns = await _context.Countdowns.ListAsync(ct);
+            var summary = await _context.CheckInService.SummarizeAsync(7, ct);
+            await MutateAsync(() =>
             {
-                Countdowns.Add(countdown);
-            }
+                NextReminder = reminders
+                    .Where(reminder => reminder.Enabled)
+                    .Where(reminder => reminder.NextDueUtc is not null)
+                    .OrderBy(reminder => reminder.NextDueUtc)
+                    .FirstOrDefault();
+                ActiveFocus = focus;
 
-            CheckInSummary = await _context.CheckInService.SummarizeAsync(7, cancellationToken);
-            RecentCheckIns.Clear();
-            foreach (var checkIn in CheckInSummary.Recent) RecentCheckIns.Add(checkIn);
-            OnPropertyChanged(nameof(IsPaused));
-            OnPropertyChanged(nameof(PauseDescription));
-            OnPropertyChanged(nameof(PetStateText));
-            OnPropertyChanged(nameof(PetAnimationText));
-            OnPropertyChanged(nameof(CheckInSummaryText));
-        });
+                Countdowns.Clear();
+                foreach (var countdown in countdowns)
+                {
+                    Countdowns.Add(countdown);
+                }
+
+                CheckInSummary = summary;
+                RecentCheckIns.Clear();
+                foreach (var checkIn in CheckInSummary.Recent) RecentCheckIns.Add(checkIn);
+                OnPropertyChanged(nameof(IsPaused));
+                OnPropertyChanged(nameof(PauseDescription));
+                OnPropertyChanged(nameof(PetStateText));
+                OnPropertyChanged(nameof(PetAnimationText));
+                OnPropertyChanged(nameof(CheckInSummaryText));
+            }, ct);
+        }, cancellationToken);
     }
 
     public Task PetAsync(CancellationToken cancellationToken = default) =>
@@ -232,10 +241,13 @@ public sealed class HomeViewModel : FeatureViewModelBase
                 isAllDay: false,
                 TimeZoneInfo.Local);
             await _context.Countdowns.SaveAsync(countdown, cancellationToken);
-            var existing = Countdowns.FirstOrDefault(item => item.Id == countdown.Id);
-            if (existing is null) Countdowns.Add(countdown);
-            else Countdowns[Countdowns.IndexOf(existing)] = countdown;
-            SelectCountdown(null);
+            await MutateAsync(() =>
+            {
+                var existing = Countdowns.FirstOrDefault(item => item.Id == countdown.Id);
+                if (existing is null) Countdowns.Add(countdown);
+                else Countdowns[Countdowns.IndexOf(existing)] = countdown;
+                SelectCountdown(null);
+            }, cancellationToken);
         }, "oki countdown saved");
 
     public Task DeleteCountdownAsync(
@@ -246,9 +258,12 @@ public sealed class HomeViewModel : FeatureViewModelBase
         return RunAsync(async () =>
         {
             await _context.Countdowns.DeleteAsync(countdown.Id, cancellationToken);
-            var existing = Countdowns.FirstOrDefault(item => item.Id == countdown.Id);
-            if (existing is not null) Countdowns.Remove(existing);
-            if (SelectedCountdown?.Id == countdown.Id) SelectCountdown(null);
+            await MutateAsync(() =>
+            {
+                var existing = Countdowns.FirstOrDefault(item => item.Id == countdown.Id);
+                if (existing is not null) Countdowns.Remove(existing);
+                if (SelectedCountdown?.Id == countdown.Id) SelectCountdown(null);
+            }, cancellationToken);
         }, "okkk countdown deleted le");
     }
 
@@ -259,10 +274,14 @@ public sealed class HomeViewModel : FeatureViewModelBase
                 SelectedMood,
                 CheckInNote,
                 cancellationToken);
-            CheckInSummary = await _context.CheckInService.SummarizeAsync(7, cancellationToken);
-            RecentCheckIns.Clear();
-            foreach (var checkIn in CheckInSummary.Recent) RecentCheckIns.Add(checkIn);
-            CheckInNote = null;
-            OnPropertyChanged(nameof(CheckInSummaryText));
+            var summary = await _context.CheckInService.SummarizeAsync(7, cancellationToken);
+            await MutateAsync(() =>
+            {
+                CheckInSummary = summary;
+                RecentCheckIns.Clear();
+                foreach (var checkIn in CheckInSummary.Recent) RecentCheckIns.Add(checkIn);
+                CheckInNote = null;
+                OnPropertyChanged(nameof(CheckInSummaryText));
+            }, cancellationToken);
         }, "oki noted mwamwa");
 }

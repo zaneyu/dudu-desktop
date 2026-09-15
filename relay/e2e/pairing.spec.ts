@@ -9,6 +9,16 @@ test("disconnect removes the paired composer", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Pair privately" })).toBeVisible();
 });
 
+test("disconnect failure reports failure and keeps the paired composer", async ({ page }) => {
+  const api = await openPairedSender(page);
+  api.failNextDisconnect = "abort";
+
+  await page.getByRole("button", { name: "Disconnect this phone" }).click();
+
+  await expect(page.getByTestId("disconnect-status")).toHaveText("aiyo couldnt disconnect try again");
+  await expect(page.getByLabel("Message")).toBeVisible();
+});
+
 test("pairs and sends a note using only the keyboard", async ({ page, browserName }) => {
   const api = await mockRelay(page);
   await page.goto("/");

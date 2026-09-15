@@ -399,8 +399,8 @@ public sealed class OnboardingViewModelTests
         public List<Reminder> Saved { get; } = [];
         public Task<IReadOnlyList<Reminder>> LoadDueAsync(DateTimeOffset utcNow, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<Reminder>>(Saved);
-        public Task RecordOccurrencesAndAdvanceAsync(Reminder reminder, IReadOnlyList<ReminderOccurrence> occurrences, DateTimeOffset? nextDueUtc, CancellationToken cancellationToken) =>
-            Task.CompletedTask;
+        public Task<bool> RecordOccurrencesAndAdvanceAsync(Reminder reminder, IReadOnlyList<ReminderOccurrence> occurrences, DateTimeOffset? nextDueUtc, CancellationToken cancellationToken) =>
+            Task.FromResult(true);
         public Task SaveAsync(Reminder reminder, CancellationToken cancellationToken = default)
         {
             Saved.RemoveAll(item => item.Id == reminder.Id);
@@ -449,12 +449,6 @@ public sealed class OnboardingViewModelTests
         }
 
         public Task<TResult> ExecuteAsync<TResult>(Func<IAppUnitOfWorkContext, CancellationToken, Task<TResult>> action, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-
-        public Task ExecuteAsync(Func<CancellationToken, Task> action, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-
-        public Task<TResult> ExecuteAsync<TResult>(Func<CancellationToken, Task<TResult>> action, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
     }
 

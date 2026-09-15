@@ -28,6 +28,8 @@ export interface MockRelay {
    * ones the mock then made fail via `failNextSend` -- lets a test see whether a retry reused the
    * same id (identical retry) or minted a new one (the draft changed since the last attempt). */
   sentMessageIds: string[];
+  /** Failure returned by the next sender disconnect, for local-state retention coverage. */
+  failNextDisconnect: "abort" | number | null;
 }
 
 const VALID_PAIRING_CODE = "7K9M2R4X";
@@ -37,9 +39,16 @@ async function exportSpkiBase64Url(publicKey: CryptoKey): Promise<string> {
   return Buffer.from(raw).toString("base64url");
 }
 
+async function fingerprintSpki(publicKey: CryptoKey): Promise<string> {
+  const raw = await crypto.subtle.exportKey("spki", publicKey);
+  const digest = await crypto.subtle.digest("SHA-256", raw);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 export async function mockRelay(page: Page): Promise<MockRelay> {
   const recipient = await createRecipientForTest();
   const publicKeySpki = await exportSpkiBase64Url(recipient.publicKey);
+  const publicKeyFingerprint = await fingerprintSpki(recipient.publicKey);
   const deviceId = "mock-device-1";
 
   const state: MockRelay = {
@@ -49,6 +58,7 @@ export async function mockRelay(page: Page): Promise<MockRelay> {
     statuses: new Map(),
     failNextSend: null,
     sentMessageIds: [],
+    failNextDisconnect: null,
   };
 
   await page.route("**/v1/**", async (route) => {
@@ -68,7 +78,7 @@ export async function mockRelay(page: Page): Promise<MockRelay> {
         await route.fulfill({
           status: 200,
           contentType: "application/json",
-          body: JSON.stringify({ publicKey: publicKeySpki, deviceId }),
+          body: JSON.stringify({ publicKey: publicKeySpki, publicKeyFingerprint, deviceId }),
         });
       } else {
         await route.fulfill({
@@ -87,6 +97,7 @@ export async function mockRelay(page: Page): Promise<MockRelay> {
           contentType: "application/json",
           body: JSON.stringify({
             publicKey: publicKeySpki,
+            deviceId,
             deviceCreatedUtc: new Date().toISOString(),
             publicKeyFingerprint: "mock-fingerprint",
           }),
@@ -102,6 +113,20 @@ export async function mockRelay(page: Page): Promise<MockRelay> {
     }
 
     if (method === "POST" && url.pathname === "/v1/sender/disconnect") {
+      if (state.failNextDisconnect !== null) {
+        const failure = state.failNextDisconnect;
+        state.failNextDisconnect = null;
+        if (failure === "abort") {
+          await route.abort("failed");
+        } else {
+          await route.fulfill({
+            status: failure,
+            contentType: "application/json",
+            body: JSON.stringify({ error: "mock_failure", message: "Simulated failure for a test." }),
+          });
+        }
+        return;
+      }
       state.paired = false;
       await route.fulfill({ status: 204, body: "" });
       return;

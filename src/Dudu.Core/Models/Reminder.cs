@@ -42,7 +42,7 @@ public sealed record Reminder(
     string LocalTimeZoneId,
     QuietHoursBehavior QuietHoursBehavior,
     MissedOccurrencePolicy MissedPolicy,
-    DateTimeOffset NextDueUtc,
+    DateTimeOffset? NextDueUtc,
     DateTimeOffset? SnoozedUntilUtc = null,
     QuietHours? QuietHours = null);
 

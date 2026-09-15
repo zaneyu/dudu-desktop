@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Runtime.ExceptionServices;
 using Dudu.Core.Assets;
 using Dudu.Core.Models;
 
@@ -223,7 +222,7 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
                 active = _activeTask;
             }
 
-            WaitForCompletion(active);
+            WaitForCompletionIgnoringFault(active);
             _presentationGate.Wait();
             try
             {
@@ -288,8 +287,10 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
                 {
                     await previous.ConfigureAwait(false);
                 }
-                catch (OperationCanceledException)
+                catch
                 {
+                    // A cancelled or faulted predecessor was already reported to
+                    // its own caller; it must not poison the replacement.
                 }
             }
 
@@ -310,20 +311,9 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
                 _runGate.Release();
             }
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            lock (_stateGate)
-            {
-                _disposed = true;
-                _activeCancellation?.Cancel();
-            }
-
-            // The run gate has been released by the inner finally before this catch.
-            // Cleanup is best-effort so the presenter/composer exception remains primary.
-            DisposeResources();
-            ExceptionDispatchInfo.Capture(exception).Throw();
-            throw;
-        }
+        // Playback faults intentionally do not latch disposal or tear down shared
+        // resources: the fault surfaces to this PlayAsync caller only, and the
+        // next PlayAsync replaces the failed presentation.
         finally
         {
             lock (_stateGate)
@@ -719,22 +709,6 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
         if (options.ReducedMotionFadeDuration > MaximumSemanticDuration)
         {
             throw new ArgumentOutOfRangeException(nameof(options), "Reduced-motion fade duration is too long.");
-        }
-    }
-
-    private static void WaitForCompletion(Task? task)
-    {
-        if (task is null)
-        {
-            return;
-        }
-
-        try
-        {
-            task.GetAwaiter().GetResult();
-        }
-        catch (OperationCanceledException)
-        {
         }
     }
 

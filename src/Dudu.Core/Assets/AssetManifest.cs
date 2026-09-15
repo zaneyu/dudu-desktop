@@ -7,6 +7,21 @@ public static class AssetManifestContract
 {
     public const int CurrentSchemaVersion = 1;
 
+    /// <summary>Maximum frames in a single animation; bounds decode + compose work per frame tick.</summary>
+    public const int MaxFramesPerAnimation = 64;
+
+    /// <summary>Upper bound for a single frame duration; animations are ambient loops, not video.</summary>
+    public const int MaxFrameDurationMs = 10_000;
+
+    /// <summary>Upper bound for the summed duration of one animation loop.</summary>
+    public const int MaxAnimationDurationMs = 10_000;
+
+    /// <summary>Maximum decoded bytes for a single PNG file referenced by a pack.</summary>
+    public const long MaxFileBytes = 2_097_152;
+
+    /// <summary>Maximum summed bytes of every PNG file referenced by a pack.</summary>
+    public const long MaxPackBytes = 33_554_432;
+
     public static IReadOnlyList<string> RequiredAnimationKeys { get; } =
     [
         "idle",
@@ -48,6 +63,10 @@ public static class AssetManifestContract
         if (string.IsNullOrWhiteSpace(manifest.PackId))
         {
             errors.Add("packId is required.");
+        }
+        else if (!IsSafeKey(manifest.PackId))
+        {
+            errors.Add("packId must be a safe identifier (letters, digits, '-', '_', '.').");
         }
 
         if (string.IsNullOrWhiteSpace(manifest.Version))
@@ -177,8 +196,13 @@ public static class AssetManifestContract
         {
             errors.Add($"{path}.frames must contain at least one frame.");
         }
+        else if (animation.Frames.Count > MaxFramesPerAnimation)
+        {
+            errors.Add($"{path}.frames must contain at most {MaxFramesPerAnimation} frames.");
+        }
         else
         {
+            var totalDurationMs = 0L;
             for (var index = 0; index < animation.Frames.Count; index++)
             {
                 var frame = animation.Frames[index];
@@ -197,6 +221,14 @@ public static class AssetManifestContract
                 {
                     errors.Add($"{path}.frames[{index}].durationMs must be positive.");
                 }
+                else if (frame.DurationMs > MaxFrameDurationMs)
+                {
+                    errors.Add($"{path}.frames[{index}].durationMs must not exceed {MaxFrameDurationMs}ms.");
+                }
+                else
+                {
+                    totalDurationMs += frame.DurationMs;
+                }
 
                 if (string.IsNullOrWhiteSpace(frame.Sha256))
                 {
@@ -206,6 +238,11 @@ public static class AssetManifestContract
                 {
                     errors.Add($"{path}.frames[{index}].sha256 must be a 64-character hexadecimal SHA-256.");
                 }
+            }
+
+            if (totalDurationMs > MaxAnimationDurationMs)
+            {
+                errors.Add($"{path} total duration must not exceed {MaxAnimationDurationMs}ms.");
             }
         }
 

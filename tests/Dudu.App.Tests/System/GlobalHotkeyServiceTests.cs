@@ -37,7 +37,9 @@ public sealed class GlobalHotkeyServiceTests
             service.SetGesture(HotkeyGesture.Parse("Ctrl+Shift+D")));
 
         Assert.Equal("Ctrl+Alt+D", service.CurrentGesture.ToString());
-        Assert.Equal(0, native.UnregisterCount);
+        // Unregister-then-register: the old id is released before the new
+        // claim is attempted, then restored best-effort on conflict.
+        Assert.Equal(1, native.UnregisterCount);
     }
 
     [Fact]
@@ -74,18 +76,27 @@ public sealed class GlobalHotkeyServiceTests
     }
 
     [Fact]
-    public void Failed_old_unregister_attempt_unwinds_new_registration_and_preserves_previous()
+    public void Failed_old_unregister_is_best_effort_and_new_registration_proceeds()
     {
         var native = new FakeHotkeyNativeApi();
         using var service = new GlobalHotkeyService(native);
         service.SetGesture(HotkeyGesture.Default);
         native.RejectNextUnregistration();
 
-        Assert.Throws<HotkeyConflictException>(() =>
-            service.SetGesture(HotkeyGesture.Parse("Ctrl+Shift+D")));
+        // Unregister-then-register treats the old unregister as best-effort:
+        // the new gesture is still claimed.
+        service.SetGesture(HotkeyGesture.Parse("Ctrl+Shift+D"));
 
-        Assert.Equal("Ctrl+Alt+D", service.CurrentGesture.ToString());
-        Assert.Equal(2, native.UnregisterCount);
+        Assert.Equal("Ctrl+Shift+D", service.CurrentGesture.ToString());
+        Assert.Equal(1, native.UnregisterCount);
+    }
+
+    [Theory]
+    [InlineData("Ctrl+é")]
+    [InlineData("Ctrl+中")]
+    public void Grammar_rejects_non_ascii_keys(string input)
+    {
+        Assert.Throws<FormatException>(() => HotkeyGesture.Parse(input));
     }
 
     private sealed class FakeHotkeyNativeApi : IGlobalHotkeyNativeApi

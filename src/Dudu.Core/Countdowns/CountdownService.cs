@@ -10,6 +10,12 @@ public static class CountdownService
     {
         ArgumentNullException.ThrowIfNull(countdown);
         nowUtc = nowUtc.ToUniversalTime();
+
+        if (countdown.TargetDate is null && countdown.TargetUtc is null)
+        {
+            return new CountdownDisplay(TimeSpan.Zero, 0);
+        }
+
         var localNow = TimeZoneInfo.ConvertTime(nowUtc, countdown.LocalTimeZone);
 
         if (countdown.IsAllDay || countdown.TargetDate is not null)

@@ -130,10 +130,16 @@ public sealed record HotkeyGesture
     private static bool TryParseKey(string token, out uint key)
     {
         key = 0;
-        if (token.Length == 1 && char.IsLetterOrDigit(token[0]))
+        if (token.Length == 1)
         {
-            key = char.ToUpperInvariant(token[0]);
-            return true;
+            var upper = char.ToUpperInvariant(token[0]);
+            if ((upper >= 'A' && upper <= 'Z') || (upper >= '0' && upper <= '9'))
+            {
+                key = upper;
+                return true;
+            }
+
+            return false;
         }
 
         if (token.Length > 1
@@ -237,21 +243,18 @@ public sealed class GlobalHotkeyService : IDisposable
             }
 
             var previousWindow = _ownerWindow;
+            var previousId = _registeredId;
+            var previousGesture = _currentGesture;
+
+            // Unregister-then-register: the previous binding is released
+            // before the new one is claimed so two ids are never live at
+            // once. On failure the previous binding is restored best-effort.
+            _native.Unregister(previousWindow, previousId);
             var requestedId = _nextId++;
-            if (!_native.Register(ownerWindow, requestedId, _currentGesture.Modifiers, _currentGesture.Key))
+            if (!_native.Register(ownerWindow, requestedId, previousGesture.Modifiers, previousGesture.Key))
             {
+                _native.Register(previousWindow, previousId, previousGesture.Modifiers, previousGesture.Key);
                 throw new HotkeyConflictException("aiyo cant move the global hotkey");
-            }
-
-            if (!_native.Unregister(previousWindow, _registeredId))
-            {
-                if (!_native.Unregister(ownerWindow, requestedId))
-                {
-                    throw new HotkeyConflictException(
-                        "oh no cant restore or undo the hotkey");
-                }
-
-                throw new HotkeyConflictException("cannot move the previous global hotkey");
             }
 
             _ownerWindow = ownerWindow;
@@ -274,21 +277,30 @@ public sealed class GlobalHotkeyService : IDisposable
                 return;
             }
 
-            var requestedId = _registeredId == 0 ? DefaultId : _nextId++;
-            if (!_native.Register(_ownerWindow, requestedId, gesture.Modifiers, gesture.Key))
+            if (_registeredId == 0)
             {
-                throw new HotkeyConflictException($"alala {gesture} already taken by another shortcut");
-            }
-
-            if (_registeredId != 0 && !_native.Unregister(_ownerWindow, _registeredId))
-            {
-                if (!_native.Unregister(_ownerWindow, requestedId))
+                var firstId = DefaultId;
+                if (!_native.Register(_ownerWindow, firstId, gesture.Modifiers, gesture.Key))
                 {
-                    throw new HotkeyConflictException(
-                        "wait cant replace or undo the hotkey");
+                    throw new HotkeyConflictException($"alala {gesture} already taken by another shortcut");
                 }
 
-                throw new HotkeyConflictException("aiyo cant replace the previous global hotkey");
+                _registeredId = firstId;
+                _currentGesture = gesture;
+                return;
+            }
+
+            var previousId = _registeredId;
+            var previousGesture = _currentGesture;
+
+            // Unregister-then-register so only one id is ever live. If the
+            // new gesture is taken, restore the previous binding best-effort.
+            _native.Unregister(_ownerWindow, previousId);
+            var requestedId = _nextId++;
+            if (!_native.Register(_ownerWindow, requestedId, gesture.Modifiers, gesture.Key))
+            {
+                _native.Register(_ownerWindow, previousId, previousGesture.Modifiers, previousGesture.Key);
+                throw new HotkeyConflictException($"alala {gesture} already taken by another shortcut");
             }
 
             _registeredId = requestedId;

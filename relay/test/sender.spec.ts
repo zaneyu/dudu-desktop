@@ -8,7 +8,13 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { MessageComposer, type ComposerElements } from "../sender-src/composer.js";
 import { createRecipientForTest } from "../sender-src/crypto.js";
-import { clearStoredDevice, loadStoredDevice, pairWithCode, verifyStoredSession } from "../sender-src/pairing.js";
+import {
+  clearStoredDevice,
+  disconnect,
+  loadStoredDevice,
+  pairWithCode,
+  verifyStoredSession,
+} from "../sender-src/pairing.js";
 import type { EncryptedEnvelopeV1 } from "../src/protocol/types.js";
 import { bytesToBase64Url } from "../src/security/tokens.js";
 
@@ -120,14 +126,15 @@ describe("sender pairing key pinning", () => {
   });
 
   it("keeps the session when the relay still reports the key seen at pairing", async () => {
-    installFetch(() => jsonOk({ deviceId: "device-1", publicKey: RECIPIENT_PUBLIC_KEY }));
+    const fingerprint = await sha256HexForPublicKey(RECIPIENT_PUBLIC_KEY);
+    installFetch(() => jsonOk({ deviceId: "device-1", publicKey: RECIPIENT_PUBLIC_KEY, publicKeyFingerprint: fingerprint }));
     await pairWithCode("123456");
 
     const result = await verifyStoredSession();
 
     expect(result).toEqual({
       state: "paired",
-      device: { deviceId: "device-1", publicKey: RECIPIENT_PUBLIC_KEY },
+      device: { deviceId: "device-1", publicKey: RECIPIENT_PUBLIC_KEY, publicKeyFingerprint: fingerprint },
     });
     expect(loadStoredDevice()).not.toBeNull();
   });
@@ -135,9 +142,10 @@ describe("sender pairing key pinning", () => {
   it("drops the session when the relay reports a different key than the pinned one", async () => {
     // Review I6: without this pin the relay could hand the sender its own key and read every
     // note. The sender trusts the key it saw at pairing and refuses a silent swap.
-    installFetch(() => jsonOk({ deviceId: "device-1", publicKey: RECIPIENT_PUBLIC_KEY }));
+    const fingerprint = await sha256HexForPublicKey(RECIPIENT_PUBLIC_KEY);
+    installFetch(() => jsonOk({ deviceId: "device-1", publicKey: RECIPIENT_PUBLIC_KEY, publicKeyFingerprint: fingerprint }));
     await pairWithCode("123456");
-    installFetch(() => jsonOk({ deviceId: "device-1", publicKey: OTHER_PUBLIC_KEY }));
+    installFetch(() => jsonOk({ deviceId: "device-1", publicKey: OTHER_PUBLIC_KEY, publicKeyFingerprint: fingerprint }));
 
     const result = await verifyStoredSession();
 
@@ -146,7 +154,8 @@ describe("sender pairing key pinning", () => {
   });
 
   it("reports an unpaired state and clears the cache when the relay says the session is gone", async () => {
-    installFetch(() => jsonOk({ deviceId: "device-1", publicKey: RECIPIENT_PUBLIC_KEY }));
+    const fingerprint = await sha256HexForPublicKey(RECIPIENT_PUBLIC_KEY);
+    installFetch(() => jsonOk({ deviceId: "device-1", publicKey: RECIPIENT_PUBLIC_KEY, publicKeyFingerprint: fingerprint }));
     await pairWithCode("123456");
     installFetch(() => new Response(null, { status: 401 }));
 
@@ -161,6 +170,47 @@ describe("sender pairing key pinning", () => {
     });
 
     expect(await verifyStoredSession()).toEqual({ state: "unpaired" });
+  });
+
+  it("rejects an initial pairing response whose fingerprint does not match its public key", async () => {
+    installFetch(() =>
+      jsonOk({ deviceId: "device-1", publicKey: RECIPIENT_PUBLIC_KEY, publicKeyFingerprint: "00".repeat(32) }),
+    );
+
+    await expect(pairWithCode("123456")).rejects.toThrow("mismatched device fingerprint");
+    expect(loadStoredDevice()).toBeNull();
+  });
+});
+
+describe("sender disconnect", () => {
+  beforeEach(() => {
+    installLocalStorage();
+  });
+
+  it("retains the paired state when the revoke request cannot reach the relay", async () => {
+    const fingerprint = await sha256HexForPublicKey(RECIPIENT_PUBLIC_KEY);
+    installFetch(() => jsonOk({ deviceId: "device-1", publicKey: RECIPIENT_PUBLIC_KEY, publicKeyFingerprint: fingerprint }));
+    await pairWithCode("123456");
+    installFetch(() => {
+      throw new Error("offline");
+    });
+
+    await expect(disconnect()).rejects.toThrow("Could not reach the relay");
+    expect(loadStoredDevice()).not.toBeNull();
+  });
+
+  it("retains the paired state unless the relay returns the revocation confirmation", async () => {
+    const fingerprint = await sha256HexForPublicKey(RECIPIENT_PUBLIC_KEY);
+    installFetch(() => jsonOk({ deviceId: "device-1", publicKey: RECIPIENT_PUBLIC_KEY, publicKeyFingerprint: fingerprint }));
+    await pairWithCode("123456");
+    installFetch(() => jsonOk({ error: "internal", message: "try again" }, 500));
+
+    await expect(disconnect()).rejects.toThrow("try again");
+    expect(loadStoredDevice()).not.toBeNull();
+
+    installFetch(() => new Response(null, { status: 204 }));
+    await disconnect();
+    expect(loadStoredDevice()).toBeNull();
   });
 });
 
@@ -234,3 +284,10 @@ describe("composer draft id", () => {
     expect(posted[1].messageId).toBe(posted[0].messageId);
   });
 });
+
+async function sha256HexForPublicKey(publicKey: string): Promise<string> {
+  const binary = atob(publicKey.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((publicKey.length + 3) % 4));
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}

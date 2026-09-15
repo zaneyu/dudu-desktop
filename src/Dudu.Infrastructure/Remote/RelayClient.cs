@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
@@ -34,15 +35,30 @@ public sealed class RelayClient : IRelayClient
         ArgumentNullException.ThrowIfNull(options);
         _baseUrl = options.BaseUrl ?? throw new ArgumentException(
             "RelayOptions.BaseUrl must be set to use RelayClient.", nameof(options));
+        if (!IsAllowedBaseUrl(_baseUrl))
+        {
+            throw new ArgumentException(
+                "The relay base URL must use HTTPS unless it is an explicit loopback HTTP development URL.",
+                nameof(options));
+        }
 
         _httpClient = httpClient;
         _secretStore = secretStore;
         _logger = logger ?? NullLogger<RelayClient>.Instance;
     }
 
+    private static bool IsAllowedBaseUrl(Uri value) =>
+        value.IsAbsoluteUri
+        && (value.Scheme == Uri.UriSchemeHttps
+            || (value.Scheme == Uri.UriSchemeHttp && value.IsLoopback));
+
     public async Task<RelayRegistrationResult> RegisterAsync(string publicKeySpki, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(publicKeySpki);
+
+        // A staged token left by an interrupted rotation belongs to the previous device. Clear it
+        // before creating a new device so it can never be promoted over this registration's token.
+        await _secretStore.DeleteAsync(RelaySecretKeys.DesktopTokenStaging, cancellationToken);
 
         var response = await SendAsync(
             HttpMethod.Post,
@@ -56,10 +72,21 @@ public sealed class RelayClient : IRelayClient
 
         // Write the token first and the device id last. The presence of the id is the
         // registration-complete marker, so it must never be persisted before its credential.
-        await _secretStore.SetAsync(
-            RelaySecretKeys.DesktopToken, Encoding.UTF8.GetBytes(body.DesktopToken), cancellationToken);
-        await _secretStore.SetAsync(
-            RelaySecretKeys.DeviceId, Encoding.UTF8.GetBytes(body.DeviceId), cancellationToken);
+        // The UTF-8 copies are zeroed once stored: the secret store copies what it needs.
+        var tokenBytes = Encoding.UTF8.GetBytes(body.DesktopToken);
+        var deviceIdBytes = Encoding.UTF8.GetBytes(body.DeviceId);
+        try
+        {
+            await _secretStore.SetAsync(
+                RelaySecretKeys.DesktopToken, tokenBytes, cancellationToken);
+            await _secretStore.SetAsync(
+                RelaySecretKeys.DeviceId, deviceIdBytes, cancellationToken);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(tokenBytes);
+            CryptographicOperations.ZeroMemory(deviceIdBytes);
+        }
 
         return new RelayRegistrationResult(
             body.DeviceId,
@@ -70,8 +97,20 @@ public sealed class RelayClient : IRelayClient
 
     public async Task<RelayDeviceInfo> GetDeviceAsync(CancellationToken cancellationToken)
     {
-        var response = await SendAuthenticatedAsync(HttpMethod.Get, "/v1/devices/current", cancellationToken);
-        var body = await ReadAsync(response, RelayJsonContext.Default.GetCurrentDeviceResponseDto, cancellationToken);
+        GetCurrentDeviceResponseDto body;
+        try
+        {
+            var response = await SendAuthenticatedAsync(HttpMethod.Get, "/v1/devices/current", cancellationToken);
+            body = await ReadAsync(response, RelayJsonContext.Default.GetCurrentDeviceResponseDto, cancellationToken);
+        }
+        catch (RelayNotFoundException)
+        {
+            // The device row is gone server-side (deleted or expired): the stored credential is
+            // dead even though it is syntactically fine. Report it as unauthorized so callers
+            // converge on NeedsRepair instead of a generic protocol error.
+            throw new RelayUnauthorizedException("This device is no longer registered with the relay.");
+        }
+
         return new RelayDeviceInfo(
             ParseUtc(body.CreatedUtc, "createdUtc"),
             body.PublicKeyFingerprint,
@@ -98,9 +137,49 @@ public sealed class RelayClient : IRelayClient
             cancellationToken);
 
         var body = await ReadAsync(response, RelayJsonContext.Default.RotateDeviceKeyResponseDto, cancellationToken);
-        await _secretStore.SetAsync(
-            RelaySecretKeys.DesktopToken, Encoding.UTF8.GetBytes(body.DesktopToken), cancellationToken);
-        return body.DesktopToken;
+
+        // Staged rotation: the relay has already rotated server-side (the previous active token
+        // is dead), so the new token is written to the staging slot first and activated only
+        // once the staging write has succeeded. If the staging write fails the new token is lost,
+        // so the local registration is deleted and the next EnsureRegisteredAsync re-registers.
+        // If only the activation write fails, the staged token survives: the next authenticated
+        // request that gets a 401 promotes it (see SendAsync) and the device keeps its pairing.
+        var newTokenBytes = Encoding.UTF8.GetBytes(body.DesktopToken);
+        try
+        {
+            try
+            {
+                await _secretStore.SetAsync(
+                    RelaySecretKeys.DesktopTokenStaging, newTokenBytes, CancellationToken.None);
+            }
+            catch (Exception)
+            {
+                await ForceReRegistrationAsync(CancellationToken.None);
+                throw;
+            }
+
+            // Uncancellable: the server-side token is already rotated, so abandoning here would
+            // only leave the recovery to the 401 promotion path.
+            await _secretStore.SetAsync(
+                RelaySecretKeys.DesktopToken, newTokenBytes, CancellationToken.None);
+
+            try
+            {
+                await _secretStore.DeleteAsync(RelaySecretKeys.DesktopTokenStaging, cancellationToken);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                // Non-fatal: a stale staging row equals the active token, so a later 401 promotes
+                // it once, retries, and then drops it. Logged for visibility.
+                PrivacySafeLog.RelayFailed(_logger, 0, "staging-cleanup");
+            }
+
+            return body.DesktopToken;
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(newTokenBytes);
+        }
     }
 
     public async Task DeleteDeviceAsync(CancellationToken cancellationToken)
@@ -130,10 +209,44 @@ public sealed class RelayClient : IRelayClient
     public async Task AcknowledgeAsync(string messageId, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(messageId);
-        await SendAuthenticatedAsync(
-            HttpMethod.Post,
-            $"/v1/messages/{Uri.EscapeDataString(messageId)}/ack",
-            cancellationToken);
+        try
+        {
+            await SendAuthenticatedAsync(
+                HttpMethod.Post,
+                $"/v1/messages/{Uri.EscapeDataString(messageId)}/ack",
+                cancellationToken);
+        }
+        catch (RelayNotFoundException)
+        {
+            // Already gone (expired between poll and ack, or acked by a concurrent poll): the
+            // relay's ack contract is idempotent, so a 404 is success, not a failure.
+        }
+    }
+
+    /// <summary>
+    /// Deletes every local registration secret so the next
+    /// <c>EnsureRegisteredAsync</c> performs a fresh registration. Best-effort: a failing delete
+    /// must not mask the write failure that triggered this recovery, and a leftover device id
+    /// without its token still self-heals (registration requires both secrets).
+    /// </summary>
+    private async Task ForceReRegistrationAsync(CancellationToken cancellationToken)
+    {
+        foreach (var key in new[]
+            {
+                RelaySecretKeys.DeviceId,
+                RelaySecretKeys.DesktopToken,
+                RelaySecretKeys.DesktopTokenStaging,
+            })
+        {
+            try
+            {
+                await _secretStore.DeleteAsync(key, cancellationToken);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                // Best effort (see above): cleanup never masks the rotation failure.
+            }
+        }
     }
 
     private async Task<HttpResponseMessage> SendAuthenticatedAsync(
@@ -143,6 +256,57 @@ public sealed class RelayClient : IRelayClient
         await SendAsync<object?>(method, path, null, null, authenticated: true, cancellationToken);
 
     private async Task<HttpResponseMessage> SendAsync<TRequest>(
+        HttpMethod method,
+        string path,
+        TRequest? requestBody,
+        JsonTypeInfo<TRequest>? requestTypeInfo,
+        bool authenticated,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await SendOnceAsync(method, path, requestBody, requestTypeInfo, authenticated, cancellationToken);
+        }
+        catch (RelayUnauthorizedException) when (authenticated)
+        {
+            if (!await TryPromoteStagedTokenAsync(cancellationToken))
+            {
+                throw;
+            }
+        }
+
+        // An interrupted rotation left the relay's new token only in the staging slot. It is now
+        // active; retry exactly once. A second 401 propagates (callers report NeedsRepair).
+        return await SendOnceAsync(method, path, requestBody, requestTypeInfo, authenticated, cancellationToken);
+    }
+
+    /// <summary>
+    /// Promotes a staged desktop token to the active slot. Returns false when nothing is staged.
+    /// The staging slot is cleared either way after a promotion attempt, so a 401 can trigger at
+    /// most one retry.
+    /// </summary>
+    private async Task<bool> TryPromoteStagedTokenAsync(CancellationToken cancellationToken)
+    {
+        var staged = await _secretStore.GetAsync(RelaySecretKeys.DesktopTokenStaging, cancellationToken);
+        if (staged is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            await _secretStore.SetAsync(RelaySecretKeys.DesktopToken, staged, cancellationToken);
+            await _secretStore.DeleteAsync(RelaySecretKeys.DesktopTokenStaging, cancellationToken);
+            PrivacySafeLog.RelayFailed(_logger, 401, "promoted-staged-token");
+            return true;
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(staged);
+        }
+    }
+
+    private async Task<HttpResponseMessage> SendOnceAsync<TRequest>(
         HttpMethod method,
         string path,
         TRequest? requestBody,
@@ -162,8 +326,17 @@ public sealed class RelayClient : IRelayClient
         {
             var tokenBytes = await _secretStore.GetAsync(RelaySecretKeys.DesktopToken, cancellationToken)
                 ?? throw new RelayUnauthorizedException("No desktop token is stored.");
-            request.Headers.Authorization = new AuthenticationHeaderValue(
-                "Bearer", Encoding.UTF8.GetString(tokenBytes));
+            try
+            {
+                // The header value is a string HttpClient requires, so it unavoidably lingers
+                // until GC; the fetched bytes are zeroed promptly to shrink the exposure window.
+                request.Headers.Authorization = new AuthenticationHeaderValue(
+                    "Bearer", Encoding.UTF8.GetString(tokenBytes));
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(tokenBytes);
+            }
         }
 
         HttpResponseMessage response;
@@ -187,6 +360,17 @@ public sealed class RelayClient : IRelayClient
             PrivacySafeLog.RelayFailed(_logger, (int)response.StatusCode, "unauthorized");
             response.Dispose();
             throw new RelayUnauthorizedException();
+        }
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            // 404 is routing information, not a body to parse: an unknown message id on ack, or
+            // a device row that no longer exists. Surfaced distinctly so GetDeviceAsync can map a
+            // deleted device to NeedsRepair while AcknowledgeAsync treats a vanished message as
+            // idempotent success.
+            PrivacySafeLog.RelayFailed(_logger, (int)response.StatusCode, "not-found");
+            response.Dispose();
+            throw new RelayNotFoundException();
         }
 
         if ((int)response.StatusCode >= 500)

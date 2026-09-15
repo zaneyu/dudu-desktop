@@ -1,3 +1,5 @@
+using Dudu.Core.Models;
+
 namespace Dudu.App.Presentation;
 
 /// <summary>The category of an unsolicited event waiting to be presented.</summary>
@@ -6,18 +8,21 @@ public enum PresentationItemKind
     RemoteNote,
     Reminder,
     Ambient,
+    LocalNote,
 }
 
 /// <summary>
-/// A privacy-safe description of an unsolicited event. It never carries note
-/// content — only the identifiers needed to raise the matching pet event and
-/// notification.
+/// A privacy-safe description of an unsolicited event. Remote items carry
+/// only identifiers; local-note text stays in-process so the pet can render
+/// the selected local note without involving notifications or the relay.
 /// </summary>
 public sealed record DurableNotification
 {
     public PresentationItemKind Kind { get; }
     public string Id { get; }
     public string? Title { get; }
+    public string? Body { get; }
+    public string? AnimationKey { get; }
 
     /// <summary>
     /// The identity used to detect duplicates, both while an item sits in
@@ -26,11 +31,18 @@ public sealed record DurableNotification
     /// </summary>
     internal string Key => $"{Kind}:{Id}";
 
-    private DurableNotification(PresentationItemKind kind, string id, string? title)
+    private DurableNotification(
+        PresentationItemKind kind,
+        string id,
+        string? title,
+        string? body = null,
+        string? animationKey = null)
     {
         Kind = kind;
         Id = id;
         Title = title;
+        Body = body;
+        AnimationKey = animationKey;
     }
 
     /// <summary>
@@ -66,7 +78,33 @@ public sealed record DurableNotification
     public static DurableNotification Ambient(string animationKey)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(animationKey);
-        return new DurableNotification(PresentationItemKind.Ambient, animationKey, null);
+        return new DurableNotification(
+            PresentationItemKind.Ambient,
+            animationKey,
+            null,
+            animationKey: animationKey);
+    }
+
+    /// <summary>
+    /// Creates a local note selected by the ambient scheduler. It is a
+    /// queueable durable presentation item, unlike a bare ambient animation,
+    /// so failed playback can be retried without selecting or recording a
+    /// second note.
+    /// </summary>
+    public static DurableNotification LocalNote(
+        LocalLoveNote note,
+        string animationKey)
+    {
+        ArgumentNullException.ThrowIfNull(note);
+        ArgumentException.ThrowIfNullOrWhiteSpace(note.Id);
+        ArgumentException.ThrowIfNullOrWhiteSpace(note.Text);
+        ArgumentException.ThrowIfNullOrWhiteSpace(animationKey);
+        return new DurableNotification(
+            PresentationItemKind.LocalNote,
+            note.Id,
+            "A little note for you",
+            note.Text,
+            animationKey);
     }
 }
 
@@ -123,6 +161,29 @@ public sealed class PresentationPolicy
     /// double-queued. Returns true when the item was actually enqueued.
     /// </summary>
     public bool Enqueue(DurableNotification item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        if (item.Kind == PresentationItemKind.Ambient)
+        {
+            return false;
+        }
+
+        lock (_sync)
+        {
+            if (!_queuedIds.Add(item.Key))
+            {
+                return false;
+            }
+
+            _queue.Enqueue(item);
+            return true;
+        }
+    }
+
+    /// <summary>Returns an item to the durable queue after a presentation
+    /// attempt was cancelled or failed. Requeueing is idempotent and preserves
+    /// the acknowledgement boundary owned by the caller.</summary>
+    public bool Requeue(DurableNotification item)
     {
         ArgumentNullException.ThrowIfNull(item);
         if (item.Kind == PresentationItemKind.Ambient)

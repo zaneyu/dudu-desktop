@@ -229,6 +229,27 @@ public sealed class StartupRegistrationServiceTests
         Assert.Null(settings.ReconciliationError);
     }
 
+    [Fact]
+    public async Task Dispose_waits_for_an_in_flight_shortcut_write()
+    {
+        var writer = new BlockingWriter();
+        var service = new StartupRegistrationService("/opt/Dudu.exe", "/tmp/startup", writer);
+
+        var write = service.SetEnabledAsync(true, TestContext.Current.CancellationToken);
+        await writer.Entered.Task.WaitAsync(TestContext.Current.CancellationToken);
+
+        var dispose = service.DisposeAsync().AsTask();
+        Assert.False(dispose.IsCompleted);
+
+        writer.Release.TrySetResult(true);
+        await write;
+        await dispose;
+
+        Assert.True(service.IsEnabled);
+        await Assert.ThrowsAsync<ObjectDisposedException>(() =>
+            service.SetEnabledAsync(false, TestContext.Current.CancellationToken));
+    }
+
     private static Preferences CreatePreferences(bool launchAtSignIn) => new(
         AppTheme.System,
         new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
@@ -267,6 +288,27 @@ public sealed class StartupRegistrationServiceTests
             Deletes.Add(shortcutPath);
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class BlockingWriter : IStartupLinkWriter
+    {
+        public TaskCompletionSource<bool> Entered { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<bool> Release { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task WriteAtomicAsync(
+            string shortcutPath,
+            string targetPath,
+            string arguments,
+            CancellationToken cancellationToken)
+        {
+            Entered.TrySetResult(true);
+            await Release.Task.WaitAsync(cancellationToken);
+        }
+
+        public Task DeleteAsync(string shortcutPath, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
     }
 
     private sealed class FakePreferencesRepository : IPreferencesRepository

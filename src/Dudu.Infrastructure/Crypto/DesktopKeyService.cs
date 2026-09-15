@@ -27,6 +27,7 @@ public sealed class DesktopKeyService
     internal const string SecretStoreKey = "desktop-ecdh-private-v1";
 
     private readonly ISecretStore _secretStore;
+    private readonly SemaphoreSlim _gate = new(1, 1);
 
     public DesktopKeyService(ISecretStore secretStore)
     {
@@ -35,22 +36,30 @@ public sealed class DesktopKeyService
 
     public async Task<DesktopKeyMaterial> GetOrCreateAsync(CancellationToken cancellationToken = default)
     {
-        var existingPrivateKey = await _secretStore.GetAsync(SecretStoreKey, cancellationToken);
-        if (existingPrivateKey is not null)
+        await _gate.WaitAsync(cancellationToken);
+        try
         {
-            using var existing = ECDiffieHellman.Create();
-            existing.ImportPkcs8PrivateKey(existingPrivateKey, out _);
+            var existingPrivateKey = await _secretStore.GetAsync(SecretStoreKey, cancellationToken);
+            if (existingPrivateKey is not null)
+            {
+                using var existing = ECDiffieHellman.Create();
+                existing.ImportPkcs8PrivateKey(existingPrivateKey, out _);
+                return new DesktopKeyMaterial(
+                    Base64Url.EncodeToString(existing.ExportSubjectPublicKeyInfo()),
+                    existingPrivateKey);
+            }
+
+            using var created = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
+            var privateKeyPkcs8 = created.ExportPkcs8PrivateKey();
+            await _secretStore.SetAsync(SecretStoreKey, privateKeyPkcs8, cancellationToken);
+
             return new DesktopKeyMaterial(
-                Base64Url.EncodeToString(existing.ExportSubjectPublicKeyInfo()),
-                existingPrivateKey);
+                Base64Url.EncodeToString(created.ExportSubjectPublicKeyInfo()),
+                privateKeyPkcs8);
         }
-
-        using var created = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
-        var privateKeyPkcs8 = created.ExportPkcs8PrivateKey();
-        await _secretStore.SetAsync(SecretStoreKey, privateKeyPkcs8, cancellationToken);
-
-        return new DesktopKeyMaterial(
-            Base64Url.EncodeToString(created.ExportSubjectPublicKeyInfo()),
-            privateKeyPkcs8);
+        finally
+        {
+            _gate.Release();
+        }
     }
 }

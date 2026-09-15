@@ -313,7 +313,8 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
     public async Task OnTaskbarCreatedAsync(CancellationToken cancellationToken = default)
     {
         await CaptureAsync(cancellationToken);
-        try { _tray?.Recreate(); }
+        if (_tray is null) return;
+        try { await _tray.RecreateAsync(cancellationToken); }
         catch (Exception exception) { ReportFailure("taskbar-tray-recreate", exception); }
     }
 
@@ -361,8 +362,11 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         finally { _gate.Release(); }
 
         await InvokeVisualSafelyAsync(_overlay.Hide, "shutdown-hide", CancellationToken.None);
-        try { _tray?.Dispose(); }
-        catch (Exception exception) { ReportFailure("shutdown-tray", exception); }
+        if (_tray is not null)
+        {
+            try { await _tray.DisposeAsync(); }
+            catch (Exception exception) { ReportFailure("shutdown-tray", exception); }
+        }
         await _host.StopAsync();
         await _overlay.DisposeAsync();
         _gate.Dispose();

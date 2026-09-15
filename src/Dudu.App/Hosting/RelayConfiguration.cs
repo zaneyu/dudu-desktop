@@ -12,13 +12,18 @@ namespace Dudu.App.Hosting;
 /// </summary>
 internal static class RelayConfiguration
 {
-    /// <summary>The one documented way to point this build at a relay (see docs/privacy.md).</summary>
+    /// <summary>The one documented way to point this build at a relay (see docs/privacy.md).
+    /// RELEASE OPT-IN: private release builds must ship with this variable UNSET so the baked-in
+    /// production relay is used. Setting it is an explicit local-development opt-in (e.g. a
+    /// loopback Worker under test) and must never be part of release handoff, installer testing,
+    /// or any machine that is handed to someone else.</summary>
     internal const string BaseUrlEnvironmentVariable = "DUDU_RELAY_BASE_URL";
 
     /// <summary>
     /// Resolves the relay base URL from <see cref="BaseUrlEnvironmentVariable"/>, falling back to
     /// <see cref="ProductInfo.DefaultRelayBaseUrl"/>. Either value is used only when it parses as
-    /// an absolute http/https URI; anything else -- unset, malformed, or a non-http(s) scheme
+    /// an absolute HTTPS URI, or explicit loopback HTTP for development; anything else -- unset,
+    /// malformed, public HTTP, or a non-http(s) scheme
     /// such as <c>file://</c> -- is ignored, leaving <see cref="RelayOptions.BaseUrl"/> null so
     /// <c>AddDuduInfrastructure</c> registers <see cref="OfflinePairingService"/> and no relay is
     /// activated. That fallback is a supported configuration, not a failure: the Connection page
@@ -28,13 +33,24 @@ internal static class RelayConfiguration
     /// How to read an environment variable. Defaults to the real process environment; tests pass
     /// their own so they never mutate it.
     /// </param>
-    internal static RelayOptions Resolve(Func<string, string?>? readEnvironmentVariable = null)
+    /// <param name="logResolvedBaseUrl">
+    /// Optional startup sink receiving the resolved relay origin (scheme + host + port only, e.g.
+    /// <c>https://relay.example.test</c>) or <c>(relay not configured)</c>. The origin carries no
+    /// secrets: the relay credential is a bearer token that never appears in the URL, and any path
+    /// or query is stripped before logging.
+    /// </param>
+    internal static RelayOptions Resolve(
+        Func<string, string?>? readEnvironmentVariable = null,
+        Action<string>? logResolvedBaseUrl = null)
     {
         var read = readEnvironmentVariable ?? Environment.GetEnvironmentVariable;
         if (!TryParseAbsoluteHttpUri(read(BaseUrlEnvironmentVariable), out var baseUrl))
         {
             TryParseAbsoluteHttpUri(ProductInfo.DefaultRelayBaseUrl, out baseUrl);
         }
+
+        logResolvedBaseUrl?.Invoke(
+            baseUrl?.GetLeftPart(UriPartial.Authority) ?? "(relay not configured)");
 
         return new RelayOptions(baseUrl);
     }
@@ -48,7 +64,8 @@ internal static class RelayConfiguration
         }
 
         if (Uri.TryCreate(value, UriKind.Absolute, out var parsed)
-            && (parsed.Scheme == Uri.UriSchemeHttp || parsed.Scheme == Uri.UriSchemeHttps))
+            && (parsed.Scheme == Uri.UriSchemeHttps
+                || (parsed.Scheme == Uri.UriSchemeHttp && parsed.IsLoopback)))
         {
             uri = parsed;
             return true;

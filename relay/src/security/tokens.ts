@@ -12,6 +12,25 @@ const TOKEN_BYTE_LENGTH = 32;
 export const PAIRING_CODE_LENGTH = 8;
 const PAIRING_CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
+/**
+ * The same alphabet as a charset check, applied to redemption input AFTER
+ * `normalizePairingCodeInput` (so lowercase input is already upper-cased): `0-9`, `A-H` (no I),
+ * `J-K` (no L), `M-N`, `P-T` (no O), `V-Z` (no U). Rejecting anything outside this set with a
+ * 400 before hashing means malformed guesses never reach the HMAC or the pairing-code lookup.
+ */
+export const PAIRING_CODE_CHARSET_PATTERN = /^[0-9A-HJKMNP-TV-Z]{8}$/;
+
+/**
+ * Shape precheck for 32-byte capability tokens (desktop bearer tokens and sender-session cookie
+ * tokens): 32 bytes encode to exactly 43 unpadded Base64URL characters; 44 is accepted as well
+ * so a padded-or-longer variant fails closed at the DB lookup rather than here. Anything that
+ * fails this test is rejected before its SHA-256 is ever computed or compared, which keeps
+ * oversized/garbage `Authorization` and `Cookie` values off the hashed-lookup path entirely.
+ */
+export function isPlausibleCapabilityToken(value: string): boolean {
+  return value.length >= 43 && value.length <= 44 && /^[A-Za-z0-9_-]+$/.test(value);
+}
+
 /** Generates a fresh 32-byte capability token, encoded as unpadded Base64URL. */
 export function generateCapabilityToken(): string {
   return bytesToBase64Url(crypto.getRandomValues(new Uint8Array(TOKEN_BYTE_LENGTH)));

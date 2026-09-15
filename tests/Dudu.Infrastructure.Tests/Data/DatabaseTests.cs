@@ -75,6 +75,132 @@ public sealed class DatabaseTests
     }
 
     [Fact]
+    public async Task Restore_accepts_an_integrity_valid_backup_from_an_older_schema()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var backup = await fixture.Backups.CreatePreMigrationBackupAsync(TestContext.Current.CancellationToken);
+        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = backup,
+            Mode = SqliteOpenMode.ReadWrite,
+            Pooling = false,
+        }.ToString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "UPDATE schema_version SET version = 2 WHERE id = 1;";
+            await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+        await connection.DisposeAsync();
+
+        // Older-schema backups restore successfully; the next startup migrates them forward.
+        Assert.True(await fixture.Backups.IsValidBackupAsync(
+            backup!, TestContext.Current.CancellationToken));
+        var result = await fixture.Backups.TryRestoreAsync(
+            backup!, TestContext.Current.CancellationToken);
+        Assert.True(result.Restored);
+        Assert.Equal(2, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task Restore_rejects_an_integrity_valid_backup_from_a_newer_schema()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var backup = await fixture.Backups.CreatePreMigrationBackupAsync(TestContext.Current.CancellationToken);
+        var newerVersion = await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken) + 1;
+        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = backup,
+            Mode = SqliteOpenMode.ReadWrite,
+            Pooling = false,
+        }.ToString());
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "UPDATE schema_version SET version = $version WHERE id = 1;";
+            command.Parameters.AddWithValue("$version", newerVersion);
+            await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+        await connection.DisposeAsync();
+
+        Assert.False(await fixture.Backups.IsValidBackupAsync(
+            backup!, TestContext.Current.CancellationToken));
+        var result = await fixture.Backups.TryRestoreAsync(
+            backup!, TestContext.Current.CancellationToken);
+        Assert.Equal(RestoreFailure.IntegrityCheckFailed, result.Failure);
+    }
+
+    [Fact]
+    public async Task Restore_latest_prefers_filename_timestamp_over_file_mtime()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var profiles = new ProfileRepository(fixture.Database);
+        await profiles.SaveAsync(new Profile("First", true), TestContext.Current.CancellationToken);
+        var older = await fixture.Backups.CreatePreMigrationBackupAsync(TestContext.Current.CancellationToken);
+        await Task.Delay(15, TestContext.Current.CancellationToken);
+        await profiles.SaveAsync(new Profile("Second", true), TestContext.Current.CancellationToken);
+        var newer = await fixture.Backups.CreatePreMigrationBackupAsync(TestContext.Current.CancellationToken);
+
+        // Invert mtimes: filename order must still win, because copies and coarse timestamp
+        // granularity can make mtime disagree with which backup is actually newest.
+        File.SetLastWriteTimeUtc(older!, File.GetLastWriteTimeUtc(newer!));
+        File.SetLastWriteTimeUtc(newer!, DateTime.UtcNow.AddHours(-1));
+
+        var result = await fixture.Backups.RestoreLatestValidAsync(TestContext.Current.CancellationToken);
+        Assert.True(result.Restored);
+        Assert.Equal(newer, result.BackupPath);
+        Assert.Equal("Second", (await profiles.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
+    }
+
+    [Fact]
+    public async Task Backup_rotation_tolerates_undeletable_files()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        for (var i = 0; i < 3; i++)
+        {
+            await fixture.Backups.CreatePreMigrationBackupAsync(TestContext.Current.CancellationToken);
+            await Task.Delay(2, TestContext.Current.CancellationToken);
+        }
+
+        var stubborn = new DatabaseBackupService(
+            new DatabaseOptions(fixture.Options.DatabasePath, fixture.Options.BackupDirectory)
+            {
+                BackupRetentionCount = 0,
+            },
+            moveFile: (source, destination) => File.Move(source, destination),
+            deleteFile: _ => throw new IOException("injected rotation delete failure"));
+
+        // Rotation runs as part of backup creation; a locked file must not fail the new backup.
+        var backup = await stubborn.CreatePreMigrationBackupAsync(TestContext.Current.CancellationToken);
+        Assert.True(File.Exists(backup));
+    }
+
+    [Fact]
+    public async Task Remote_envelope_prune_removes_only_expired_beyond_retention()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var repository = new RemoteEnvelopeRepository(fixture.Database);
+        var now = DateTimeOffset.UtcNow;
+        var retention = TimeSpan.FromDays(30);
+        var stale = new RemoteEnvelope("stale", [1], null, null, null, null, now - retention - TimeSpan.FromHours(1));
+        var fresh = new RemoteEnvelope("fresh", [2], null, null, null, null, now);
+        var futureScheduled = new RemoteEnvelope(
+            "future", [3], null, null, null,
+            (now + TimeSpan.FromDays(1)).ToString("O"),
+            now - retention - TimeSpan.FromHours(1));
+        Assert.True(await repository.TryInsertAsync(stale, TestContext.Current.CancellationToken));
+        Assert.True(await repository.TryInsertAsync(fresh, TestContext.Current.CancellationToken));
+        Assert.True(await repository.TryInsertAsync(futureScheduled, TestContext.Current.CancellationToken));
+
+        var removed = await repository.PruneExpiredAsync(now, retention, TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, removed);
+        Assert.Null(await repository.GetAsync("stale", TestContext.Current.CancellationToken));
+        Assert.NotNull(await repository.GetAsync("fresh", TestContext.Current.CancellationToken));
+        Assert.NotNull(await repository.GetAsync("future", TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
     public async Task Local_note_cap_is_atomic_between_two_connections()
     {
         await using var fixture = await DatabaseFixture.CreateAsync();
@@ -224,6 +350,11 @@ public sealed class DatabaseTests
         Assert.Equal(((RecurrenceRule.SelectedWeekdays)reminder.Rule).LocalTime, loadedWeekdays.LocalTime);
         Assert.Equal(((RecurrenceRule.SelectedWeekdays)reminder.Rule).Days, loadedWeekdays.Days);
         Assert.Equal(reminder.QuietHours, loadedReminder.QuietHours);
+
+        var completedOnce = reminder with { Id = "completed-once", Rule = new RecurrenceRule.Once(), NextDueUtc = null };
+        await reminderRepository.SaveAsync(completedOnce, cancellationToken);
+        Assert.Null((await reminderRepository.ListAsync(cancellationToken))
+            .Single(item => item.Id == completedOnce.Id).NextDueUtc);
 
         var countdownRepository = new CountdownRepository(fixture.Database);
         var countdown = new Countdown("countdown", "event",

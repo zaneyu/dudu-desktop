@@ -3,6 +3,9 @@ using Dudu.App.Animation;
 using Dudu.App.Presentation;
 using Dudu.App.System;
 using Dudu.Core.Pet;
+using Dudu.Core.Notes;
+using Dudu.Core.Models;
+using Dudu.Core.Time;
 using Xunit;
 
 namespace Dudu.App.Tests.Presentation;
@@ -112,6 +115,108 @@ public sealed class PresentationCoordinatorTests
 
         Assert.Equal(1, playCount);
         Assert.Equal(1, notifications.ReminderCalls);
+    }
+
+    [Fact]
+    public async Task Failed_presentation_is_requeued_for_a_later_tick()
+    {
+        var policy = new PresentationPolicy(TimeSpan.Zero);
+        var coordinator = new PresentationCoordinator(
+            policy,
+            new RecordingNotificationService(),
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => Task.FromException(new InvalidOperationException("playback failed")),
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1));
+
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-1", "Stretch"),
+            bypassSuppression: false,
+            CancellationToken.None);
+
+        Assert.Equal(1, policy.QueuedCount);
+    }
+
+    [Fact]
+    public async Task Eligible_ambient_tick_selects_and_presents_a_local_note_through_the_gateway()
+    {
+        var clock = new FixedClock(DateTimeOffset.Parse("2026-09-14T16:00:00Z"));
+        var notes = new RecordingLocalNoteRepository(
+            new LocalLoveNote("note-1", "You are doing great."));
+        var preferences = Preferences.Default with { LocalNoteDailyLimit = 1 };
+        var scheduler = new AmbientScheduler(
+            clock,
+            new FixedRandomSource(),
+            preferences.AmbientMinimumInterval,
+            preferences.QuietHours);
+        var selector = new LocalNoteSelector(notes, clock, new FixedRandomSource(), preferences);
+        PetPresentation? presented = null;
+        var coordinator = new PresentationCoordinator(
+            new PresentationPolicy(TimeSpan.Zero),
+            new RecordingNotificationService(),
+            PetStateMachine.CreateIdle(),
+            (presentation, _, _) =>
+            {
+                presented = presentation;
+                return Task.CompletedTask;
+            },
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            ambientScheduler: scheduler,
+            localNoteSelector: selector);
+
+        // The scheduler holds its first ambient moment for one minimum interval
+        // after construction, so advance past eligibility before ticking.
+        clock.Advance(preferences.AmbientMinimumInterval);
+        await coordinator.TickAsync(TestContext.Current.CancellationToken);
+
+        Assert.NotNull(presented);
+        Assert.Equal(PetState.Ambient, presented.State);
+        Assert.Equal("You are doing great.", presented.BubbleBody);
+        Assert.Equal(1, notes.ShownCount);
+    }
+
+    private sealed class FixedClock(DateTimeOffset utcNow) : IClock
+    {
+        public DateTimeOffset UtcNow { get; private set; } = utcNow;
+        public TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
+
+        public void Advance(TimeSpan duration) => UtcNow += duration;
+    }
+
+    private sealed class FixedRandomSource : IRandomSource
+    {
+        public int Next(int exclusiveMax) => 0;
+    }
+
+    private sealed class RecordingLocalNoteRepository(LocalLoveNote note) : ILocalNoteRepository
+    {
+        public int ShownCount { get; private set; }
+
+        public Task<IReadOnlyList<LocalLoveNote>> ListEnabledAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<LocalLoveNote>>([note]);
+
+        public Task<int> CountUnsolicitedShownAsync(DateOnly localDate, CancellationToken cancellationToken) =>
+            Task.FromResult(ShownCount);
+
+        public Task<IReadOnlyList<string>> GetMostRecentShownIdsAsync(int count, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<string>>([]);
+
+        public Task<bool> TryRecordShownAsync(
+            string noteId,
+            DateTimeOffset shownUtc,
+            DateOnly localDate,
+            int dailyLimit,
+            bool unsolicited,
+            CancellationToken cancellationToken)
+        {
+            ShownCount++;
+            return Task.FromResult(true);
+        }
     }
 
     private sealed class RecordingNotificationService : INotificationService

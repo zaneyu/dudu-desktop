@@ -34,7 +34,15 @@ internal static class NotificationArguments
                 continue;
             }
 
-            yield return (pair[..separatorIndex], pair[(separatorIndex + 1)..]);
+            yield return (
+                Uri.UnescapeDataString(pair[..separatorIndex]),
+                Uri.UnescapeDataString(pair[(separatorIndex + 1)..]));
         }
     }
+
+    /// <summary>Builds one "key=value" fragment with both halves
+    /// percent-encoded, so a value containing '&amp;', ';', '=' or '%' can
+    /// never split into, or forge, another argument.</summary>
+    public static string Pair(string key, string value) =>
+        Uri.EscapeDataString(key) + "=" + Uri.EscapeDataString(value);
 }

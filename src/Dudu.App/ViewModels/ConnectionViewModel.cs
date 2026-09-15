@@ -16,10 +16,10 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
     public ConnectionViewModel(CompanionFeatureContext context)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
-        RefreshCommand = new AsyncRelayCommand(() => RefreshAsync(CancellationToken.None));
-        CreateCodeCommand = new AsyncRelayCommand(() => CreateCodeAsync(CancellationToken.None));
-        RevokeSessionsCommand = new AsyncRelayCommand(() => RevokeSessionsAsync(CancellationToken.None));
-        DeleteRemoteDeviceCommand = new AsyncRelayCommand(() => DeleteRemoteDeviceAsync(CancellationToken.None));
+        RefreshCommand = new AsyncRelayCommand((CancellationToken ct) => RefreshAsync(ct));
+        CreateCodeCommand = new AsyncRelayCommand((CancellationToken ct) => CreateCodeAsync(ct));
+        RevokeSessionsCommand = new AsyncRelayCommand((CancellationToken ct) => RevokeSessionsAsync(ct));
+        DeleteRemoteDeviceCommand = new AsyncRelayCommand((CancellationToken ct) => DeleteRemoteDeviceAsync(ct));
     }
 
     public IAsyncRelayCommand RefreshCommand { get; }
@@ -105,25 +105,33 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
 
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
     {
-        await RunAsync(async () =>
+        await RunRefreshAsync(async ct =>
         {
-            Availability = await _context.Pairing.GetStateAsync(cancellationToken);
-            StatusReason = _context.Pairing.StatusReason;
-            Sessions.Clear();
+            var availability = await _context.Pairing.GetStateAsync(ct);
+            var reason = _context.Pairing.StatusReason;
+            List<PairingSessionSummary> sessions = new();
             try
             {
-                foreach (var session in await _context.Pairing.ListSessionsAsync(cancellationToken)) Sessions.Add(session);
+                foreach (var session in await _context.Pairing.ListSessionsAsync(ct)) sessions.Add(session);
             }
             catch (NotSupportedException)
             {
                 // No per-session listing available; fall back to the aggregate count below.
             }
 
-            SessionCount = Sessions.Count > 0
-                ? Sessions.Count
-                : await _context.Pairing.GetSessionCountAsync(cancellationToken);
-            OnPropertyChanged(nameof(IsPaired));
-        });
+            var count = sessions.Count > 0
+                ? sessions.Count
+                : await _context.Pairing.GetSessionCountAsync(ct);
+            await MutateAsync(() =>
+            {
+                Availability = availability;
+                StatusReason = reason;
+                Sessions.Clear();
+                foreach (var session in sessions) Sessions.Add(session);
+                SessionCount = count;
+                OnPropertyChanged(nameof(IsPaired));
+            }, ct);
+        }, cancellationToken);
     }
 
     public Task CreateCodeAsync(CancellationToken cancellationToken = default) =>
@@ -146,9 +154,12 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
         {
             var result = await _context.Pairing.RevokeSessionsWithResultAsync(cancellationToken);
             if (!result.Completed) throw new NotSupportedException(result.ErrorMessage ?? "cannot revoke sessions right now");
-            Sessions.Clear();
-            SessionCount = 0;
-            OnPropertyChanged(nameof(IsPaired));
+            await MutateAsync(() =>
+            {
+                Sessions.Clear();
+                SessionCount = 0;
+                OnPropertyChanged(nameof(IsPaired));
+            }, cancellationToken);
         }, "done le sessions revoked");
 
     public Task DeleteRemoteDeviceAsync(CancellationToken cancellationToken = default) =>
@@ -156,11 +167,14 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
         {
             var result = await _context.Pairing.DeleteRemoteDeviceWithResultAsync(cancellationToken: cancellationToken);
             if (!result.Completed) throw new NotSupportedException(result.ErrorMessage ?? "alala cant delete device data now");
-            PairingCode = null;
-            CodeExpiresUtc = null;
-            Sessions.Clear();
-            SessionCount = 0;
-            Availability = PairingAvailability.Offline;
-            OnPropertyChanged(nameof(IsPaired));
+            await MutateAsync(() =>
+            {
+                PairingCode = null;
+                CodeExpiresUtc = null;
+                Sessions.Clear();
+                SessionCount = 0;
+                Availability = PairingAvailability.Offline;
+                OnPropertyChanged(nameof(IsPaired));
+            }, cancellationToken);
         }, "can remote data deleted le");
 }

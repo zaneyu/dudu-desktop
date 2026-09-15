@@ -56,6 +56,29 @@ public sealed class TaskServiceTests
         Assert.Empty(await service.ListActiveAsync(TestContext.Current.CancellationToken));
     }
 
+    [Fact]
+    public async Task Stale_update_cannot_reopen_a_task_completed_after_it_was_loaded()
+    {
+        var repository = new InMemoryTaskRepository();
+        var clock = new FakeClock(DateTimeOffset.Parse("2026-09-11T10:00:00Z"));
+        var service = new TaskService(repository, clock);
+        var task = await service.CreateAsync("Task", null, TestContext.Current.CancellationToken);
+        repository.BeforeCompareAndSet = () =>
+        {
+            repository.Tasks[task.Id] = task with
+            {
+                IsCompleted = true,
+                CompletedUtc = clock.UtcNow,
+                UpdatedUtc = clock.UtcNow,
+            };
+        };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.UpdateAsync(
+            task.Id, "Edited", null, TestContext.Current.CancellationToken));
+
+        Assert.True(repository.Tasks[task.Id].IsCompleted);
+    }
+
     private sealed class FakeClock(DateTimeOffset now) : IClock
     {
         public DateTimeOffset UtcNow { get; } = now;
@@ -66,6 +89,7 @@ public sealed class TaskServiceTests
     private sealed class InMemoryTaskRepository : ITaskRepository
     {
         public Dictionary<Guid, TaskItem> Tasks { get; } = [];
+        public Action? BeforeCompareAndSet { get; set; }
 
         public Task<TaskItem?> GetAsync(Guid id, CancellationToken cancellationToken) =>
             Task.FromResult(Tasks.GetValueOrDefault(id));
@@ -78,6 +102,19 @@ public sealed class TaskServiceTests
         {
             Tasks[task.Id] = task;
             return Task.CompletedTask;
+        }
+
+        public Task<bool> TryCompareAndSetAsync(TaskItem expected, TaskItem replacement, CancellationToken cancellationToken)
+        {
+            BeforeCompareAndSet?.Invoke();
+            BeforeCompareAndSet = null;
+            if (!Tasks.TryGetValue(expected.Id, out var current) || current != expected)
+            {
+                return Task.FromResult(false);
+            }
+
+            Tasks[replacement.Id] = replacement;
+            return Task.FromResult(true);
         }
     }
 }

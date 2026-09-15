@@ -19,16 +19,16 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
     public TasksFocusViewModel(CompanionFeatureContext context)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
-        RefreshCommand = new AsyncRelayCommand(() => RefreshAsync(CancellationToken.None));
-        SaveTaskCommand = new AsyncRelayCommand(() => SaveTaskAsync(CancellationToken.None));
+        RefreshCommand = new AsyncRelayCommand((CancellationToken ct) => RefreshAsync(ct));
+        SaveTaskCommand = new AsyncRelayCommand((CancellationToken ct) => SaveTaskAsync(ct));
         SelectTaskCommand = new RelayCommand<TaskItem>(SelectTask);
-        CompleteTaskCommand = new AsyncRelayCommand<TaskItem>(CompleteTaskAsync);
-        DeleteTaskCommand = new AsyncRelayCommand<TaskItem>(DeleteTaskAsync);
-        StartFocusCommand = new AsyncRelayCommand(StartFocusAsync);
-        PauseFocusCommand = new AsyncRelayCommand(PauseFocusAsync);
-        ResumeFocusCommand = new AsyncRelayCommand(ResumeFocusAsync);
-        ExtendFocusCommand = new AsyncRelayCommand(ExtendFocusAsync);
-        EndFocusCommand = new AsyncRelayCommand(EndFocusAsync);
+        CompleteTaskCommand = new AsyncRelayCommand<TaskItem>((item, ct) => CompleteTaskAsync(item, ct));
+        DeleteTaskCommand = new AsyncRelayCommand<TaskItem>((item, ct) => DeleteTaskAsync(item, ct));
+        StartFocusCommand = new AsyncRelayCommand((CancellationToken ct) => StartFocusAsync(ct));
+        PauseFocusCommand = new AsyncRelayCommand((CancellationToken ct) => PauseFocusAsync(ct));
+        ResumeFocusCommand = new AsyncRelayCommand((CancellationToken ct) => ResumeFocusAsync(ct));
+        ExtendFocusCommand = new AsyncRelayCommand((CancellationToken ct) => ExtendFocusAsync(ct));
+        EndFocusCommand = new AsyncRelayCommand((CancellationToken ct) => EndFocusAsync(ct));
     }
 
     public IAsyncRelayCommand RefreshCommand { get; }
@@ -84,17 +84,24 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
 
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
     {
-        await RunAsync(async () =>
+        await RunRefreshAsync(async ct =>
         {
-            ActiveTasks.Clear();
-            foreach (var task in await _context.Tasks.ListActiveAsync(cancellationToken)) ActiveTasks.Add(task);
-            CompletedTasks.Clear();
-            foreach (var task in await _context.Tasks.ListCompletedAsync(cancellationToken)) CompletedTasks.Add(task);
-            ActiveFocus = await _context.FocusService.GetCurrentAsync(cancellationToken);
-            FocusHistory.Clear();
-            foreach (var session in await _context.FocusSessions.ListHistoryAsync(cancellationToken)) FocusHistory.Add(session);
-            OnPropertyChanged(nameof(IsFocusActive));
-        });
+            var active = await _context.Tasks.ListActiveAsync(ct);
+            var completed = await _context.Tasks.ListCompletedAsync(ct);
+            var focus = await _context.FocusService.GetCurrentAsync(ct);
+            var history = await _context.FocusSessions.ListHistoryAsync(ct);
+            await MutateAsync(() =>
+            {
+                ActiveTasks.Clear();
+                foreach (var task in active) ActiveTasks.Add(task);
+                CompletedTasks.Clear();
+                foreach (var task in completed) CompletedTasks.Add(task);
+                ActiveFocus = focus;
+                FocusHistory.Clear();
+                foreach (var session in history) FocusHistory.Add(session);
+                OnPropertyChanged(nameof(IsFocusActive));
+            }, ct);
+        }, cancellationToken);
     }
 
     public Task SaveTaskAsync(CancellationToken cancellationToken = default) =>
@@ -103,8 +110,13 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
             var saved = SelectedTask is null
                 ? await _context.TaskService.CreateAsync(Title, Normalize(Notes), DueUtc, cancellationToken)
                 : await _context.TaskService.UpdateAsync(SelectedTask.Id, Title, Normalize(Notes), DueUtc, cancellationToken);
-            ReplaceTask(saved);
-            SelectTask(null);
+            await MutateAsync(() =>
+            {
+                var existing = ActiveTasks.FirstOrDefault(item => item.Id == saved.Id);
+                if (existing is not null) ActiveTasks[ActiveTasks.IndexOf(existing)] = saved;
+                else ActiveTasks.Add(saved);
+                SelectTask(null);
+            }, cancellationToken);
         }, "oki task saved");
 
     public void SelectTask(TaskItem? task)
@@ -121,10 +133,13 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
         return RunAsync(async () =>
         {
             var completed = await _context.TaskService.CompleteAsync(task.Id, cancellationToken);
-            var active = ActiveTasks.FirstOrDefault(item => item.Id == task.Id);
-            if (active is not null) ActiveTasks.Remove(active);
-            CompletedTasks.Insert(0, completed);
-            if (SelectedTask?.Id == task.Id) SelectedTask = null;
+            await MutateAsync(() =>
+            {
+                var active = ActiveTasks.FirstOrDefault(item => item.Id == task.Id);
+                if (active is not null) ActiveTasks.Remove(active);
+                CompletedTasks.Insert(0, completed);
+                if (SelectedTask?.Id == task.Id) SelectedTask = null;
+            }, cancellationToken);
         }, "okkk task done");
     }
 
@@ -134,11 +149,14 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
         return RunAsync(async () =>
         {
             await _context.TaskService.DeleteAsync(task.Id, cancellationToken);
-            var active = ActiveTasks.FirstOrDefault(item => item.Id == task.Id);
-            if (active is not null) ActiveTasks.Remove(active);
-            var completed = CompletedTasks.FirstOrDefault(item => item.Id == task.Id);
-            if (completed is not null) CompletedTasks.Remove(completed);
-            if (SelectedTask?.Id == task.Id) SelectTask(null);
+            await MutateAsync(() =>
+            {
+                var active = ActiveTasks.FirstOrDefault(item => item.Id == task.Id);
+                if (active is not null) ActiveTasks.Remove(active);
+                var completed = CompletedTasks.FirstOrDefault(item => item.Id == task.Id);
+                if (completed is not null) CompletedTasks.Remove(completed);
+                if (SelectedTask?.Id == task.Id) SelectTask(null);
+            }, cancellationToken);
         }, "otayyy task deleted le");
     }
 

@@ -28,15 +28,24 @@ const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
 /**
  * Parses a request body as JSON. Throws `UnsupportedMediaTypeError` when the `Content-Type`
- * header is not `application/json` (callers map that to 415); `JsonBodyTooLargeError` when the
+ * header is not exactly `application/json` (callers map that to 415); `JsonBodyTooLargeError` when the
  * raw body exceeds `MAXIMUM_BODY_BYTES` (callers map that to 413); `JsonBodyUnsafeError` when the
  * raw text carries a forbidden or duplicate key (callers map that to 400); any other failure
  * (body is not valid JSON) propagates as a plain `SyntaxError`, which callers also map to a
  * generic 400.
+ *
+ * The media-type check is an EXACT match on the part before any `;` parameters (compared
+ * case-insensitively after trimming): the previous `includes("application/json")` substring test
+ * also accepted values like `text/plain; application/json` or `application/json-malicious`,
+ * which are not JSON requests at all. A charset suffix (`application/json; charset=utf-8`) is
+ * still accepted, since only the media type itself is compared.
  */
 export async function readJsonBody(request: Request): Promise<unknown> {
   const contentType = request.headers.get("Content-Type") ?? "";
-  if (!contentType.toLowerCase().includes("application/json")) {
+  // Exact media-type match: split off any "; ..." parameters first, so "text/plain" or
+  // "application/json-evil" can never smuggle past via substring matching.
+  const mediaType = contentType.split(";")[0].trim().toLowerCase();
+  if (mediaType !== "application/json") {
     throw new UnsupportedMediaTypeError();
   }
 

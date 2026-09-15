@@ -147,6 +147,17 @@ public static class WindowsCompanionProductionComposition
         }
 
         var paths = AppPaths.ForCurrentUser();
+        // Runs only in the primary instance, so secondary launches never count
+        // as failed runs. The counter is incremented before anything is
+        // composed and reset once the runtime proves stable or shuts down.
+        var crashGuard = StartupCrashGuard.BeginRun(paths.Root);
+        var safeMode = crashGuard.SafeMode;
+        if (safeMode)
+        {
+            Trace.TraceWarning(
+                "Dudu is starting in safe mode after {0} consecutive failed runs; overlay and remote sync are disabled.",
+                crashGuard.ConsecutiveFailedRuns);
+        }
         // The real presentation gateway does not exist yet at this point: it
         // depends on the pet state machine, animation engine, and pause
         // store, all of which are only available once the overlay is
@@ -158,7 +169,11 @@ public static class WindowsCompanionProductionComposition
         var services = new ServiceCollection()
             .AddDuduInfrastructure(
                 new DatabaseOptions(paths.Database, paths.Backups),
-                RelayConfiguration.Resolve())
+                // Release builds leave DUDU_RELAY_BASE_URL unset: the environment override is an
+                // explicit local-dev opt-in (see RelayConfiguration), never part of release
+                // handoff. The resolved origin is traced at startup without secrets.
+                RelayConfiguration.Resolve(logResolvedBaseUrl: static origin =>
+                    Trace.TraceInformation("Dudu relay base URL resolved to {0}.", origin)))
             .AddSingleton<IReminderDueSink>(provider => new ReminderDueSink(
                 provider.GetRequiredService<IReminderRepository>(),
                 () => presentationGateway
@@ -166,7 +181,7 @@ public static class WindowsCompanionProductionComposition
             .BuildServiceProvider();
         var host = new AppHost(services, paths);
         var remoteSync = services.GetService<RemoteSyncService>();
-        if (remoteSync is not null)
+        if (remoteSync is not null && !safeMode)
         {
             host.AttachRemoteSync(new RemoteSyncHostAdapter(remoteSync));
         }
@@ -258,7 +273,7 @@ public static class WindowsCompanionProductionComposition
             }
             var pause = new PauseStateStore();
             var runtimePreferences = new RuntimePreferencesState(preferences);
-            var showOverlay = launchOptions.ShouldShowOverlay(preferences, profile);
+            var showOverlay = !safeMode && launchOptions.ShouldShowOverlay(preferences, profile);
 
             var runtime = await WindowsCompanionRuntime.CreateAsync(
                 host,
@@ -300,8 +315,9 @@ public static class WindowsCompanionProductionComposition
                         },
                         gate: petGate);
                     notificationService = new AppNotificationService(new WindowsAppNotificationSink());
+                    AppNotificationService invokedNotifications = notificationService;
                     AppNotificationManager.Default.NotificationInvoked += (_, invokedArgs) =>
-                        HandleNotificationInvoked(actions, invokedArgs.Arguments);
+                        HandleNotificationInvoked(actions, invokedNotifications, invokedArgs.Arguments);
                     presentationGateway = new PresentationCoordinator(
                         new PresentationPolicy(PresentationMinimumSilentInterval),
                         notificationService,
@@ -316,7 +332,9 @@ public static class WindowsCompanionProductionComposition
                             runtimePreferences.Current.QuietHours,
                             TimeZoneInfo.Local),
                         pauseState: () => pause.GetEffective(DateTimeOffset.UtcNow),
-                        petGate: petGate);
+                        petGate: petGate,
+                        ambientScheduler: services.GetRequiredService<AmbientScheduler>(),
+                        localNoteSelector: services.GetRequiredService<Dudu.Core.Notes.LocalNoteSelector>());
                     _ = StartAnimationPlayback(
                         animationEngine.PlayAsync(
                             pet.Current,
@@ -468,6 +486,8 @@ public static class WindowsCompanionProductionComposition
                     return Task.CompletedTask;
                 },
                 setGlobalShortcutAsync: runtime.SetGlobalShortcutAsync,
+                dismissReminderNotificationAsync: (reminderId, token) =>
+                    notificationService?.DismissReminderAsync(reminderId, token) ?? Task.CompletedTask,
                 deleteRemoteDataAsync: async token =>
                 {
                     var result = await services.GetRequiredService<IPairingService>()
@@ -502,7 +522,15 @@ public static class WindowsCompanionProductionComposition
                 OverlayCommands = overlayRouter,
             });
             await FixtureRemoteNoteInstaller.InstallIfRequestedAsync(services, cancellationToken);
-            return new ComposedPrimaryRuntime(runtime, animationEngine!, presenter, startup, services);
+            return new ComposedPrimaryRuntime(
+                runtime,
+                animationEngine!,
+                presenter,
+                startup,
+                services,
+                crashGuard,
+                safeMode ? notificationService : null,
+                safeMode ? actions : null);
         }
         catch
         {
@@ -549,6 +577,7 @@ public static class WindowsCompanionProductionComposition
     /// </summary>
     private static void HandleNotificationInvoked(
         CompanionUiActions actions,
+        AppNotificationService notifications,
         IEnumerable<KeyValuePair<string, string>>? arguments)
     {
         // Review I2: this used to re-parse invokedArgs.Argument, the raw string, with a
@@ -566,6 +595,14 @@ public static class WindowsCompanionProductionComposition
         if (destination is null)
         {
             return;
+        }
+
+        if (activation!.ReminderId is { } reminderId)
+        {
+            // Acting on the toast acknowledges it; drop the Action Center copy.
+            _ = ObserveNativeCallbackAsync(
+                notifications.DismissReminderAsync(reminderId, CancellationToken.None),
+                "notification-dismiss");
         }
 
         _ = ObserveNativeCallbackAsync(
@@ -608,10 +645,36 @@ public static class WindowsCompanionProductionComposition
         AnimationEngine animationEngine,
         LayeredFramePresenter presenter,
         StartupRegistrationService startup,
-        ServiceProvider services) : IPrimaryAppRuntime
+        ServiceProvider services,
+        StartupCrashGuard crashGuard,
+        AppNotificationService? safeModeNotifications,
+        CompanionUiActions? safeModeActions) : IPrimaryAppRuntime
     {
-        public Task StartAsync(CancellationToken cancellationToken = default) =>
-            runtime.StartAsync(cancellationToken);
+        private readonly CancellationTokenSource _stopping = new();
+        private int _started;
+
+        public async Task StartAsync(CancellationToken cancellationToken = default)
+        {
+            await runtime.StartAsync(cancellationToken);
+            Volatile.Write(ref _started, 1);
+            _ = crashGuard.MarkCleanAfterAsync(StableRunPeriod, _stopping.Token);
+            if (safeModeActions is not null)
+            {
+                _ = ObserveNativeCallbackAsync(ShowSafeModeNoticeAsync(), "safe-mode-notice");
+            }
+        }
+
+        private async Task ShowSafeModeNoticeAsync()
+        {
+            var token = _stopping.Token;
+            if (safeModeNotifications is not null)
+            {
+                await safeModeNotifications.TryRegisterAsync(token);
+                await safeModeNotifications.ShowSafeModeNoticeAsync(token);
+            }
+
+            await safeModeActions!.OpenHome(token);
+        }
 
         public Task ActivateAsync(
             AppActivation activation,
@@ -620,6 +683,13 @@ public static class WindowsCompanionProductionComposition
 
         public async ValueTask DisposeAsync()
         {
+            _stopping.Cancel();
+            if (Volatile.Read(ref _started) != 0)
+            {
+                // A started runtime reaching orderly disposal is a clean run.
+                crashGuard.MarkCleanRun();
+            }
+
             await animationEngine.DisposeAsync();
             await runtime.DisposeAsync();
             await startup.DisposeAsync();
@@ -640,6 +710,10 @@ public static class WindowsCompanionProductionComposition
     /// add a second suppression path), suppressing ambient ticks while either
     /// condition holds and resuming only once both have cleared.
     /// </summary>
+    /// <summary>How long a started runtime must stay up before its run counts
+    /// as clean for the crash-loop safe-mode counter.</summary>
+    internal static readonly TimeSpan StableRunPeriod = TimeSpan.FromSeconds(60);
+
     private sealed class DelegatingPresentationEnvironmentSink(
         Action<bool> setSessionLocked,
         Action<bool> setFullscreen,

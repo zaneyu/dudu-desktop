@@ -54,7 +54,37 @@ public sealed class WindowsAppNotificationSink : INotificationSink
             builder.AddButton(appButton);
         }
 
-        AppNotificationManager.Default.Show(builder.BuildNotification());
+        var notification = builder.BuildNotification();
+        if (request.Tag is not null)
+        {
+            notification.Tag = request.Tag;
+        }
+
+        if (request.Group is not null)
+        {
+            notification.Group = request.Group;
+        }
+
+        if (request.ExpirationTime is { } expiration)
+        {
+            notification.Expiration = expiration;
+        }
+
+        AppNotificationManager.Default.Show(notification);
         return Task.CompletedTask;
+    }
+
+    public async Task RemoveAsync(string tag, string group, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(tag);
+        ArgumentException.ThrowIfNullOrEmpty(group);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        await AppNotificationManager.Default.RemoveByTagAndGroupAsync(tag, group)
+            .AsTask(cancellationToken);
     }
 }

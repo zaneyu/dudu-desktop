@@ -1,5 +1,6 @@
 using Dudu.Core.Abstractions;
 using Dudu.Core.Models;
+using Dudu.Core.Reminders;
 using Microsoft.Data.Sqlite;
 
 namespace Dudu.Infrastructure.Data.Repositories;
@@ -36,7 +37,7 @@ public sealed class ReminderRepository : SqliteRepository, IReminderRepository, 
         return result;
     }
 
-    public async Task RecordOccurrencesAndAdvanceAsync(
+    public async Task<bool> RecordOccurrencesAndAdvanceAsync(
         Reminder reminder,
         IReadOnlyList<ReminderOccurrence> occurrences,
         DateTimeOffset? nextDueUtc,
@@ -47,6 +48,13 @@ public sealed class ReminderRepository : SqliteRepository, IReminderRepository, 
         if (IsTransactionBound)
         {
             await using var boundConnection = await OpenAsync(cancellationToken);
+            await using var boundUpdate = boundConnection.CreateCommand();
+            AddCompareAndSet(boundUpdate, reminder, nextDueUtc);
+            if (await boundUpdate.ExecuteNonQueryAsync(cancellationToken) != 1)
+            {
+                return false;
+            }
+
             foreach (var occurrence in occurrences)
             {
                 await using var insert = boundConnection.CreateCommand();
@@ -55,17 +63,21 @@ public sealed class ReminderRepository : SqliteRepository, IReminderRepository, 
                 await insert.ExecuteNonQueryAsync(cancellationToken);
             }
 
-            await using var boundUpdate = boundConnection.CreateCommand();
-            boundUpdate.CommandText = "UPDATE reminders SET next_due_utc=$next, snoozed_until_utc=NULL WHERE id=$id;";
-            Add(boundUpdate, "$next", Utc(nextDueUtc)); Add(boundUpdate, "$id", reminder.Id);
-            await boundUpdate.ExecuteNonQueryAsync(cancellationToken);
-            return;
+            return true;
         }
 
         await using var connection = await OpenAsync(cancellationToken);
         await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
         try
         {
+            await using var update = connection.CreateCommand(); update.Transaction = transaction;
+            AddCompareAndSet(update, reminder, nextDueUtc);
+            if (await update.ExecuteNonQueryAsync(cancellationToken) != 1)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return false;
+            }
+
             foreach (var occurrence in occurrences)
             {
                 await using var insert = connection.CreateCommand(); insert.Transaction = transaction;
@@ -74,17 +86,16 @@ public sealed class ReminderRepository : SqliteRepository, IReminderRepository, 
                 await insert.ExecuteNonQueryAsync(cancellationToken);
             }
 
-            await using var update = connection.CreateCommand(); update.Transaction = transaction;
-            update.CommandText = "UPDATE reminders SET next_due_utc=$next, snoozed_until_utc=NULL WHERE id=$id;";
-            Add(update, "$next", Utc(nextDueUtc)); Add(update, "$id", reminder.Id);
-            await update.ExecuteNonQueryAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
+            return true;
         }
         catch { await transaction.RollbackAsync(CancellationToken.None); throw; }
     }
 
     public async Task SaveAsync(Reminder reminder, CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(reminder);
+        ReminderScheduler.ValidateForSave(reminder);
         var rule = EncodeRule(reminder.Rule);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
@@ -119,6 +130,34 @@ public sealed class ReminderRepository : SqliteRepository, IReminderRepository, 
     private static Reminder Read(SqliteDataReader r) => new(
         r.GetString(0), r.GetString(1), ReadString(r,2), r.GetInt32(3)!=0,
         DecodeRule(r.GetInt32(4), r[5], r[6], r[7], r[8]), r.GetString(9),
-        (QuietHoursBehavior)r.GetInt32(10), (MissedOccurrencePolicy)r.GetInt32(11), ReadNullableUtc(r[12]) ?? DateTimeOffset.MaxValue, ReadNullableUtc(r[13]),
+        (QuietHoursBehavior)r.GetInt32(10), (MissedOccurrencePolicy)r.GetInt32(11), ReadNullableUtc(r[12]), ReadNullableUtc(r[13]),
         ReadQuietHours(r[14], r[15], r[16]));
+
+    private static void AddCompareAndSet(
+        SqliteCommand command,
+        Reminder expected,
+        DateTimeOffset? nextDueUtc)
+    {
+        var rule = EncodeRule(expected.Rule);
+        command.CommandText = """
+            UPDATE reminders
+            SET next_due_utc=$next, snoozed_until_utc=NULL
+            WHERE id=$id AND title=$title AND details IS $details AND enabled=$enabled
+              AND rule_kind=$kind AND local_time IS $localTime AND weekdays_mask IS $weekdays
+              AND interval_ticks IS $interval AND first_due_utc IS $firstDue
+              AND local_time_zone_id=$zone AND quiet_hours_behavior=$quietBehavior
+              AND missed_policy=$missed AND next_due_utc IS $oldNext
+              AND snoozed_until_utc IS $oldSnoozed AND quiet_hours_enabled IS $qhEnabled
+              AND quiet_hours_start IS $qhStart AND quiet_hours_end IS $qhEnd;
+            """;
+        Add(command, "$id", expected.Id); Add(command, "$title", expected.Title); Add(command, "$details", expected.Details);
+        Add(command, "$enabled", expected.Enabled ? 1 : 0); Add(command, "$kind", rule.Kind); Add(command, "$localTime", rule.LocalTime);
+        Add(command, "$weekdays", rule.Weekdays); Add(command, "$interval", rule.IntervalSeconds); Add(command, "$firstDue", rule.FirstDueUtc);
+        Add(command, "$zone", expected.LocalTimeZoneId); Add(command, "$quietBehavior", (int)expected.QuietHoursBehavior);
+        Add(command, "$missed", (int)expected.MissedPolicy); Add(command, "$oldNext", Utc(expected.NextDueUtc));
+        Add(command, "$oldSnoozed", Utc(expected.SnoozedUntilUtc)); Add(command, "$next", Utc(nextDueUtc));
+        Add(command, "$qhEnabled", expected.QuietHours is null ? null : expected.QuietHours.Enabled ? 1 : 0);
+        Add(command, "$qhStart", expected.QuietHours is null ? null : Time(expected.QuietHours.Start));
+        Add(command, "$qhEnd", expected.QuietHours is null ? null : Time(expected.QuietHours.End));
+    }
 }

@@ -1,4 +1,5 @@
 using System.Buffers.Text;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using Dudu.Core.Abstractions;
@@ -21,6 +22,20 @@ public sealed class RemoteSyncServiceTests
 
         await fixture.Service.PollOnceAsync(fixture.CancellationToken);
         await fixture.Service.PollOnceAsync(fixture.CancellationToken);
+
+        Assert.Single(fixture.Envelopes);
+        Assert.Single(fixture.Presentations);
+        Assert.Equal(new[] { fixture.MessageId }, fixture.AcknowledgedIds);
+    }
+
+    [Fact]
+    public async Task Concurrent_polls_notify_only_the_atomic_storage_winner()
+    {
+        await using var fixture = await RemoteSyncFixture.WithSameEnvelopeReturnedTwiceAsync();
+
+        await Task.WhenAll(
+            fixture.Service.PollOnceAsync(fixture.CancellationToken),
+            fixture.Service.PollOnceAsync(fixture.CancellationToken));
 
         Assert.Single(fixture.Envelopes);
         Assert.Single(fixture.Presentations);
@@ -91,6 +106,141 @@ public sealed class RemoteSyncServiceTests
         Assert.True(fixture.Service.NeedsRepair);
     }
 
+    [Fact]
+    public async Task Future_deliver_after_is_stored_but_neither_notified_nor_acked()
+    {
+        // The relay withholds future-scheduled envelopes on its own clock, but a skewed
+        // sender/relay clock can still deliver one early. The desktop must not surface the note
+        // before its scheduled time -- and must not ack either, since acking would delete the
+        // relay copy before it was ever presented.
+        await using var fixture = await RemoteSyncFixture.WithFutureDeliverAfterAsync();
+
+        await fixture.Service.PollOnceAsync(fixture.CancellationToken);
+
+        Assert.Empty(fixture.Presentations);
+        Assert.Empty(fixture.AcknowledgedIds);
+        // Stored, but not listed before its deliver-after moment...
+        Assert.NotNull(await fixture.RealRepository.GetAsync(fixture.MessageId, fixture.CancellationToken));
+        Assert.Empty(await fixture.RealRepository.ListPendingAsync(fixture.CancellationToken));
+        // ...and listed once it is due.
+        var dueRepository = new RemoteEnvelopeRepository(
+            fixture.Database, new ShiftedTimeProvider(TimeSpan.FromHours(2)));
+        Assert.Equal(
+            [fixture.MessageId],
+            (await dueRepository.ListPendingAsync(fixture.CancellationToken))
+                .Select(envelope => envelope.MessageId));
+    }
+
+    [Fact]
+    public async Task Reveal_still_works_for_a_note_kept_unsaved_past_the_30_day_window()
+    {
+        // Freshness is judged at receipt, not at reveal: a note received today must stay
+        // revealable when the user opens it 40 days later.
+        await using var fixture = await RemoteSyncFixture.WithStoredEncryptedEnvelopeAsync(
+            "still here", clockNow: DateTimeOffset.UtcNow.AddDays(40));
+
+        var note = await fixture.Service.RevealAsync(fixture.MessageId, fixture.CancellationToken);
+
+        Assert.Equal("still here", note.Text);
+    }
+
+    [Fact]
+    public async Task Invalid_envelopes_beyond_the_daily_quota_are_acked_but_not_stored()
+    {
+        var total = RemoteSyncService.InvalidEnvelopeDailyQuota + 2;
+        await using var fixture = await RemoteSyncFixture.WithInvalidEnvelopesAsync(total);
+
+        await fixture.Service.PollOnceAsync(fixture.CancellationToken);
+
+        Assert.Equal(RemoteSyncService.InvalidEnvelopeDailyQuota, fixture.Envelopes.Count);
+        Assert.Equal(total, fixture.AcknowledgedIds.Count);
+        Assert.Empty(fixture.Presentations);
+        Assert.Equal(
+            RemoteSyncService.InvalidEnvelopeDailyQuota,
+            fixture.ReportedErrors.Count(error => error.Tag == "remote-sync-decrypt"));
+        Assert.Single(fixture.ReportedErrors, error => error.Tag == "remote-sync-invalid-quota");
+    }
+
+    [Theory]
+    [InlineData("not-found")]
+    [InlineData("unauthorized")]
+    public async Task Revoke_clears_local_registration_when_the_relay_device_is_already_gone(string failure)
+    {
+        await using var fixture = await RemoteSyncFixture.WithRegistrationAsync();
+        fixture.Relay.DeleteDeviceException = failure == "not-found"
+            ? () => new RelayNotFoundException()
+            : () => new RelayUnauthorizedException();
+
+        await fixture.Service.RevokeDeviceAsync(fixture.CancellationToken);
+
+        Assert.False(fixture.SecretStore.Values.ContainsKey(RelaySecretKeys.DeviceId));
+        Assert.False(fixture.SecretStore.Values.ContainsKey(RelaySecretKeys.DesktopToken));
+        Assert.False(fixture.SecretStore.Values.ContainsKey(RelaySecretKeys.DesktopTokenStaging));
+        Assert.Equal(PairingAvailability.Offline, fixture.Service.State);
+    }
+
+    [Fact]
+    public async Task Revoke_keeps_the_encryption_key_unless_explicitly_asked_to_destroy_it()
+    {
+        await using var fixture = await RemoteSyncFixture.WithStoredEncryptedEnvelopeAsync("keep me");
+        fixture.SecretStore.Values[RelaySecretKeys.DeviceId] = Encoding.UTF8.GetBytes("device-1");
+        fixture.SecretStore.Values[RelaySecretKeys.DesktopToken] = Encoding.UTF8.GetBytes("token-1");
+
+        await fixture.Service.RevokeDeviceAsync(fixture.CancellationToken);
+
+        Assert.True(fixture.SecretStore.Values.ContainsKey(RemoteSyncFixture.DesktopPrivateKeySecretKey));
+        Assert.Equal("keep me", (await fixture.Service.RevealAsync(fixture.MessageId, fixture.CancellationToken)).Text);
+
+        await fixture.Service.RevokeDeviceAsync(fixture.CancellationToken, destroyEncryptionKey: true);
+
+        Assert.False(fixture.SecretStore.Values.ContainsKey(RemoteSyncFixture.DesktopPrivateKeySecretKey));
+    }
+
+    [Fact]
+    public async Task Revoke_leaves_local_registration_intact_when_the_relay_is_unavailable()
+    {
+        await using var fixture = await RemoteSyncFixture.WithRegistrationAsync();
+        fixture.Relay.DeleteDeviceException = () => new RelayUnavailableException("simulated outage");
+
+        await Assert.ThrowsAsync<RelayUnavailableException>(
+            () => fixture.Service.RevokeDeviceAsync(fixture.CancellationToken));
+
+        Assert.True(fixture.SecretStore.Values.ContainsKey(RelaySecretKeys.DeviceId));
+        Assert.True(fixture.SecretStore.Values.ContainsKey(RelaySecretKeys.DesktopToken));
+    }
+
+    [Fact]
+    public async Task Rejected_ack_flips_to_needs_repair()
+    {
+        // An ack rejected with 401 means the stored bearer token is dead, exactly like a 401 on
+        // poll: the service must report NeedsRepair rather than backing off and retrying with the
+        // same credential.
+        await using var fixture = await RemoteSyncFixture.WithFailingAckAsync();
+
+        await Assert.ThrowsAsync<RelayUnauthorizedException>(
+            () => fixture.Service.PollOnceAsync(fixture.CancellationToken));
+
+        Assert.Equal(PairingAvailability.NeedsRepair, fixture.Service.State);
+        Assert.True(fixture.Service.NeedsRepair);
+    }
+
+    [Fact]
+    public async Task Oversize_envelope_is_acked_and_skipped_without_blocking_the_page()
+    {
+        // A poison envelope far larger than any well-formed page member is acked (advanced past)
+        // without being stored or presented, while the rest of the page still processes normally.
+        await using var fixture = await RemoteSyncFixture.WithOversizeEnvelopeAsync();
+
+        await fixture.Service.PollOnceAsync(fixture.CancellationToken);
+
+        Assert.Single(fixture.Envelopes);
+        Assert.Equal(fixture.MessageId, fixture.Envelopes[0].MessageId);
+        Assert.Equal([Guid.ParseExact(fixture.MessageId, "D")], fixture.Presentations);
+        Assert.Equal(2, fixture.AcknowledgedIds.Count);
+        Assert.Contains(fixture.AcknowledgedIds, id => id == fixture.MessageId);
+        Assert.Contains(fixture.ReportedErrors, error => error.Tag == "remote-sync-oversize");
+    }
+
     [Theory]
     // Review C2: both payloads deserialize cleanly -- System.Text.Json binds JSON null onto a
     // non-nullable string member without complaint. The first is the one named in the review;
@@ -156,6 +306,37 @@ public sealed class RemoteSyncServiceTests
         Assert.False(fixture.Service.IsRunning);
     }
 
+    [Fact]
+    public async Task Stop_racing_start_does_not_restart_the_poll_loop()
+    {
+        await using var fixture = await RemoteSyncFixture.WithBlockingPollAsync();
+
+        await fixture.Service.StartAsync(fixture.CancellationToken);
+        await fixture.Relay.PollEntered.Task.WaitAsync(fixture.CancellationToken);
+
+        var stop = fixture.Service.StopAsync(fixture.CancellationToken);
+        var racingStart = fixture.Service.StartAsync(fixture.CancellationToken);
+        Assert.False(stop.IsCompleted);
+        Assert.False(racingStart.IsCompleted);
+
+        fixture.Relay.ReleasePoll.TrySetResult(true);
+        await stop;
+        await racingStart;
+
+        Assert.False(fixture.Service.IsRunning);
+    }
+
+    [Fact]
+    public async Task Start_after_dispose_is_rejected()
+    {
+        await using var fixture = await RemoteSyncFixture.CreateAsync();
+
+        await fixture.Service.DisposeAsync();
+
+        await Assert.ThrowsAsync<ObjectDisposedException>(() =>
+            fixture.Service.StartAsync(fixture.CancellationToken));
+    }
+
     /// <summary>Polls <paramref name="condition"/> until it holds or ten seconds elapse.</summary>
     private static async Task WaitUntilAsync(Func<bool> condition, CancellationToken cancellationToken)
     {
@@ -199,7 +380,7 @@ public sealed class RemoteSyncServiceTests
     private sealed class RemoteSyncFixture : IAsyncDisposable
     {
         // Matches Dudu.Infrastructure.Crypto.DesktopKeyService's internal SecretStoreKey constant.
-        private const string DesktopPrivateKeySecretKey = "desktop-ecdh-private-v1";
+        public const string DesktopPrivateKeySecretKey = "desktop-ecdh-private-v1";
 
         private readonly string _root;
         private readonly Database _database;
@@ -239,6 +420,7 @@ public sealed class RemoteSyncServiceTests
         public string MessageId { get; }
         public RemoteSyncService Service { get; }
         public DatabaseOptions Options => _database.Options;
+        public Database Database => _database;
         public List<(string Tag, Exception Exception)> ReportedErrors { get; }
         public CancellationToken CancellationToken => TestContext.Current.CancellationToken;
 
@@ -269,9 +451,11 @@ public sealed class RemoteSyncServiceTests
             return fixture;
         }
 
-        public static async Task<RemoteSyncFixture> WithStoredEncryptedEnvelopeAsync(string text)
+        public static async Task<RemoteSyncFixture> WithStoredEncryptedEnvelopeAsync(
+            string text,
+            DateTimeOffset? clockNow = null)
         {
-            var fixture = await CreateAsync();
+            var fixture = await CreateAsync(clockNow: clockNow);
             var encrypted = CryptoFixture.EncryptFor(fixture.RecipientPublicKeySpki, text, fixture.MessageId);
             var stored = new RemoteEnvelope(
                 encrypted.MessageId,
@@ -300,6 +484,27 @@ public sealed class RemoteSyncServiceTests
             return fixture;
         }
 
+        public static async Task<RemoteSyncFixture> WithRegistrationAsync()
+        {
+            var fixture = await CreateAsync();
+            fixture.SecretStore.Values[RelaySecretKeys.DeviceId] = Encoding.UTF8.GetBytes("device-1");
+            fixture.SecretStore.Values[RelaySecretKeys.DesktopToken] = Encoding.UTF8.GetBytes("token-1");
+            fixture.SecretStore.Values[RelaySecretKeys.DesktopTokenStaging] = Encoding.UTF8.GetBytes("token-2");
+            return fixture;
+        }
+
+        public static async Task<RemoteSyncFixture> WithInvalidEnvelopesAsync(int count)
+        {
+            var fixture = await CreateAsync();
+            fixture.Relay.PollResult = Enumerable.Range(0, count)
+                .Select(_ => ToRelayEnvelope(CryptoFixture.EncryptRawPayloadFor(
+                    fixture.RecipientPublicKeySpki,
+                    Encoding.UTF8.GetBytes("""{"kind":"note","text":null,"reaction":null}"""),
+                    Guid.NewGuid().ToString())))
+                .ToArray();
+            return fixture;
+        }
+
         public static async Task<RemoteSyncFixture> WithMalformedCiphertextAsync()
         {
             var fixture = await CreateAsync();
@@ -323,6 +528,45 @@ public sealed class RemoteSyncServiceTests
             return fixture;
         }
 
+        public static async Task<RemoteSyncFixture> WithFailingAckAsync()
+        {
+            var fixture = await CreateAsync();
+            var envelope = CryptoFixture.EncryptFor(fixture.RecipientPublicKeySpki, "hi there", fixture.MessageId);
+            fixture.Relay.PollResult = [ToRelayEnvelope(envelope)];
+            fixture.Relay.AckException = () => new RelayUnauthorizedException("simulated dead token on ack");
+            return fixture;
+        }
+
+        public static async Task<RemoteSyncFixture> WithFutureDeliverAfterAsync()
+        {
+            var fixture = await CreateAsync();
+            var deliverAfterUtc = DateTimeOffset.UtcNow.AddHours(1).ToString(
+                "yyyy-MM-ddTHH:mm:ss.fffZ",
+                CultureInfo.InvariantCulture);
+            var envelope = CryptoFixture.EncryptFor(
+                fixture.RecipientPublicKeySpki,
+                "not yet",
+                fixture.MessageId,
+                deliverAfterUtc: deliverAfterUtc);
+            fixture.Relay.PollResult = [ToRelayEnvelope(envelope)];
+            return fixture;
+        }
+
+        public static async Task<RemoteSyncFixture> WithOversizeEnvelopeAsync()
+        {
+            var fixture = await CreateAsync();
+            var good = CryptoFixture.EncryptFor(fixture.RecipientPublicKeySpki, "hi there", fixture.MessageId);
+            var other = CryptoFixture.EncryptFor(fixture.RecipientPublicKeySpki, "too big");
+            var oversized = ToRelayEnvelope(other) with
+            {
+                // Stays below no bound the relay page enforces here (the fake client returns it
+                // verbatim) but far above the service's per-envelope cap.
+                Ciphertext = new string('A', RemoteSyncService.MaxEnvelopeWireBytes * 2),
+            };
+            fixture.Relay.PollResult = [oversized, ToRelayEnvelope(good)];
+            return fixture;
+        }
+
         public static async Task<RemoteSyncFixture> WithOneTransientOutageAsync()
         {
             var fixture = await CreateAsync();
@@ -330,7 +574,16 @@ public sealed class RemoteSyncServiceTests
             return fixture;
         }
 
-        private static async Task<RemoteSyncFixture> CreateAsync(bool useThrowingRepository = false)
+        public static async Task<RemoteSyncFixture> WithBlockingPollAsync()
+        {
+            var fixture = await CreateAsync();
+            fixture.Relay.BlockPoll = true;
+            return fixture;
+        }
+
+        internal static async Task<RemoteSyncFixture> CreateAsync(
+            bool useThrowingRepository = false,
+            DateTimeOffset? clockNow = null)
         {
             var root = Path.Combine(Path.GetTempPath(), "dudu-remote-sync-tests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
@@ -356,7 +609,7 @@ public sealed class RemoteSyncServiceTests
             // Must track real UtcNow (not an arbitrary fixed date): EnvelopeCrypto.Decrypt rejects
             // an envelope whose wire createdUtc is more than 5 minutes ahead of the clock it is
             // given, and CryptoFixture.EncryptFor always stamps createdUtc with the real clock.
-            var clock = new FixedClock(DateTimeOffset.UtcNow);
+            var clock = new FixedClock(clockNow ?? DateTimeOffset.UtcNow);
             var backoff = new PollBackoff(new FixedFractionRandomSource(0));
             var messageId = Guid.NewGuid().ToString();
             var reportedErrors = new List<(string Tag, Exception Exception)>();
@@ -418,6 +671,11 @@ public sealed class RemoteSyncServiceTests
         }
     }
 
+    private sealed class ShiftedTimeProvider(TimeSpan offset) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => base.GetUtcNow() + offset;
+    }
+
     private sealed class FixedClock(DateTimeOffset now) : IClock
     {
         public DateTimeOffset UtcNow { get; } = now;
@@ -464,6 +722,9 @@ public sealed class RemoteSyncServiceTests
 
         public Task DeleteAsync(string messageId, CancellationToken cancellationToken) =>
             _inner.DeleteAsync(messageId, cancellationToken);
+
+        public Task<int> PruneExpiredAsync(DateTimeOffset utcNow, TimeSpan retention, CancellationToken cancellationToken) =>
+            _inner.PruneExpiredAsync(utcNow, retention, cancellationToken);
     }
 
     /// <summary>Always throws from the one member <see cref="RemoteSyncService"/> relies on to
@@ -495,6 +756,9 @@ public sealed class RemoteSyncServiceTests
 
         public Task DeleteAsync(string messageId, CancellationToken cancellationToken) =>
             _inner.DeleteAsync(messageId, cancellationToken);
+
+        public Task<int> PruneExpiredAsync(DateTimeOffset utcNow, TimeSpan retention, CancellationToken cancellationToken) =>
+            _inner.PruneExpiredAsync(utcNow, retention, cancellationToken);
     }
 
     /// <summary>An <see cref="IRemoteNoteArrivalSink"/> test double recording each notification.
@@ -523,7 +787,14 @@ public sealed class RemoteSyncServiceTests
         public int RegisterCallCount { get; private set; }
         public IReadOnlyList<RelayEnvelope>? PollResult { get; set; }
         public Func<Exception>? PollException { get; set; }
+        public Func<Exception>? AckException { get; set; }
+        public Func<Exception>? DeleteDeviceException { get; set; }
         public List<string> AcknowledgedIds { get; } = [];
+        public TaskCompletionSource<bool> PollEntered { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<bool> ReleasePoll { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool BlockPoll { get; set; }
 
         public void FailNextPolls(int count) => _failuresRemaining = count;
 
@@ -556,6 +827,11 @@ public sealed class RemoteSyncServiceTests
         public Task DeleteDeviceAsync(CancellationToken cancellationToken)
         {
             RequestCount++;
+            if (DeleteDeviceException is not null)
+            {
+                throw DeleteDeviceException();
+            }
+
             return Task.CompletedTask;
         }
 
@@ -574,12 +850,28 @@ public sealed class RemoteSyncServiceTests
                 throw PollException();
             }
 
-            return Task.FromResult(PollResult ?? (IReadOnlyList<RelayEnvelope>)Array.Empty<RelayEnvelope>());
+            return PollCoreAsync(cancellationToken);
+        }
+
+        private async Task<IReadOnlyList<RelayEnvelope>> PollCoreAsync(CancellationToken cancellationToken)
+        {
+            if (BlockPoll)
+            {
+                PollEntered.TrySetResult(true);
+                await ReleasePoll.Task;
+            }
+
+            return PollResult ?? (IReadOnlyList<RelayEnvelope>)Array.Empty<RelayEnvelope>();
         }
 
         public Task AcknowledgeAsync(string messageId, CancellationToken cancellationToken)
         {
             RequestCount++;
+            if (AckException is not null)
+            {
+                throw AckException();
+            }
+
             if (_ackedSet.Add(messageId))
             {
                 AcknowledgedIds.Add(messageId);

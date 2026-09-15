@@ -19,4 +19,15 @@ public sealed record Preferences(
     bool HidePetDuringFullscreen,
     TimeSpan AmbientMinimumInterval,
     bool HydrationRemindersEnabled = true,
-    bool BreakRemindersEnabled = true);
+    bool BreakRemindersEnabled = true)
+{
+    public static Preferences Default => new(
+        AppTheme.System,
+        new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+        ReducedMotion: false,
+        LocalNoteDailyLimit: 3,
+        LaunchAtSignIn: true,
+        AlwaysOnTop: false,
+        HidePetDuringFullscreen: true,
+        AmbientMinimumInterval: TimeSpan.FromMinutes(15));
+}

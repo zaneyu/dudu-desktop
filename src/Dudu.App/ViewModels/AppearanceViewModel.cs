@@ -31,10 +31,10 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
         _hideDuringFullscreen = preferences.HidePetDuringFullscreen;
         _petScale = 1;
         _monitorDeviceName = "current monitor";
-        SaveCommand = new AsyncRelayCommand(() => SaveAsync(CancellationToken.None));
-        SavePlacementCommand = new AsyncRelayCommand(() => SavePlacementAsync(CancellationToken.None));
-        ApplyOutfitCommand = new AsyncRelayCommand(() => ApplyOutfitAsync(CancellationToken.None));
-        SaveShortcutCommand = new AsyncRelayCommand(() => SaveShortcutAsync(CancellationToken.None));
+        SaveCommand = new AsyncRelayCommand((CancellationToken ct) => SaveAsync(ct));
+        SavePlacementCommand = new AsyncRelayCommand((CancellationToken ct) => SavePlacementAsync(ct));
+        ApplyOutfitCommand = new AsyncRelayCommand((CancellationToken ct) => ApplyOutfitAsync(ct));
+        SaveShortcutCommand = new AsyncRelayCommand((CancellationToken ct) => SaveShortcutAsync(ct));
     }
 
     public IAsyncRelayCommand SaveCommand { get; }
@@ -76,26 +76,29 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
 
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
     {
-        await RunAsync(async () =>
+        await RunRefreshAsync(async ct =>
         {
             // Cached Settings pages are created after onboarding.  Rehydrate
             // from the coordinator each time the page is activated so a later
             // onboarding/defaults write is the single source of truth.
             var preferences = _context.CurrentPreferences;
-            Theme = preferences.Theme;
-            ReducedMotion = preferences.ReducedMotion;
-            AlwaysOnTop = preferences.AlwaysOnTop;
-            HideDuringFullscreen = preferences.HidePetDuringFullscreen;
-            var placements = await _context.PetPlacements.ListAsync(cancellationToken);
-            MonitorOptions.Clear();
-            foreach (var placement in placements) MonitorOptions.Add(placement.MonitorDeviceName);
-            if (MonitorOptions.Count == 0) MonitorOptions.Add(MonitorDeviceName);
-            var selectedPlacement = placements.FirstOrDefault(item =>
-                string.Equals(item.MonitorDeviceName, MonitorDeviceName, StringComparison.Ordinal))
-                ?? placements.FirstOrDefault();
-            MonitorDeviceName = selectedPlacement?.MonitorDeviceName ?? MonitorOptions[0];
-            if (selectedPlacement is not null) PetScale = selectedPlacement.Scale;
-        });
+            var placements = await _context.PetPlacements.ListAsync(ct);
+            await MutateAsync(() =>
+            {
+                Theme = preferences.Theme;
+                ReducedMotion = preferences.ReducedMotion;
+                AlwaysOnTop = preferences.AlwaysOnTop;
+                HideDuringFullscreen = preferences.HidePetDuringFullscreen;
+                MonitorOptions.Clear();
+                foreach (var placement in placements) MonitorOptions.Add(placement.MonitorDeviceName);
+                if (MonitorOptions.Count == 0) MonitorOptions.Add(MonitorDeviceName);
+                var selectedPlacement = placements.FirstOrDefault(item =>
+                    string.Equals(item.MonitorDeviceName, MonitorDeviceName, StringComparison.Ordinal))
+                    ?? placements.FirstOrDefault();
+                MonitorDeviceName = selectedPlacement?.MonitorDeviceName ?? MonitorOptions[0];
+                if (selectedPlacement is not null) PetScale = selectedPlacement.Scale;
+            }, ct);
+        }, cancellationToken);
     }
 
     public Task SaveAsync(CancellationToken cancellationToken = default) =>
