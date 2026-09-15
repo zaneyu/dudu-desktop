@@ -65,7 +65,7 @@ Source: "..\src\Dudu.App\Assets\Packs\private-dudu\*"; DestDir: "{app}\Assets\Pa
 ; {userprograms} (not a DefaultGroupName subfolder) so its path matches
 ; tests/installer/installer-smoke.ps1, which checks for
 ; "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Dudu Desktop.lnk".
-Name: "{code:GetStartMenuShortcutPath}"; Filename: "{app}\Dudu.App.exe"
+Name: "{code:GetStartMenuShortcutDir}\Dudu Desktop"; Filename: "{app}\Dudu.App.exe"
 ; Optional desktop shortcut, off by default.
 Name: "{userdesktop}\Dudu Desktop"; Filename: "{app}\Dudu.App.exe"; Tasks: desktopicon
 
@@ -87,11 +87,12 @@ const
 var
   ShouldDeleteUserData: Boolean;
 
-function GetStartMenuShortcutPath(): string;
+// ISCC requires a literal "\" in an [Icons] Name, so the override is a directory.
+function GetStartMenuShortcutDir(Param: string): string;
 begin
-  Result := GetEnv('DUDU_START_MENU_SHORTCUT_PATH');
+  Result := GetEnv('DUDU_START_MENU_SHORTCUT_DIR');
   if Result = '' then
-    Result := ExpandConstant('{userprograms}\Dudu Desktop');
+    Result := ExpandConstant('{userprograms}');
 end;
 
 function GetDataRoot(): string;

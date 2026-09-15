@@ -63,7 +63,7 @@ if ($sentinelRoot -like "$testRoot\*") {
 
 $previousDataRoot = [Environment]::GetEnvironmentVariable("DUDU_DATA_ROOT", "Process")
 $previousStartupShortcut = [Environment]::GetEnvironmentVariable("DUDU_STARTUP_SHORTCUT_PATH", "Process")
-$previousStartMenuShortcut = [Environment]::GetEnvironmentVariable("DUDU_START_MENU_SHORTCUT_PATH", "Process")
+$previousStartMenuShortcut = [Environment]::GetEnvironmentVariable("DUDU_START_MENU_SHORTCUT_DIR", "Process")
 $runningApp = $null
 
 New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
@@ -71,7 +71,7 @@ New-Item -ItemType Directory -Path $sentinelRoot -Force | Out-Null
 Set-Content -Path $sentinelPath -Value "operator-sentinel-$runId" -NoNewline
 [Environment]::SetEnvironmentVariable("DUDU_DATA_ROOT", $dataRoot, "Process")
 [Environment]::SetEnvironmentVariable("DUDU_STARTUP_SHORTCUT_PATH", $startupShortcutPath, "Process")
-[Environment]::SetEnvironmentVariable("DUDU_START_MENU_SHORTCUT_PATH", $shortcutPath, "Process")
+[Environment]::SetEnvironmentVariable("DUDU_START_MENU_SHORTCUT_DIR", (Split-Path -Parent $shortcutPath), "Process")
 
 function Install-DuduDesktopSilently {
     # Start-Process -Wait never sets $LASTEXITCODE; read the process's own exit code.
@@ -224,7 +224,7 @@ finally {
     }
     [Environment]::SetEnvironmentVariable("DUDU_DATA_ROOT", $previousDataRoot, "Process")
     [Environment]::SetEnvironmentVariable("DUDU_STARTUP_SHORTCUT_PATH", $previousStartupShortcut, "Process")
-    [Environment]::SetEnvironmentVariable("DUDU_START_MENU_SHORTCUT_PATH", $previousStartMenuShortcut, "Process")
+    [Environment]::SetEnvironmentVariable("DUDU_START_MENU_SHORTCUT_DIR", $previousStartMenuShortcut, "Process")
     # These paths are generated uniquely by this run and are never operator data.
     Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $sentinelRoot -Recurse -Force -ErrorAction SilentlyContinue
