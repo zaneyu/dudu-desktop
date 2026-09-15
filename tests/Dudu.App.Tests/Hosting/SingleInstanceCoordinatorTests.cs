@@ -39,12 +39,19 @@ public sealed class SingleInstanceCoordinatorTests
     public async Task Malformed_and_duplicate_payloads_are_ignored_without_killing_the_listener()
     {
         var transport = new InMemoryActivationTransport();
-        var activations = new List<AppActivation>();
+        var calls = 0;
+        var secondCall = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
         await using var primary = new SingleInstanceCoordinator(
             transport,
             activation =>
             {
-                activations.Add(activation);
+                Assert.Equal(AppActivation.OpenHome, activation);
+                if (Interlocked.Increment(ref calls) == 2)
+                {
+                    secondCall.TrySetResult(true);
+                }
+
                 return Task.CompletedTask;
             });
 
@@ -53,8 +60,8 @@ public sealed class SingleInstanceCoordinatorTests
         await transport.InjectAsync([(byte)AppActivation.OpenHome]);
         await transport.InjectAsync([(byte)AppActivation.OpenHome]);
 
-        await Task.Delay(20, TestContext.Current.CancellationToken);
-        Assert.Equal(2, activations.Count);
+        await secondCall.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        Assert.Equal(2, calls);
     }
 
     [Fact]
