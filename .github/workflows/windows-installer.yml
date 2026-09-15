@@ -196,4 +196,6 @@ jobs:
       - name: Relay browser E2E
         if: always()
         working-directory: relay
-        run: npm run test:e2e
+        run: |
+          npx playwright install chromium firefox webkit
+          npm run test:e2e

@@ -30,8 +30,6 @@ public sealed class SingleInstanceCoordinator : IAsyncDisposable
     private readonly CancellationTokenSource _disposeCancellation = new();
     private readonly object _gate = new();
     private readonly SemaphoreSlim _acquisitionGate = new(1, 1);
-    private readonly TimeSpan _activationThrottle = TimeSpan.FromMilliseconds(250);
-    private DateTimeOffset _lastActivationUtc = DateTimeOffset.MinValue;
     private Task? _listenerTask;
     private bool _isPrimary;
     private bool _disposed;
@@ -197,20 +195,6 @@ public sealed class SingleInstanceCoordinator : IAsyncDisposable
             return;
         }
 
-        lock (_gate)
-        {
-            // Rate-limit secondary accepts: coalesce bursts into one
-            // activation per throttle window instead of replaying each pipe
-            // connect as separate UI work.
-            var now = DateTimeOffset.UtcNow;
-            if (now - _lastActivationUtc < _activationThrottle)
-            {
-                return;
-            }
-
-            _lastActivationUtc = now;
-        }
-
         try
         {
             await _activationHandler((AppActivation)payload.Span[0]);
@@ -297,8 +281,7 @@ internal sealed class WindowsActivationTransport : IActivationTransport
                 await onPayload(buffer.AsMemory(0, count));
 
                 // Rate-limit accepts so a burst of secondaries cannot hot-loop
-                // pipe creation; the bootstrap/coordinator coalesce above
-                // makes the delay lossless for identical activations.
+                // pipe creation; activations are idempotent UI requests.
                 await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

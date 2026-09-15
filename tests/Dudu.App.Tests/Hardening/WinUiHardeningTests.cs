@@ -72,6 +72,7 @@ public sealed class WinUiHardeningTests
         threadField.SetValue(service, Environment.CurrentManagedThreadId + 100000);
         Assert.Throws<InvalidOperationException>(() => service.Recreate());
         Assert.Throws<InvalidOperationException>(() => service.Dispose());
+        threadField.SetValue(service, Environment.CurrentManagedThreadId);
     }
 
     [Fact]
