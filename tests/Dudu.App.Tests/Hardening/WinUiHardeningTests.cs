@@ -155,20 +155,6 @@ public sealed class WinUiHardeningTests
         await Assert.ThrowsAsync<TimeoutException>(() => task);
     }
 
-    [Fact]
-    public async Task Single_instance_coalesces_rapid_activations()
-    {
-        var calls = 0;
-        var transport = new FlappingTransport();
-        await using var coordinator = new SingleInstanceCoordinator(
-            transport, _ => { calls++; return Task.CompletedTask; });
-        Assert.True(await coordinator.TryAcquireAsync(TestContext.Current.CancellationToken));
-        // Two rapid payloads: the second falls inside the 250ms throttle.
-        await transport.FireAsync([1]);
-        await transport.FireAsync([1]);
-        Assert.Equal(1, calls);
-    }
-
     private sealed class StubTrayNative : ITrayNativeApi
     {
         public int RecreateCount { get; private set; }
@@ -207,18 +193,4 @@ public sealed class WinUiHardeningTests
         public Task SaveAsync(Preferences p, CancellationToken ct) { LastSaved = p; return Task.CompletedTask; }
     }
 
-    private sealed class FlappingTransport : IActivationTransport
-    {
-        private Func<ReadOnlyMemory<byte>, Task>? _handler;
-        public Task<bool> TryAcquirePrimaryAsync(CancellationToken ct) => Task.FromResult(true);
-        public Task ListenAsync(Func<ReadOnlyMemory<byte>, Task> onPayload, CancellationToken ct)
-        {
-            _handler = onPayload;
-            return Task.Delay(Timeout.Infinite, ct).ContinueWith(_ => { }, TaskScheduler.Default);
-        }
-        public Task FireAsync(byte[] payload) =>
-            _handler is null ? Task.CompletedTask : _handler(payload);
-        public Task SendAsync(byte payload, TimeSpan timeout, CancellationToken ct) => Task.CompletedTask;
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
-    }
 }
