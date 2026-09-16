@@ -69,9 +69,8 @@ jobs:
         run: pwsh tests/installer/installer-smoke.ps1 -Installer artifacts/DuduDesktop-1.0.0-win-x64-private.exe
 
       - name: Performance gates
-        # Advisory until the harness stops hanging on the hosted runner (it produced no
-        # output for 26 minutes after building); it must not block the installer.
-        continue-on-error: true
+        # This is a release gate. The harness seeds a completed onboarding profile before launch,
+        # so a missing overlay now fails promptly instead of silently allowing an unmeasured build.
         timeout-minutes: 15
         shell: pwsh
         run: pwsh scripts/run-performance-gates.ps1 -Executable artifacts/publish/win-x64/Dudu.App.exe -Output artifacts/performance/release.json

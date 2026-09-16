@@ -2,17 +2,23 @@
 
 const MAX_PAIRING_ATTEMPTS = 5;
 
-export async function insertPairingCode(
+export function insertPairingCodeStatement(
   db: D1Database,
   pairing: { codeHash: string; deviceId: string; expiresUtc: string },
-): Promise<void> {
-  await db
+): D1PreparedStatement {
+  return db
     .prepare(
       `INSERT INTO pairing_codes (code_hash, device_id, expires_utc, consumed_utc, attempt_count)
        VALUES (?1, ?2, ?3, NULL, 0)`,
     )
-    .bind(pairing.codeHash, pairing.deviceId, pairing.expiresUtc)
-    .run();
+    .bind(pairing.codeHash, pairing.deviceId, pairing.expiresUtc);
+}
+
+export async function insertPairingCode(
+  db: D1Database,
+  pairing: { codeHash: string; deviceId: string; expiresUtc: string },
+): Promise<void> {
+  await insertPairingCodeStatement(db, pairing).run();
 }
 
 /**
@@ -23,14 +29,20 @@ export async function insertPairingCode(
  * redeemable long after the user moved on. Consumed codes are history and are left alone for
  * the scheduled expiry sweep.
  */
+export function deleteUnredeemedPairingCodesStatement(
+  db: D1Database,
+  deviceId: string,
+): D1PreparedStatement {
+  return db
+    .prepare(`DELETE FROM pairing_codes WHERE device_id = ?1 AND consumed_utc IS NULL`)
+    .bind(deviceId);
+}
+
 export async function deleteUnredeemedPairingCodesForDevice(
   db: D1Database,
   deviceId: string,
 ): Promise<void> {
-  await db
-    .prepare(`DELETE FROM pairing_codes WHERE device_id = ?1 AND consumed_utc IS NULL`)
-    .bind(deviceId)
-    .run();
+  await deleteUnredeemedPairingCodesStatement(db, deviceId).run();
 }
 
 export interface PairingAttemptResult {

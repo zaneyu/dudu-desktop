@@ -4,10 +4,13 @@ import {
   buildRotateKeyStatements,
   countActiveSenderSessions,
   findDeviceByTokenHash,
-  insertDevice,
+  insertDeviceStatement,
   type DeviceRecord,
 } from "../db/devices.js";
-import { insertPairingCode, deleteUnredeemedPairingCodesForDevice } from "../db/pairings.js";
+import {
+  deleteUnredeemedPairingCodesStatement,
+  insertPairingCodeStatement,
+} from "../db/pairings.js";
 import type { Env } from "../env.js";
 import { JsonBodyTooLargeError, readJsonBody, UnsupportedMediaTypeError } from "../http/body.js";
 import {
@@ -120,16 +123,24 @@ export async function registerDevice(request: Request, env: Env): Promise<Respon
   const desktopToken = generateCapabilityToken();
   const desktopTokenHash = await sha256HexOfText(desktopToken);
 
-  await insertDevice(env.DB, { id: deviceId, publicKeySpki: publicKey, desktopTokenHash, createdUtc: nowIso });
-
   const pairingCode = generatePairingCode();
   const pairingCodeHash = await hmacSha256Hex(env.PAIRING_CODE_PEPPER, pairingCode);
   const pairingCodeExpiresUtc = new Date(now.getTime() + PAIRING_CODE_VALIDITY_MS).toISOString();
-  await insertPairingCode(env.DB, {
-    codeHash: pairingCodeHash,
-    deviceId,
-    expiresUtc: pairingCodeExpiresUtc,
-  });
+  // Registration is one logical operation. If either row fails, do not leave an active device
+  // whose bearer token was never returned to the caller and therefore cannot be revoked.
+  await env.DB.batch([
+    insertDeviceStatement(env.DB, {
+      id: deviceId,
+      publicKeySpki: publicKey,
+      desktopTokenHash,
+      createdUtc: nowIso,
+    }),
+    insertPairingCodeStatement(env.DB, {
+      codeHash: pairingCodeHash,
+      deviceId,
+      expiresUtc: pairingCodeExpiresUtc,
+    }),
+  ]);
 
   return jsonResponse({ deviceId, desktopToken, pairingCode, pairingCodeExpiresUtc }, 201);
 }
@@ -228,10 +239,12 @@ export async function createDevicePairingCode(request: Request, env: Env): Promi
   const code = generatePairingCode();
   const codeHash = await hmacSha256Hex(env.PAIRING_CODE_PEPPER, code);
   const expiresUtc = new Date(Date.now() + PAIRING_CODE_VALIDITY_MS).toISOString();
-  // Cap live codes at one: minting a fresh code retires every still-unredeemed predecessor, so
-  // repeated minting can never accumulate a set of simultaneously-valid redeem oracles.
-  await deleteUnredeemedPairingCodesForDevice(env.DB, device.id);
-  await insertPairingCode(env.DB, { codeHash, deviceId: device.id, expiresUtc });
+  // Cap live codes at one atomically: concurrent mints must not interleave deletion and insertion
+  // and leave multiple simultaneously-valid redeem oracles behind.
+  await env.DB.batch([
+    deleteUnredeemedPairingCodesStatement(env.DB, device.id),
+    insertPairingCodeStatement(env.DB, { codeHash, deviceId: device.id, expiresUtc }),
+  ]);
   return jsonResponse({ code, expiresUtc }, 201);
 }
 

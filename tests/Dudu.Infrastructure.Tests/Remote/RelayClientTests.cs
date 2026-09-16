@@ -45,6 +45,32 @@ public sealed class RelayClientTests
     }
 
     [Fact]
+    public async Task Requests_preserve_a_configured_relay_path_prefix_and_query()
+    {
+        Uri? requestUri = null;
+        var handler = new FakeHttpMessageHandler(request =>
+        {
+            requestUri = request.RequestUri;
+            return new HttpResponseMessage(HttpStatusCode.Created)
+            {
+                Content = JsonContent(
+                    "{\"deviceId\":\"device-1\",\"desktopToken\":\"token-1\"," +
+                    "\"pairingCode\":\"ABC123\",\"pairingCodeExpiresUtc\":\"2026-01-01T00:00:00.000Z\"}"),
+            };
+        });
+        var client = new RelayClient(
+            new HttpClient(handler),
+            new InMemorySecretStore(),
+            new RelayOptions(new Uri("https://relay.example.test/some/path?tenant=dudu")));
+
+        await client.RegisterAsync("public-key-spki", TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            "https://relay.example.test/some/path/v1/devices/register?tenant=dudu",
+            requestUri?.AbsoluteUri);
+    }
+
+    [Fact]
     public async Task Register_writes_device_id_last_so_partial_storage_does_not_look_registered()
     {
         var handler = new FakeHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.Created)

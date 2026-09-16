@@ -32,17 +32,23 @@ function fromRow(row: DeviceRow): DeviceRecord {
   };
 }
 
-export async function insertDevice(
+export function insertDeviceStatement(
   db: D1Database,
   device: { id: string; publicKeySpki: string; desktopTokenHash: string; createdUtc: string },
-): Promise<void> {
-  await db
+): D1PreparedStatement {
+  return db
     .prepare(
       `INSERT INTO devices (id, public_key_spki, desktop_token_hash, created_utc, revoked_utc)
        VALUES (?1, ?2, ?3, ?4, NULL)`,
     )
-    .bind(device.id, device.publicKeySpki, device.desktopTokenHash, device.createdUtc)
-    .run();
+    .bind(device.id, device.publicKeySpki, device.desktopTokenHash, device.createdUtc);
+}
+
+export async function insertDevice(
+  db: D1Database,
+  device: { id: string; publicKeySpki: string; desktopTokenHash: string; createdUtc: string },
+): Promise<void> {
+  await insertDeviceStatement(db, device).run();
 }
 
 /** Looks up a non-revoked device by the SHA-256 hash of its bearer desktop token. */

@@ -314,7 +314,7 @@ public sealed class RelayClient : IRelayClient
         bool authenticated,
         CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(method, new Uri(_baseUrl, path));
+        using var request = new HttpRequestMessage(method, BuildRequestUri(path));
 
         if (requestBody is not null && requestTypeInfo is not null)
         {
@@ -388,6 +388,27 @@ public sealed class RelayClient : IRelayClient
         }
 
         return response;
+    }
+
+    /// <summary>
+    /// Resolves an API route below the configured relay path prefix. The standard <see cref="Uri"/>
+    /// constructor treats a route beginning with <c>/</c> as rooted at the host and silently drops
+    /// any configured path, which breaks relays hosted behind a reverse-proxy prefix.
+    /// </summary>
+    private Uri BuildRequestUri(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !path.StartsWith("/", StringComparison.Ordinal))
+        {
+            throw new ArgumentException("Relay request paths must be absolute route paths.", nameof(path));
+        }
+
+        var basePath = _baseUrl.AbsolutePath.TrimEnd('/');
+        var routePath = $"{basePath}/{path.TrimStart('/')}";
+        var builder = new UriBuilder(_baseUrl)
+        {
+            Path = routePath,
+        };
+        return builder.Uri;
     }
 
     private async Task<TResponse> ReadAsync<TResponse>(

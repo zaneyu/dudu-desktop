@@ -1,5 +1,8 @@
 using System.Diagnostics;
 using System.Globalization;
+using Dudu.Core.Models;
+using Dudu.Infrastructure.Data;
+using Dudu.Infrastructure.Data.Repositories;
 
 /// <summary>
 /// The five numbers task-23's performance gate cares about: how long the pet took to appear,
@@ -124,6 +127,7 @@ internal static class PerformanceScenario
             Path.GetTempPath(), "dudu-performance-allocations-" + Guid.NewGuid().ToString("N") + ".csv");
         var dataRoot = Path.Combine(Path.GetTempPath(), "dudu-performance-run-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dataRoot);
+        await PreparePerformanceDataRootAsync(dataRoot);
 
         var startInfo = new ProcessStartInfo(executable) { UseShellExecute = false };
         startInfo.Environment["DUDU_DATA_ROOT"] = dataRoot;
@@ -210,6 +214,21 @@ internal static class PerformanceScenario
             try { Directory.Delete(dataRoot, recursive: true); } catch (IOException) { }
             try { if (File.Exists(allocationReportPath)) File.Delete(allocationReportPath); } catch (IOException) { }
         }
+    }
+
+    /// <summary>
+    /// The performance scenario measures the normal post-onboarding overlay, not the onboarding
+    /// wizard. A blank data root would deliberately suppress the overlay forever, causing the
+    /// locator to measure an invalid launch and leaving hosted CI with an opaque timeout. Seed the
+    /// same durable completion marker that a successful onboarding run writes before launching.
+    /// </summary>
+    private static async Task PreparePerformanceDataRootAsync(string dataRoot)
+    {
+        var databasePath = Path.Combine(dataRoot, "dudu.db");
+        var backupPath = Path.Combine(dataRoot, "backups");
+        await using var database = await Database.OpenAsync(databasePath, backupPath, CancellationToken.None);
+        var profiles = new ProfileRepository(database);
+        await profiles.SaveAsync(new Profile("performance", OnboardingComplete: true), CancellationToken.None);
     }
 
     /// <summary>

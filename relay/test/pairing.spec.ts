@@ -50,6 +50,24 @@ describe("device registration and pairing", () => {
     expect(sessionCount?.count).toBe(1);
   });
 
+  it("keeps only one live pairing code when minting concurrently", async () => {
+    const registration = await registerDevice();
+
+    const responses = await Promise.all([
+      createPairingCode(registration.desktopToken),
+      createPairingCode(registration.desktopToken),
+    ]);
+
+    expect(responses).toHaveLength(2);
+    const liveCodes = await env.DB.prepare(
+      `SELECT COUNT(*) AS count FROM pairing_codes
+       WHERE device_id = ?1 AND consumed_utc IS NULL`,
+    )
+      .bind(registration.deviceId)
+      .first<{ count: number }>();
+    expect(liveCodes?.count).toBe(1);
+  });
+
   it("expires pairing codes after ten minutes", async () => {
     const { code } = await createPairingCodeForTest({ ageSeconds: 601 });
     expect((await redeem(code)).status).toBe(410);
