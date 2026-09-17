@@ -34,6 +34,22 @@ public sealed class AmbientSchedulerTests
     }
 
     [Fact]
+    public void Scheduler_only_requests_animations_backed_by_the_private_pack_contract()
+    {
+        var clock = new FakeClock(DateTimeOffset.Parse("2026-09-11T10:00:00Z"));
+        var random = new SequenceRandomSource(2, 0);
+        var scheduler = new AmbientScheduler(clock, random, TimeSpan.Zero);
+
+        var result = Assert.IsType<PetEvent.AmbientRequested>(scheduler.TryGetNextEvent(
+            paused: false, focusActive: false, fullscreen: false, sessionLocked: false));
+
+        Assert.Contains(result.AnimationKey, new[]
+        {
+            "idle", "blink", "greeting", "sleep", "drink", "celebrate",
+        });
+    }
+
+    [Fact]
     public void Explicit_quiet_override_wins_over_the_policy_in_both_directions()
     {
         var clock = new FakeClock(DateTimeOffset.Parse("2026-09-11T23:00:00Z"));
@@ -66,5 +82,12 @@ public sealed class AmbientSchedulerTests
     private sealed class FixedRandomSource : IRandomSource
     {
         public int Next(int exclusiveMax) => 0;
+    }
+
+    private sealed class SequenceRandomSource(params int[] values) : IRandomSource
+    {
+        private readonly Queue<int> _values = new(values);
+
+        public int Next(int exclusiveMax) => _values.Dequeue();
     }
 }

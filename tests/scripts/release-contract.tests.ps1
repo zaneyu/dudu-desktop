@@ -44,6 +44,7 @@ $e2e = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "tests/e2e/private-not
 $workflow = Get-Content -Raw -LiteralPath (Join-Path $repoRoot ".github/workflows/windows-installer.yml")
 $smoke = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "tests/installer/installer-smoke.ps1")
 $innoScript = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "scripts/install-inno-setup.ps1")
+$appProject = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "src/Dudu.App/Dudu.App.csproj")
 
 Assert-Contains "Inno has a default AppVersion define" $iss '#ifndef AppVersion'
 Assert-Contains "Inno receives AppVersion from the compiler define" $iss 'AppVersion=\{#AppVersion\}'
@@ -73,10 +74,20 @@ Assert-Contains "smoke test creates an outside sentinel" $smoke 'dudu-installer-
 Assert-Contains "smoke test can exercise a running app during upgrade" $smoke 'ExerciseRunningApp'
 Assert-True "installer contains no image-wide Dudu taskkill" ($iss -notmatch 'taskkill\s+/IM\s+Dudu\.App\.exe')
 Assert-Contains "Inno download verifies before Start-Process" $innoScript 'Assert-PinnedInnoSetupFile -Path \$downloadPath'
+Assert-Contains "app copies the private animation pack" $appProject '<Content Include="Assets/Packs/private-dudu/\*\*" CopyToOutputDirectory="PreserveNewest" />'
 
 $manifest = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "src/Dudu.App/Assets/Packs/private-dudu/manifest.json") | ConvertFrom-Json
 Assert-True "private release manifest declares privateUseOnly" ($manifest.privateUseOnly -eq $true)
-Assert-True "private release pack contains asset files" (@(Get-ChildItem -LiteralPath (Join-Path $repoRoot "src/Dudu.App/Assets/Packs/private-dudu") -Recurse -File).Count -gt 1)
+$privatePackRoot = Join-Path $repoRoot "src/Dudu.App/Assets/Packs/private-dudu"
+Assert-True "private release pack contains asset files" (@(Get-ChildItem -LiteralPath $privatePackRoot -Recurse -File).Count -gt 1)
+$idleFrame = $manifest.outfits.base.animations.idle.frames[0].file
+$blinkFrame = $manifest.outfits.base.animations.blink.frames[0].file
+Assert-True "private idle frame is a clean character frame" ($idleFrame -notmatch '536e8919d09d')
+Assert-True "private blink frame is a clean character frame" ($blinkFrame -notmatch '536e8919d09d')
+foreach ($animationName in @('idle', 'blink', 'greeting', 'sleep', 'drink', 'focus', 'celebrate', 'comfort-hug', 'note-arrival')) {
+    $animation = $manifest.outfits.base.animations.$animationName
+    Assert-True "private $animationName has a referenced first frame" ($null -ne $animation -and $animation.frames.Count -gt 0 -and (Test-Path -LiteralPath (Join-Path $privatePackRoot $animation.frames[0].file)))
+}
 
 Write-Host ""
 if ($script:FailureCount -gt 0) {

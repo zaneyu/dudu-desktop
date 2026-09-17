@@ -19,7 +19,11 @@ public sealed record Preferences(
     bool HidePetDuringFullscreen,
     TimeSpan AmbientMinimumInterval,
     bool HydrationRemindersEnabled = true,
-    bool BreakRemindersEnabled = true)
+    bool BreakRemindersEnabled = true,
+    string? OutfitKey = null,
+    bool AutomaticSeasonalMode = true,
+    MonthDay? Anniversary = null,
+    MonthDay? Birthday = null)
 {
     public static Preferences Default => new(
         AppTheme.System,

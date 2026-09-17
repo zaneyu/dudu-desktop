@@ -70,6 +70,7 @@ public sealed record CompanionSettingsContext(
     public CompanionFeatureContext? Features { get; init; }
     public OverlayActionSurfaceController? ActionSurface { get; init; }
     public OverlayCommandRouter? OverlayCommands { get; init; }
+    public IReadOnlyList<string> AvailableOutfitKeys { get; init; } = ["base"];
 }
 
 public sealed record CompanionLaunchOptions(bool Background, bool SelfTest = false)
@@ -300,7 +301,9 @@ public static class WindowsCompanionProductionComposition
                     animationEngine = new AnimationEngine(
                         pack,
                         overlay,
-                        composer: composer);
+                        composer: composer,
+                        localDate: LocalDateNow(),
+                        seasonalDates: SeasonalDatesFor(preferences));
                     // Shared with PresentationCoordinator below so an explicit
                     // one-shot (via PetPresentationCoordinator) and an
                     // unsolicited background release never interleave their
@@ -312,6 +315,7 @@ public static class WindowsCompanionProductionComposition
                         () => new AnimationOptions
                         {
                             ReducedMotionEnabled = runtimePreferences.Current.ReducedMotion,
+                            OutfitKey = RuntimeOutfitKey(runtimePreferences.Current),
                         },
                         gate: petGate);
                     notificationService = new AppNotificationService(new WindowsAppNotificationSink());
@@ -326,6 +330,7 @@ public static class WindowsCompanionProductionComposition
                         () => new AnimationOptions
                         {
                             ReducedMotionEnabled = runtimePreferences.Current.ReducedMotion,
+                            OutfitKey = RuntimeOutfitKey(runtimePreferences.Current),
                         },
                         isQuietHours: () => QuietHoursPolicy.IsQuiet(
                             DateTimeOffset.UtcNow,
@@ -338,9 +343,7 @@ public static class WindowsCompanionProductionComposition
                     _ = StartAnimationPlayback(
                         animationEngine.PlayAsync(
                             pet.Current,
-                            preferences.ReducedMotion
-                                ? AnimationOptions.ReducedMotion
-                                : AnimationOptions.Default,
+                            AnimationOptionsFor(preferences),
                             cancellationToken));
                     await overlay.SetActionSurfaceAsync(actionSurface, cancellationToken);
                 },
@@ -352,6 +355,9 @@ public static class WindowsCompanionProductionComposition
                 onPreferencesChanged: (updated, token) =>
                 {
                     runtimePreferences.Set(updated);
+                    animationEngine?.UpdateSeasonalContext(
+                        LocalDateNow(),
+                        SeasonalDatesFor(updated));
                     composer.SetOverlayPalette(OverlaySurfacePalette.For(
                         updated.Theme,
                         OverlaySurfaceRenderer.IsHighContrastEnabled()));
@@ -363,9 +369,7 @@ public static class WindowsCompanionProductionComposition
                     return StartAnimationPlayback(
                         animationEngine.PlayAsync(
                             pet.Current,
-                            updated.ReducedMotion
-                                ? AnimationOptions.ReducedMotion
-                                : AnimationOptions.Default,
+                            AnimationOptionsFor(updated),
                             token));
                 },
                 presentationEnvironment: new DelegatingPresentationEnvironmentSink(
@@ -432,10 +436,7 @@ public static class WindowsCompanionProductionComposition
                     {
                         _ = StartAnimationPlayback(animationEngine.PlayAsync(
                             pet.Current,
-                            new AnimationOptions
-                            {
-                                ReducedMotionEnabled = runtimePreferences.Current.ReducedMotion,
-                            },
+                            AnimationOptionsFor(runtimePreferences.Current),
                             token));
                     }
                     return Task.CompletedTask;
@@ -481,7 +482,7 @@ public static class WindowsCompanionProductionComposition
                         new AnimationOptions
                         {
                             ReducedMotionEnabled = runtimePreferences.Current.ReducedMotion,
-                            OutfitKey = outfit,
+                            OutfitKey = outfit ?? RuntimeOutfitKey(runtimePreferences.Current),
                         }, token));
                     return Task.CompletedTask;
                 },
@@ -520,6 +521,9 @@ public static class WindowsCompanionProductionComposition
                 Features = featureContext,
                 ActionSurface = actionSurface,
                 OverlayCommands = overlayRouter,
+                AvailableOutfitKeys = pack.Manifest.Outfits.Keys
+                    .OrderBy(key => key, StringComparer.Ordinal)
+                    .ToArray(),
             });
             await FixtureRemoteNoteInstaller.InstallIfRequestedAsync(services, cancellationToken);
             return new ComposedPrimaryRuntime(
@@ -713,6 +717,22 @@ public static class WindowsCompanionProductionComposition
     /// <summary>How long a started runtime must stay up before its run counts
     /// as clean for the crash-loop safe-mode counter.</summary>
     internal static readonly TimeSpan StableRunPeriod = TimeSpan.FromSeconds(60);
+
+    private static AnimationOptions AnimationOptionsFor(Preferences preferences) =>
+        new()
+        {
+            ReducedMotionEnabled = preferences.ReducedMotion,
+            OutfitKey = RuntimeOutfitKey(preferences),
+        };
+
+    private static string? RuntimeOutfitKey(Preferences preferences) =>
+        preferences.AutomaticSeasonalMode ? null : preferences.OutfitKey ?? "base";
+
+    private static SeasonalDates SeasonalDatesFor(Preferences preferences) =>
+        new(preferences.Anniversary, preferences.Birthday);
+
+    private static DateOnly LocalDateNow() =>
+        DateOnly.FromDateTime(DateTime.Now);
 
     private sealed class DelegatingPresentationEnvironmentSink(
         Action<bool> setSessionLocked,

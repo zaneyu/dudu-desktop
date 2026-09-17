@@ -63,8 +63,8 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
     private readonly SemaphoreSlim _runGate = new(1, 1);
     private readonly SemaphoreSlim _presentationGate = new(1, 1);
     private readonly object _repaintGate = new();
-    private readonly DateOnly _localDate;
-    private readonly SeasonalDates _seasonalDates;
+    private DateOnly _localDate;
+    private SeasonalDates _seasonalDates;
     private AssetPack _pack;
     private Task? _activeTask;
     private CancellationTokenSource? _activeCancellation;
@@ -130,6 +130,22 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
             {
                 return _currentPresentation;
             }
+        }
+    }
+
+    /// <summary>
+    /// Updates the calendar context used by automatic outfit resolution. The
+    /// next repaint or presentation observes the new date without requiring a
+    /// process restart or replacing the loaded asset pack.
+    /// </summary>
+    public void UpdateSeasonalContext(DateOnly localDate, SeasonalDates seasonalDates)
+    {
+        ArgumentNullException.ThrowIfNull(seasonalDates);
+        lock (_stateGate)
+        {
+            ThrowIfDisposed();
+            _localDate = localDate;
+            _seasonalDates = seasonalDates;
         }
     }
 
@@ -609,9 +625,16 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
         string? outfitKey)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(animationKey);
+        DateOnly localDate;
+        SeasonalDates seasonalDates;
+        lock (_stateGate)
+        {
+            localDate = _localDate;
+            seasonalDates = _seasonalDates;
+        }
         var selectedOutfit = pack.ResolveOutfit(
-            _localDate,
-            _seasonalDates,
+            localDate,
+            seasonalDates,
             outfitKey);
 
         if (pack.Manifest.Outfits.TryGetValue(selectedOutfit, out var selected)

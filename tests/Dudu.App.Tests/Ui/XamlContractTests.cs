@@ -111,16 +111,16 @@ public sealed class XamlContractTests
         {
             "OverlayActionPet", "RemindersSave", "TasksSave", "FocusStart", "LoveNotesSave",
             "AppearanceSave", "ConnectionCreateCode", "PrivacyBackup",
-            "AppearanceOutfit", "AppearanceSeasonalMode",
+            "AppearanceOutfit", "AppearanceSeasonalMode", "AppearanceSaveSeasonal",
         })
         {
             Assert.Contains($"AutomationProperties.AutomationId=\"{automationId}\"", allPages);
         }
 
-        Assert.Contains("IsEnabled=\"{x:Bind ViewModel.CanPersistOutfit, Mode=OneWay}\"", allPages);
-        Assert.Contains("IsEnabled=\"{x:Bind ViewModel.CanConfigureSeasonalMode, Mode=OneWay}\"", allPages);
+        Assert.Contains("SelectedItem=\"{x:Bind ViewModel.SelectedOutfit, Mode=TwoWay}\"", allPages);
+        Assert.Contains("Date=\"{x:Bind ViewModel.AnniversaryDate, Mode=TwoWay}\"", allPages);
+        Assert.Contains("Date=\"{x:Bind ViewModel.BirthdayDate, Mode=TwoWay}\"", allPages);
         Assert.Contains("ViewModel.OutfitAvailabilityMessage", allPages);
-        Assert.Contains("outfit selection is unavailable", File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "ViewModels", "AppearanceViewModel.cs")));
         Assert.Contains("ItemsSource=\"{x:Bind ViewModel.RecentCheckIns, Mode=OneWay}\"", File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml")));
         var loveNotes = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "LoveNotesPage.xaml"));
         Assert.Contains("SelectedItem=\"{x:Bind ViewModel.SelectedRemoteEnvelope, Mode=TwoWay}\"", loveNotes);
@@ -129,7 +129,7 @@ public sealed class XamlContractTests
         var privacy = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "PrivacyDataPage.xaml"));
         Assert.Contains("AutomationProperties.AutomationId=\"PrivacyConfirmationMessage\"", privacy);
         Assert.Contains("AutomationProperties.AutomationId=\"PrivacyConfirm\"", privacy);
-        Assert.Contains("automatic seasonal mode is unavailable", allPages);
+        Assert.Contains("automatic mode checks these dates", allPages);
         var automationIds = Regex.Matches(
                 allPages,
                 "AutomationProperties\\.AutomationId=\\\"([^\\\"]+)\\\"")
@@ -204,6 +204,30 @@ public sealed class XamlContractTests
 
         var allPages = string.Join("\n", pages.Values);
         foreach (var label in expectedLabels) Assert.Contains($"Text=\"{label}\"", allPages);
+    }
+
+    [Fact]
+    public void Settings_shell_keeps_dudu_present_across_every_destination()
+    {
+        var root = FindRepositoryRoot();
+        var shell = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.App", "Windows", "SettingsWindow.xaml"));
+        var code = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.App", "Windows", "SettingsWindow.xaml.cs"));
+        var stubs = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.App", "XamlCompileStubs.cs"));
+
+        Assert.Contains("AutomationProperties.AutomationId=\"DuduCompanionPanel\"", shell);
+        Assert.Contains("x:Name=\"DuduFrameImage\"", shell);
+        Assert.Contains("x:Name=\"OnboardingFrame\"", shell);
+        Assert.Contains("Click=\"DuduPetButton_Click\"", shell);
+        Assert.Contains("Click=\"DuduDrinkButton_Click\"", shell);
+        Assert.Contains("Click=\"DuduComfortButton_Click\"", shell);
+        Assert.Contains("AssetManifestLoader.LoadAsync", code);
+        Assert.Contains("DuduCompanionStatus.Text", code);
+        Assert.Contains("private Image DuduFrameImage", stubs);
+        Assert.Contains("private Frame OnboardingFrame", stubs);
+        Assert.Contains("private Button DuduComfortButton", stubs);
     }
 
     [Fact]

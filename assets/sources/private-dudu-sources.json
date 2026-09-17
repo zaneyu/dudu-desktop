@@ -11,54 +11,12 @@
       "creator": "Huang Xiao B",
       "privateUseOnly": true,
       "accessedUtc": "2026-09-11T00:00:00Z",
-      "animationKeys": [
-        "idle",
-        "blink"
-      ],
+      "animationKeys": [],
       "status": "imported",
       "mediaUrl": "https://huangxiaob.com/wp-content/uploads/2026/05/huang-xiao-b.png",
       "rawFile": "huangxiaob-home.png",
       "sha256": "fb9cc8495716781c0606727450a243dc431dc704b4a0765275aacf158ee16803",
-      "transform": {
-        "outputFiles": [
-          "frames/base/idle/0000-536e8919d09d.png",
-          "frames/base/blink/0000-536e8919d09d.png"
-        ],
-        "outputSha256": [
-          "536e8919d09d113d5ac393a68a9024d085a34806b2dad06c6c4fc5387be60821",
-          "536e8919d09d113d5ac393a68a9024d085a34806b2dad06c6c4fc5387be60821"
-        ],
-        "normalizations": [
-          {
-            "frameIndex": 0,
-            "trimmedSize": {
-              "width": 490,
-              "height": 97
-            },
-            "scale": 1,
-            "canvasSize": 512,
-            "anchor": {
-              "x": 256,
-              "y": 400
-            },
-            "colorFormat": "premultiplied BGRA8888 PNG"
-          },
-          {
-            "frameIndex": 0,
-            "trimmedSize": {
-              "width": 490,
-              "height": 97
-            },
-            "scale": 1,
-            "canvasSize": 512,
-            "anchor": {
-              "x": 256,
-              "y": 400
-            },
-            "colorFormat": "premultiplied BGRA8888 PNG"
-          }
-        ]
-      },
+      "transform": null,
       "notes": "Imported after media signature and payload-size checks; SHA-256 recorded."
     },
     {
@@ -68,6 +26,8 @@
       "privateUseOnly": true,
       "accessedUtc": "2026-09-11T00:00:00Z",
       "animationKeys": [
+        "idle",
+        "blink",
         "greeting"
       ],
       "status": "imported",
@@ -76,19 +36,27 @@
       "sha256": "e1267bc7cd0288a5cd1e9edb6781dc0e8f2548766a0e8c91377ccec989437d3c",
       "transform": {
         "outputFiles": [
-          "frames/base/greeting/0000-e6f1623b17a7.png",
-          "frames/base/greeting/0001-5624988541eb.png"
+          "frames/base/idle/0000-0f1dc997ae6b.png",
+          "frames/base/idle/0001-2f2e18cc6635.png",
+          "frames/base/blink/0000-0f1dc997ae6b.png",
+          "frames/base/blink/0001-2f2e18cc6635.png",
+          "frames/base/greeting/0000-0f1dc997ae6b.png",
+          "frames/base/greeting/0001-2f2e18cc6635.png"
         ],
         "outputSha256": [
-          "e6f1623b17a78f168b727317d38398b4d4b6c73b498f61dd612fd3545a41e70c",
-          "5624988541eb3afd5c4dc85112203805a81a3a49eda2b48b58abdf6c9132f0d6"
+          "0f1dc997ae6bb0045bb0005f450242026a8265199276dfe7ddcd7ef144859315",
+          "2f2e18cc6635c06787f607e90309938cc54ec299dc7e4471857e7539a054a124",
+          "0f1dc997ae6bb0045bb0005f450242026a8265199276dfe7ddcd7ef144859315",
+          "2f2e18cc6635c06787f607e90309938cc54ec299dc7e4471857e7539a054a124",
+          "0f1dc997ae6bb0045bb0005f450242026a8265199276dfe7ddcd7ef144859315",
+          "2f2e18cc6635c06787f607e90309938cc54ec299dc7e4471857e7539a054a124"
         ],
         "normalizations": [
           {
             "frameIndex": 0,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 407,
+              "height": 442
             },
             "scale": 1,
             "canvasSize": 512,
@@ -101,8 +69,64 @@
           {
             "frameIndex": 1,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 407,
+              "height": 442
+            },
+            "scale": 1,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 0,
+            "trimmedSize": {
+              "width": 407,
+              "height": 442
+            },
+            "scale": 1,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 1,
+            "trimmedSize": {
+              "width": 407,
+              "height": 442
+            },
+            "scale": 1,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 0,
+            "trimmedSize": {
+              "width": 407,
+              "height": 442
+            },
+            "scale": 1,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 1,
+            "trimmedSize": {
+              "width": 407,
+              "height": 442
             },
             "scale": 1,
             "canvasSize": 512,
@@ -131,57 +155,57 @@
       "sha256": "e54386535ec296c88a63988b295f72f27147e20d297721a02a617c1efad14c8b",
       "transform": {
         "outputFiles": [
-          "frames/base/celebrate/0000-259f506ec3e8.png",
-          "frames/base/celebrate/0001-c3607976df3d.png",
-          "frames/base/celebrate/0002-b6e040e3586e.png",
-          "frames/base/celebrate/0003-62b44fcdd13c.png",
-          "frames/base/celebrate/0004-a19aa886843e.png",
-          "frames/base/celebrate/0005-c678eca1b9b6.png",
-          "frames/base/celebrate/0006-f65522ca9867.png",
-          "frames/base/celebrate/0007-55bbe70b7bb9.png",
-          "frames/base/celebrate/0008-ff3163b09a35.png",
-          "frames/base/celebrate/0009-1cadffae39cd.png",
-          "frames/base/celebrate/0010-8de0b1215d3c.png",
-          "frames/base/celebrate/0011-67fd82526dbe.png",
-          "frames/base/celebrate/0012-12713116e686.png",
-          "frames/base/celebrate/0013-96803e7250db.png",
-          "frames/base/celebrate/0014-ed9d56255e23.png",
-          "frames/base/celebrate/0015-5867aeb7cef2.png",
-          "frames/base/celebrate/0016-df605e385450.png",
-          "frames/base/celebrate/0017-840792d78bbd.png",
-          "frames/base/celebrate/0018-917c94177f11.png",
-          "frames/base/celebrate/0019-1b49dc8fdf8f.png",
-          "frames/base/celebrate/0020-579f98386100.png"
+          "frames/base/celebrate/0000-4c34b56a849a.png",
+          "frames/base/celebrate/0001-6b87ae0f6136.png",
+          "frames/base/celebrate/0002-4a3fb82d1b83.png",
+          "frames/base/celebrate/0003-1088e9515c5a.png",
+          "frames/base/celebrate/0004-549bc121f2b8.png",
+          "frames/base/celebrate/0005-70fb55a93d9f.png",
+          "frames/base/celebrate/0006-16df6fc48afe.png",
+          "frames/base/celebrate/0007-7799438eeeec.png",
+          "frames/base/celebrate/0008-943864aa55bd.png",
+          "frames/base/celebrate/0009-45110729d229.png",
+          "frames/base/celebrate/0010-78951750b064.png",
+          "frames/base/celebrate/0011-071367c5cf44.png",
+          "frames/base/celebrate/0012-ed0ee4d7cd41.png",
+          "frames/base/celebrate/0013-9b80c6a05d41.png",
+          "frames/base/celebrate/0014-79af6e7f2edb.png",
+          "frames/base/celebrate/0015-aa2ab313c14c.png",
+          "frames/base/celebrate/0016-6e5e6bf39f06.png",
+          "frames/base/celebrate/0017-af6b43315650.png",
+          "frames/base/celebrate/0018-1e0794ed2974.png",
+          "frames/base/celebrate/0019-5ac204c3617b.png",
+          "frames/base/celebrate/0020-7d6d23b2598b.png"
         ],
         "outputSha256": [
-          "259f506ec3e88319d3b147f7ca1a45e0f5378971802b828eb6d75aed1bac7d28",
-          "c3607976df3d48e27fd625fcba6436d623f2255aac0583297f1fdf2c0ca1c3aa",
-          "b6e040e3586ed1be30d9e15e982351ef7683afc91411688af5a8e54eb836ca37",
-          "62b44fcdd13c8c85aa1bb7d0cd25979440509de2ddd51a745c880a62333421da",
-          "a19aa886843e219eae3a2050bc1447af84b1a299c5dc2f903f68a48b567163a4",
-          "c678eca1b9b6d9a214f27db10d7f0c212513188f27bfe0201c770a6734d0b976",
-          "f65522ca986748416748efaae71270bf4a5d9ff5da0d4cb1d592cdad5ad1a03d",
-          "55bbe70b7bb97f69f6ae13bfe058bb646d3c323d73c2af320797854c84cc0d66",
-          "ff3163b09a35b774713380594f57c061bb68b5b900286e2287abe7b3e9c5dda6",
-          "1cadffae39cdb0a566c326e32d8a29ed44a28b0abafb6b3e03802f43ec608fb6",
-          "8de0b1215d3c4155ca5e40019010d42be57fb76abddc80021a1c48fb1dfb1c4d",
-          "67fd82526dbe1e7742bae910dc9f267273a251729ca62a346094bfc02fd1561f",
-          "12713116e68663913302cd41e7e0e311f79acfa8033f86de7fbea24430ddbe39",
-          "96803e7250db715657ef392e8982361c89a89edecbe05771c5a2192e92d20eb3",
-          "ed9d56255e23bd809a81c38f4633f5f391902e3a25f1db2dd8ab828d2ad782ef",
-          "5867aeb7cef237a43f63a82ba4fcc94ce2ace131e22635d52ee8cf57399fe2b5",
-          "df605e3854507703ae53b5a3353e67099e582687d0dd5938872505e4dc3805e0",
-          "840792d78bbd76e610402663d5c87e9b1a4e63f602272e52e9f81902013e2b88",
-          "917c94177f114009d757664ab68234bda43de5f143fd1de79a540635b8a93cf3",
-          "1b49dc8fdf8f24ebacceb0325df1469909a30a64e78772083773852468487b66",
-          "579f98386100fd3433acbccfd781fbc17d54cf3e732b6e1e7e4cddf889527019"
+          "4c34b56a849a38abe65474d4673cd5b7b3ef3e28b120e7ddb7c856115f735622",
+          "6b87ae0f6136cdd4fa9503872ed8e2080630c75e9f1cd3fb6403ded9a40bb023",
+          "4a3fb82d1b83ee40a70c991c16bd920e978e2bddd4fa0ca24bb1d2483d85690d",
+          "1088e9515c5af013bc37b4ac2f7451a744ebf9d42881e5925f536251171515cd",
+          "549bc121f2b852d2ff53b8c777a92a64a9791fbc805f80e34b59229aa43462b5",
+          "70fb55a93d9f72aacd9f223e23a28aa779cd17d4243f56255217eca0c5900e2f",
+          "16df6fc48afefa429f137af7fddf2a0b22e15bf0ecfaf2a65d874811096ab940",
+          "7799438eeeec14365c54e7af475c494aa0530041ac6a4f0f03c19f68f60a89d5",
+          "943864aa55bdca8df97bfeb0cbaab52d3dda5a0397d22259d99d17ef004d351a",
+          "45110729d229447b955e3d665f4fad9ff0e9b029069f814ca6f1fb14047ac57c",
+          "78951750b0648e28303c4ea0844f22fa418acdb5a08f98c21fbdd3627081e07d",
+          "071367c5cf4488eb6d051b7591b1100abc27e3d756d9d27edd72a8b4a4db4a71",
+          "ed0ee4d7cd410f63a6f0b31bda5b282575f5bf135a75768d49722e296bbbd33e",
+          "9b80c6a05d412ea799caef8ee24f0eee9bfa74264a859547d6ff892c98fea023",
+          "79af6e7f2edb7188f92e4d6fd490c0b5d55847c50e1a5c2566948f8772cee036",
+          "aa2ab313c14cf8a3af31bb4ffc4cb3ab1bf785dee807852e18e2572b7ab2c623",
+          "6e5e6bf39f06cb82f86ce10dfb118f53ccf44a2b5bd8d9276b1ba4a99b2d3da5",
+          "af6b433156503300757544120a4fbf79bcf759222a2b21ce11611fb002eb148a",
+          "1e0794ed2974335bfba98964246eb1a6a2ebf85128f0feac3976d9f21f204e79",
+          "5ac204c3617b48b5ee1c72df013698e6cfbc7e66954dc61bb26888f7110d290f",
+          "7d6d23b2598bd32f003d6fece13d9c809bc179a2969b59b223ae76315f6838c5"
         ],
         "normalizations": [
           {
             "frameIndex": 0,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 380,
+              "height": 473
             },
             "scale": 1,
             "canvasSize": 512,
@@ -194,8 +218,8 @@
           {
             "frameIndex": 1,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 496,
+              "height": 496
             },
             "scale": 1,
             "canvasSize": 512,
@@ -208,8 +232,8 @@
           {
             "frameIndex": 2,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 362,
+              "height": 447
             },
             "scale": 1,
             "canvasSize": 512,
@@ -222,8 +246,8 @@
           {
             "frameIndex": 3,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 356,
+              "height": 440
             },
             "scale": 1,
             "canvasSize": 512,
@@ -236,8 +260,8 @@
           {
             "frameIndex": 4,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 357,
+              "height": 440
             },
             "scale": 1,
             "canvasSize": 512,
@@ -250,8 +274,8 @@
           {
             "frameIndex": 5,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 366,
+              "height": 475
             },
             "scale": 1,
             "canvasSize": 512,
@@ -264,8 +288,8 @@
           {
             "frameIndex": 6,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 367,
+              "height": 475
             },
             "scale": 1,
             "canvasSize": 512,
@@ -278,8 +302,8 @@
           {
             "frameIndex": 7,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 374,
+              "height": 475
             },
             "scale": 1,
             "canvasSize": 512,
@@ -292,8 +316,8 @@
           {
             "frameIndex": 8,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 374,
+              "height": 469
             },
             "scale": 1,
             "canvasSize": 512,
@@ -306,8 +330,8 @@
           {
             "frameIndex": 9,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 374,
+              "height": 469
             },
             "scale": 1,
             "canvasSize": 512,
@@ -320,8 +344,8 @@
           {
             "frameIndex": 10,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 375,
+              "height": 460
             },
             "scale": 1,
             "canvasSize": 512,
@@ -334,8 +358,8 @@
           {
             "frameIndex": 11,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 371,
+              "height": 464
             },
             "scale": 1,
             "canvasSize": 512,
@@ -348,8 +372,8 @@
           {
             "frameIndex": 12,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 371,
+              "height": 464
             },
             "scale": 1,
             "canvasSize": 512,
@@ -362,8 +386,8 @@
           {
             "frameIndex": 13,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 367,
+              "height": 445
             },
             "scale": 1,
             "canvasSize": 512,
@@ -376,8 +400,8 @@
           {
             "frameIndex": 14,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 361,
+              "height": 445
             },
             "scale": 1,
             "canvasSize": 512,
@@ -390,8 +414,8 @@
           {
             "frameIndex": 15,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 356,
+              "height": 439
             },
             "scale": 1,
             "canvasSize": 512,
@@ -404,8 +428,8 @@
           {
             "frameIndex": 16,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 493,
+              "height": 490
             },
             "scale": 1,
             "canvasSize": 512,
@@ -418,8 +442,8 @@
           {
             "frameIndex": 17,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 496,
+              "height": 494
             },
             "scale": 1,
             "canvasSize": 512,
@@ -432,8 +456,8 @@
           {
             "frameIndex": 18,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 374,
+              "height": 475
             },
             "scale": 1,
             "canvasSize": 512,
@@ -446,8 +470,8 @@
           {
             "frameIndex": 19,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 374,
+              "height": 469
             },
             "scale": 1,
             "canvasSize": 512,
@@ -460,8 +484,8 @@
           {
             "frameIndex": 20,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 373,
+              "height": 469
             },
             "scale": 1,
             "canvasSize": 512,
@@ -491,23 +515,23 @@
       "sha256": "7197ef6f3887bfc1c00ab6a09973e5e49ef5722db02206fa1f8424ab8c6b903d",
       "transform": {
         "outputFiles": [
-          "frames/base/sleep/0000-3a706be53ec5.png",
-          "frames/base/sleep/0001-3a706be53ec5.png",
-          "frames/base/focus/0000-3a706be53ec5.png",
-          "frames/base/focus/0001-3a706be53ec5.png"
+          "frames/base/sleep/0000-a26eca07da02.png",
+          "frames/base/sleep/0001-a26eca07da02.png",
+          "frames/base/focus/0000-a26eca07da02.png",
+          "frames/base/focus/0001-a26eca07da02.png"
         ],
         "outputSha256": [
-          "3a706be53ec5bb82fdf49daf7bb6d65deb945f6d4076f2900de430df55ec7884",
-          "3a706be53ec5bb82fdf49daf7bb6d65deb945f6d4076f2900de430df55ec7884",
-          "3a706be53ec5bb82fdf49daf7bb6d65deb945f6d4076f2900de430df55ec7884",
-          "3a706be53ec5bb82fdf49daf7bb6d65deb945f6d4076f2900de430df55ec7884"
+          "a26eca07da023c76ec071adff76f45739ffebccbc4ea0a243bb5ce37e1a1a7a8",
+          "a26eca07da023c76ec071adff76f45739ffebccbc4ea0a243bb5ce37e1a1a7a8",
+          "a26eca07da023c76ec071adff76f45739ffebccbc4ea0a243bb5ce37e1a1a7a8",
+          "a26eca07da023c76ec071adff76f45739ffebccbc4ea0a243bb5ce37e1a1a7a8"
         ],
         "normalizations": [
           {
             "frameIndex": 0,
             "trimmedSize": {
-              "width": 444,
-              "height": 450
+              "width": 417,
+              "height": 441
             },
             "scale": 1,
             "canvasSize": 512,
@@ -520,8 +544,8 @@
           {
             "frameIndex": 1,
             "trimmedSize": {
-              "width": 444,
-              "height": 450
+              "width": 417,
+              "height": 441
             },
             "scale": 1,
             "canvasSize": 512,
@@ -534,8 +558,8 @@
           {
             "frameIndex": 0,
             "trimmedSize": {
-              "width": 444,
-              "height": 450
+              "width": 417,
+              "height": 441
             },
             "scale": 1,
             "canvasSize": 512,
@@ -548,8 +572,8 @@
           {
             "frameIndex": 1,
             "trimmedSize": {
-              "width": 444,
-              "height": 450
+              "width": 417,
+              "height": 441
             },
             "scale": 1,
             "canvasSize": 512,
@@ -579,67 +603,67 @@
       "sha256": "0221c5a8fc1f67b3061ffe68f91bf1d7c87270504d9defc70a986b47a32e4752",
       "transform": {
         "outputFiles": [
-          "frames/base/comfort-hug/0000-de026940bb85.png",
-          "frames/base/comfort-hug/0001-96c9db710e4c.png",
-          "frames/base/comfort-hug/0002-bf06334437d4.png",
-          "frames/base/comfort-hug/0003-7cc6e3a24995.png",
-          "frames/base/comfort-hug/0004-6e0b112950b2.png",
-          "frames/base/comfort-hug/0005-5d54899721ed.png",
-          "frames/base/comfort-hug/0006-b29b2797c361.png",
-          "frames/base/comfort-hug/0007-f70e94c1d31b.png",
-          "frames/base/comfort-hug/0008-924d50b750f4.png",
-          "frames/base/comfort-hug/0009-6b0815150913.png",
-          "frames/base/comfort-hug/0010-f7b3e552760a.png",
-          "frames/base/comfort-hug/0011-2a9ada32dadc.png",
-          "frames/base/comfort-hug/0012-14d08e483137.png",
-          "frames/base/note-arrival/0000-de026940bb85.png",
-          "frames/base/note-arrival/0001-96c9db710e4c.png",
-          "frames/base/note-arrival/0002-bf06334437d4.png",
-          "frames/base/note-arrival/0003-7cc6e3a24995.png",
-          "frames/base/note-arrival/0004-6e0b112950b2.png",
-          "frames/base/note-arrival/0005-5d54899721ed.png",
-          "frames/base/note-arrival/0006-b29b2797c361.png",
-          "frames/base/note-arrival/0007-f70e94c1d31b.png",
-          "frames/base/note-arrival/0008-924d50b750f4.png",
-          "frames/base/note-arrival/0009-6b0815150913.png",
-          "frames/base/note-arrival/0010-f7b3e552760a.png",
-          "frames/base/note-arrival/0011-2a9ada32dadc.png",
-          "frames/base/note-arrival/0012-14d08e483137.png"
+          "frames/base/comfort-hug/0000-4c4baabe428b.png",
+          "frames/base/comfort-hug/0001-ad0b2a39a991.png",
+          "frames/base/comfort-hug/0002-cf8a8e25a0b4.png",
+          "frames/base/comfort-hug/0003-0ae2e1ab27bb.png",
+          "frames/base/comfort-hug/0004-6ecf406727e9.png",
+          "frames/base/comfort-hug/0005-3431e62be3d8.png",
+          "frames/base/comfort-hug/0006-1e27e52f7ccc.png",
+          "frames/base/comfort-hug/0007-cbd1da32a0d6.png",
+          "frames/base/comfort-hug/0008-1d533bb0bf69.png",
+          "frames/base/comfort-hug/0009-893ae8f09e5e.png",
+          "frames/base/comfort-hug/0010-4cf25efc5a1c.png",
+          "frames/base/comfort-hug/0011-cb6f3c8cd105.png",
+          "frames/base/comfort-hug/0012-994719e96e67.png",
+          "frames/base/note-arrival/0000-4c4baabe428b.png",
+          "frames/base/note-arrival/0001-ad0b2a39a991.png",
+          "frames/base/note-arrival/0002-cf8a8e25a0b4.png",
+          "frames/base/note-arrival/0003-0ae2e1ab27bb.png",
+          "frames/base/note-arrival/0004-6ecf406727e9.png",
+          "frames/base/note-arrival/0005-3431e62be3d8.png",
+          "frames/base/note-arrival/0006-1e27e52f7ccc.png",
+          "frames/base/note-arrival/0007-cbd1da32a0d6.png",
+          "frames/base/note-arrival/0008-1d533bb0bf69.png",
+          "frames/base/note-arrival/0009-893ae8f09e5e.png",
+          "frames/base/note-arrival/0010-4cf25efc5a1c.png",
+          "frames/base/note-arrival/0011-cb6f3c8cd105.png",
+          "frames/base/note-arrival/0012-994719e96e67.png"
         ],
         "outputSha256": [
-          "de026940bb85742968aebdce81b1f050004cc7cfeb152fecd151b642d63e220f",
-          "96c9db710e4c24037a86157f209531b68585879756cd1bc2960c28e357f7211a",
-          "bf06334437d4cf11963bd69021d57f306c04e50d6b80d80b7c38d6ac7986b781",
-          "7cc6e3a249950d4aef91f0c7fc90e1c433c22c84390c56315886eb0b5b37171c",
-          "6e0b112950b277ffb82af2a3725c08d81cc8bbe6ccb1b21b291757ad65dd8d3d",
-          "5d54899721ed9ae54a5e92b1e6edb549d39aa18d4d9d682122859ae593c81ab0",
-          "b29b2797c36125fdffbc0f28393ed564b8bf551c980d1195a8f9ef05298f94ee",
-          "f70e94c1d31bc89144859896e4d9556db690a323c8b0e9ff9fb859f99703dc0c",
-          "924d50b750f413603009c3d9db5da96fe8b1409029706eeb0487c4824e0da97a",
-          "6b0815150913a523df067b968107aae2c497e73087dd3d9b3eee9662e1926af6",
-          "f7b3e552760a36b6cdd144c7f6def88f3530304214db50aadf234da4c43c4d61",
-          "2a9ada32dadca66b7cd5b94d3c3bbfe6d802e4dff15a0524b830b4c36fb1d8ec",
-          "14d08e483137e1562a30623467d3d1afde8b8f36cc55c45161fb2fce5bf25fbf",
-          "de026940bb85742968aebdce81b1f050004cc7cfeb152fecd151b642d63e220f",
-          "96c9db710e4c24037a86157f209531b68585879756cd1bc2960c28e357f7211a",
-          "bf06334437d4cf11963bd69021d57f306c04e50d6b80d80b7c38d6ac7986b781",
-          "7cc6e3a249950d4aef91f0c7fc90e1c433c22c84390c56315886eb0b5b37171c",
-          "6e0b112950b277ffb82af2a3725c08d81cc8bbe6ccb1b21b291757ad65dd8d3d",
-          "5d54899721ed9ae54a5e92b1e6edb549d39aa18d4d9d682122859ae593c81ab0",
-          "b29b2797c36125fdffbc0f28393ed564b8bf551c980d1195a8f9ef05298f94ee",
-          "f70e94c1d31bc89144859896e4d9556db690a323c8b0e9ff9fb859f99703dc0c",
-          "924d50b750f413603009c3d9db5da96fe8b1409029706eeb0487c4824e0da97a",
-          "6b0815150913a523df067b968107aae2c497e73087dd3d9b3eee9662e1926af6",
-          "f7b3e552760a36b6cdd144c7f6def88f3530304214db50aadf234da4c43c4d61",
-          "2a9ada32dadca66b7cd5b94d3c3bbfe6d802e4dff15a0524b830b4c36fb1d8ec",
-          "14d08e483137e1562a30623467d3d1afde8b8f36cc55c45161fb2fce5bf25fbf"
+          "4c4baabe428b61133ef8009278de4c589ea5fb4a21259f2449cf9ef5fc8b4262",
+          "ad0b2a39a991b099f1f6760695f417a501ab018d8124cf9911442761d1b67239",
+          "cf8a8e25a0b4347c8f26cb40f733c52b5f160c8f415378832e0d8bab7f89a1c9",
+          "0ae2e1ab27bb33f96ff6b211c18c2dcd73c13326ae954f7a2d04e881e4828ba5",
+          "6ecf406727e92886987629c2681862bd7b357b82e1c735aea6d05f5da04d6043",
+          "3431e62be3d82e8e3f4664bbe8c338b4dea0e3e6eeb45251be120cb6243822e6",
+          "1e27e52f7ccc9ff4b2dc75ed393076ac21f64ea3fdde9cf27593a03812e21da8",
+          "cbd1da32a0d6acdffd71840efaeb5f08d788bad8da05b614667ac78fe3f84b21",
+          "1d533bb0bf6936a7104751344e76c865d6e468994249b6aa102559205e315e97",
+          "893ae8f09e5ed80e5d852373cb3192c920218972050259f0a23ee05b4a2e96c3",
+          "4cf25efc5a1c397062f530f901bb71ee6f1f39b650426e235b541467420f69c1",
+          "cb6f3c8cd105bb64cdf4aa61e34540752146fb6abc7462542dc8f4bfc0149548",
+          "994719e96e671f767ef68845b8a281108035b7de86e9950ec8aeeec2c5d89541",
+          "4c4baabe428b61133ef8009278de4c589ea5fb4a21259f2449cf9ef5fc8b4262",
+          "ad0b2a39a991b099f1f6760695f417a501ab018d8124cf9911442761d1b67239",
+          "cf8a8e25a0b4347c8f26cb40f733c52b5f160c8f415378832e0d8bab7f89a1c9",
+          "0ae2e1ab27bb33f96ff6b211c18c2dcd73c13326ae954f7a2d04e881e4828ba5",
+          "6ecf406727e92886987629c2681862bd7b357b82e1c735aea6d05f5da04d6043",
+          "3431e62be3d82e8e3f4664bbe8c338b4dea0e3e6eeb45251be120cb6243822e6",
+          "1e27e52f7ccc9ff4b2dc75ed393076ac21f64ea3fdde9cf27593a03812e21da8",
+          "cbd1da32a0d6acdffd71840efaeb5f08d788bad8da05b614667ac78fe3f84b21",
+          "1d533bb0bf6936a7104751344e76c865d6e468994249b6aa102559205e315e97",
+          "893ae8f09e5ed80e5d852373cb3192c920218972050259f0a23ee05b4a2e96c3",
+          "4cf25efc5a1c397062f530f901bb71ee6f1f39b650426e235b541467420f69c1",
+          "cb6f3c8cd105bb64cdf4aa61e34540752146fb6abc7462542dc8f4bfc0149548",
+          "994719e96e671f767ef68845b8a281108035b7de86e9950ec8aeeec2c5d89541"
         ],
         "normalizations": [
           {
             "frameIndex": 0,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 435,
+              "height": 424
             },
             "scale": 1,
             "canvasSize": 512,
@@ -652,8 +676,8 @@
           {
             "frameIndex": 1,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 436,
+              "height": 427
             },
             "scale": 1,
             "canvasSize": 512,
@@ -666,8 +690,8 @@
           {
             "frameIndex": 2,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 435,
+              "height": 427
             },
             "scale": 1,
             "canvasSize": 512,
@@ -680,8 +704,8 @@
           {
             "frameIndex": 3,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 434,
+              "height": 424
             },
             "scale": 1,
             "canvasSize": 512,
@@ -694,8 +718,8 @@
           {
             "frameIndex": 4,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 436,
+              "height": 430
             },
             "scale": 1,
             "canvasSize": 512,
@@ -708,8 +732,8 @@
           {
             "frameIndex": 5,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 446,
+              "height": 426
             },
             "scale": 1,
             "canvasSize": 512,
@@ -722,8 +746,8 @@
           {
             "frameIndex": 6,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 463,
+              "height": 475
             },
             "scale": 1,
             "canvasSize": 512,
@@ -736,8 +760,8 @@
           {
             "frameIndex": 7,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 468,
+              "height": 480
             },
             "scale": 1,
             "canvasSize": 512,
@@ -750,8 +774,8 @@
           {
             "frameIndex": 8,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 468,
+              "height": 484
             },
             "scale": 1,
             "canvasSize": 512,
@@ -764,8 +788,8 @@
           {
             "frameIndex": 9,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 467,
+              "height": 494
             },
             "scale": 1,
             "canvasSize": 512,
@@ -778,8 +802,8 @@
           {
             "frameIndex": 10,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 468,
+              "height": 490
             },
             "scale": 1,
             "canvasSize": 512,
@@ -792,8 +816,8 @@
           {
             "frameIndex": 11,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 468,
+              "height": 494
             },
             "scale": 1,
             "canvasSize": 512,
@@ -806,8 +830,8 @@
           {
             "frameIndex": 12,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 469,
+              "height": 490
             },
             "scale": 1,
             "canvasSize": 512,
@@ -820,8 +844,8 @@
           {
             "frameIndex": 0,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 435,
+              "height": 424
             },
             "scale": 1,
             "canvasSize": 512,
@@ -834,8 +858,8 @@
           {
             "frameIndex": 1,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 436,
+              "height": 427
             },
             "scale": 1,
             "canvasSize": 512,
@@ -848,8 +872,8 @@
           {
             "frameIndex": 2,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 435,
+              "height": 427
             },
             "scale": 1,
             "canvasSize": 512,
@@ -862,8 +886,8 @@
           {
             "frameIndex": 3,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 434,
+              "height": 424
             },
             "scale": 1,
             "canvasSize": 512,
@@ -876,8 +900,8 @@
           {
             "frameIndex": 4,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 436,
+              "height": 430
             },
             "scale": 1,
             "canvasSize": 512,
@@ -890,8 +914,8 @@
           {
             "frameIndex": 5,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 446,
+              "height": 426
             },
             "scale": 1,
             "canvasSize": 512,
@@ -904,8 +928,8 @@
           {
             "frameIndex": 6,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 463,
+              "height": 475
             },
             "scale": 1,
             "canvasSize": 512,
@@ -918,8 +942,8 @@
           {
             "frameIndex": 7,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 468,
+              "height": 480
             },
             "scale": 1,
             "canvasSize": 512,
@@ -932,8 +956,8 @@
           {
             "frameIndex": 8,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 468,
+              "height": 484
             },
             "scale": 1,
             "canvasSize": 512,
@@ -946,8 +970,8 @@
           {
             "frameIndex": 9,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 467,
+              "height": 494
             },
             "scale": 1,
             "canvasSize": 512,
@@ -960,8 +984,8 @@
           {
             "frameIndex": 10,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 468,
+              "height": 490
             },
             "scale": 1,
             "canvasSize": 512,
@@ -974,8 +998,8 @@
           {
             "frameIndex": 11,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 468,
+              "height": 494
             },
             "scale": 1,
             "canvasSize": 512,
@@ -988,8 +1012,8 @@
           {
             "frameIndex": 12,
             "trimmedSize": {
-              "width": 498,
-              "height": 498
+              "width": 469,
+              "height": 490
             },
             "scale": 1,
             "canvasSize": 512,
@@ -1018,17 +1042,17 @@
       "sha256": "4c8fa264b9ef4832d34a26b9c9e3ecee5e390fd841280c2b31a5ddae2a69bc5b",
       "transform": {
         "outputFiles": [
-          "frames/base/drink/0000-abf8d07d32ac.png"
+          "frames/base/drink/0000-3689c7032264.png"
         ],
         "outputSha256": [
-          "abf8d07d32ac9abb1fc58b193d0a29a3a4461d3cb00362422d9d06d651db60f3"
+          "3689c70322648d7aa2e138ae3263e4bed292f27e424ef025cf3fbeeeef1cf8ed"
         ],
         "normalizations": [
           {
             "frameIndex": 0,
             "trimmedSize": {
-              "width": 507,
-              "height": 512
+              "width": 503,
+              "height": 507
             },
             "scale": 1,
             "canvasSize": 512,

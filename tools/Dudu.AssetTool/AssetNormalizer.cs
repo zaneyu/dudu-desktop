@@ -50,12 +50,10 @@ public static class AssetNormalizer
         using var stream = new MemoryStream(bytes, writable: false);
         using var codec = SKCodec.Create(stream)
             ?? throw new InvalidDataException($"Source '{name}' is not a decodable image.");
-        var frameCount = codec.FrameCount;
-        if (frameCount <= 1)
-        {
-            return [new AssetInputFrame(name + "-0000", bytes, staticDurationMs)];
-        }
-
+        // Static PNG/JPEG codecs may report zero animation frames even though
+        // frame zero is decodable. Treat those sources as one frame so they go
+        // through the same background cleanup as GIF sources.
+        var frameCount = Math.Max(1, codec.FrameCount);
         var info = codec.Info;
         var frameInfo = codec.FrameInfo;
         var frames = new List<AssetInputFrame>(frameCount);
@@ -73,6 +71,7 @@ public static class AssetNormalizer
             }
 
             var duration = frameInfo.Length > index ? Math.Max(1, frameInfo[index].Duration) : staticDurationMs;
+            RemoveEdgeConnectedLightBackground(bitmap);
             frames.Add(new AssetInputFrame(name + $"-{index:D4}", EncodeBitmap(bitmap), duration));
         }
 
@@ -215,6 +214,77 @@ public static class AssetNormalizer
         using var data = image.Encode(SKEncodedImageFormat.Png, 100)
             ?? throw new InvalidDataException("Skia could not encode a decoded image frame.");
         return data.ToArray();
+    }
+
+    /// <summary>
+    /// Imported sticker/GIF sources commonly arrive with a solid white page
+    /// behind the artwork. The desktop pet is rendered into a transparent
+    /// layered window, so keeping that page would produce a white square around
+    /// every frame. Remove only near-white pixels connected to the image edge;
+    /// enclosed white details, such as Bubu's body or highlights, remain intact.
+    /// </summary>
+    private static void RemoveEdgeConnectedLightBackground(SKBitmap bitmap)
+    {
+        var visited = new bool[checked(bitmap.Width * bitmap.Height)];
+        var pending = new Queue<int>();
+
+        for (var x = 0; x < bitmap.Width; x++)
+        {
+            EnqueueIfCandidate(x, 0);
+            EnqueueIfCandidate(x, bitmap.Height - 1);
+        }
+
+        for (var y = 1; y < bitmap.Height - 1; y++)
+        {
+            EnqueueIfCandidate(0, y);
+            EnqueueIfCandidate(bitmap.Width - 1, y);
+        }
+
+        while (pending.Count > 0)
+        {
+            var index = pending.Dequeue();
+            var x = index % bitmap.Width;
+            var y = index / bitmap.Width;
+            if (!IsLightBackground(bitmap.GetPixel(x, y)))
+            {
+                continue;
+            }
+
+            bitmap.SetPixel(x, y, SKColors.Transparent);
+            EnqueueIfCandidate(x - 1, y);
+            EnqueueIfCandidate(x + 1, y);
+            EnqueueIfCandidate(x, y - 1);
+            EnqueueIfCandidate(x, y + 1);
+        }
+
+        void EnqueueIfCandidate(int x, int y)
+        {
+            if ((uint)x >= (uint)bitmap.Width || (uint)y >= (uint)bitmap.Height)
+            {
+                return;
+            }
+
+            var index = checked(y * bitmap.Width + x);
+            if (visited[index] || !IsLightBackground(bitmap.GetPixel(x, y)))
+            {
+                return;
+            }
+
+            visited[index] = true;
+            pending.Enqueue(index);
+        }
+    }
+
+    private static bool IsLightBackground(SKColor color)
+    {
+        if (color.Alpha == 0 || color.Red < 235 || color.Green < 235 || color.Blue < 235)
+        {
+            return false;
+        }
+
+        var spread = Math.Max(color.Red, Math.Max(color.Green, color.Blue))
+            - Math.Min(color.Red, Math.Min(color.Green, color.Blue));
+        return spread <= 24;
     }
 
     private static SKRectI? FindOpaqueBounds(SKBitmap bitmap)

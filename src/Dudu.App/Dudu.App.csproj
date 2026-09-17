@@ -27,6 +27,7 @@
   <ItemGroup>
     <AdditionalFiles Include="Overlay/NativeMethods.txt" />
     <Content Include="Assets/Packs/fallback/**" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets/Packs/private-dudu/**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

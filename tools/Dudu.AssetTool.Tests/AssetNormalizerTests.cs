@@ -41,6 +41,19 @@ public sealed class AssetNormalizerTests
         Assert.Equal("frames/base/idle/0000-aaaaaaaaaaaa.png", AssetNormalizer.DeterministicFileName("idle", 0, new string('a', 64)));
     }
 
+    [Fact]
+    public void Decoder_removes_edge_connected_white_background_but_keeps_enclosed_white_art()
+    {
+        var png = PngFixture.WhiteBackgroundWithOutlinedWhiteDetail();
+
+        var frames = AssetNormalizer.DecodeFrames(png, "white-background", 100);
+
+        using var decoded = SKBitmap.Decode(frames[0].Bytes);
+        Assert.Equal((byte)0, decoded.GetPixel(0, 0).Alpha);
+        Assert.Equal((byte)255, decoded.GetPixel(1, 1).Alpha);
+        Assert.Equal(new SKColor(255, 255, 255, 255), decoded.GetPixel(3, 3));
+    }
+
     private static class PngFixture
     {
         public static byte[] Rectangle(int width, int height, int x, int y, int rectangleWidth, int rectangleHeight)
@@ -59,6 +72,24 @@ public sealed class AssetNormalizerTests
             }
 
             return PngEncoder.Encode(width, height, rgba);
+        }
+
+        public static byte[] WhiteBackgroundWithOutlinedWhiteDetail()
+        {
+            using var bitmap = new SKBitmap(new SKImageInfo(8, 8, SKColorType.Bgra8888, SKAlphaType.Premul));
+            bitmap.Erase(SKColors.White);
+            using (var canvas = new SKCanvas(bitmap))
+            using (var paint = new SKPaint { Color = SKColors.Black, Style = SKPaintStyle.Fill })
+            {
+                canvas.DrawRect(new SKRect(1, 1, 7, 7), paint);
+                paint.Color = SKColors.White;
+                canvas.DrawRect(new SKRect(2, 2, 6, 6), paint);
+                canvas.Flush();
+            }
+
+            using var image = SKImage.FromBitmap(bitmap);
+            using var data = image.Encode(SKEncodedImageFormat.Png, 100);
+            return data!.ToArray();
         }
 
         private static class PngEncoder

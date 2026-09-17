@@ -104,6 +104,42 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Appearance_saves_manual_outfit_and_recurring_seasonal_dates()
+    {
+        var fixture = FeatureFixture.Create();
+        var viewModel = new AppearanceViewModel(
+            fixture.Context,
+            availableOutfitKeys: ["base", "winter"])
+        {
+            SelectedOutfit = "winter",
+            AnniversaryDate = new DateTimeOffset(2026, 9, 12, 0, 0, 0, TimeSpan.Zero),
+            BirthdayDate = new DateTimeOffset(2026, 2, 28, 0, 0, 0, TimeSpan.Zero),
+        };
+
+        await viewModel.ApplyOutfitAsync(TestContext.Current.CancellationToken);
+
+        var saved = Assert.Single(fixture.Preferences.SaveHistory);
+        Assert.Equal("winter", saved.OutfitKey);
+        Assert.False(saved.AutomaticSeasonalMode);
+        Assert.Equal(new MonthDay(9, 12), saved.Anniversary);
+        Assert.Equal(new MonthDay(2, 28), saved.Birthday);
+    }
+
+    [Fact]
+    public void Appearance_reports_the_automatic_outfit_for_the_current_local_date()
+    {
+        var fixture = FeatureFixture.Create();
+        var viewModel = new AppearanceViewModel(
+            fixture.Context,
+            availableOutfitKeys: ["base", "anniversary"])
+        {
+            AnniversaryDate = new DateTimeOffset(2026, 9, 12, 0, 0, 0, TimeSpan.Zero),
+        };
+
+        Assert.Equal("automatic mode · anniversary today", viewModel.OutfitAvailabilityMessage);
+    }
+
+    [Fact]
     public async Task Native_overlay_dispatch_queue_owns_faults_and_preserves_click_order()
     {
         var fixture = FeatureFixture.Create();

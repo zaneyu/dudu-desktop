@@ -54,11 +54,6 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 ; (Assert-PrivateReleaseAssetPack). Never compile this script by hand against
 ; an unvalidated publish directory.
 Source: "..\artifacts\publish\win-x64\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-; The private-dudu asset pack is deliberately NOT part of the csproj's
-; Content Include (only Assets/Packs/fallback/** is), so dotnet publish
-; never copies it. Copy it straight from source so the installed app ships
-; both the fallback pack and the private pack.
-Source: "..\src\Dudu.App\Assets\Packs\private-dudu\*"; DestDir: "{app}\Assets\Packs\private-dudu"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 ; Current-user Start Menu shortcut. Deliberately placed directly under

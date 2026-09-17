@@ -11,6 +11,15 @@ namespace Dudu.App.Windows
         private Grid AppTitleBar = null!;
         private NavigationView RootNavigation = null!;
         private Frame ContentFrame = null!;
+        private Frame OnboardingFrame = null!;
+        private Image DuduFrameImage = null!;
+        private TextBlock DuduCompanionTitle = null!;
+        private TextBlock DuduCompanionMessage = null!;
+        private TextBlock DuduCompanionState = null!;
+        private TextBlock DuduCompanionStatus = null!;
+        private Button DuduPetButton = null!;
+        private Button DuduDrinkButton = null!;
+        private Button DuduComfortButton = null!;
 
         private void InitializeComponent()
         {
@@ -18,6 +27,15 @@ namespace Dudu.App.Windows
             AppTitleBar = new Grid();
             RootNavigation = new NavigationView();
             ContentFrame = new Frame();
+            OnboardingFrame = new Frame();
+            DuduFrameImage = new Image();
+            DuduCompanionTitle = new TextBlock();
+            DuduCompanionMessage = new TextBlock();
+            DuduCompanionState = new TextBlock();
+            DuduCompanionStatus = new TextBlock();
+            DuduPetButton = new Button();
+            DuduDrinkButton = new Button();
+            DuduComfortButton = new Button();
             foreach (var item in new[]
             {
                 ("home", "home", "NavHome"),

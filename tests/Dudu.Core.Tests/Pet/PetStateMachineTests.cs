@@ -20,6 +20,17 @@ public sealed class PetStateMachineTests
     }
 
     [Fact]
+    public void Reminder_uses_the_real_note_arrival_pose_instead_of_a_missing_clip()
+    {
+        var machine = PetStateMachine.CreateIdle();
+
+        var result = machine.Handle(new PetEvent.ReminderDue("medicine"));
+
+        Assert.Equal(PetState.Reminder, result.State);
+        Assert.Equal("note-arrival", result.AnimationKey);
+    }
+
+    [Fact]
     public void Ambient_event_is_discarded_while_focus_is_active()
     {
         var machine = PetStateMachine.CreateIdle();
@@ -54,6 +65,7 @@ public sealed class PetStateMachineTests
         machine.Handle(new PetEvent.FocusStarted("f-1"));
         Assert.Equal(PetState.Focus, machine.Handle(new PetEvent.FocusEnded("other")).State);
         Assert.Equal(PetState.FocusTransition, machine.Handle(new PetEvent.FocusEnded("f-1")).State);
+        Assert.Equal("celebrate", machine.Current.AnimationKey);
         machine.Handle(new PetEvent.PresentationAcknowledged());
 
         Assert.Equal(PetState.Idle, machine.Handle(new PetEvent.FocusEnded("f-1")).State);

@@ -29,10 +29,20 @@
 
             <StackPanel Spacing="12">
                 <TextBlock Text="pet options" Style="{StaticResource SectionHeadingStyle}" />
-                <ComboBox Header="outfit" ItemsSource="{x:Bind ViewModel.OutfitOptions, Mode=OneWay}" IsEnabled="{x:Bind ViewModel.CanPersistOutfit, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceOutfit" AutomationProperties.Name="outfit" />
+                <TextBlock Text="give dudu a small change of clothes without changing the rest of the app" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <ComboBox Header="outfit" ItemsSource="{x:Bind ViewModel.OutfitOptions, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.SelectedOutfit, Mode=TwoWay}" IsEnabled="{x:Bind ViewModel.CanPersistOutfit, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceOutfit" AutomationProperties.Name="outfit" />
                 <TextBlock Text="{x:Bind ViewModel.OutfitAvailabilityMessage, Mode=OneWay}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="AppearanceOutfitAvailability" AutomationProperties.Name="outfit availability" />
-                <CheckBox Content="automatic seasonal mode" IsChecked="{x:Bind ViewModel.AutomaticSeasonalMode, Mode=TwoWay}" IsEnabled="{x:Bind ViewModel.CanConfigureSeasonalMode, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceSeasonalMode" AutomationProperties.Name="automatic seasonal mode" />
-                <TextBlock Text="automatic seasonal mode is unavailable for now" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="AppearanceSeasonalAvailability" AutomationProperties.Name="automatic seasonal mode is unavailable for now" />
+                <CheckBox Content="let the calendar choose seasonal outfits" IsChecked="{x:Bind ViewModel.AutomaticSeasonalMode, Mode=TwoWay}" IsEnabled="{x:Bind ViewModel.CanConfigureSeasonalMode, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceSeasonalMode" AutomationProperties.Name="let the calendar choose seasonal outfits" />
+                <TextBlock Text="automatic mode checks these dates and the winter season on this pc only" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="AppearanceSeasonalAvailability" AutomationProperties.Name="automatic seasonal mode details" />
+                <Grid ColumnSpacing="16" RowSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <CalendarDatePicker Header="anniversary (month and day)" Date="{x:Bind ViewModel.AnniversaryDate, Mode=TwoWay}" PlaceholderText="not set" AutomationProperties.AutomationId="AppearanceAnniversary" AutomationProperties.Name="anniversary month and day" />
+                    <CalendarDatePicker Grid.Column="1" Header="birthday (month and day)" Date="{x:Bind ViewModel.BirthdayDate, Mode=TwoWay}" PlaceholderText="not set" AutomationProperties.AutomationId="AppearanceBirthday" AutomationProperties.Name="birthday month and day" />
+                </Grid>
+                <Button Content="save seasonal look" Command="{x:Bind ViewModel.ApplyOutfitCommand}" IsEnabled="{x:Bind ViewModel.CanConfigureSeasonalMode, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceSaveSeasonal" AutomationProperties.Name="save seasonal look" HorizontalAlignment="Left" />
                 <CheckBox Content="keep dudu above other windows" IsChecked="{x:Bind ViewModel.AlwaysOnTop, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceAlwaysOnTop" AutomationProperties.Name="keep dudu above other windows" />
                 <CheckBox Content="hide dudu during fullscreen work" IsChecked="{x:Bind ViewModel.HideDuringFullscreen, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceHideFullscreen" AutomationProperties.Name="hide dudu during fullscreen work" />
             </StackPanel>

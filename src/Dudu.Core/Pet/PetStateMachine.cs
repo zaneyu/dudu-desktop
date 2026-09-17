@@ -193,13 +193,18 @@ public sealed class PetStateMachine
             var body = _dueReminderIds.Count > 1
                 ? $"{_dueReminderIds.Count} reminders due"
                 : null;
-            var presentation = Present(PetState.Reminder, "reminder");
+            // Reminder has no separate source clip. The note-arrival pose is
+            // the closest real Dudu interaction and keeps a due reminder from
+            // degrading to the generic idle fallback.
+            var presentation = Present(PetState.Reminder, "note-arrival");
             return body is null ? presentation : presentation with { BubbleBody = body };
         }
 
         if (_focusTransition is not null)
         {
-            return Present(PetState.FocusTransition, _focusTransition);
+            // The thumbs-up clip is the closest real Dudu expression for a
+            // completed focus session.
+            return Present(PetState.FocusTransition, "celebrate");
         }
 
         if (!_paused && _welcomeBackPending)
@@ -283,8 +288,8 @@ public sealed class PetStateMachine
 
     private static bool IsAllowedAmbientAnimation(string animationKey)
     {
-        return animationKey is "idle" or "blink" or "wave" or "sleep"
-            or "greeting" or "drink" or "celebrate";
+        return animationKey is "idle" or "blink" or "greeting" or "sleep"
+            or "drink" or "celebrate";
     }
 
     private static PetPresentation Present(PetState state, string animationKey)

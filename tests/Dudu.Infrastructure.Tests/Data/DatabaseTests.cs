@@ -365,7 +365,11 @@ public sealed class DatabaseTests
 
         var preferences = new Preferences(AppTheme.Dark,
             new QuietHours(true, new TimeOnly(23, 0), new TimeOnly(6, 0)), true, 3, true, false, true,
-            TimeSpan.FromMinutes(15));
+            TimeSpan.FromMinutes(15),
+            OutfitKey: "winter",
+            AutomaticSeasonalMode: false,
+            Anniversary: new MonthDay(9, 11),
+            Birthday: new MonthDay(2, 29));
         var preferencesRepository = new PreferencesRepository(fixture.Database);
         await preferencesRepository.SaveAsync(preferences, cancellationToken);
         Assert.Equal(preferences, await preferencesRepository.GetAsync(cancellationToken));

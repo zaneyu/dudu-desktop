@@ -7,7 +7,11 @@ namespace Dudu.Core.Pet;
 
 public sealed class AmbientScheduler
 {
-    private static readonly string[] AnimationKeys = ["idle", "blink", "wave", "sleep"];
+    // Keep ambient selection aligned with the shipped private pack. A missing
+    // animation silently falls back to idle, which makes Dudu feel broken even
+    // though the state machine appears to be moving.
+    private static readonly string[] AnimationKeys =
+        ["idle", "blink", "greeting", "sleep", "drink", "celebrate"];
     private readonly IClock _clock;
     private readonly IRandomSource _random;
     private readonly QuietHours _quietHours;

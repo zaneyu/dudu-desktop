@@ -6,6 +6,7 @@
     <Grid x:Name="RootGrid" Padding="0">
         <Grid.RowDefinitions>
             <RowDefinition Height="48" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
@@ -14,8 +15,49 @@
             <TextBlock Text="dudu settings" VerticalAlignment="Center" FontSize="14" FontWeight="SemiBold" />
         </Grid>
 
+        <Border Grid.Row="1" Margin="24,12,24,0" Padding="12"
+                Background="{ThemeResource BlushSurfaceBrush}"
+                BorderBrush="{ThemeResource LavenderBorderBrush}"
+                BorderThickness="1"
+                CornerRadius="12"
+                AutomationProperties.AutomationId="DuduCompanionPanel"
+                AutomationProperties.Name="dudu companion panel">
+            <Grid ColumnSpacing="14">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="84" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Border Width="76" Height="76" CornerRadius="38"
+                        Background="{ThemeResource WindowSurfaceBrush}"
+                        BorderBrush="{ThemeResource LavenderBorderBrush}"
+                        BorderThickness="1"
+                        VerticalAlignment="Center">
+                    <Image x:Name="DuduFrameImage"
+                           Width="70"
+                           Height="70"
+                           Stretch="Uniform"
+                           AutomationProperties.AutomationId="DuduCompanionImage"
+                           AutomationProperties.Name="dudu current pose" />
+                </Border>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="3">
+                    <TextBlock x:Name="DuduCompanionTitle" Text="dudu is here" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock x:Name="DuduCompanionMessage" Text="ready to keep u company" TextWrapping="Wrap" />
+                    <TextBlock x:Name="DuduCompanionState" Text="idle, ready to blink" Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" />
+                    <TextBlock x:Name="DuduCompanionStatus" Text="" Foreground="{ThemeResource SuccessBrush}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" AutomationProperties.AutomationId="DuduCompanionStatus" AutomationProperties.Name="dudu action status" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" VerticalAlignment="Center" Spacing="6">
+                    <Button x:Name="DuduPetButton" Content="pet dudu" Click="DuduPetButton_Click" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="DuduCompanionPet" AutomationProperties.Name="pet dudu" />
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <Button x:Name="DuduDrinkButton" Content="drink" Click="DuduDrinkButton_Click" AutomationProperties.AutomationId="DuduCompanionDrink" AutomationProperties.Name="ask dudu to drink water" />
+                        <Button x:Name="DuduComfortButton" Content="tiny hug" Click="DuduComfortButton_Click" AutomationProperties.AutomationId="DuduCompanionComfort" AutomationProperties.Name="give dudu a tiny hug" />
+                    </StackPanel>
+                </StackPanel>
+            </Grid>
+        </Border>
+
         <NavigationView x:Name="RootNavigation"
-                        Grid.Row="1"
+                        Grid.Row="2"
                         IsBackButtonVisible="Collapsed"
                         IsSettingsVisible="False"
                         IsPaneToggleButtonVisible="True"
@@ -33,5 +75,6 @@
             </NavigationView.MenuItems>
             <Frame x:Name="ContentFrame" />
         </NavigationView>
+        <Frame x:Name="OnboardingFrame" Grid.Row="2" Visibility="Collapsed" />
     </Grid>
 </UserControl>

@@ -77,8 +77,7 @@ $script:PublishTreeAllowlist = @(
     '^[a-z]{2,3}(?:-[a-z0-9]{2,8}){0,2}/[A-Za-z0-9._-]+\.mui$'
     # Windows App SDK XAML's own assets.
     '^Microsoft\.UI\.Xaml/Assets/(?:NoiseAsset_256x256_PNG\.png|map\.html)$'
-    # App asset packs copied by the csproj (fallback always; private-dudu if the csproj ever
-    # starts publishing it rather than the .iss copying it from source).
+    # App asset packs copied by the csproj.
     '^Assets/Packs/(?:fallback|private-dudu)/manifest\.json$'
     '^Assets/Packs/(?:fallback|private-dudu)/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.png$'
 )
