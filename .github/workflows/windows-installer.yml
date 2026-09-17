@@ -154,18 +154,51 @@ jobs:
       - name: Restore
         run: dotnet restore DuduDesktop.slnx -p:RestorePackagesWithLockFile=false
       - name: Package private Store MSIX
+        id: package_store
         shell: pwsh
-        run: pwsh scripts/package-store.ps1 -Version $env:STORE_VERSION
-      - name: Record Store package checksum
+        # GitHub-hosted Windows has no interactive desktop, so this can only
+        # produce a local-identity acceptance artifact. It is not a submission
+        # build and must never be uploaded to Partner Center.
+        run: pwsh scripts/package-store.ps1 -Version $env:STORE_VERSION -AcceptanceOnly
+      - name: Record Store package failure metadata
+        if: ${{ always() && steps.package_store.outcome == 'failure' }}
+        shell: pwsh
+        run: |
+          $failureMetadataDirectory = 'artifacts/store-package-failure-metadata'
+          New-Item -ItemType Directory -Path $failureMetadataDirectory -Force | Out-Null
+          @"
+          Store package step failed before completion.
+          WACK status: not completed; inspect validation-summary.txt or appcert-report.xml when present.
+          This diagnostic artifact is acceptance-only and contains no package payload.
+          "@ | Set-Content -LiteralPath "$failureMetadataDirectory/failure-metadata.txt" -Encoding utf8
+      - name: Upload Store package failure evidence
+        if: ${{ always() && steps.package_store.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: DuduDesktop-${{ env.STORE_VERSION }}-win-x64-store-failure-evidence
+          path: |
+            artifacts/store-package-metadata/validation-summary.txt
+            artifacts/store-package-metadata/appcert-report.xml
+            work/store-package-failures/**/validation-summary.txt
+            artifacts/store-package-failure-metadata/failure-metadata.txt
+          if-no-files-found: error
+          retention-days: 30
+      - name: Record acceptance-only Store package status and checksum
         shell: pwsh
         run: |
           $checksum = Get-Content -Raw artifacts/store-package-metadata/SHA256SUMS.txt
           $hash = ($checksum -split '\s+')[0]
           if ($hash -notmatch '^[0-9a-f]{64}$') { throw 'Store package metadata does not contain a valid SHA-256 hash.' }
+          $validationSummary = Get-Content -Raw artifacts/store-package-metadata/validation-summary.txt
+          if ($validationSummary -notmatch 'Windows App Certification Kit status: skipped \(acceptance-only mode; not valid for Partner Center submission\)\.') {
+            throw 'Hosted Store package metadata does not record the required acceptance-only WACK omission.'
+          }
           @"
           ## Store package integrity
 
           Package version: $($env:STORE_VERSION).0
+
+          WACK status: skipped — acceptance-only hosted artifact; WACK did not run and this package must never be uploaded to Partner Center.
 
           Store package SHA-256: $hash
           "@ >> $env:GITHUB_STEP_SUMMARY
@@ -229,6 +262,11 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.21.0
+      - name: Release and Store package source contracts
+        shell: pwsh
+        run: |
+          pwsh tests/scripts/release-contract.tests.ps1
+          pwsh tests/scripts/store-package.tests.ps1
       - run: dotnet restore DuduDesktop.slnx -p:RestorePackagesWithLockFile=false
       - run: dotnet build DuduDesktop.slnx -c Release --no-restore
       # One step per project with its own timeout so a hang names its project

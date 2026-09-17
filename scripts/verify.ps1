@@ -185,6 +185,7 @@ try {
 
     Write-Host "== Release source contract ==" -ForegroundColor Cyan
     pwsh tests/scripts/release-contract.tests.ps1
+    pwsh tests/scripts/store-package.tests.ps1
 
     Write-Host "== .NET restore / build / test ==" -ForegroundColor Cyan
     # Deviation from the brief: no --locked-mode. See the file header comment.

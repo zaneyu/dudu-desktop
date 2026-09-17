@@ -113,6 +113,9 @@ if (Test-Path -LiteralPath $storeScriptPath) {
     Assert-Contains "Store package script resolves AppCert from the selected Windows SDK root" $storeScript "App Certification Kit.*appcert\.exe"
     Assert-Contains "Store package script rejects an ambiguous SDK tool resolution" $storeScript "ambiguous"
     Assert-Contains "Store package script exposes the production identity gate" $storeScript "RequirePartnerCenterIdentity"
+    Assert-Contains "Store package script exposes an explicit acceptance-only mode" $storeScript "AcceptanceOnly"
+    Assert-Contains "Store package script rejects combining acceptance-only and Partner Center identity modes" $storeScript '\$AcceptanceOnly\s+-and\s+\$RequirePartnerCenterIdentity'
+    Assert-Contains "Store package script enforces local identity for acceptance-only packages" $storeScript "Assert-AcceptanceOnlyIdentity"
     Assert-Contains "Store package script rejects the local identity at the production gate" $storeScript '\$sourceIdentity\.Name\s+-eq\s+''DuduDesktop\.Local\.NonProduction'''
     Assert-Contains "Store package script compares the expected production name" $storeScript '\$sourceIdentity\.Name\s+-ne\s+\$ExpectedPartnerCenterName'
     Assert-Contains "Store package script compares the expected production publisher" $storeScript '\$sourceIdentity\.Publisher\s+-ne\s+\$ExpectedPartnerCenterPublisher'
@@ -149,6 +152,8 @@ if (Test-Path -LiteralPath $storeScriptPath) {
     $appCertSummaryIndex = $storeScript.IndexOf("Windows App Certification Kit exit code")
     $appCertThrowIndex = $storeScript.IndexOf('Windows App Certification Kit validation failed')
     Assert-True "Store package script records WACK results before throwing" ($appCertSummaryIndex -ge 0 -and $appCertThrowIndex -ge 0 -and $appCertSummaryIndex -lt $appCertThrowIndex)
+    Assert-Contains "Store package script records acceptance-only WACK omission" $storeScript "Windows App Certification Kit status: skipped"
+    Assert-Contains "Store package script keeps WACK tooling mandatory outside acceptance-only mode" $storeScript 'Resolve-WindowsSdkTools\s+-RequireAppCert:\(-not \$AcceptanceOnly\)'
     $hashIndex = $storeScript.IndexOf("Get-FileHash -LiteralPath `$artifactPath")
     Assert-True "Store package script hashes only after WACK validation" ($appCertThrowIndex -ge 0 -and $hashIndex -gt $appCertThrowIndex)
 }
@@ -172,14 +177,24 @@ Assert-Contains "workflow has minimal top-level permissions" $workflow '(?m)^per
 Assert-Contains "workflow re-verifies the stored artifact hash in a separate job" $workflow 'actions/download-artifact@'
 Assert-Contains "workflow uploads release metadata" $workflow 'artifacts/release-metadata/'
 Assert-Contains "workflow invokes the Store package wrapper" $workflow "scripts/package-store\.ps1"
+Assert-Contains "workflow invokes the Store wrapper in explicit acceptance-only mode" $workflow 'scripts/package-store\.ps1\s+-Version \$env:STORE_VERSION\s+-AcceptanceOnly'
 Assert-Contains "workflow uploads a Store package artifact" $workflow 'DuduDesktop-\$\{\{ env\.STORE_VERSION \}\}-win-x64-store'
 Assert-Contains "workflow supports an explicit Store package version" $workflow "store_version"
 Assert-Contains "workflow requires a Store version for manual dispatch" $workflow "store_version:(?s).*required:\s*true"
 Assert-Contains "workflow keeps 1.0.0 as the push Store acceptance version" $workflow "github\.event_name\s*==\s*'push'.*1\.0\.0"
 Assert-True "workflow disables source lock-file generation during restores" (@([regex]::Matches($workflow, 'dotnet restore DuduDesktop\.slnx -p:RestorePackagesWithLockFile=false')).Count -eq 3)
 Assert-Contains "workflow writes the Store package hash to the job summary" $workflow "Store package SHA-256"
+Assert-Contains "workflow writes the hosted WACK omission to the Store job summary" $workflow "WACK status: skipped"
 Assert-Contains "workflow labels the Store artifact acceptance-only" $workflow "acceptance-only"
 Assert-Contains "workflow forbids Store artifact upload to Partner Center" $workflow "never upload it to Partner Center"
+Assert-Contains "workflow uploads Store validation evidence after package failure" $workflow 'if:\s*\$\{\{ always\(\) && steps\.package_store\.outcome == ''failure'' \}\}'
+Assert-Contains "workflow uses a separate Store failure-evidence artifact" $workflow 'DuduDesktop-\$\{\{ env\.STORE_VERSION \}\}-win-x64-store-failure-evidence'
+Assert-Contains "workflow retains Store validation summary evidence" $workflow 'artifacts/store-package-metadata/validation-summary\.txt'
+Assert-Contains "workflow retains Store AppCert evidence when present" $workflow 'artifacts/store-package-metadata/appcert-report\.xml'
+Assert-Contains "workflow retains Store preflight failure evidence" $workflow 'work/store-package-failures/\*\*/validation-summary\.txt'
+Assert-Contains "workflow writes safe Store failure metadata when packaging exits early" $workflow 'artifacts/store-package-failure-metadata/failure-metadata\.txt'
+Assert-Contains "verify runs Store package source contracts" $verify 'pwsh tests/scripts/store-package\.tests\.ps1'
+Assert-Contains "workflow runs Store package source contracts" $workflow 'pwsh tests/scripts/store-package\.tests\.ps1'
 Assert-Contains "workflow keeps the Inno artifact" $workflow "DuduDesktop-1\.0\.0-win-x64-private"
 Assert-True "Store package job does not expose secrets in logs" ($workflow -notmatch "echo.*\bSTORE\b|Write-Host.*\bSTORE\b.*\bSECRET\b")
 $globalJson = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "global.json") | ConvertFrom-Json

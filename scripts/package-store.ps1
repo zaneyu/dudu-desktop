@@ -13,6 +13,11 @@ param(
     [ValidatePattern('^\d+\.\d+\.\d+$')]
     [string]$Version,
 
+    # Hosted CI can build a local-identity acceptance artifact, but cannot run
+    # WACK because GitHub-hosted runners have no interactive desktop. This
+    # switch is deliberately explicit and is never valid for Partner Center.
+    [switch]$AcceptanceOnly,
+
     # This guard is required when producing the separate package intended for submission.
     # It does not submit a package.
     [switch]$RequirePartnerCenterIdentity,
@@ -69,6 +74,8 @@ function ConvertTo-SdkVersion {
 }
 
 function Resolve-WindowsSdkTools {
+    param([switch]$RequireAppCert)
+
     $windowsKitsRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10'
     $sdkBinRoot = Join-Path $windowsKitsRoot 'bin'
     $minimumSdkVersion = [Version]'10.0.26100.0'
@@ -96,14 +103,17 @@ function Resolve-WindowsSdkTools {
         throw "Windows SDK tool resolution is ambiguous for supported x64 SDK version $selectedVersion."
     }
 
-    $appCertPath = Join-Path $windowsKitsRoot 'App Certification Kit\appcert.exe'
-    if (-not (Test-Path -LiteralPath $appCertPath)) {
-        throw "Windows App Certification Kit (appcert.exe) is required at $appCertPath."
-    }
-    $appCertFileVersion = (Get-Item -LiteralPath $appCertPath).VersionInfo.FileVersion
-    $appCertVersion = ConvertTo-SdkVersion -Value $appCertFileVersion
-    if (-not $appCertVersion -or $appCertVersion -lt $selectedVersion) {
-        throw "Windows App Certification Kit at $appCertPath is unsupported for the selected Windows SDK $selectedVersion."
+    $appCertPath = $null
+    if ($RequireAppCert) {
+        $appCertPath = Join-Path $windowsKitsRoot 'App Certification Kit\appcert.exe'
+        if (-not (Test-Path -LiteralPath $appCertPath)) {
+            throw "Windows App Certification Kit (appcert.exe) is required at $appCertPath."
+        }
+        $appCertFileVersion = (Get-Item -LiteralPath $appCertPath).VersionInfo.FileVersion
+        $appCertVersion = ConvertTo-SdkVersion -Value $appCertFileVersion
+        if (-not $appCertVersion -or $appCertVersion -lt $selectedVersion) {
+            throw "Windows App Certification Kit at $appCertPath is unsupported for the selected Windows SDK $selectedVersion."
+        }
     }
 
     return [pscustomobject]@{
@@ -156,6 +166,15 @@ function Assert-PartnerCenterIdentity {
     }
 }
 
+function Assert-AcceptanceOnlyIdentity {
+    param([Parameter(Mandatory)][System.Xml.XmlElement]$sourceIdentity)
+
+    if ($sourceIdentity.Name -ne 'DuduDesktop.Local.NonProduction' -or
+        $sourceIdentity.Publisher -ne 'CN=Dudu Desktop Local Package, O=Private') {
+        throw 'Acceptance-only packaging requires the local non-production identity and cannot produce a Partner Center submission package.'
+    }
+}
+
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $targetRuntimeIdentifier = 'win-x64'
 Assert-StoreVersion -Value $Version
@@ -198,14 +217,20 @@ try {
     [xml]$sourceManifest = Get-Content -Raw -LiteralPath $manifestPath
     $sourceIdentity = $sourceManifest.Package.Identity
     if (-not $sourceIdentity) { throw "Store package manifest has no Identity element: $manifestPath" }
-    if ($RequirePartnerCenterIdentity) {
+    if ($AcceptanceOnly -and $RequirePartnerCenterIdentity) {
+        throw 'Acceptance-only packaging cannot be combined with the Partner Center identity gate.'
+    }
+    if ($AcceptanceOnly) {
+        Assert-AcceptanceOnlyIdentity -sourceIdentity $sourceIdentity
+    }
+    elseif ($RequirePartnerCenterIdentity) {
         Assert-PartnerCenterIdentity -sourceIdentity $sourceIdentity -ExpectedPartnerCenterName $ExpectedPartnerCenterName -ExpectedPartnerCenterPublisher $ExpectedPartnerCenterPublisher
     }
     $projectAssetsPath = Join-Path (Split-Path -Parent $appProject) 'obj\project.assets.json'
     if (-not (Test-Path -LiteralPath $projectAssetsPath)) {
         throw "Restored project assets are missing: $projectAssetsPath. Run dotnet restore before packaging."
     }
-    $sdkTools = Resolve-WindowsSdkTools
+    $sdkTools = Resolve-WindowsSdkTools -RequireAppCert:(-not $AcceptanceOnly)
 }
 catch {
     Write-PreflightFailureEvidence -Message ("Store package preflight failed: " + $_.Exception.Message)
@@ -296,21 +321,26 @@ foreach ($resource in $requiredResources) {
     }
 }
 
-$appCert = $sdkTools.AppCert
-$appCertReport = Join-Path $metadataDirectory 'appcert-report.xml'
-$appCertExitCode = $null
-$appCertFailure = $null
-try {
-    & $appCert test -appxpackagepath $artifactPath -reportoutputpath $appCertReport
-    $appCertExitCode = $LASTEXITCODE
+if ($AcceptanceOnly) {
+    Add-Content -LiteralPath (Join-Path $metadataDirectory 'validation-summary.txt') -Value 'Windows App Certification Kit status: skipped (acceptance-only mode; not valid for Partner Center submission).'
 }
-catch {
-    $appCertFailure = $_
-    $appCertExitCode = 'launch failure'
-}
-Add-Content -LiteralPath (Join-Path $metadataDirectory 'validation-summary.txt') -Value "Windows App Certification Kit exit code: $appCertExitCode"
-if ($appCertFailure -or $appCertExitCode -ne 0) {
-    throw "Windows App Certification Kit validation failed with exit code $appCertExitCode."
+else {
+    $appCert = $sdkTools.AppCert
+    $appCertReport = Join-Path $metadataDirectory 'appcert-report.xml'
+    $appCertExitCode = $null
+    $appCertFailure = $null
+    try {
+        & $appCert test -appxpackagepath $artifactPath -reportoutputpath $appCertReport
+        $appCertExitCode = $LASTEXITCODE
+    }
+    catch {
+        $appCertFailure = $_
+        $appCertExitCode = 'launch failure'
+    }
+    Add-Content -LiteralPath (Join-Path $metadataDirectory 'validation-summary.txt') -Value "Windows App Certification Kit exit code: $appCertExitCode"
+    if ($appCertFailure -or $appCertExitCode -ne 0) {
+        throw "Windows App Certification Kit validation failed with exit code $appCertExitCode."
+    }
 }
 
 $hash = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()

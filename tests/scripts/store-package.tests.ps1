@@ -49,6 +49,22 @@ if (Test-Path -LiteralPath (Join-Path $repoRoot "scripts/package-store.ps1")) {
         $storeScript -match 'ExpectedPartnerCenterName' -and
         $storeScript -match 'ExpectedPartnerCenterPublisher'
     )
+    Assert-True "Store package script makes hosted packaging explicitly acceptance-only" (
+        $storeScript -match 'AcceptanceOnly'
+    )
+    Assert-True "acceptance-only mode requires the local non-production identity" (
+        $storeScript -match 'Assert-AcceptanceOnlyIdentity' -and
+        $storeScript -match 'DuduDesktop\.Local\.NonProduction'
+    )
+    Assert-True "acceptance-only mode cannot combine with the Partner Center identity gate" (
+        $storeScript -match '\$AcceptanceOnly\s+-and\s+\$RequirePartnerCenterIdentity'
+    )
+    Assert-True "acceptance-only mode records that WACK was skipped" (
+        $storeScript -match 'Windows App Certification Kit status: skipped'
+    )
+    Assert-True "normal package mode still requires WACK tooling" (
+        $storeScript -match 'Resolve-WindowsSdkTools\s+-RequireAppCert:\(-not \$AcceptanceOnly\)'
+    )
 }
 
 if (Test-Path -LiteralPath $manifestPath) {
