@@ -74,6 +74,17 @@ public sealed class PackagedRuntimeManifestTests
         Assert.Contains("ExtendedActivationKind.StartupTask", app);
     }
 
+    [Fact]
+    public void App_passes_computed_launch_arguments_to_the_bootstrap_runner()
+    {
+        var root = FindRepositoryRoot();
+        var app = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "App.xaml.cs"));
+
+        Assert.Contains(
+            "_startupRunner.RunAsync(_launchArguments, CancellationToken.None)",
+            app);
+    }
+
     private static XDocument LoadManifest()
     {
         var root = FindRepositoryRoot();

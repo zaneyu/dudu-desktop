@@ -77,7 +77,7 @@ public sealed partial class App : Application
             _bootstrapFactory!,
             ReportStartupFailure,
             ExitApplicationCore);
-        _startupTask = _startupRunner.RunAsync(args.Arguments ?? string.Empty, CancellationToken.None);
+        _startupTask = _startupRunner.RunAsync(_launchArguments, CancellationToken.None);
         _ = ObserveStartupAsync(_startupTask);
     }
 
