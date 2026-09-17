@@ -105,12 +105,18 @@ ones, so this file always reflects the latest run per scenario.
    ```powershell
    pwsh tests/installer/installer-smoke.ps1 `
      -Installer artifacts/DuduDesktop-1.0.0-win-x64-private.exe `
-     -ExerciseRunningApp
+     -ExerciseRunningApp `
+     -ExerciseNormalLaunch
    ```
 
    The script never uses the operator's canonical Dudu data root or Startup
    shortcut. It installs beneath a unique temp root, sets `DUDU_DATA_ROOT` for
-   the run, and verifies a sibling sentinel survives `/DELETEUSERDATA=1`.
+   the run, verifies a sibling sentinel survives `/DELETEUSERDATA=1`, and the
+   optional normal-launch phase starts the installed executable without
+   `--self-test`, requires it to remain alive for three seconds, rejects a
+   `startup-failure.log`, and closes that exact process cleanly. Standard
+   GitHub-hosted runners should omit `-ExerciseNormalLaunch`; this is an
+   interactive Windows acceptance check.
 
 ## What was verified on the macOS authoring host instead
 

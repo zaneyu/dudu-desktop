@@ -197,59 +197,28 @@ public static class WindowsCompanionProductionComposition
         try
         {
             var database = services.GetRequiredService<Database>();
-            await database.InitializeAsync(cancellationToken);
+            await RunStartupPhaseAsync(
+                "database",
+                () => database.InitializeAsync(cancellationToken));
             var preferencesRepository = services.GetRequiredService<IPreferencesRepository>();
             var preferences = await preferencesRepository.GetAsync(cancellationToken)
                 ?? services.GetRequiredService<Preferences>();
             var profileRepository = services.GetRequiredService<IProfileRepository>();
             var profile = await profileRepository.GetAsync(cancellationToken);
-            var savedPlacements = await services
-                .GetRequiredService<IPetPlacementRepository>()
-                .ListAsync(cancellationToken);
             // The host starts from a safe neutral placement so its first
             // monitor snapshot describes the monitor it actually occupies.
             // Saved placements are selected only after that identity is known.
             var initialPlacement = new PetPlacement("MISSING", 0.8, 0.8, 1);
             var pet = services.GetRequiredService<PetStateMachine>();
-            var packsRoot = Path.Combine(AppContext.BaseDirectory, "Assets", "Packs");
-            var privateManifestPath = Path.Combine(packsRoot, "private-dudu", "manifest.json");
-            var fallbackManifestPath = Path.Combine(packsRoot, "fallback", "manifest.json");
-            var manifestPath = File.Exists(privateManifestPath)
-                ? privateManifestPath
-                : fallbackManifestPath;
-            AssetPack pack;
-            try
-            {
-                pack = await AssetManifestLoader.LoadAsync(manifestPath, cancellationToken);
-            }
-            catch (AssetManifestException) when (string.Equals(
-                manifestPath,
-                privateManifestPath,
-                StringComparison.OrdinalIgnoreCase))
-            {
-                // The private pack is optional for raw publish folders. If it is absent or
-                // damaged, keep the companion usable with the original neutral fallback.
-                pack = await AssetManifestLoader.LoadAsync(fallbackManifestPath, cancellationToken);
-            }
-            var animation = pack.ResolveAnimation(
-                "idle",
-                DateOnly.FromDateTime(DateTime.Now),
-                SeasonalDates.Empty);
-            composer = new SkiaFrameComposer(pack);
-            composer.SetActionSurface(actionSurface);
-            composer.SetOverlayPalette(OverlaySurfacePalette.For(
-                preferences.Theme,
-                OverlaySurfaceRenderer.IsHighContrastEnabled()));
-            presenter = new LayeredFramePresenter();
             startup = new StartupRegistrationService();
             WindowsCompanionRuntime? activeRuntime = null;
             var activePlacement = initialPlacement;
             var preferenceMutations = new PreferenceMutationCoordinator(
                 preferences,
                 preferencesRepository,
-                (updated, token) => (activeRuntime
-                    ?? throw new InvalidOperationException("The companion runtime is not ready."))
-                    .ApplySettingsAsync(updated, activePlacement, token));
+                (updated, token) => activeRuntime is null
+                    ? Task.CompletedTask
+                    : activeRuntime.ApplySettingsAsync(updated, activePlacement, token));
             var startupSettings = new StartupSettingsService(
                 startup,
                 preferenceMutations);
@@ -272,11 +241,66 @@ public static class WindowsCompanionProductionComposition
             {
                 Trace.TraceError("Dudu startup registration reconciliation failed: {0}", exception);
             }
+
+            if (safeMode)
+            {
+                return await CreateSafeModeRuntimeAsync(
+                    host,
+                    services,
+                    actions,
+                    crashGuard,
+                    startup,
+                    startupSettings,
+                    preferenceMutations,
+                    profile,
+                    initialPlacement,
+                    pet);
+            }
+
+            var savedPlacements = await services
+                .GetRequiredService<IPetPlacementRepository>()
+                .ListAsync(cancellationToken);
+            var packsRoot = Path.Combine(AppContext.BaseDirectory, "Assets", "Packs");
+            var privateManifestPath = Path.Combine(packsRoot, "private-dudu", "manifest.json");
+            var fallbackManifestPath = Path.Combine(packsRoot, "fallback", "manifest.json");
+            var manifestPath = File.Exists(privateManifestPath)
+                ? privateManifestPath
+                : fallbackManifestPath;
+            var pack = await RunStartupPhaseAsync(
+                "assets",
+                async () =>
+                {
+                    try
+                    {
+                        return await AssetManifestLoader.LoadAsync(manifestPath, cancellationToken);
+                    }
+                    catch (AssetManifestException) when (string.Equals(
+                        manifestPath,
+                        privateManifestPath,
+                        StringComparison.OrdinalIgnoreCase))
+                    {
+                        // The private pack is optional for raw publish folders. If it is absent or
+                        // damaged, keep the companion usable with the original neutral fallback.
+                        return await AssetManifestLoader.LoadAsync(fallbackManifestPath, cancellationToken);
+                    }
+                });
+            var animation = pack.ResolveAnimation(
+                "idle",
+                DateOnly.FromDateTime(DateTime.Now),
+                SeasonalDates.Empty);
+            composer = new SkiaFrameComposer(pack);
+            composer.SetActionSurface(actionSurface);
+            composer.SetOverlayPalette(OverlaySurfacePalette.For(
+                preferences.Theme,
+                OverlaySurfaceRenderer.IsHighContrastEnabled()));
+            presenter = new LayeredFramePresenter();
             var pause = new PauseStateStore();
             var runtimePreferences = new RuntimePreferencesState(preferences);
             var showOverlay = !safeMode && launchOptions.ShouldShowOverlay(preferences, profile);
 
-            var runtime = await WindowsCompanionRuntime.CreateAsync(
+            var runtime = await RunStartupPhaseAsync(
+                "overlay",
+                () => WindowsCompanionRuntime.CreateAsync(
                 host,
                 presenter,
                 initialPlacement,
@@ -387,12 +411,14 @@ public static class WindowsCompanionProductionComposition
                             animationEngine?.Resume();
                         }
                     }),
-                cancellationToken: cancellationToken);
+                cancellationToken: cancellationToken));
             activeRuntime = runtime;
             host.AttachPresentationGateway(presentationGateway
                 ?? throw new InvalidOperationException("The presentation gateway was not composed."));
 
-            var placementSnapshot = await runtime.CapturePlacementSnapshotAsync(cancellationToken);
+            var placementSnapshot = await RunStartupPhaseAsync(
+                "runtime-config",
+                () => runtime.CapturePlacementSnapshotAsync(cancellationToken));
             var currentMonitorPlacement = savedPlacements.FirstOrDefault(item =>
                 string.Equals(
                     item.MonitorDeviceName,
@@ -400,7 +426,9 @@ public static class WindowsCompanionProductionComposition
                     StringComparison.Ordinal))
                 ?? placementSnapshot.Placement;
             activePlacement = currentMonitorPlacement;
-            await runtime.ApplySettingsAsync(preferences, currentMonitorPlacement, cancellationToken);
+            await RunStartupPhaseAsync(
+                "runtime-config",
+                () => runtime.ApplySettingsAsync(preferences, currentMonitorPlacement, cancellationToken));
             var featureContext = new CompanionFeatureContext(
                 services.GetRequiredService<IClock>(),
                 preferenceMutations,
@@ -469,9 +497,12 @@ public static class WindowsCompanionProductionComposition
                         }, result.Exception);
                     }
                 },
-                deleteLocalDataAsync: token => services
-                    .GetRequiredService<LocalDataMaintenanceService>()
-                    .DeleteAllUserDataAsync(token),
+                deleteLocalDataAsync: async token =>
+                {
+                    await services.GetRequiredService<RemoteSyncService>().StopAsync(token);
+                    await services.GetRequiredService<LocalDataMaintenanceService>()
+                        .DeleteAllUserDataAsync(token);
+                },
                 applyOutfitAsync: (outfit, token) =>
                 {
                     if (animationEngine is null)
@@ -559,6 +590,155 @@ public static class WindowsCompanionProductionComposition
     {
         _ = ObserveAnimationAsync(playback);
         return Task.CompletedTask;
+    }
+
+    private static async Task RunStartupPhaseAsync(
+        string phase,
+        Func<Task> operation)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(phase);
+        ArgumentNullException.ThrowIfNull(operation);
+        try
+        {
+            await operation();
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (StartupPhaseException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            throw new StartupPhaseException(phase, exception);
+        }
+    }
+
+    private static async Task<T> RunStartupPhaseAsync<T>(
+        string phase,
+        Func<Task<T>> operation)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(phase);
+        ArgumentNullException.ThrowIfNull(operation);
+        try
+        {
+            return await operation();
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (StartupPhaseException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            throw new StartupPhaseException(phase, exception);
+        }
+    }
+
+    private static async Task<IPrimaryAppRuntime> CreateSafeModeRuntimeAsync(
+        AppHost host,
+        ServiceProvider services,
+        CompanionUiActions actions,
+        StartupCrashGuard crashGuard,
+        StartupRegistrationService startup,
+        StartupSettingsService startupSettings,
+        PreferenceMutationCoordinator preferenceMutations,
+        Profile? profile,
+        PetPlacement initialPlacement,
+        PetStateMachine pet)
+    {
+        // Safe mode is deliberately composed before any native overlay object: it only keeps
+        // the database, settings services, and the recoverable settings surface alive.
+        var profileRepository = services.GetRequiredService<IProfileRepository>();
+        var placements = services.GetRequiredService<IPetPlacementRepository>();
+        var reminderRepository = services.GetRequiredService<IReminderRepository>();
+        var featureContext = new CompanionFeatureContext(
+            services.GetRequiredService<IClock>(),
+            preferenceMutations,
+            profileRepository,
+            placements,
+            reminderRepository,
+            reminderRepository as IReminderWriter
+                ?? throw new InvalidOperationException("Reminder writer is not registered."),
+            services.GetRequiredService<ITaskRepository>(),
+            services.GetRequiredService<IFocusSessionRepository>(),
+            services.GetRequiredService<ILocalNoteRepository>(),
+            services.GetRequiredService<IRemoteEnvelopeRepository>(),
+            services.GetRequiredService<ICountdownRepository>(),
+            services.GetRequiredService<ICheckInRepository>(),
+            services.GetRequiredService<Dudu.Core.CheckIns.CheckInService>(),
+            services.GetRequiredService<Dudu.Core.Tasks.TaskService>(),
+            services.GetRequiredService<Dudu.Core.Focus.FocusService>(),
+            services.GetRequiredService<Dudu.Core.Notes.LocalNoteSelector>(),
+            services.GetRequiredService<IPairingService>(),
+            services.GetRequiredService<ICompanionFeatureTransactions>(),
+            pet,
+            applyPlacementAsync: (_, _) => Task.CompletedTask,
+            setUserVisibleAsync: (_, _) => Task.CompletedTask,
+            backupAsync: token => CreateBackupAsync(services, token),
+            restoreAsync: token => RestoreLatestAsync(services, token),
+            deleteLocalDataAsync: async token =>
+            {
+                await services.GetRequiredService<RemoteSyncService>().StopAsync(token);
+                await services.GetRequiredService<LocalDataMaintenanceService>()
+                    .DeleteAllUserDataAsync(token);
+            });
+        var safeSnapshot = new MonitorPlacementSnapshot(
+            initialPlacement,
+            new PixelRect(0, 0, 1, 1),
+            new MonitorInfo("SAFE-MODE", new PixelRect(0, 0, 1, 1), 96, true));
+        actions.ConfigureSettings?.Invoke(new CompanionSettingsContext(
+            startupSettings,
+            startup,
+            preferenceMutations,
+            profileRepository,
+            placements,
+            services.GetRequiredService<IAppUnitOfWork>(),
+            services.GetRequiredService<IPairingService>(),
+            profile,
+            initialPlacement,
+            safeSnapshot,
+            (_, _, _) => Task.CompletedTask,
+            _ => Task.FromResult(safeSnapshot),
+            (_, _) => Task.CompletedTask,
+            (_, _) => Task.CompletedTask)
+        {
+            Features = featureContext,
+            AvailableOutfitKeys = ["base"],
+        });
+
+        return new SafeModePrimaryRuntime(host, services, startup, actions, startupSettings, crashGuard);
+    }
+
+    private static async Task CreateBackupAsync(
+        ServiceProvider services,
+        CancellationToken cancellationToken)
+    {
+        var path = await services.GetRequiredService<DatabaseBackupService>()
+            .CreatePreMigrationBackupAsync(cancellationToken);
+        if (path is null)
+        {
+            throw new InvalidOperationException("There is no local database to back up.");
+        }
+    }
+
+    private static async Task RestoreLatestAsync(
+        ServiceProvider services,
+        CancellationToken cancellationToken)
+    {
+        var result = await services.GetRequiredService<DatabaseBackupService>()
+            .RestoreLatestValidAsync(cancellationToken);
+        if (!result.Restored)
+        {
+            throw new InvalidOperationException(
+                "The latest local backup could not be restored.",
+                result.Exception);
+        }
     }
 
     internal static Task DispatchSettingsDestinationAsync(
@@ -699,6 +879,43 @@ public static class WindowsCompanionProductionComposition
             await runtime.DisposeAsync();
             await startup.DisposeAsync();
             presenter.Dispose();
+            await services.DisposeAsync();
+        }
+    }
+
+    private sealed class SafeModePrimaryRuntime(
+        AppHost host,
+        ServiceProvider services,
+        StartupRegistrationService startup,
+        CompanionUiActions actions,
+        StartupSettingsService startupSettings,
+        StartupCrashGuard crashGuard) : IPrimaryAppRuntime
+    {
+        private readonly CancellationTokenSource _stopping = new();
+        private int _started;
+
+        public async Task StartAsync(CancellationToken cancellationToken = default)
+        {
+            await actions.OpenSettings(startupSettings, cancellationToken);
+            Volatile.Write(ref _started, 1);
+            _ = crashGuard.MarkCleanAfterAsync(StableRunPeriod, _stopping.Token);
+        }
+
+        public Task ActivateAsync(
+            AppActivation activation,
+            CancellationToken cancellationToken = default) =>
+            actions.OpenSettings(startupSettings, cancellationToken);
+
+        public async ValueTask DisposeAsync()
+        {
+            _stopping.Cancel();
+            if (Volatile.Read(ref _started) != 0)
+            {
+                crashGuard.MarkCleanRun();
+            }
+
+            await host.DisposeAsync();
+            await startup.DisposeAsync();
             await services.DisposeAsync();
         }
     }

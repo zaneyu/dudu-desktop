@@ -56,10 +56,6 @@ public sealed class RelayClient : IRelayClient
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(publicKeySpki);
 
-        // A staged token left by an interrupted rotation belongs to the previous device. Clear it
-        // before creating a new device so it can never be promoted over this registration's token.
-        await _secretStore.DeleteAsync(RelaySecretKeys.DesktopTokenStaging, cancellationToken);
-
         var response = await SendAsync(
             HttpMethod.Post,
             "/v1/devices/register",
@@ -69,6 +65,16 @@ public sealed class RelayClient : IRelayClient
             cancellationToken);
 
         var body = await ReadAsync(response, RelayJsonContext.Default.RegisterDeviceResponseDto, cancellationToken);
+        if (string.IsNullOrWhiteSpace(body.DeviceId)
+            || string.IsNullOrWhiteSpace(body.DesktopToken)
+            || string.IsNullOrWhiteSpace(body.PairingCode))
+        {
+            throw new RelayProtocolException("The relay returned an incomplete registration response.");
+        }
+        var expiresUtc = ParseUtc(body.PairingCodeExpiresUtc, "pairingCodeExpiresUtc");
+
+        await _secretStore.DeleteAsync(RelaySecretKeys.DeviceId, cancellationToken);
+        await _secretStore.DeleteAsync(RelaySecretKeys.DesktopTokenStaging, cancellationToken);
 
         // Write the token first and the device id last. The presence of the id is the
         // registration-complete marker, so it must never be persisted before its credential.
@@ -92,7 +98,7 @@ public sealed class RelayClient : IRelayClient
             body.DeviceId,
             body.DesktopToken,
             body.PairingCode,
-            ParseUtc(body.PairingCodeExpiresUtc, "pairingCodeExpiresUtc"));
+            expiresUtc);
     }
 
     public async Task<RelayDeviceInfo> GetDeviceAsync(CancellationToken cancellationToken)

@@ -50,6 +50,7 @@ public sealed class PresentationCoordinator :
     private readonly object _gate = new();
     private readonly HashSet<string> _presentingIds = new(StringComparer.Ordinal);
     private readonly Func<bool> _isFullscreenNow;
+    private readonly Func<DateTimeOffset> _utcNow;
     private bool _sessionLocked;
     private bool _fullscreen;
 
@@ -70,8 +71,10 @@ public sealed class PresentationCoordinator :
         SemaphoreSlim petGate,
         AmbientScheduler? ambientScheduler = null,
         LocalNoteSelector? localNoteSelector = null,
-        Func<bool>? isFullscreenNow = null)
+        Func<bool>? isFullscreenNow = null,
+        Func<DateTimeOffset>? utcNow = null)
     {
+        _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
         _policy = policy ?? throw new ArgumentNullException(nameof(policy));
         _notifications = notifications ?? throw new ArgumentNullException(nameof(notifications));
         _pet = pet ?? throw new ArgumentNullException(nameof(pet));
@@ -151,7 +154,13 @@ public sealed class PresentationCoordinator :
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(item);
-        var now = DateTimeOffset.UtcNow;
+        var now = _utcNow();
+        if (item.IsExpired(now))
+        {
+            return;
+        }
+
+        bypassSuppression &= !item.IsRoutine;
         bool shouldPresentNow;
         lock (_gate)
         {
@@ -167,7 +176,6 @@ public sealed class PresentationCoordinator :
                 return;
             }
 
-            _policy.RecordImmediateRelease(now);
             _presentingIds.Add(item.Key);
         }
 
@@ -198,7 +206,7 @@ public sealed class PresentationCoordinator :
     /// </summary>
     public async Task TickAsync(CancellationToken cancellationToken = default)
     {
-        var now = DateTimeOffset.UtcNow;
+        var now = _utcNow();
         DurableNotification? toPresent;
         SuppressionSnapshot environment;
         lock (_gate)
@@ -210,7 +218,8 @@ public sealed class PresentationCoordinator :
                 environment.Paused,
                 environment.SessionLocked,
                 environment.FocusActive,
-                now);
+                now,
+                recordRelease: false);
 
             toPresent = decision.ToPresent.FirstOrDefault(item => !_presentingIds.Contains(item.Key));
             if (toPresent is not null)
@@ -298,8 +307,31 @@ public sealed class PresentationCoordinator :
         var succeeded = true;
         try
         {
+            var now = _utcNow();
+            if (item.IsExpired(now))
+            {
+                return true;
+            }
+
+            if (item.IsRoutine && IsSuppressed(CaptureEnvironment(now)))
+            {
+                return false;
+            }
+
+            _policy.RecordImmediateRelease(now);
             var petEvent = ToPetEvent(item);
             presentation = _pet.Handle(petEvent);
+            if (item.Kind == PresentationItemKind.Reminder
+                && presentation.State == PetState.Reminder
+                && (item.Body is not null || item.AnimationKey is not null))
+            {
+                presentation = presentation with
+                {
+                    AnimationKey = item.AnimationKey ?? presentation.AnimationKey,
+                    BubbleTitle = item.Title,
+                    BubbleBody = item.Body ?? presentation.BubbleBody,
+                };
+            }
             if (item.Kind == PresentationItemKind.LocalNote)
             {
                 presentation = presentation with

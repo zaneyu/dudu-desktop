@@ -57,9 +57,8 @@ const MAXIMUM_DELIVER_AFTER_MS = MESSAGE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
  * seconds (what `Date.toISOString()` emits), e.g. `2026-01-02T03:04:05.678Z`. Loose
  * `Date.parse` inputs — date-only strings, offsets, missing timezone — are rejected even when
  * they denote a valid instant: a canonical wire timestamp must not depend on the parser's
- * fallback heuristics. `deliverAfterUtc` intentionally keeps offset support (a sender may spell
- * a future instant with its local offset, and the comparison below is by instant, not string),
- * but it must still parse and must not precede `createdUtc`.
+ * fallback heuristics. `deliverAfterUtc` uses the same canonical UTC form so validation and the
+ * SQLite delivery comparison operate on one unambiguous wire representation.
  */
 const STRICT_ISO8601_Z_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
 
@@ -120,9 +119,12 @@ export async function validateIncomingEnvelope(body: unknown, now: Date): Promis
   }
 
   if (envelope.deliverAfterUtc !== null) {
+    if (!STRICT_ISO8601_Z_PATTERN.test(envelope.deliverAfterUtc)) {
+      throw new EnvelopeSemanticError("deliverAfterUtc must be strict ISO-8601 UTC (Z) form.");
+    }
     const deliverAfterMs = Date.parse(envelope.deliverAfterUtc);
-    if (Number.isNaN(deliverAfterMs)) {
-      throw new EnvelopeSemanticError("deliverAfterUtc is not a parsable timestamp.");
+    if (Number.isNaN(deliverAfterMs) || !isRealCalendarInstant(envelope.deliverAfterUtc, deliverAfterMs)) {
+      throw new EnvelopeSemanticError("deliverAfterUtc must be a real ISO-8601 UTC instant.");
     }
     const createdMs = Date.parse(envelope.createdUtc);
     if (deliverAfterMs < createdMs) {

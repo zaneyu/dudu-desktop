@@ -369,8 +369,6 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         }
         await _host.StopAsync();
         await _overlay.DisposeAsync();
-        _gate.Dispose();
-        _visibilityGate.Dispose();
     }
 
     private async Task<GateSnapshot> CaptureAsync(CancellationToken cancellationToken)

@@ -5,6 +5,28 @@ namespace Dudu.App.Tests.Hosting;
 public sealed class ProductionStartupContractTests
 {
     [Fact]
+    public void Safe_mode_returns_before_constructing_native_overlay_runtime()
+    {
+        var root = FindRepositoryRoot();
+        var composition = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "Dudu.App",
+            "Hosting",
+            "WindowsCompanionProductionComposition.cs"));
+
+        var safeModeBranch = composition.IndexOf("if (safeMode)", StringComparison.Ordinal);
+        var nativeComposer = composition.IndexOf("new SkiaFrameComposer(pack)", StringComparison.Ordinal);
+        var nativeRuntime = composition.IndexOf("WindowsCompanionRuntime.CreateAsync(", StringComparison.Ordinal);
+
+        Assert.True(safeModeBranch >= 0);
+        Assert.True(nativeComposer > safeModeBranch);
+        Assert.True(nativeRuntime > safeModeBranch);
+        Assert.Contains("new SafeModePrimaryRuntime", composition);
+        Assert.DoesNotContain("AttachRemoteSync", composition[safeModeBranch..nativeRuntime]);
+    }
+
+    [Fact]
     public void Production_overlay_visibility_uses_the_sampled_fullscreen_gate()
     {
         var root = FindRepositoryRoot();

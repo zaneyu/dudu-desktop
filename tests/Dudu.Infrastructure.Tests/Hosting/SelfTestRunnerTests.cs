@@ -70,6 +70,25 @@ public sealed class SelfTestRunnerTests
         }
     }
 
+    [Fact]
+    public async Task RunAsync_returns_failure_when_the_data_root_cannot_be_created()
+    {
+        var tempRoot = Path.Combine(Path.GetTempPath(), "dudu-self-test-blocked-" + Guid.NewGuid().ToString("N"));
+        File.WriteAllText(tempRoot, "not a directory");
+        try
+        {
+            var paths = AppPaths.ForRoot(tempRoot);
+
+            var exitCode = await SelfTestRunner.RunAsync(paths, Path.Combine(tempRoot, "packs"), TestContext.Current.CancellationToken);
+
+            Assert.Equal(SelfTestRunner.FailureExitCode, exitCode);
+        }
+        finally
+        {
+            File.Delete(tempRoot);
+        }
+    }
+
     private static string FindRepoRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

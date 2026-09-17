@@ -12,7 +12,7 @@ const POLL_INTERVAL_MS = 30_000;
 
 export interface RecentStatus {
   messageId: string;
-  status: MessageState;
+  status: MessageState | "unavailable";
 }
 
 function isRecentStatus(value: unknown): value is RecentStatus {
@@ -50,7 +50,7 @@ export function clearRecent(): void {
   sessionStorage.removeItem(STORAGE_KEY);
 }
 
-function statusLine(status: MessageState): string {
+function statusLine(status: RecentStatus["status"]): string {
   switch (status) {
     case "queued":
       return "on the way";
@@ -58,6 +58,8 @@ function statusLine(status: MessageState): string {
       return "delivered le";
     case "expired":
       return "expired";
+    case "unavailable":
+      return "status no longer available";
     default:
       return status;
   }
@@ -104,9 +106,7 @@ export class StatusTracker {
     for (const entry of queued) {
       try {
         const result = await getMessageStatus(entry.messageId);
-        if (result) {
-          this.applyStatus(entry.messageId, result.status);
-        }
+        this.applyStatus(entry.messageId, result?.status ?? "unavailable");
       } catch (error) {
         if (error instanceof ApiUnauthorizedError) {
           this.onUnauthorized();
@@ -117,7 +117,7 @@ export class StatusTracker {
     }
   }
 
-  private applyStatus(messageId: string, status: MessageState): void {
+  private applyStatus(messageId: string, status: RecentStatus["status"]): void {
     const entries = loadRecent();
     const index = entries.findIndex((entry) => entry.messageId === messageId);
     if (index === -1) {

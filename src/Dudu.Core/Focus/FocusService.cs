@@ -68,7 +68,8 @@ public sealed class FocusService
             now.Add(duration),
             TimeSpan.Zero,
             FocusStatus.Running,
-            now);
+            now,
+            TimeSpan.Zero);
 
         if (!await _repository.TryCreateActiveAsync(session, cancellationToken))
         {
@@ -99,6 +100,7 @@ public sealed class FocusService
         // RemainingWhenPaused is persisted and later trusted by ResumeAsync, so clamp
         // a corrupt far-future EndsUtc here instead of storing an unbounded remainder.
         remaining = CapRemaining(remaining);
+        var consumed = CapConsumed(session.ConsumedFocusTime + ElapsedSince(session.StartedUtc, now));
 
         var paused = session with
         {
@@ -106,6 +108,7 @@ public sealed class FocusService
             RemainingWhenPaused = remaining,
             Status = FocusStatus.Paused,
             UpdatedUtc = now,
+            ConsumedFocusTime = consumed,
         };
         if (!await _repository.TryCompareAndSetAsync(session, paused, cancellationToken))
         {
@@ -128,6 +131,7 @@ public sealed class FocusService
 
         var resumed = session with
         {
+            StartedUtc = now,
             EndsUtc = now.Add(remaining),
             RemainingWhenPaused = TimeSpan.Zero,
             Status = FocusStatus.Running,
@@ -168,22 +172,27 @@ public sealed class FocusService
                 throw new InvalidOperationException("cannot extend an expired focus session");
             }
 
-            extended = session with
-            {
-                EndsUtc = session.EndsUtc.Value.Add(extension),
-                UpdatedUtc = now,
-            };
-            if (extended.EndsUtc.Value - session.StartedUtc > MaxDuration)
+            var consumed = CapConsumed(session.ConsumedFocusTime + ElapsedSince(session.StartedUtc, now));
+            var remaining = RemainingForRunning(session, now);
+            if (consumed + remaining + extension > MaxDuration)
             {
                 throw new ArgumentOutOfRangeException(
                     nameof(extension),
                     "oh no that extension would push the session past 24 hours");
             }
+
+            extended = session with
+            {
+                StartedUtc = now,
+                EndsUtc = session.EndsUtc.Value.Add(extension),
+                UpdatedUtc = now,
+                ConsumedFocusTime = consumed,
+            };
         }
         else if (session.Status == FocusStatus.Paused)
         {
             var remaining = CapRemaining(session.RemainingWhenPaused).Add(extension);
-            if (remaining > MaxDuration)
+            if (session.ConsumedFocusTime + remaining > MaxDuration)
             {
                 throw new ArgumentOutOfRangeException(
                     nameof(extension),
@@ -248,7 +257,9 @@ public sealed class FocusService
         var now = UtcNow();
         var ended = session with
         {
-            Status = FocusStatus.EndedEarly,
+            Status = session.Status == FocusStatus.Running && session.EndsUtc <= now
+                ? FocusStatus.Completed
+                : FocusStatus.EndedEarly,
             UpdatedUtc = now,
         };
         if (!await _repository.TryCompareAndSetAsync(session, ended, cancellationToken))
@@ -280,6 +291,12 @@ public sealed class FocusService
 
     private static TimeSpan CapRemaining(TimeSpan remaining) =>
         remaining > MaxDuration ? MaxDuration : remaining;
+
+    private static TimeSpan CapConsumed(TimeSpan consumed) =>
+        consumed < TimeSpan.Zero ? TimeSpan.Zero : CapRemaining(consumed);
+
+    private static TimeSpan ElapsedSince(DateTimeOffset started, DateTimeOffset now) =>
+        now > started ? now - started : TimeSpan.Zero;
 
     private static FocusSnapshot ToSnapshot(FocusSession session, DateTimeOffset now) =>
         new(

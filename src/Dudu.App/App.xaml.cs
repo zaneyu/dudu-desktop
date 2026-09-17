@@ -25,6 +25,7 @@ public sealed partial class App : Application
 
     public App()
     {
+        InitializeComponent();
         _dispatcherQueue = DispatcherQueue.GetForCurrentThread()
             ?? throw new InvalidOperationException("Dudu must start on a WinUI dispatcher thread.");
         _uiDispatcher = new AwaitableUiDispatcher(
@@ -77,7 +78,26 @@ public sealed partial class App : Application
 
     private static async Task RunSelfTestAndExitAsync()
     {
-        var exitCode = await SelfTestRunner.RunAsync(AppPaths.ForCurrentUser());
+        var exitCode = SelfTestRunner.FailureExitCode;
+        try
+        {
+            exitCode = await SelfTestRunner.RunAsync(AppPaths.ForCurrentUser());
+        }
+        catch (Exception exception)
+        {
+            // --self-test is a diagnostic entry point. Its failure must become
+            // a deterministic nonzero process exit, never an unobserved task
+            // that leaves an installer smoke test waiting forever.
+            try
+            {
+                var paths = AppPaths.ForCurrentUser();
+                StartupFailureLogger.Record(paths, "self-test", exception);
+            }
+            catch
+            {
+            }
+        }
+
         Environment.Exit(exitCode);
     }
 
@@ -243,15 +263,26 @@ public sealed partial class App : Application
                 reportPath,
                 string.Create(CultureInfo.InvariantCulture, $"{timestampUtcMilliseconds},{totalAllocatedBytes}\n"));
         }
-        catch (IOException)
+        catch (Exception)
         {
-            // Best-effort telemetry only; a transient write failure must never crash the app.
+            // Best-effort telemetry only; any write failure must never crash the app.
         }
     }
 
     private static void ReportStartupFailure(Exception exception)
     {
-        StartupFailureLogger.Record(AppPaths.ForCurrentUser(), "bootstrap", exception);
+        var phase = exception is StartupPhaseException phaseException
+            ? phaseException.Phase
+            : "bootstrap";
+        try
+        {
+            StartupFailureLogger.Record(AppPaths.ForCurrentUser(), phase, exception);
+        }
+        catch
+        {
+            // Failure reporting must never prevent the controlled exit path.
+        }
+
         Trace.TraceError("Dudu startup failed: {0}", exception);
     }
 

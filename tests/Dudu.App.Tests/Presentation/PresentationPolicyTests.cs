@@ -6,6 +6,24 @@ namespace Dudu.App.Tests.Presentation;
 public sealed class PresentationPolicyTests
 {
     [Fact]
+    public void Expired_reminder_is_removed_without_delaying_the_next_durable_item()
+    {
+        var now = DateTimeOffset.Parse("2026-09-18T00:00:00Z");
+        var policy = new PresentationPolicy(TimeSpan.FromMinutes(2));
+        var expired = DurableNotification.Reminder("bedtime", "Goodnight", expiresUtc: now);
+        var generic = DurableNotification.Reminder("generic", "Stretch");
+        policy.Enqueue(expired);
+        policy.Enqueue(generic);
+
+        var decision = policy.Decide(false, false, false, nowUtc: now);
+
+        Assert.Equal(generic, Assert.Single(decision.ToPresent));
+        Assert.False(policy.IsQueued(expired));
+        Assert.Equal(0, policy.QueuedCount);
+        Assert.True(policy.Enqueue(DurableNotification.Reminder("bedtime", "Goodnight", expiresUtc: now.AddDays(1))));
+    }
+
+    [Fact]
     public void Leaving_quiet_hours_releases_one_durable_item_not_a_burst()
     {
         var policy = PresentationPolicyFixture.WithQueuedNotes(3);

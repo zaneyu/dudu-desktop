@@ -27,12 +27,16 @@ public sealed class RemindersViewModel : FeatureViewModelBase
     private QuietHoursBehavior _quietHoursBehavior = QuietHoursBehavior.WaitUntilQuietHoursEnd;
     private bool _hydrationEnabled;
     private bool _breakEnabled;
+    private bool _eveningCheckInEnabled;
+    private bool _bedtimeRitualEnabled;
 
     public RemindersViewModel(CompanionFeatureContext context)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
         _hydrationEnabled = context.CurrentPreferences.HydrationRemindersEnabled;
         _breakEnabled = context.CurrentPreferences.BreakRemindersEnabled;
+        _eveningCheckInEnabled = context.CurrentPreferences.EveningCheckInEnabled;
+        _bedtimeRitualEnabled = context.CurrentPreferences.BedtimeRitualEnabled;
         RefreshCommand = new AsyncRelayCommand((CancellationToken ct) => RefreshAsync(ct));
         SaveCommand = new AsyncRelayCommand((CancellationToken ct) => SaveAsync(ct));
         CompleteCommand = new AsyncRelayCommand<Reminder>((item, ct) => CompleteAsync(item, ct));
@@ -120,6 +124,8 @@ public sealed class RemindersViewModel : FeatureViewModelBase
     public QuietHoursBehavior QuietHoursBehavior { get => _quietHoursBehavior; set => SetProperty(ref _quietHoursBehavior, value); }
     public bool HydrationRemindersEnabled { get => _hydrationEnabled; set => SetProperty(ref _hydrationEnabled, value); }
     public bool BreakRemindersEnabled { get => _breakEnabled; set => SetProperty(ref _breakEnabled, value); }
+    public bool EveningCheckInEnabled { get => _eveningCheckInEnabled; set => SetProperty(ref _eveningCheckInEnabled, value); }
+    public bool BedtimeRitualEnabled { get => _bedtimeRitualEnabled; set => SetProperty(ref _bedtimeRitualEnabled, value); }
     public IReadOnlySet<DayOfWeek> SelectedWeekdays { get; set; } = new HashSet<DayOfWeek> { DayOfWeek.Monday, DayOfWeek.Wednesday, DayOfWeek.Friday };
 
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
@@ -132,6 +138,8 @@ public sealed class RemindersViewModel : FeatureViewModelBase
             {
                 HydrationRemindersEnabled = preferences.HydrationRemindersEnabled;
                 BreakRemindersEnabled = preferences.BreakRemindersEnabled;
+                EveningCheckInEnabled = preferences.EveningCheckInEnabled;
+                BedtimeRitualEnabled = preferences.BedtimeRitualEnabled;
                 Reminders.Clear();
                 foreach (var reminder in items)
                 {
@@ -154,6 +162,7 @@ public sealed class RemindersViewModel : FeatureViewModelBase
                 ? TimeZoneInfo.Local
                 : ResolveTimeZone(SelectedReminder.LocalTimeZoneId);
             var nextDue = NextDueUtc(rule, now, zone);
+            var isEveningRoutine = SelectedReminder?.Id is LocalReminderDefaults.EveningCheckInId or LocalReminderDefaults.BedtimeId;
             var reminder = SelectedReminder is null
                 ? new Reminder(Guid.NewGuid().ToString("N"), title, Normalize(Details), Enabled, rule,
                     zone.Id, QuietHoursBehavior, MissedOccurrencePolicy.LatestOnly, nextDue,
@@ -164,9 +173,10 @@ public sealed class RemindersViewModel : FeatureViewModelBase
                     Details = Normalize(Details),
                     Enabled = Enabled,
                     Rule = rule,
-                    QuietHoursBehavior = QuietHoursBehavior,
+                    QuietHoursBehavior = isEveningRoutine ? QuietHoursBehavior.WaitUntilQuietHoursEnd : QuietHoursBehavior,
+                    MissedPolicy = isEveningRoutine ? MissedOccurrencePolicy.Skip : SelectedReminder.MissedPolicy,
                     NextDueUtc = nextDue,
-                    QuietHours = _context.CurrentPreferences.QuietHours,
+                    QuietHours = isEveningRoutine ? null : _context.CurrentPreferences.QuietHours,
                 };
             await _context.ReminderWriter.SaveAsync(reminder, cancellationToken);
             var saved = reminder;
@@ -213,12 +223,15 @@ public sealed class RemindersViewModel : FeatureViewModelBase
             {
                 HydrationRemindersEnabled = HydrationRemindersEnabled,
                 BreakRemindersEnabled = BreakRemindersEnabled,
+                EveningCheckInEnabled = EveningCheckInEnabled,
+                BedtimeRitualEnabled = BedtimeRitualEnabled,
             }, cancellationToken);
 
             // These stable IDs make toggle changes an upsert, not a duplicate
             // or a stale disabled default left behind by initial hydration.
             var defaults = (await _context.Reminders.ListAsync(cancellationToken))
-                .Where(item => item.Id is "default-hydration" or "default-break")
+                .Where(item => item.Id is "default-hydration" or "default-break"
+                    or LocalReminderDefaults.EveningCheckInId or LocalReminderDefaults.BedtimeId)
                 .ToArray();
             await MutateAsync(() =>
             {

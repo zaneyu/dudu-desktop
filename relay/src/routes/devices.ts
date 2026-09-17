@@ -208,15 +208,17 @@ export async function rotateDeviceKey(request: Request, env: Env): Promise<Respo
 
   // One atomic batch (see `buildRotateKeyStatements`): new key/token, revoked sender sessions,
   // and the wiped queue together with its status and ownership rows.
-  await env.DB.batch(
+  const results = await env.DB.batch(
     buildRotateKeyStatements(env.DB, {
       deviceId: device.id,
+      expectedDesktopTokenHash: device.desktopTokenHash,
       newPublicKeySpki: newPublicKey,
       newDesktopTokenHash,
       revokedUtc,
     }),
   );
 
+  if (!results.at(-1)?.meta.changes) return unauthorized();
   return jsonResponse({ desktopToken: newDesktopToken });
 }
 
@@ -258,6 +260,7 @@ export async function deleteCurrentDevice(request: Request, env: Env): Promise<R
   if (!device) {
     return unauthorized();
   }
-  await env.DB.batch(buildDeleteDeviceStatements(env.DB, device.id, new Date().toISOString()));
+  const results = await env.DB.batch(buildDeleteDeviceStatements(env.DB, device.id, new Date().toISOString(), device.desktopTokenHash));
+  if (!results.at(-1)?.meta.changes) return unauthorized();
   return noContentResponse();
 }

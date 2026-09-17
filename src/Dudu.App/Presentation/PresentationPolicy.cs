@@ -23,6 +23,13 @@ public sealed record DurableNotification
     public string? Title { get; }
     public string? Body { get; }
     public string? AnimationKey { get; }
+    public DateTimeOffset? ExpiresUtc { get; }
+
+    internal bool IsExpired(DateTimeOffset nowUtc) => ExpiresUtc is { } expiry && nowUtc >= expiry;
+
+    internal bool IsRoutine => Kind == PresentationItemKind.Reminder
+        && Id is Dudu.Core.Reminders.LocalReminderDefaults.EveningCheckInId
+            or Dudu.Core.Reminders.LocalReminderDefaults.BedtimeId;
 
     /// <summary>
     /// The identity used to detect duplicates, both while an item sits in
@@ -36,13 +43,15 @@ public sealed record DurableNotification
         string id,
         string? title,
         string? body = null,
-        string? animationKey = null)
+        string? animationKey = null,
+        DateTimeOffset? expiresUtc = null)
     {
         Kind = kind;
         Id = id;
         Title = title;
         Body = body;
         AnimationKey = animationKey;
+        ExpiresUtc = expiresUtc;
     }
 
     /// <summary>
@@ -63,11 +72,16 @@ public sealed record DurableNotification
         return new DurableNotification(PresentationItemKind.RemoteNote, messageId, null);
     }
 
-    public static DurableNotification Reminder(string reminderId, string title)
+    public static DurableNotification Reminder(
+        string reminderId,
+        string title,
+        string? body = null,
+        string? animationKey = null,
+        DateTimeOffset? expiresUtc = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(reminderId);
         ArgumentException.ThrowIfNullOrWhiteSpace(title);
-        return new DurableNotification(PresentationItemKind.Reminder, reminderId, title);
+        return new DurableNotification(PresentationItemKind.Reminder, reminderId, title, body, animationKey, expiresUtc);
     }
 
     /// <summary>
@@ -241,12 +255,27 @@ public sealed class PresentationPolicy
         bool paused,
         bool sessionLocked = false,
         bool focusActive = false,
-        DateTimeOffset? nowUtc = null)
+        DateTimeOffset? nowUtc = null,
+        bool recordRelease = true)
     {
         var now = nowUtc ?? DateTimeOffset.UtcNow;
         var suppressed = nowQuiet || fullscreen || paused || sessionLocked || focusActive;
         lock (_sync)
         {
+            var queuedCount = _queue.Count;
+            for (var index = 0; index < queuedCount; index++)
+            {
+                var queued = _queue.Dequeue();
+                if (queued.IsExpired(now))
+                {
+                    _queuedIds.Remove(queued.Key);
+                }
+                else
+                {
+                    _queue.Enqueue(queued);
+                }
+            }
+
             if (_queue.Count == 0
                 || suppressed
                 || (_lastReleaseUtc is { } last && now - last < _minimumSilentInterval))
@@ -256,7 +285,10 @@ public sealed class PresentationPolicy
 
             var item = _queue.Dequeue();
             _queuedIds.Remove(item.Key);
-            _lastReleaseUtc = now;
+            if (recordRelease)
+            {
+                _lastReleaseUtc = now;
+            }
             return new PresentationDecision(new[] { item }, _queue.Count);
         }
     }

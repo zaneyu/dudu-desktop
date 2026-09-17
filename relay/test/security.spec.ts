@@ -22,10 +22,15 @@ router.add("GET", "/v1/__test-throws-500", () => {
  */
 const fixture: PairedFixture = await pairedFixture();
 
+const BINDING_HEADERS = {
+  "X-Dudu-Device": fixture.deviceId,
+  "X-Dudu-Recipient-Key": fixture.recipientPublicKey,
+};
+
 function requestWithOrigin(origin: string): Request {
   return new Request(`${BASE_URL}/v1/messages`, {
     method: "POST",
-    headers: jsonHeaders({ Origin: origin, Cookie: fixture.sessionCookie }),
+    headers: jsonHeaders({ Origin: origin, Cookie: fixture.sessionCookie, ...BINDING_HEADERS }),
     body: JSON.stringify({}),
   });
 }
@@ -33,7 +38,12 @@ function requestWithOrigin(origin: string): Request {
 function requestWithContentType(contentType: string): Request {
   return new Request(`${BASE_URL}/v1/messages`, {
     method: "POST",
-    headers: new Headers({ "Content-Type": contentType, Origin: BASE_URL, Cookie: fixture.sessionCookie }),
+    headers: new Headers({
+      "Content-Type": contentType,
+      Origin: BASE_URL,
+      Cookie: fixture.sessionCookie,
+      ...BINDING_HEADERS,
+    }),
     body: "not json",
   });
 }
@@ -41,7 +51,7 @@ function requestWithContentType(contentType: string): Request {
 function requestWithEnvelope(body: unknown): Request {
   return new Request(`${BASE_URL}/v1/messages`, {
     method: "POST",
-    headers: jsonHeaders({ Origin: BASE_URL, Cookie: fixture.sessionCookie }),
+    headers: jsonHeaders({ Origin: BASE_URL, Cookie: fixture.sessionCookie, ...BINDING_HEADERS }),
     body: JSON.stringify(body),
   });
 }
@@ -57,7 +67,7 @@ async function requestWithCiphertext(oversizedByteLength: number): Promise<Reque
   const oversized = { ...envelope, ciphertext: bytesToBase64Url(new Uint8Array(oversizedByteLength)) };
   return new Request(`${BASE_URL}/v1/messages`, {
     method: "POST",
-    headers: jsonHeaders({ Origin: BASE_URL, Cookie: fixture.sessionCookie }),
+    headers: jsonHeaders({ Origin: BASE_URL, Cookie: fixture.sessionCookie, ...BINDING_HEADERS }),
     body: JSON.stringify(oversized),
   });
 }
@@ -86,7 +96,7 @@ describe("Worker security hardening", () => {
     const response = await exports.default.fetch(
       new Request(`${BASE_URL}/v1/messages`, {
         method: "POST",
-        headers: jsonHeaders({ Origin: BASE_URL, Cookie: fixture.sessionCookie }),
+        headers: jsonHeaders({ Origin: BASE_URL, Cookie: fixture.sessionCookie, ...BINDING_HEADERS }),
         body: '{"protocolVersion":1,"protocolVersion":1,"messageId":"00000000-0000-4000-8000-000000000000"}',
       }),
     );
@@ -97,7 +107,7 @@ describe("Worker security hardening", () => {
     const response = await exports.default.fetch(
       new Request(`${BASE_URL}/v1/messages`, {
         method: "POST",
-        headers: jsonHeaders({ Origin: BASE_URL, Cookie: fixture.sessionCookie }),
+        headers: jsonHeaders({ Origin: BASE_URL, Cookie: fixture.sessionCookie, ...BINDING_HEADERS }),
         body: '{"__proto__":{"polluted":true}}',
       }),
     );
@@ -108,7 +118,7 @@ describe("Worker security hardening", () => {
     const response = await exports.default.fetch(
       new Request(`${BASE_URL}/v1/messages`, {
         method: "POST",
-        headers: jsonHeaders({ Origin: BASE_URL, Cookie: fixture.sessionCookie }),
+        headers: jsonHeaders({ Origin: BASE_URL, Cookie: fixture.sessionCookie, ...BINDING_HEADERS }),
         body: "x".repeat(1024 * 1024),
       }),
     );
@@ -134,7 +144,7 @@ describe("Worker security hardening", () => {
     const response = await exports.default.fetch(
       new Request(`${BASE_URL}/v1/messages`, {
         method: "POST",
-        headers: jsonHeaders({ Origin: BASE_URL, Cookie: fixture.sessionCookie }),
+        headers: jsonHeaders({ Origin: BASE_URL, Cookie: fixture.sessionCookie, ...BINDING_HEADERS }),
         body: JSON.stringify({ ...envelope, ciphertext: noncanonical }),
       }),
     );

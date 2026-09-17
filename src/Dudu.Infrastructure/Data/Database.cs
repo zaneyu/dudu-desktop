@@ -52,6 +52,11 @@ public sealed class Database : IAsyncDisposable, IDisposable
         await _coordinator.InitializeAsync(InitializeCoreAsync);
     }
 
+    internal void InvalidateInitialization()
+    {
+        _coordinator.ResetInitialization();
+    }
+
     public async Task<SqliteConnection> CreateConnectionAsync(
         CancellationToken cancellationToken = default)
     {
@@ -118,6 +123,11 @@ public sealed class Database : IAsyncDisposable, IDisposable
             ?? throw new InvalidOperationException("The database path has no directory."));
         Directory.CreateDirectory(_options.BackupDirectory);
 
+        // A previous process may have died mid-restore with the canonical path missing or
+        // holding a partial file. Reconciliation must run before this create-mode open,
+        // otherwise SQLite would silently seed an empty database over the recovery set.
+        await new DatabaseBackupService(_options).ReconcileInterruptedRestoreAsync(CancellationToken.None);
+
         await using var connection = await OpenConnectionAsync(CancellationToken.None);
         await new MigrationRunner(_options).RunAsync(connection, CancellationToken.None);
         await SeedData.SeedAsync(connection, CancellationToken.None);
@@ -153,6 +163,14 @@ internal sealed class DatabaseAccessCoordinator
             _initializationRunCount++;
             _ = RunInitializationAsync(source, initializer);
             return source.Task;
+        }
+    }
+
+    public void ResetInitialization()
+    {
+        lock (_sync)
+        {
+            _initializationSource = null;
         }
     }
 

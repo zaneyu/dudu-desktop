@@ -5,6 +5,8 @@ namespace Dudu.Core.Reminders;
 
 public static class ReminderScheduler
 {
+    public static readonly TimeSpan OnTimeGracePeriod = TimeSpan.FromMinutes(1);
+
     /// <summary>
     /// Creation/update boundary guard. Call this before persisting a reminder so
     /// corrupt schedules (an empty weekday set that would never fire, a
@@ -17,11 +19,19 @@ public static class ReminderScheduler
         ArgumentNullException.ThrowIfNull(reminder);
 
         if (reminder.Rule is RecurrenceRule.SelectedWeekdays selected
-            && selected.Days.Count == 0)
+            && (selected.Days is null || selected.Days.Count == 0
+                || selected.Days.Any(day => !Enum.IsDefined(day))))
         {
             throw new ArgumentException(
-                "A selected-weekdays reminder must include at least one day.",
+                "A selected-weekdays reminder must include only valid days and at least one day.",
                 nameof(reminder));
+        }
+
+        if (reminder.Rule is RecurrenceRule.Interval interval && interval.Period <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(reminder),
+                "An interval recurrence must be greater than zero.");
         }
 
         if (reminder.NextDueUtc == DateTimeOffset.MinValue)
@@ -71,11 +81,6 @@ public static class ReminderScheduler
         if (nextDueUtc > nowUtc)
         {
             return ApplyQuietHours(reminder, nextDueUtc, timeZone);
-        }
-
-        if (reminder.Rule is RecurrenceRule.Once)
-        {
-            return null;
         }
 
         // A due occurrence that is currently quiet remains the active occurrence
@@ -134,14 +139,24 @@ public static class ReminderScheduler
         if (latestIntendedUtc is { } intendedUtc)
         {
             var deliverableUtc = ApplyQuietHours(reminder, intendedUtc, timeZone);
+            if (deliverableUtc > throughUtc)
+            {
+                return new ReminderReconciliation(dueNow, deliverableUtc);
+            }
+
             if (deliverableUtc is { } deliverable
                 && deliverable >= fromUtc
                 && deliverable <= throughUtc)
             {
                 var occurrence = new ReminderOccurrence(reminder.Id, deliverable);
                 dueNow = ReminderOccurrencePolicy
-                    .Select(reminder, [occurrence])
+                    .Select(reminder, [occurrence], throughUtc - deliverable > OnTimeGracePeriod)
                     .ToArray();
+                if (dueNow.Length > 0 && ApplyQuietHours(reminder, throughUtc, timeZone) is { } allowedUtc
+                    && allowedUtc > throughUtc)
+                {
+                    return new ReminderReconciliation(Array.Empty<ReminderOccurrence>(), allowedUtc);
+                }
 
                 // A sleep-length window can span many missed occurrences that the
                 // LatestOnly policy folds into a single delivery. Surface that so

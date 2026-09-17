@@ -15,7 +15,8 @@ public sealed record FocusSession(
     DateTimeOffset? EndsUtc,
     TimeSpan RemainingWhenPaused,
     FocusStatus Status,
-    DateTimeOffset UpdatedUtc);
+    DateTimeOffset UpdatedUtc,
+    TimeSpan ConsumedFocusTime = default);
 
 public sealed record FocusSnapshot(
     Guid Id,

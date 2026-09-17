@@ -135,6 +135,47 @@ public sealed class ReminderEngineTests
             expired.Id, TestContext.Current.CancellationToken))!.Status);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Tick_persists_quiet_deferral_without_notifying(bool once)
+    {
+        var now = Now.AddHours(14);
+        var reminder = DueReminder() with
+        {
+            Rule = once ? new RecurrenceRule.Once() : new RecurrenceRule.Daily(new TimeOnly(9, 0)),
+            QuietHoursBehavior = QuietHoursBehavior.WaitUntilQuietHoursEnd,
+            QuietHours = new QuietHours(true, new TimeOnly(22, 0), new TimeOnly(7, 0)),
+        };
+        var events = new List<string>();
+        var repository = new FakeReminderRepository([reminder], events);
+        var sink = new FakeReminderDueSink(events);
+        var engine = new ReminderEngine(new FakeClock(now), repository, sink);
+
+        await engine.TickAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(["load", "record"], events);
+        Assert.Empty(sink.Notifications);
+        Assert.Empty(repository.RecordedOccurrences);
+        Assert.Equal(DateTimeOffset.Parse("2026-09-12T07:00:00Z"), repository.NextDueUtc);
+    }
+
+    [Theory]
+    [InlineData(30, 1)]
+    [InlineData(120, 0)]
+    public async Task Tick_applies_skip_only_after_the_on_time_grace_period(int secondsLate, int expectedCount)
+    {
+        var reminder = DueReminder() with { MissedPolicy = MissedOccurrencePolicy.Skip };
+        var repository = new FakeReminderRepository([reminder], []);
+        var sink = new FakeReminderDueSink([]);
+        var engine = new ReminderEngine(new FakeClock(Now.AddSeconds(secondsLate)), repository, sink);
+
+        await engine.TickAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(expectedCount, sink.Notifications.Count);
+        Assert.Equal(Now.AddDays(1), repository.NextDueUtc);
+    }
+
     private static Reminder DueReminder()
     {
         return new Reminder(
@@ -211,6 +252,8 @@ public sealed class ReminderEngineTests
 
         public IReadOnlyList<ReminderOccurrence> RecordedOccurrences { get; private set; } = [];
 
+        public DateTimeOffset? NextDueUtc { get; private set; }
+
         public Task<IReadOnlyList<Reminder>> LoadDueAsync(
             DateTimeOffset utcNow,
             CancellationToken cancellationToken)
@@ -239,6 +282,7 @@ public sealed class ReminderEngineTests
             }
 
             RecordedOccurrences = occurrences;
+            NextDueUtc = nextDueUtc;
             return Task.FromResult(AdvanceResult);
         }
     }

@@ -86,9 +86,12 @@ public sealed class CompanionFeatureTransactionService : ICompanionFeatureTransa
                 ?? throw new InvalidOperationException("The transactional reminder repository cannot restore reminders.");
             await writer.DeleteAsync("default-hydration", token);
             await writer.DeleteAsync("default-break", token);
+            await writer.DeleteAsync(LocalReminderDefaults.EveningCheckInId, token);
+            await writer.DeleteAsync(LocalReminderDefaults.BedtimeId, token);
             foreach (var reminder in previousDefaultReminders)
             {
-                if (reminder.Id is not ("default-hydration" or "default-break"))
+                if (reminder.Id is not ("default-hydration" or "default-break"
+                    or LocalReminderDefaults.EveningCheckInId or LocalReminderDefaults.BedtimeId))
                 {
                     throw new ArgumentException(
                         "Only stable default reminder rows can be restored.",

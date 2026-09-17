@@ -53,13 +53,14 @@ const composerElements: ComposerElements = {
 
 function showUnpaired(message = ""): void {
   statusTracker.stop();
+  composer.clearRecipient();
   pairedSection.hidden = true;
   unpairedSection.hidden = false;
   pairingStatus.textContent = message;
 }
 
 function showPaired(device: StoredDevice): void {
-  composer.setRecipientPublicKey(device.publicKey);
+  composer.setRecipientPublicKey(device.publicKey, device.deviceId);
   unpairedSection.hidden = true;
   pairedSection.hidden = false;
   statusTracker.render();

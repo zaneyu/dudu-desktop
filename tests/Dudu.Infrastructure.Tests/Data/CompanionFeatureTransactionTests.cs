@@ -1,4 +1,6 @@
 using Dudu.Core.Models;
+using Dudu.Core.Policies;
+using Dudu.Core.Reminders;
 using Dudu.Infrastructure.Data;
 using Dudu.Infrastructure.Data.Repositories;
 using Xunit;
@@ -34,7 +36,8 @@ public sealed class CompanionFeatureTransactionTests
         var reminders = await new ReminderRepository(fixture.Database)
             .ListAsync(TestContext.Current.CancellationToken);
         Assert.DoesNotContain(reminders, item =>
-            item.Id is "default-hydration" or "default-break");
+            item.Id is "default-hydration" or "default-break"
+                or LocalReminderDefaults.EveningCheckInId or LocalReminderDefaults.BedtimeId);
     }
 
     [Fact]
@@ -65,11 +68,75 @@ public sealed class CompanionFeatureTransactionTests
         Assert.Equal(2, defaults.Length);
         Assert.False(defaults.Single(item => item.Id == "default-break").Enabled);
         Assert.True(defaults.Single(item => item.Id == "default-hydration").Enabled);
-        Assert.All(defaults, item =>
+        Assert.All(defaults.Where(item => item.Id is "default-hydration" or "default-break"), item =>
         {
             Assert.Equal("UTC", item.LocalTimeZoneId);
             Assert.Equal(preferences.QuietHours, item.QuietHours);
         });
+    }
+
+    [Fact]
+    public async Task Routine_defaults_commit_without_quiet_hour_shift_and_roll_back_together()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var preferences = TestPreferences() with
+        {
+            QuietHours = new QuietHours(true, new TimeOnly(21), new TimeOnly(7)),
+            EveningCheckInEnabled = true,
+            BedtimeRitualEnabled = true,
+        };
+        var service = new CompanionFeatureTransactionService(new AppUnitOfWork(fixture.Database));
+
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            preferences,
+            DateTimeOffset.Parse("2026-09-12T10:00:00Z"),
+            TimeZoneInfo.Utc,
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(preferences, await new PreferencesRepository(fixture.Database)
+            .GetAsync(TestContext.Current.CancellationToken));
+        var evening = (await new ReminderRepository(fixture.Database)
+            .ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == LocalReminderDefaults.EveningCheckInId);
+        var bedtime = (await new ReminderRepository(fixture.Database)
+            .ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == LocalReminderDefaults.BedtimeId);
+        Assert.Equal(new DateTimeOffset(2026, 9, 12, 20, 0, 0, TimeSpan.Zero), evening.NextDueUtc);
+        Assert.Equal(new DateTimeOffset(2026, 9, 12, 22, 0, 0, TimeSpan.Zero), bedtime.NextDueUtc);
+        Assert.All(new[] { evening, bedtime }, item =>
+        {
+            Assert.Null(item.QuietHours);
+            Assert.Equal(QuietHoursBehavior.WaitUntilQuietHoursEnd, item.QuietHoursBehavior);
+            Assert.Equal(MissedOccurrencePolicy.Skip, item.MissedPolicy);
+            Assert.Equal("UTC", item.LocalTimeZoneId);
+        });
+
+        var restoring = new CompanionFeatureTransactionService(new AppUnitOfWork(fixture.Database));
+        await restoring.RestorePreferencesAndDefaultRemindersAsync(
+            TestPreferences() with
+            {
+                QuietHours = new QuietHours(true, new TimeOnly(21), new TimeOnly(7)),
+            },
+            [
+                new Reminder(
+                    LocalReminderDefaults.EveningCheckInId,
+                    "how was your day, ada?",
+                    null,
+                    false,
+                    new RecurrenceRule.Daily(new TimeOnly(20, 0)),
+                    "UTC",
+                    QuietHoursBehavior.WaitUntilQuietHoursEnd,
+                    MissedOccurrencePolicy.Skip,
+                    DateTimeOffset.Parse("2026-09-13T20:00:00Z")),
+            ],
+            TestContext.Current.CancellationToken);
+        var restored = (await new ReminderRepository(fixture.Database)
+            .ListAsync(TestContext.Current.CancellationToken))
+            .Where(item => item.Id is LocalReminderDefaults.EveningCheckInId
+                or LocalReminderDefaults.BedtimeId)
+            .ToArray();
+        Assert.Single(restored);
+        Assert.False(restored[0].Enabled);
     }
 
     [Fact]

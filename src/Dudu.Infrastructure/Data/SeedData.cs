@@ -6,18 +6,18 @@ public static class SeedData
 {
     private static readonly (string Id, string Text)[] Notes =
     [
-        ("default-note-01", "u can de"),
+        ("default-note-01", "jiayo ada one small step"),
         ("default-note-02", "rest rest abit ok"),
-        ("default-note-03", "good job today lovuh"),
-        ("default-note-04", "namnam properly ah"),
-        ("default-note-05", "soon soon"),
+        ("default-note-03", "so lihai de ada good job today"),
+        ("default-note-04", "namnam break time"),
+        ("default-note-05", "slow slow also ok"),
         ("default-note-06", "drink water ah"),
-        ("default-note-07", "proud of u"),
-        ("default-note-08", "sleep early tonight ok"),
-        ("default-note-09", "mwamwa"),
-        ("default-note-10", "try try today lovuh"),
+        ("default-note-07", "small progress counts too"),
+        ("default-note-08", "time to shuijiaojiao"),
+        ("default-note-09", "a little mwamwa from dudu"),
+        ("default-note-10", "dudu peipei while u try"),
         ("default-note-11", "isok rest abit"),
-        ("default-note-12", "busy is good today"),
+        ("default-note-12", "one thing at a time ok"),
     ];
 
     public static async Task SeedAsync(

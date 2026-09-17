@@ -21,6 +21,7 @@ export interface QueuedMessageParams {
   ciphertext: string;
   senderSessionId: string;
   envelopeHash: string;
+  expectedPublicKeySpki: string;
   /** `message_status.expires_utc` at insert time — the same as `expiresUtc` (ciphertext
    * retention), so a queued status never expires before the message it describes. `ackMessage`
    * later re-sets this to `now + 24h` on delivery. */
@@ -48,7 +49,7 @@ export async function insertQueuedMessage(db: D1Database, params: QueuedMessageP
            AND s.device_id = ?8
            AND s.revoked_utc IS NULL
            AND s.expires_utc > ?9
-           AND d.revoked_utc IS NULL
+           AND d.revoked_utc IS NULL AND d.public_key_spki = ?10
            AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.id = ?1)
          ON CONFLICT (id) DO NOTHING`,
       )
@@ -62,13 +63,14 @@ export async function insertQueuedMessage(db: D1Database, params: QueuedMessageP
         params.senderSessionId,
         params.deviceId,
         params.nowIso,
+        params.expectedPublicKeySpki,
       ),
     db
       .prepare(
         `INSERT INTO message_status (id, sender_session_id, device_id, state, updated_utc, expires_utc)
          SELECT ?1, ?2, ?3, 'queued', ?4, ?5
          FROM message_ownership
-         WHERE id = ?6
+         WHERE id = ?6 AND changes() = 1 AND state = 'queued'
            AND sender_session_id = ?7
            AND device_id = ?8
            AND envelope_hash = ?9
@@ -91,9 +93,10 @@ export async function insertQueuedMessage(db: D1Database, params: QueuedMessageP
            (id, device_id, protocol_version, created_utc, deliver_after_utc, expires_utc,
             ephemeral_public_key, hkdf_salt, nonce, ciphertext)
          SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10
-         WHERE EXISTS (
+         WHERE changes() = 1 AND EXISTS (
            SELECT 1 FROM message_ownership
            WHERE id = ?11 AND sender_session_id = ?12 AND device_id = ?13 AND envelope_hash = ?14
+             AND state = 'queued'
          )
          ON CONFLICT (device_id, id) DO NOTHING`,
       )
@@ -172,35 +175,17 @@ export async function findMessageStateForSession(
   senderSessionId: string,
   nowIso: string,
 ): Promise<MessageState | null> {
-  const statusRow = await db
-    .prepare(`SELECT device_id, state FROM message_status WHERE id = ?1 AND sender_session_id = ?2`)
-    .bind(id, senderSessionId)
-    .first<{ device_id: string; state: "queued" | "delivered" }>();
-  if (!statusRow) {
-    const ownership = await db
-      .prepare(`SELECT device_id, state FROM message_ownership WHERE id = ?1 AND sender_session_id = ?2`)
-      .bind(id, senderSessionId)
-      .first<{ device_id: string; state: "queued" | "delivered" }>();
-    if (!ownership) {
-      return null;
-    }
-    if (ownership.state === "delivered") {
-      return "delivered";
-    }
-    return (await isStillQueued(db, ownership.device_id, id, nowIso)) ? "queued" : "expired";
-  }
-  if (statusRow.state === "delivered") {
-    return "delivered";
-  }
-  return (await isStillQueued(db, statusRow.device_id, id, nowIso)) ? "queued" : "expired";
-}
-
-async function isStillQueued(db: D1Database, deviceId: string, id: string, nowIso: string): Promise<boolean> {
-  const messageRow = await db
-    .prepare(`SELECT expires_utc FROM messages WHERE device_id = ?1 AND id = ?2`)
-    .bind(deviceId, id)
-    .first<{ expires_utc: string }>();
-  return messageRow !== null && messageRow.expires_utc > nowIso;
+  const row = await db.prepare(`
+    SELECT CASE WHEN state = 'delivered' THEN 'delivered'
+      WHEN EXISTS (SELECT 1 FROM messages m WHERE m.id = ?1 AND m.device_id = owner.device_id
+        AND m.expires_utc > ?3) THEN 'queued' ELSE 'expired' END AS state
+    FROM (
+      SELECT device_id, state FROM message_ownership WHERE id = ?1 AND sender_session_id = ?2
+      UNION ALL
+      SELECT device_id, state FROM message_status WHERE id = ?1 AND sender_session_id = ?2
+    ) owner LIMIT 1
+  `).bind(id, senderSessionId, nowIso).first<{ state: MessageState }>();
+  return row?.state ?? null;
 }
 
 interface MessageRow {
@@ -401,30 +386,21 @@ export async function ackMessage(
   nowIso: string,
   statusExpiresUtc: string,
 ): Promise<AckResult> {
-  const ownership = await db
-    .prepare(`SELECT device_id, sender_session_id, state FROM message_ownership WHERE id = ?1`)
-    .bind(id)
-    .first<{
-      device_id: string;
-      sender_session_id: string;
-      state: "queued" | "delivered";
-    }>();
-  if (!ownership || ownership.device_id !== deviceId) {
-    return "not_found";
-  }
-  if (ownership.state === "delivered") {
-    return "ok";
-  }
-  await db.batch([
-    db.prepare(`DELETE FROM messages WHERE device_id = ?1 AND id = ?2`).bind(deviceId, id),
-    db
-      .prepare(`UPDATE message_status SET state = 'delivered', updated_utc = ?1, expires_utc = ?2 WHERE id = ?3`)
-      .bind(nowIso, statusExpiresUtc, id),
-    db
-      .prepare(`UPDATE message_ownership SET state = 'delivered' WHERE id = ?1 AND device_id = ?2`)
+  const results = await db.batch([
+    db.prepare(`UPDATE message_status SET state = 'delivered', updated_utc = ?1, expires_utc = ?2
+      WHERE id = ?3 AND device_id = ?4 AND state = 'queued'
+        AND EXISTS (SELECT 1 FROM message_ownership WHERE id = ?3 AND device_id = ?4)`)
+      .bind(nowIso, statusExpiresUtc, id, deviceId),
+    db.prepare(`UPDATE message_ownership SET state = 'delivered', expires_utc = MAX(expires_utc, ?3)
+      WHERE id = ?1 AND device_id = ?2 AND state = 'queued'`)
+      .bind(id, deviceId, statusExpiresUtc),
+    db.prepare(`DELETE FROM messages WHERE device_id = ?1 AND id = ?2
+      AND EXISTS (SELECT 1 FROM message_ownership WHERE id = ?2 AND device_id = ?1 AND state = 'delivered')`)
+      .bind(deviceId, id),
+    db.prepare(`SELECT 1 FROM message_ownership WHERE id = ?1 AND device_id = ?2 AND state = 'delivered'`)
       .bind(id, deviceId),
   ]);
-  return "ok";
+  return results[3].results.length > 0 ? "ok" : "not_found";
 }
 
 /** A `DELETE FROM messages` statement for one device, for callers (key rotation, device deletion)

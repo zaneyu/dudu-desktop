@@ -29,13 +29,13 @@ public sealed class DatabaseTests
         await using var fixture = await DatabaseFixture.CreateAsync();
         await using var connection = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken);
         var runner = new MigrationRunner(fixture.Options);
-        // Version 4 is now a real migration; inject the failure at the next
+        // Version 6 is now a real migration; inject the failure at the next
         // version so this test continues to exercise rollback rather than
         // replacing production schema.
-        runner.AddMigration(5, "CREATE TABLE broken(;" );
+        runner.AddMigration(7, "CREATE TABLE broken(;" );
 
         await Assert.ThrowsAsync<SqliteException>(() => runner.RunAsync(connection, TestContext.Current.CancellationToken));
-        Assert.Equal(4, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(6, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
         Assert.True(File.Exists(fixture.Options.DatabasePath));
     }
 
@@ -94,6 +94,29 @@ public sealed class DatabaseTests
             command.CommandText = "UPDATE schema_version SET version = 2 WHERE id = 1;";
             await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
         }
+        foreach (var (table, column) in new[]
+        {
+            ("remote_envelopes", "hkdf_salt"),
+            ("remote_envelopes", "created_utc"),
+            ("preferences", "outfit_key"),
+            ("preferences", "automatic_seasonal_mode"),
+            ("preferences", "anniversary_month"),
+            ("preferences", "anniversary_day"),
+            ("preferences", "birthday_month"),
+            ("preferences", "birthday_day"),
+            ("preferences", "evening_check_in_enabled"),
+            ("preferences", "bedtime_ritual_enabled"),
+        })
+        {
+            await using var drop = connection.CreateCommand();
+            drop.CommandText = $"ALTER TABLE {table} DROP COLUMN {column};";
+            await drop.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+        await using (var dropConsumed = connection.CreateCommand())
+        {
+            dropConsumed.CommandText = "ALTER TABLE focus_sessions DROP COLUMN consumed_focus_ticks;";
+            await dropConsumed.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
         await connection.DisposeAsync();
 
         // Older-schema backups restore successfully; the next startup migrates them forward.
@@ -102,7 +125,7 @@ public sealed class DatabaseTests
         var result = await fixture.Backups.TryRestoreAsync(
             backup!, TestContext.Current.CancellationToken);
         Assert.True(result.Restored);
-        Assert.Equal(2, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(6, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -585,6 +608,193 @@ public sealed class DatabaseTests
     }
 
     [Fact]
+    public async Task Restoring_an_older_schema_backup_migrates_it_and_serves_existing_and_new_instances()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var backup = await fixture.Backups.CreatePreMigrationBackupAsync(TestContext.Current.CancellationToken);
+        await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = backup,
+            Mode = SqliteOpenMode.ReadWrite,
+            Pooling = false,
+        }.ToString()))
+        {
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            await using var command = connection.CreateCommand();
+            command.CommandText = "UPDATE schema_version SET version = 1 WHERE id = 1;";
+            await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        // Drop the columns added after version 1 so the backup is genuinely an older schema
+        // whose preferences row would fail the current SELECT.
+        await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = backup,
+            Mode = SqliteOpenMode.ReadWrite,
+            Pooling = false,
+        }.ToString()))
+        {
+            await connection.OpenAsync(TestContext.Current.CancellationToken);
+            var columns = new[]
+            {
+                "hydration_reminders_enabled", "break_reminders_enabled",
+                "outfit_key", "automatic_seasonal_mode", "anniversary_month",
+                "anniversary_day", "birthday_month", "birthday_day",
+                "evening_check_in_enabled", "bedtime_ritual_enabled",
+            };
+            foreach (var column in columns)
+            {
+                await using var drop = connection.CreateCommand();
+                drop.CommandText = $"ALTER TABLE preferences DROP COLUMN {column};";
+                await drop.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+            }
+            await using (var dropConsumed = connection.CreateCommand())
+            {
+                dropConsumed.CommandText = "ALTER TABLE focus_sessions DROP COLUMN consumed_focus_ticks;";
+                await dropConsumed.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+            }
+            await using var dropHkdf = connection.CreateCommand();
+            dropHkdf.CommandText = "ALTER TABLE remote_envelopes DROP COLUMN hkdf_salt;";
+            await dropHkdf.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+            await using var dropCreated = connection.CreateCommand();
+            dropCreated.CommandText = "ALTER TABLE remote_envelopes DROP COLUMN created_utc;";
+            await dropCreated.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        var result = await fixture.Backups.TryRestoreAsync(backup!, TestContext.Current.CancellationToken);
+
+        Assert.True(result.Restored, result.ToString());
+
+        var preferencesRepository = new PreferencesRepository(fixture.Database);
+        Assert.Equal(6, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        _ = await preferencesRepository.GetAsync(TestContext.Current.CancellationToken);
+
+        await using var freshDatabase = await Database.OpenAsync(fixture.Options, TestContext.Current.CancellationToken);
+        Assert.Equal(6, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        var freshPreferences = new PreferencesRepository(freshDatabase);
+        _ = await freshPreferences.GetAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task Restore_failure_still_invalidates_cached_initialization()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var profiles = new ProfileRepository(fixture.Database);
+        await profiles.SaveAsync(new Profile("Current", true), TestContext.Current.CancellationToken);
+        var backup = await fixture.Backups.CreatePreMigrationBackupAsync(TestContext.Current.CancellationToken);
+
+        var failingBackups = new DatabaseBackupService(
+            fixture.Options,
+            static (_, _) => throw new IOException("injected replacement failure"));
+        var result = await failingBackups.TryRestoreAsync(backup!, TestContext.Current.CancellationToken);
+
+        Assert.False(result.Restored);
+        Assert.Equal(RestoreFailure.RestoreFailed, result.Failure);
+        Assert.Equal("Current", (await profiles.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
+        Assert.True(File.Exists(fixture.Options.DatabasePath));
+    }
+
+    [Fact]
+    public async Task Reconciliation_restores_the_staged_old_database_when_no_canonical_file_exists()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "dudu-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var options = new DatabaseOptions(Path.Combine(root, "dudu.db"), Path.Combine(root, "backups"));
+            var oldDatabase = await Database.OpenAsync(options, TestContext.Current.CancellationToken);
+            var profiles = new ProfileRepository(oldDatabase);
+            await profiles.SaveAsync(new Profile("Interrupted", true), TestContext.Current.CancellationToken);
+            var stagedPath = options.DatabasePath + ".restore-old-" + Guid.NewGuid().ToString("N");
+            SqliteConnection.ClearAllPools();
+            await oldDatabase.DisposeAsync();
+            File.Move(options.DatabasePath, stagedPath);
+            Assert.False(File.Exists(options.DatabasePath));
+
+            var service = new DatabaseBackupService(options);
+            var recovered = await service.ReconcileInterruptedRestoreAsync(TestContext.Current.CancellationToken);
+
+            Assert.True(recovered);
+            Assert.True(File.Exists(options.DatabasePath));
+            Assert.False(File.Exists(stagedPath));
+
+            await using var reopened = await Database.OpenAsync(options, TestContext.Current.CancellationToken);
+            var repository = new ProfileRepository(reopened);
+            Assert.Equal("Interrupted", (await repository.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
+    public async Task Reconciliation_installs_a_valid_restore_temp_over_a_truncated_canonical_file()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "dudu-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var options = new DatabaseOptions(Path.Combine(root, "dudu.db"), Path.Combine(root, "backups"));
+            var source = await Database.OpenAsync(options, TestContext.Current.CancellationToken);
+            var profiles = new ProfileRepository(source);
+            await profiles.SaveAsync(new Profile("Replacement", true), TestContext.Current.CancellationToken);
+            SqliteConnection.ClearAllPools();
+            await source.DisposeAsync();
+
+            var temporaryPath = options.DatabasePath + ".restore-" + Guid.NewGuid().ToString("N");
+            File.Copy(options.DatabasePath, temporaryPath);
+            await File.WriteAllTextAsync(options.DatabasePath, "truncated", TestContext.Current.CancellationToken);
+
+            var service = new DatabaseBackupService(options);
+            var recovered = await service.ReconcileInterruptedRestoreAsync(TestContext.Current.CancellationToken);
+
+            Assert.True(recovered);
+            await using var reopened = await Database.OpenAsync(options, TestContext.Current.CancellationToken);
+            var repository = new ProfileRepository(reopened);
+            Assert.Equal("Replacement", (await repository.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
+    public async Task Reconciliation_never_leaves_an_empty_database_when_a_recovery_set_exists()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "dudu-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var options = new DatabaseOptions(Path.Combine(root, "dudu.db"), Path.Combine(root, "backups"));
+            var oldDatabase = await Database.OpenAsync(options, TestContext.Current.CancellationToken);
+            var profiles = new ProfileRepository(oldDatabase);
+            await profiles.SaveAsync(new Profile("Recovered", true), TestContext.Current.CancellationToken);
+            var stagedPath = options.DatabasePath + ".restore-old-" + Guid.NewGuid().ToString("N");
+            SqliteConnection.ClearAllPools();
+            await oldDatabase.DisposeAsync();
+            File.Move(options.DatabasePath, stagedPath);
+            await File.WriteAllTextAsync(options.DatabasePath, "half written", TestContext.Current.CancellationToken);
+
+            var service = new DatabaseBackupService(options);
+            var recovered = await service.ReconcileInterruptedRestoreAsync(TestContext.Current.CancellationToken);
+
+            Assert.True(recovered);
+            await using var reopened = await Database.OpenAsync(options, TestContext.Current.CancellationToken);
+            var repository = new ProfileRepository(reopened);
+            Assert.Equal("Recovered", (await repository.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
     public async Task Sidecar_staging_failure_restores_current_database()
     {
         await using var fixture = await DatabaseFixture.CreateAsync();
@@ -712,6 +922,140 @@ public sealed class DatabaseTests
         Assert.True(File.Exists(fixture.Options.DatabasePath));
     }
 
+    [Fact]
+    public async Task Restore_succeeds_over_a_corrupt_current_database_and_keeps_a_recovery_set()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var profiles = new ProfileRepository(fixture.Database);
+        await profiles.SaveAsync(new Profile("Before", true), TestContext.Current.CancellationToken);
+        var backup = await fixture.Backups.CreatePreMigrationBackupAsync(TestContext.Current.CancellationToken);
+
+        SqliteConnection.ClearAllPools();
+        var corruptBytes = new byte[8192];
+        "SQLite format 3\0"u8.CopyTo(corruptBytes);
+        for (var i = 512; i < corruptBytes.Length; i++)
+        {
+            corruptBytes[i] = 0xAB;
+        }
+
+        File.WriteAllBytes(fixture.Options.DatabasePath, corruptBytes);
+        var service = new DatabaseBackupService(fixture.Options);
+
+        var result = await service.TryRestoreAsync(backup!, TestContext.Current.CancellationToken);
+
+        Assert.True(result.Restored);
+        Assert.Equal(RestoreFailure.None, result.Failure);
+        Assert.Equal("Before", (await profiles.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
+        var recoveryFiles = Directory.GetFiles(Path.GetDirectoryName(fixture.Options.DatabasePath)!, "*");
+        Assert.True(
+            recoveryFiles.Any(path => path.Contains(DatabaseBackupService.RecoverySuffix, StringComparison.Ordinal)),
+            string.Join(Environment.NewLine, recoveryFiles));
+    }
+
+    [Fact]
+    public async Task Restore_over_a_corrupt_current_database_preserves_the_unreadable_file_as_recovery()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var backup = await fixture.Backups.CreatePreMigrationBackupAsync(TestContext.Current.CancellationToken);
+
+        SqliteConnection.ClearAllPools();
+        var corruptBytes = new byte[8192];
+        "SQLite format 3\0"u8.CopyTo(corruptBytes);
+        for (var i = 512; i < corruptBytes.Length; i++)
+        {
+            corruptBytes[i] = 0xAB;
+        }
+
+        File.WriteAllBytes(fixture.Options.DatabasePath, corruptBytes);
+        var service = new DatabaseBackupService(fixture.Options);
+
+        var result = await service.TryRestoreAsync(backup!, TestContext.Current.CancellationToken);
+
+        Assert.True(result.Restored);
+        var recoveryPath = Directory.GetFiles(
+            Path.GetDirectoryName(fixture.Options.DatabasePath)!,
+            "*")
+            .Single(path => !path.EndsWith("-wal" + DatabaseBackupService.RecoverySuffix)
+                && !path.EndsWith("-shm" + DatabaseBackupService.RecoverySuffix)
+                && path.Contains(DatabaseBackupService.RecoverySuffix, StringComparison.Ordinal));
+        Assert.Equal(corruptBytes.Length, new FileInfo(recoveryPath).Length);
+    }
+
+    [Fact]
+    public async Task Restore_latest_continues_to_older_backups_after_an_unreadable_newest_backup()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var profiles = new ProfileRepository(fixture.Database);
+        await profiles.SaveAsync(new Profile("Older", true), TestContext.Current.CancellationToken);
+        var older = await fixture.Backups.CreatePreMigrationBackupAsync(TestContext.Current.CancellationToken);
+        await Task.Delay(15, TestContext.Current.CancellationToken);
+        await profiles.SaveAsync(new Profile("Newer", true), TestContext.Current.CancellationToken);
+        var newer = await fixture.Backups.CreatePreMigrationBackupAsync(TestContext.Current.CancellationToken);
+
+        await File.WriteAllTextAsync(newer!, "not a database", TestContext.Current.CancellationToken);
+
+        var result = await fixture.Backups.RestoreLatestValidAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(result.Restored);
+        Assert.Equal(older, result.BackupPath);
+        Assert.Equal("Older", (await profiles.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
+    }
+
+    [Fact]
+    public async Task Restore_latest_reports_integrity_failure_when_no_candidate_restores()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        foreach (var existingBackup in Directory.GetFiles(fixture.Options.BackupDirectory, "*.db"))
+        {
+            File.Delete(existingBackup);
+        }
+        var newer = await fixture.Backups.CreatePreMigrationBackupAsync(TestContext.Current.CancellationToken);
+        await Task.Delay(15, TestContext.Current.CancellationToken);
+        var older = await fixture.Backups.CreatePreMigrationBackupAsync(TestContext.Current.CancellationToken);
+
+        await File.WriteAllTextAsync(newer!, "not a database", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(older!, "still not a database", TestContext.Current.CancellationToken);
+        var result = await fixture.Backups.RestoreLatestValidAsync(TestContext.Current.CancellationToken);
+
+        Assert.False(result.Restored);
+        Assert.Equal(RestoreFailure.IntegrityCheckFailed, result.Failure);
+    }
+
+    [Fact]
+    public async Task Rollback_overwrites_a_partial_file_left_at_the_canonical_path()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var profiles = new ProfileRepository(fixture.Database);
+        await profiles.SaveAsync(new Profile("Current", true), TestContext.Current.CancellationToken);
+        var backup = await fixture.Backups.CreatePreMigrationBackupAsync(TestContext.Current.CancellationToken);
+        await profiles.SaveAsync(new Profile("Still current", true), TestContext.Current.CancellationToken);
+
+        // Leave a partial replacement at the canonical path before reporting the install
+        // failure. Rollback must move that partial file aside with overwrite enabled, then
+        // restore the staged database.
+        var failingBackups = new DatabaseBackupService(
+            fixture.Options,
+            moveFile: (source, destination) =>
+            {
+                if (destination == fixture.Options.DatabasePath)
+                {
+                    File.Copy(source, destination, overwrite: true);
+                    throw new IOException("injected partial replacement failure");
+                }
+
+                File.Move(source, destination);
+            },
+            beforeStaging: () => File.WriteAllBytes(
+                fixture.Options.DatabasePath + "-shm",
+                new byte[32 * 1024]));
+
+        var result = await failingBackups.TryRestoreAsync(backup!, TestContext.Current.CancellationToken);
+
+        Assert.False(result.Restored);
+        Assert.Equal(RestoreFailure.RestoreFailed, result.Failure);
+        Assert.Equal("Still current", (await profiles.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
+    }
+
     private static async Task AssertPragmasAsync(SqliteConnection connection, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
@@ -738,7 +1082,7 @@ public sealed class DatabaseTests
             var root = Path.Combine(Path.GetTempPath(), "dudu-tests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
             var options = new DatabaseOptions(Path.Combine(root, "dudu.db"), Path.Combine(root, "backups"));
-            var database = await Database.OpenAsync(options);
+            var database = await Database.OpenAsync(options, TestContext.Current.CancellationToken);
             return new DatabaseFixture(root, options, database, new DatabaseBackupService(options));
         }
 

@@ -88,7 +88,10 @@ export async function disconnectSender(): Promise<void> {
   throw new ApiHttpError(response.status, await parseErrorBody(response));
 }
 
-export async function postMessage(envelope: EncryptedEnvelopeV1): Promise<PostMessageResponse> {
+export async function postMessage(
+  envelope: EncryptedEnvelopeV1,
+  recipient: { deviceId: string; publicKey: string },
+): Promise<PostMessageResponse> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);
   let response: Response;
@@ -96,7 +99,11 @@ export async function postMessage(envelope: EncryptedEnvelopeV1): Promise<PostMe
     response = await fetch("/v1/messages", {
       method: "POST",
       credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Dudu-Device": recipient.deviceId,
+        "X-Dudu-Recipient-Key": recipient.publicKey,
+      },
       body: JSON.stringify(envelope),
       signal: controller.signal,
     });

@@ -23,7 +23,9 @@ public sealed record Preferences(
     string? OutfitKey = null,
     bool AutomaticSeasonalMode = true,
     MonthDay? Anniversary = null,
-    MonthDay? Birthday = null)
+    MonthDay? Birthday = null,
+    bool EveningCheckInEnabled = false,
+    bool BedtimeRitualEnabled = false)
 {
     public static Preferences Default => new(
         AppTheme.System,

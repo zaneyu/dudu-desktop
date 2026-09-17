@@ -3,6 +3,14 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 
+namespace Dudu.App
+{
+    public sealed partial class App
+    {
+        private void InitializeComponent() { }
+    }
+}
+
 namespace Dudu.App.Windows
 {
     public sealed partial class SettingsWindow

@@ -20,6 +20,7 @@ import { JsonBodyTooLargeError, readJsonBody, UnsupportedMediaTypeError } from "
 import {
   badRequest,
   conflict,
+  errorResponse,
   forbidden,
   jsonResponse,
   noContentResponse,
@@ -69,6 +70,12 @@ export async function postMessage(request: Request, env: Env): Promise<Response>
   const session = await authenticateSenderSession(request, env);
   if (!session) {
     return unauthorized();
+  }
+
+  const expectedDevice = request.headers.get("X-Dudu-Device");
+  const expectedKey = request.headers.get("X-Dudu-Recipient-Key");
+  if (expectedDevice !== session.deviceId || expectedKey !== session.publicKeySpki) {
+    return errorResponse(412, "recipient_changed", "Confirm the recipient before sending.");
   }
 
   // Scoped per sender session (not per IP): the cap is "sixty per sender per hour", and a sender
@@ -143,6 +150,7 @@ export async function postMessage(request: Request, env: Env): Promise<Response>
   const inserted = await insertQueuedMessage(env.DB, {
     id: envelope.messageId,
     deviceId: session.deviceId,
+    expectedPublicKeySpki: expectedKey,
     nowIso,
     protocolVersion: envelope.protocolVersion,
     createdUtc: envelope.createdUtc,
