@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package
+    xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+    xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+    xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+    IgnorableNamespaces="uap rescap">
+  <!--
+    This is intentionally a local, non-production identity. Partner Center's
+    reserved Name and Publisher must replace both attributes before any Store
+    publication workflow is introduced; the Store will reject this identity.
+  -->
+  <Identity
+      Name="DuduDesktop.Local.NonProduction"
+      Publisher="CN=Dudu Desktop Local Package, O=Dudu Desktop Local Development, C=US"
+      Version="1.0.0.0"
+      ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>Dudu Desktop</DisplayName>
+    <PublisherDisplayName>Dudu Desktop Local Development</PublisherDisplayName>
+    <Logo>PackageAssets\Logo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.26100.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="x-generate" />
+  </Resources>
+
+  <Applications>
+    <Application
+        Id="App"
+        Executable="$targetnametoken$.exe"
+        EntryPoint="$targetentrypoint$">
+      <uap:VisualElements
+          AppListEntry="default"
+          DisplayName="Dudu Desktop"
+          Description="Dudu Desktop Companion"
+          Square44x44Logo="PackageAssets\Logo.png"
+          Square150x150Logo="PackageAssets\Logo.png"
+          BackgroundColor="#F4EEE8" />
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>

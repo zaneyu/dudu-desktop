@@ -20,6 +20,14 @@
     <DefineConstants>$(DefineConstants);DUDU_XAML_STUBS</DefineConstants>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(DuduStorePackage)' == 'true' and '$(OS)' == 'Windows_NT'">
+    <WindowsPackageType>MSIX</WindowsPackageType>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
+    <AppxBundle>Never</AppxBundle>
+    <GenerateAppInstallerFile>false</GenerateAppInstallerFile>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Dudu.Infrastructure\Dudu.Infrastructure.csproj" />
   </ItemGroup>
