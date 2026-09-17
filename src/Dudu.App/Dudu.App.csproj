@@ -23,6 +23,7 @@
   <PropertyGroup Condition="'$(DuduStorePackage)' == 'true' and '$(OS)' == 'Windows_NT'">
     <WindowsPackageType>MSIX</WindowsPackageType>
     <EnableMsixTooling>true</EnableMsixTooling>
+    <GenerateAppxPackageOnBuild>true</GenerateAppxPackageOnBuild>
     <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
     <AppxBundle>Never</AppxBundle>
     <GenerateAppInstallerFile>false</GenerateAppInstallerFile>

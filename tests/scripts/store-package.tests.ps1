@@ -37,6 +37,7 @@ if ($storePackageProperties.Count -eq 1) {
     $storePackagePropertyGroup = $storePackageProperties[0]
     Assert-True "Store package mode uses MSIX" ($storePackagePropertyGroup.WindowsPackageType -eq 'MSIX')
     Assert-True "Store package mode enables MSIX tooling" ($storePackagePropertyGroup.EnableMsixTooling -eq 'true')
+    Assert-True "Store package mode explicitly requests MSIX generation" ($storePackagePropertyGroup.GenerateAppxPackageOnBuild -eq 'true')
     Assert-True "Store package mode disables local signing" ($storePackagePropertyGroup.AppxPackageSigningEnabled -eq 'false')
     Assert-True "Store package mode never creates an Appx bundle" ($storePackagePropertyGroup.AppxBundle -eq 'Never')
     Assert-True "Store package mode does not generate an App Installer file" ($storePackagePropertyGroup.GenerateAppInstallerFile -eq 'false')
@@ -48,6 +49,9 @@ if (Test-Path -LiteralPath (Join-Path $repoRoot "scripts/package-store.ps1")) {
         $storeScript -match 'RequirePartnerCenterIdentity' -and
         $storeScript -match 'ExpectedPartnerCenterName' -and
         $storeScript -match 'ExpectedPartnerCenterPublisher'
+    )
+    Assert-True "Store package publish explicitly requests MSIX generation" (
+        $storeScript -match "'-p:GenerateAppxPackageOnBuild=true'"
     )
     Assert-True "Store package script makes hosted packaging explicitly acceptance-only" (
         $storeScript -match 'AcceptanceOnly'

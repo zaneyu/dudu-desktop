@@ -244,6 +244,31 @@ function Assert-StrictStorePackageOutput {
     return $relativeFilePath
 }
 
+function Assert-AppCertReportPass {
+    param([Parameter(Mandatory)][string]$ReportPath)
+
+    if (-not (Test-Path -LiteralPath $ReportPath -PathType Leaf)) {
+        throw 'Windows App Certification Kit did not produce its XML report.'
+    }
+
+    try {
+        [xml]$appCertReport = Get-Content -Raw -LiteralPath $ReportPath
+    }
+    catch {
+        throw 'Windows App Certification Kit produced an unreadable XML report.'
+    }
+
+    # AppCert writes a REPORT root with OVERALL_RESULT="PASS" for a passing
+    # Windows App Certification Kit run. Do not infer success from exit code.
+    $reportRoot = $appCertReport.DocumentElement
+    if ($null -eq $reportRoot -or
+        $reportRoot.LocalName -cne 'REPORT' -or
+        $reportRoot.GetAttribute('OVERALL_RESULT') -cne 'PASS') {
+        throw 'Windows App Certification Kit report does not record an overall PASS result.'
+    }
+}
+
+
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $targetRuntimeIdentifier = 'win-x64'
 
@@ -320,6 +345,7 @@ try {
     $stage = 'dotnet publish'
     & dotnet publish $appProject -c Release -r win-x64 --self-contained true --no-restore `
         '-p:DuduStorePackage=true' "-p:Version=$Version" "-p:RuntimeIdentifier=$targetRuntimeIdentifier" `
+        '-p:GenerateAppxPackageOnBuild=true' `
         "-p:AppxPackageVersion=$expectedPackageVersion" '-p:AppxPackageSigningEnabled=false' "-p:PublishDir=$publishDirectory$([IO.Path]::DirectorySeparatorChar)" `
         "-p:AppxPackageDir=$packageDirectory$([IO.Path]::DirectorySeparatorChar)"
     if ($LASTEXITCODE -ne 0) { throw "Store package publish failed with exit code $LASTEXITCODE." }
@@ -374,6 +400,15 @@ try {
     else {
         $appCert = $sdkTools.AppCert
         $appCertReport = Join-Path $metadataDirectory 'appcert-report.xml'
+        $stage = 'Windows App Certification Kit reset'
+        & $appCert reset
+        $appCertResetExitCode = $LASTEXITCODE
+        Add-Content -LiteralPath (Join-Path $metadataDirectory 'validation-summary.txt') -Value "Windows App Certification Kit reset exit code: $appCertResetExitCode"
+        if ($appCertResetExitCode -ne 0) {
+            throw "Windows App Certification Kit reset failed with exit code $appCertResetExitCode."
+        }
+
+        $stage = 'Windows App Certification Kit validation'
         $appCertExitCode = $null
         $appCertFailure = $null
         try {
@@ -385,7 +420,16 @@ try {
             $appCertExitCode = 'launch failure'
         }
         Add-Content -LiteralPath (Join-Path $metadataDirectory 'validation-summary.txt') -Value "Windows App Certification Kit exit code: $appCertExitCode"
-        if ($appCertFailure -or $appCertExitCode -ne 0) {
+        $appCertReportFailure = $null
+        try {
+            Assert-AppCertReportPass -ReportPath $appCertReport
+            Add-Content -LiteralPath (Join-Path $metadataDirectory 'validation-summary.txt') -Value 'Windows App Certification Kit report: overall PASS'
+        }
+        catch {
+            $appCertReportFailure = $_
+            Add-Content -LiteralPath (Join-Path $metadataDirectory 'validation-summary.txt') -Value 'Windows App Certification Kit report: missing, unreadable, or not overall PASS'
+        }
+        if ($appCertFailure -or $appCertExitCode -ne 0 -or $appCertReportFailure) {
             throw "Windows App Certification Kit validation failed with exit code $appCertExitCode."
         }
     }

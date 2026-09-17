@@ -87,6 +87,7 @@ if (Test-Path -LiteralPath $storeScriptPath) {
     $storeScript = Get-Content -Raw -LiteralPath $storeScriptPath
     Assert-Contains "Store package script requires Windows" $storeScript "OperatingSystem.*Windows"
     Assert-Contains "Store package script enables the package mode" $storeScript "DuduStorePackage.*true"
+    Assert-Contains "Store package publish explicitly requests MSIX generation" $storeScript "GenerateAppxPackageOnBuild.*true"
     Assert-Contains "Store package script targets win-x64" $storeScript "RuntimeIdentifier.*win-x64"
     Assert-Contains "Store package script disables local signing" $storeScript "AppxPackageSigningEnabled.*false"
     Assert-Contains "Store package script writes beneath artifacts" $storeScript "artifacts[/\\]store-package"
@@ -228,6 +229,61 @@ if (Test-Path -LiteralPath $storeScriptPath) {
             Assert-True "strict package-output validator handles $($strictOutputCase.Name) correctly" ($rejectedOutput -eq $strictOutputCase.Reject)
         }
     }
+    $appCertReportFunction = @($storeScriptAst.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Assert-AppCertReportPass'
+    }, $true))
+    Assert-True "Store package script exposes an executable WACK report validator" ($appCertReportFunction.Count -eq 1)
+    if ($appCertReportFunction.Count -eq 1) {
+        . ([scriptblock]::Create($appCertReportFunction[0].Extent.Text))
+        $reportTestDirectory = Join-Path ([IO.Path]::GetTempPath()) ("dudu-appcert-contract-" + [Guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $reportTestDirectory -Force | Out-Null
+        try {
+            $passingReport = Join-Path $reportTestDirectory 'passing.xml'
+            Set-Content -LiteralPath $passingReport -NoNewline -Encoding utf8 -Value '<REPORT OVERALL_RESULT="PASS" VERSION="10.0.26100.0" />'
+            $acceptedPassingReport = $true
+            try { Assert-AppCertReportPass -ReportPath $passingReport } catch { $acceptedPassingReport = $false }
+            Assert-True "WACK report validator accepts the schema-level PASS result" $acceptedPassingReport
+
+            $failedReport = Join-Path $reportTestDirectory 'failed.xml'
+            Set-Content -LiteralPath $failedReport -NoNewline -Encoding utf8 -Value '<REPORT OVERALL_RESULT="FAIL" VERSION="10.0.26100.0" />'
+            $rejectedFailedReport = $false
+            try { Assert-AppCertReportPass -ReportPath $failedReport } catch { $rejectedFailedReport = $true }
+            Assert-True "WACK report validator rejects the schema-level FAIL result" $rejectedFailedReport
+
+            $malformedReport = Join-Path $reportTestDirectory 'malformed.xml'
+            Set-Content -LiteralPath $malformedReport -NoNewline -Encoding utf8 -Value '<RESULT OVERALL_RESULT="PASS" />'
+            $rejectedMalformedReport = $false
+            try { Assert-AppCertReportPass -ReportPath $malformedReport } catch { $rejectedMalformedReport = $true }
+            Assert-True "WACK report validator rejects a non-WACK report schema" $rejectedMalformedReport
+
+            $rejectedMissingReport = $false
+            try { Assert-AppCertReportPass -ReportPath (Join-Path $reportTestDirectory 'missing.xml') } catch { $rejectedMissingReport = $true }
+            Assert-True "WACK report validator rejects a missing report" $rejectedMissingReport
+        }
+        finally {
+            Remove-Item -LiteralPath $reportTestDirectory -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    $appCertResetInvocations = @($storeScriptAst.FindAll({
+        param($node)
+        if ($node -isnot [System.Management.Automation.Language.CommandAst]) { return $false }
+        $elements = @($node.CommandElements | ForEach-Object { $_.Extent.Text })
+        return $elements.Count -ge 2 -and $elements[0] -eq '$appCert' -and $elements[1] -eq 'reset'
+    }, $true))
+    $appCertTestInvocations = @($storeScriptAst.FindAll({
+        param($node)
+        if ($node -isnot [System.Management.Automation.Language.CommandAst]) { return $false }
+        $elements = @($node.CommandElements | ForEach-Object { $_.Extent.Text })
+        return $elements.Count -ge 2 -and $elements[0] -eq '$appCert' -and $elements[1] -eq 'test'
+    }, $true))
+    Assert-True "production WACK resets AppCert before testing" (
+        $appCertResetInvocations.Count -eq 1 -and
+        $appCertTestInvocations.Count -eq 1 -and
+        $appCertResetInvocations[0].Extent.StartOffset -lt $appCertTestInvocations[0].Extent.StartOffset
+    )
+    Assert-Contains "production WACK validates its report after appcert test" $storeScript 'Assert-AppCertReportPass\s+-ReportPath\s+\$appCertReport'
     $clearOutputIndex = $storeScript.IndexOf("Remove-Item -LiteralPath `$directory -Recurse -Force")
     $preflightCommentIndex = $storeScript.IndexOf("# Validate every host, source, and tool input")
     $preflightTryIndex = $storeScript.IndexOf("try {", $preflightCommentIndex)

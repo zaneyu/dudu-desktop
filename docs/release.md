@@ -254,6 +254,12 @@ private identity values. Store artifacts become Microsoft-signed only after
 Microsoft Store publication. The current Inno installer remains unsigned and
 may trigger SmartScreen or Smart App Control behavior.
 
+In production mode, the wrapper resets the Windows App Certification Kit before
+testing and accepts the package only when AppCert exits successfully and writes
+an XML `REPORT` whose `OVERALL_RESULT` is `PASS`. `-AcceptanceOnly` explicitly
+skips WACK; its checksum is integrity evidence for acceptance only, never a
+production certification pass or Partner Center upload authorization.
+
 For each Store release:
 
 1. Wait for a green Windows workflow, including its package and verification
