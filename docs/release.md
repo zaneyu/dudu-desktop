@@ -242,17 +242,23 @@ For each Store release:
 1. Wait for a green Windows workflow, including its package and verification
    jobs. A CI artifact is not evidence that recipient Windows acceptance has
    completed.
-2. Download the Store package artifact to a newly created temporary directory.
-   Keep the MSIX/MSIX upload file and its release metadata private.
-3. Compare the package SHA-256 hash with both the Windows workflow job summary and the
-   matching release metadata before uploading anything.
+2. Download the workflow artifact named
+   `DuduDesktop-1.0.0-win-x64-store` to a newly created temporary directory.
+   It contains the MSIX/MSIX upload file under `artifacts/store-package/` and
+   the private release metadata under `artifacts/store-package-metadata/`.
+3. Compare the package SHA-256 hash with both the Windows workflow job summary
+   and `store-package-metadata/SHA256SUMS.txt`; also confirm
+   `package-version.txt` matches the intended release before uploading
+   anything. Keep the package and all metadata private.
 4. Upload the MSIX/MSIX upload file to Partner Center, keep the audience
    private, and submit it for certification.
 5. After publication, verify from the recipient's invited Store account that
    the private Store listing is visible and that Dudu Desktop installs.
-6. For later updates, use a strictly increasing package version. If a rollout
-   is bad, pause it in Partner Center and submit a corrected package with the
-   next increasing version.
+6. For later updates, run the workflow with a strictly increasing three-part
+   package version and confirm the corresponding package filename and
+   `package-version.txt` before submission. If a rollout is bad, pause it in
+   Partner Center and submit a corrected package with the next increasing
+   version.
 
 During migration, retain the Inno installer as the recovery path until two
 Store versions have upgraded successfully on the recipient's Windows device.
