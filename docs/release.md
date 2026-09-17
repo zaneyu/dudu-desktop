@@ -223,11 +223,107 @@ All commands run from the repository root with `pwsh`.
    application files and shortcuts; it does not delete the local database,
    backups, or secrets under `%LocalAppData%\DuduDesktop` unless the
    recipient separately chooses "delete local data" from the app's Privacy
-   & Data page first (see §6). This matches the final acceptance checklist's
+   & Data page first (see §7). This matches the final acceptance checklist's
    "optional data deletion" requirement — deletion is optional and
    recipient-initiated, not automatic on uninstall.
 
-## 5. First pairing and sender revocation
+## 5. Private Store submission and migration fallback
+
+The Store path is a private-audience distribution path, not a public release.
+Reserve and maintain the private-audience Store app in Partner Center, and
+keep its audience restricted to the invited recipient account(s). The local
+non-production package identity is for development and acceptance only; it is
+not Store-publishable. **Fail closed: never upload the CI package made with
+`DuduDesktop.Local.NonProduction` to Partner Center.**
+
+The owner must first configure the exact Partner Center `Identity Name` and
+`Publisher` in the private working copy of `src/Dudu.App/Package.appxmanifest`.
+Because that manifest declares `rescap:unvirtualizedResources` for the shared
+`%LocalAppData%\DuduDesktop` exception, obtain and retain Partner Center's
+restricted-capability justification/approval privately before submitting any
+production package. Retain the justification and approval outcome in private
+release records only; do not add URLs, credentials, or private evidence to the
+repository. A WACK `PASS` is not Store approval and does not replace this
+Partner Center prerequisite. If the restricted-capability approval has not
+been obtained and retained privately, stop before production submission; the
+local and CI package flows remain acceptance-only.
+
+Then the owner must produce the submission package with the identity gate:
+
+```powershell
+pwsh scripts/package-store.ps1 -Version <Major.Minor.Patch> `
+  -RequirePartnerCenterIdentity `
+  -ExpectedPartnerCenterName '<exact Partner Center Identity Name>' `
+  -ExpectedPartnerCenterPublisher '<exact Partner Center Publisher>'
+```
+
+The command fails unless the manifest matches both exact values and is not the
+local identity. Only the package produced after that successful gate may be
+submitted; the ordinary CI artifact remains acceptance-only. Do not commit the
+private identity values. Store artifacts become Microsoft-signed only after
+Microsoft Store publication. The current Inno installer remains unsigned and
+may trigger SmartScreen or Smart App Control behavior.
+
+In production mode, the wrapper resets the Windows App Certification Kit before
+testing and accepts the package only when AppCert exits successfully and writes
+an XML `REPORT` whose `OVERALL_RESULT` is `PASS`. `-AcceptanceOnly` explicitly
+skips WACK; its checksum is integrity evidence for acceptance only, never a
+production certification pass or Partner Center upload authorization.
+
+For each Store release:
+
+1. Wait for a green Windows workflow, including its package and verification
+   jobs. A CI artifact is not evidence that recipient Windows acceptance has
+   completed. The CI Store artifact is acceptance-only: **never upload it to
+   Partner Center**.
+2. Download the workflow artifact named
+   `DuduDesktop-<version>-win-x64-store` to a newly created temporary directory.
+   It contains the `.msix` package under `artifacts/store-package/` and
+   the private release metadata under `artifacts/store-package-metadata/`.
+3. Use that CI `.msix` only for acceptance and integrity verification. Compare
+   its SHA-256 hash with the `Store package SHA-256` value in the Store job
+   summary and with `store-package-metadata/SHA256SUMS.txt`; also confirm
+   `package-version.txt` matches the intended release. This comparison applies
+   only to the acceptance artifact; it is not an upload authorization.
+4. Separately configure the exact Partner Center `Identity Name` and
+   `Publisher` in the private working copy of
+   `src/Dudu.App/Package.appxmanifest`, then run the identity-gated local
+   command above. It must produce a new local `.msix` and its own metadata.
+5. Verify the locally produced `.msix` against its own
+   `store-package-metadata/SHA256SUMS.txt` and `package-version.txt`, confirming
+   the intended strictly increasing version. Do not substitute the CI package
+   or use its job-summary hash for this local package.
+6. Upload only that locally produced, identity-gated `.msix` (the Partner
+   Center upload container, if the portal requests one, is not the raw `.msix`)
+   to Partner Center, keep the audience private, and submit it for
+   certification.
+7. After publication, verify from the recipient's invited Store account that
+   the private Store listing is visible and that Dudu Desktop installs.
+8. For later updates, start the workflow with `workflow_dispatch` and enter
+   the explicit `store_version` three-part value. Pushes retain the `1.0.0`
+   default for repeatable acceptance builds. Use a strictly increasing package
+   version and confirm the corresponding package filename and
+   `package-version.txt` before submission. If a rollout is bad, pause it in
+   Partner Center and submit a corrected package with the next increasing
+   version.
+
+During migration, retain the Inno installer as the recovery path until two
+Store versions have upgraded successfully on the recipient's Windows device.
+A package identity change can affect startup shortcuts, notifications,
+activation, and uninstall behavior even when `%LocalAppData%\DuduDesktop` is
+preserved. Complete the Windows acceptance matrix in
+`docs/testing/windows-acceptance.md` before calling the Store path the normal
+recipient release.
+
+### Recipient procedure for the private Store path
+
+1. Sign in to Microsoft Store with the invited personal account.
+2. Open the private Store link supplied through the private release channel.
+3. Install Dudu Desktop and leave Store app updates enabled.
+4. If removing an old Inno installation, do not delete local data unless you
+   intentionally want to wipe it from Dudu's Privacy & Data page.
+
+## 6. First pairing and sender revocation
 
 1. On the desktop, open Settings → Connection and request a pairing code.
    This calls the relay's `POST /v1/devices/pairing-code` endpoint,
@@ -241,7 +337,7 @@ All commands run from the repository root with `pwsh`.
    `POST /v1/sender/disconnect`. The recipient can re-pair at any time by
    generating a new code.
 
-## 6. Database backup, restore, and damaged-database preservation
+## 7. Database backup, restore, and damaged-database preservation
 
 The local SQLite database lives at `%LocalAppData%\DuduDesktop\dudu.db`
 (override the whole data root with the `DUDU_DATA_ROOT` environment
@@ -268,7 +364,7 @@ up using SQLite's `VACUUM INTO`, validates every backup with
   `dudu.db.restore-failed-{guid}` instead of being deleted, so a human can
   recover data from it later rather than silently losing it.
 
-## 7. Private-use statements
+## 8. Private-use statements
 
 - SmartScreen may warn because the private installer is unsigned.
 - The artwork and installer must remain private.
@@ -279,7 +375,7 @@ push this tag, this branch, or the installer to any public location. Transfer
 the installer and `artifacts/SHA256SUMS.txt` to the recipient only through a
 private channel.
 
-## 8. Known deviations and pending items
+## 9. Known deviations and pending items
 
 - **`dotnet restore --locked-mode` is intentionally omitted.** `scripts/verify.ps1`
   runs `dotnet restore DuduDesktop.slnx` without `--locked-mode`. This

@@ -45,6 +45,277 @@ $workflow = Get-Content -Raw -LiteralPath (Join-Path $repoRoot ".github/workflow
 $smoke = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "tests/installer/installer-smoke.ps1")
 $innoScript = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "scripts/install-inno-setup.ps1")
 $appProject = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "src/Dudu.App/Dudu.App.csproj")
+$storeScriptPath = Join-Path $repoRoot "scripts/package-store.ps1"
+$packageManifestPath = Join-Path $repoRoot "src/Dudu.App/Package.appxmanifest"
+$packageManifestSource = Get-Content -Raw -LiteralPath $packageManifestPath
+$readme = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "README.md")
+$releaseDoc = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "docs/release.md")
+$acceptanceDoc = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "docs/testing/windows-acceptance.md")
+$changelog = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "CHANGELOG.md")
+$releaseDocs = @($readme, $releaseDoc, $acceptanceDoc, $changelog, $workflow)
+
+$officialMicrosoftDocumentationUrlPattern = '(?i)https?://(?:learn|support)\.microsoft\.com(?:[/ :]|$)'
+$concreteServiceUrlPattern = '(?i)https?://(?!<[^>]+>)(?!learn\.microsoft\.com(?:[/ :]|$))(?!support\.microsoft\.com(?:[/ :]|$))(?!keepachangelog\.com(?:[/ :]|$))[^\s)>]+'
+$privacyUrlFixtures = @('https://relay.example.invalid/v1', 'https://sender.example.invalid/')
+
+Assert-Contains "release runbook documents private Store submission" $releaseDoc "Partner Center"
+Assert-Contains "release runbook documents private Store audience" $releaseDoc "private-audience|audience.*private"
+Assert-Contains "release runbook documents Store hash comparison" $releaseDoc "SHA-256 hash"
+Assert-Contains "release runbook names Store artifact" $releaseDoc "DuduDesktop-<version>-win-x64-store"
+Assert-Contains "release runbook names Store hash metadata" $releaseDoc "store-package-metadata/SHA256SUMS\.txt"
+Assert-Contains "release runbook names Store version metadata" $releaseDoc "package-version\.txt"
+Assert-Contains "release runbook documents Store certification" $releaseDoc "certification"
+Assert-Contains "release runbook documents Store publication signing" $releaseDoc "Microsoft-signed"
+Assert-Contains "release runbook documents Inno migration fallback" $releaseDoc "two\s+Store versions"
+Assert-Contains "release runbook documents package identity migration risk" $releaseDoc "(?s)startup shortcuts.*notifications.*activation.*uninstall"
+Assert-Contains "release runbook marks the CI Store artifact acceptance-only" $releaseDoc "(?is)CI artifact.*acceptance-only"
+Assert-Contains "release runbook forbids uploading the CI Store artifact" $releaseDoc "(?is)never upload.*CI artifact|CI artifact.*never upload"
+Assert-Contains "release runbook requires a separate local gated package" $releaseDoc "identity-gated\s+local\s+command"
+Assert-Contains "release runbook uploads only the local gated package" $releaseDoc "Upload only that locally produced"
+Assert-Contains "release runbook identifies the restricted capability" $releaseDoc "rescap:unvirtualizedResources"
+Assert-Contains "release runbook requires private restricted-capability approval" $releaseDoc "(?is)restricted-capability.*justification/approval.*retained privately"
+Assert-Contains "release runbook distinguishes WACK PASS from Store approval" $releaseDoc "(?is)WACK.*PASS.*not Store approval"
+Assert-True "manifest restricted capability has a documented Partner Center approval gate" (
+    ($packageManifestSource -notmatch 'rescap:Capability\s+Name="unvirtualizedResources"') -or
+    ($releaseDoc -match '(?is)rescap:unvirtualizedResources.*restricted-capability.*justification/approval.*retained privately')
+)
+Assert-Contains "README links Store release path" $readme "private Store"
+Assert-Contains "acceptance matrix includes Store visibility" $acceptanceDoc "Store visibility"
+Assert-Contains "acceptance matrix includes second Store update" $acceptanceDoc "second Store update"
+Assert-Contains "changelog records private Store migration" $changelog "private .*Store"
+Assert-True "concrete relay and sender URLs are detected generally" (@($privacyUrlFixtures | Where-Object { $_ -match $concreteServiceUrlPattern }).Count -eq 2)
+Assert-True "official Microsoft documentation links are allowed" ('https://learn.microsoft.com/windows/apps/' -notmatch $concreteServiceUrlPattern)
+Assert-True "release sources contain no concrete relay or sender URL" (@($releaseDocs | Where-Object { $_ -match $concreteServiceUrlPattern }).Count -eq 0)
+Assert-True "release sources contain no pairing-code literal" (@($releaseDocs | Where-Object { $_ -match '(?i)pairing\s+code\s*[:=]\s*[0-9A-Z-]{6,}' }).Count -eq 0)
+Assert-True "release sources contain no embedded token value" (@($releaseDocs | Where-Object { $_ -match '(?i)(?:access[_ -]?token|authentication[_ -]?token|bearer)\s*[:=]\s*[A-Za-z0-9._~+/=-]{12,}' }).Count -eq 0)
+Assert-True "release sources contain no private-key material" (@($releaseDocs | Where-Object { $_ -match 'BEGIN (?:EC|RSA|OPENSSH) PRIVATE KEY|PRIVATE KEY-----' }).Count -eq 0)
+Assert-True "release sources contain no raw-artwork path" (@($releaseDocs | Where-Object { $_ -match 'assets[/\\]raw[/\\]' }).Count -eq 0)
+
+Assert-True "Store package script exists" (Test-Path -LiteralPath $storeScriptPath)
+if (Test-Path -LiteralPath $storeScriptPath) {
+    $storeScript = Get-Content -Raw -LiteralPath $storeScriptPath
+    Assert-Contains "Store package script requires Windows" $storeScript "OperatingSystem.*Windows"
+    Assert-Contains "Store package script enables the package mode" $storeScript "DuduStorePackage.*true"
+    Assert-Contains "Store package publish explicitly requests MSIX generation" $storeScript "GenerateAppxPackageOnBuild.*true"
+    Assert-Contains "Store package script targets win-x64" $storeScript "RuntimeIdentifier.*win-x64"
+    Assert-Contains "Store package script disables local signing" $storeScript "AppxPackageSigningEnabled.*false"
+    Assert-Contains "Store package script writes beneath artifacts" $storeScript "artifacts[/\\]store-package"
+    Assert-True "Store package script does not publish a relay URL" ($storeScript -notmatch "workers\.dev|DUDU_RELAY_BASE_URL")
+    Assert-True "Store package script does not embed credentials" ($storeScript -notmatch 'clientSecret|accessToken|password\s*=\s*[''\"][^''\"]+|token\s*=\s*[''\"][^''\"]+')
+    Assert-Contains "Store package script exposes strict package-output validation" $storeScript "Assert-StrictStorePackageOutput"
+    Assert-True "Store package script removes bundle-unpack complexity" ($storeScript -notmatch "makeAppx unbundle")
+    Assert-Contains "Store package script validates Store version component bounds" $storeScript "Assert-StoreVersion"
+    Assert-Contains "Store package script limits Store version components to 65535" $storeScript "65535"
+    Assert-Contains "Store package script fixes the fourth Store version component to zero" $storeScript 'expectedPackageVersion.*\$Version\.0'
+    Assert-Contains "Store package script validates the Store package version" $storeScript "Store package version must use Major\.Minor\.Patch"
+    Assert-Contains "Store package script requires Windows build 26100" $storeScript "OSVersion.*Build.*26100"
+    Assert-Contains "Store package script requires a 64-bit OS" $storeScript "Is64BitOperatingSystem"
+    Assert-Contains "Store package script requires the pinned SDK" $storeScript "dotnetVersion.*10\.0\.112"
+    Assert-Contains "Store package script fixes the target runtime to win-x64" $storeScript "targetRuntimeIdentifier.*win-x64"
+    Assert-Contains "Store package publish uses the verified no-restore path" $storeScript "dotnet publish.*--no-restore"
+    Assert-Contains "Store package script requires restored assets before publishing" $storeScript "project\.assets\.json"
+    Assert-True "Store package script does not recursively select arbitrary SDK tools" ($storeScript -notmatch "function Find-Tool")
+    Assert-Contains "Store package script resolves SDK tools from the Windows Kits root" $storeScript "Windows Kits\\10"
+    Assert-Contains "Store package script enumerates versioned Windows SDK bin directories" $storeScript "Get-ChildItem -LiteralPath \`$sdkBinRoot -Directory"
+    Assert-Contains "Store package script resolves an x64 MakeAppx executable" $storeScript "x64.*makeappx\.exe"
+    Assert-Contains "Store package script requires Windows SDK 26100 or newer for package tools" $storeScript "10\.0\.26100\.0"
+    Assert-Contains "Store package script resolves AppCert from the selected Windows SDK root" $storeScript "App Certification Kit.*appcert\.exe"
+    Assert-Contains "Store package script rejects an ambiguous SDK tool resolution" $storeScript "ambiguous"
+    Assert-Contains "Store package script exposes the production identity gate" $storeScript "RequirePartnerCenterIdentity"
+    Assert-Contains "Store package script exposes an explicit acceptance-only mode" $storeScript "AcceptanceOnly"
+    Assert-Contains "Store package script requires exactly one packaging mode" $storeScript "Assert-PackageMode"
+    Assert-Contains "Store package script rejects combining acceptance-only and Partner Center identity modes" $storeScript '\$AcceptanceOnly\s+-eq\s+\$RequirePartnerCenterIdentity'
+    Assert-Contains "Store package script enforces local identity for acceptance-only packages" $storeScript "Assert-AcceptanceOnlyIdentity"
+    Assert-Contains "Store package script rejects the local identity at the production gate" $storeScript '\$sourceIdentity\.Name\s+-eq\s+''DuduDesktop\.Local\.NonProduction'''
+    Assert-Contains "Store package script compares the expected production name" $storeScript '\$sourceIdentity\.Name\s+-ne\s+\$ExpectedPartnerCenterName'
+    Assert-Contains "Store package script compares the expected production publisher" $storeScript '\$sourceIdentity\.Publisher\s+-ne\s+\$ExpectedPartnerCenterPublisher'
+    $storeScriptAst = [System.Management.Automation.Language.Parser]::ParseFile(
+        $storeScriptPath,
+        [ref]$null,
+        [ref]$null
+    )
+    $identityFunction = @($storeScriptAst.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Assert-PartnerCenterIdentity'
+    }, $true))
+    Assert-True "Store package script exposes an executable identity validation function" ($identityFunction.Count -eq 1)
+    if ($identityFunction.Count -eq 1) {
+        . ([scriptblock]::Create($identityFunction[0].Extent.Text))
+        [xml]$localIdentityManifest = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'src/Dudu.App/Package.appxmanifest')
+        $localIdentity = $localIdentityManifest.Package.Identity
+        $rejectedLocalIdentity = $false
+        try {
+            Assert-PartnerCenterIdentity -sourceIdentity $localIdentity -ExpectedPartnerCenterName 'Contoso.Dudu' -ExpectedPartnerCenterPublisher 'CN=Contoso Dudu'
+        }
+        catch {
+            $rejectedLocalIdentity = $true
+        }
+        Assert-True "Store identity function rejects the local non-production identity" $rejectedLocalIdentity
+    }
+    $acceptanceIdentityFunction = @($storeScriptAst.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Assert-AcceptanceOnlyIdentity'
+    }, $true))
+    Assert-True "Store package script exposes an executable acceptance-only identity validation function" ($acceptanceIdentityFunction.Count -eq 1)
+    if ($acceptanceIdentityFunction.Count -eq 1) {
+        . ([scriptblock]::Create($acceptanceIdentityFunction[0].Extent.Text))
+        [xml]$acceptanceManifest = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'src/Dudu.App/Package.appxmanifest')
+        $acceptedManifestIdentity = $true
+        try {
+            Assert-AcceptanceOnlyIdentity -sourceIdentity $acceptanceManifest.Package.Identity
+        }
+        catch {
+            $acceptedManifestIdentity = $false
+        }
+        Assert-True "acceptance-only identity guard accepts the real manifest identity" $acceptedManifestIdentity
+
+        [xml]$nonLocalManifest = '<Package><Identity Name="DuduDesktop.Local.NonProduction" Publisher="CN=Not Dudu" /></Package>'
+        $rejectedNonLocalIdentity = $false
+        try {
+            Assert-AcceptanceOnlyIdentity -sourceIdentity $nonLocalManifest.Package.Identity
+        }
+        catch {
+            $rejectedNonLocalIdentity = $true
+        }
+        Assert-True "acceptance-only identity guard rejects a different publisher" $rejectedNonLocalIdentity
+    }
+    $packageModeFunction = @($storeScriptAst.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Assert-PackageMode'
+    }, $true))
+    Assert-True "Store package script exposes an executable packaging mode validator" ($packageModeFunction.Count -eq 1)
+    if ($packageModeFunction.Count -eq 1) {
+        . ([scriptblock]::Create($packageModeFunction[0].Extent.Text))
+        $modeCases = @(
+            @{ Name = 'neither'; AcceptanceOnly = $false; RequirePartnerCenterIdentity = $false; Reject = $true },
+            @{ Name = 'both'; AcceptanceOnly = $true; RequirePartnerCenterIdentity = $true; Reject = $true },
+            @{ Name = 'acceptance-only'; AcceptanceOnly = $true; RequirePartnerCenterIdentity = $false; Reject = $false },
+            @{ Name = 'Partner Center'; AcceptanceOnly = $false; RequirePartnerCenterIdentity = $true; Reject = $false }
+        )
+        foreach ($modeCase in $modeCases) {
+            $rejectedMode = $false
+            try {
+                Assert-PackageMode -AcceptanceOnly:$modeCase.AcceptanceOnly -RequirePartnerCenterIdentity:$modeCase.RequirePartnerCenterIdentity
+            }
+            catch {
+                $rejectedMode = $true
+            }
+            Assert-True "Store package mode validator handles $($modeCase.Name) correctly" ($rejectedMode -eq $modeCase.Reject)
+        }
+    }
+    $strictOutputFunction = @($storeScriptAst.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Assert-StrictStorePackageOutput'
+    }, $true))
+    Assert-True "Store package script exposes an executable strict package-output validator" ($strictOutputFunction.Count -eq 1)
+    if ($strictOutputFunction.Count -eq 1) {
+        . ([scriptblock]::Create($strictOutputFunction[0].Extent.Text))
+        $strictOutputCases = @(
+            @{ Name = 'one root MSIX'; Files = @('DuduDesktop_1.0.0.0_x64.msix'); Reject = $false },
+            @{ Name = 'no files'; Files = @(); Reject = $true },
+            @{ Name = 'two MSIX files'; Files = @('DuduDesktop_1.0.0.0_x64.msix', 'stale.msix'); Reject = $true },
+            @{ Name = 'MSIX plus extra file'; Files = @('DuduDesktop_1.0.0.0_x64.msix', 'publish.log'); Reject = $true },
+            @{ Name = 'MSIX upload container'; Files = @('DuduDesktop.msixupload'); Reject = $true },
+            @{ Name = 'AppX upload container'; Files = @('DuduDesktop.appxupload'); Reject = $true },
+            @{ Name = 'App Installer'; Files = @('DuduDesktop.appinstaller'); Reject = $true },
+            @{ Name = 'AppX package'; Files = @('DuduDesktop.appx'); Reject = $true },
+            @{ Name = 'MSIX bundle'; Files = @('DuduDesktop.msixbundle'); Reject = $true },
+            @{ Name = 'AppX bundle'; Files = @('DuduDesktop.appxbundle'); Reject = $true },
+            @{ Name = 'nested MSIX'; Files = @('nested/DuduDesktop.msix'); Reject = $true }
+        )
+        foreach ($strictOutputCase in $strictOutputCases) {
+            $rejectedOutput = $false
+            try {
+                Assert-StrictStorePackageOutput -RelativeFilePaths $strictOutputCase.Files
+            }
+            catch {
+                $rejectedOutput = $true
+            }
+            Assert-True "strict package-output validator handles $($strictOutputCase.Name) correctly" ($rejectedOutput -eq $strictOutputCase.Reject)
+        }
+    }
+    $appCertReportFunction = @($storeScriptAst.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Assert-AppCertReportPass'
+    }, $true))
+    Assert-True "Store package script exposes an executable WACK report validator" ($appCertReportFunction.Count -eq 1)
+    if ($appCertReportFunction.Count -eq 1) {
+        . ([scriptblock]::Create($appCertReportFunction[0].Extent.Text))
+        $reportTestDirectory = Join-Path ([IO.Path]::GetTempPath()) ("dudu-appcert-contract-" + [Guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $reportTestDirectory -Force | Out-Null
+        try {
+            $passingReport = Join-Path $reportTestDirectory 'passing.xml'
+            Set-Content -LiteralPath $passingReport -NoNewline -Encoding utf8 -Value '<REPORT OVERALL_RESULT="PASS" VERSION="10.0.26100.0" />'
+            $acceptedPassingReport = $true
+            try { Assert-AppCertReportPass -ReportPath $passingReport } catch { $acceptedPassingReport = $false }
+            Assert-True "WACK report validator accepts the schema-level PASS result" $acceptedPassingReport
+
+            $failedReport = Join-Path $reportTestDirectory 'failed.xml'
+            Set-Content -LiteralPath $failedReport -NoNewline -Encoding utf8 -Value '<REPORT OVERALL_RESULT="FAIL" VERSION="10.0.26100.0" />'
+            $rejectedFailedReport = $false
+            try { Assert-AppCertReportPass -ReportPath $failedReport } catch { $rejectedFailedReport = $true }
+            Assert-True "WACK report validator rejects the schema-level FAIL result" $rejectedFailedReport
+
+            $malformedReport = Join-Path $reportTestDirectory 'malformed.xml'
+            Set-Content -LiteralPath $malformedReport -NoNewline -Encoding utf8 -Value '<RESULT OVERALL_RESULT="PASS" />'
+            $rejectedMalformedReport = $false
+            try { Assert-AppCertReportPass -ReportPath $malformedReport } catch { $rejectedMalformedReport = $true }
+            Assert-True "WACK report validator rejects a non-WACK report schema" $rejectedMalformedReport
+
+            $rejectedMissingReport = $false
+            try { Assert-AppCertReportPass -ReportPath (Join-Path $reportTestDirectory 'missing.xml') } catch { $rejectedMissingReport = $true }
+            Assert-True "WACK report validator rejects a missing report" $rejectedMissingReport
+        }
+        finally {
+            Remove-Item -LiteralPath $reportTestDirectory -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    $appCertResetInvocations = @($storeScriptAst.FindAll({
+        param($node)
+        if ($node -isnot [System.Management.Automation.Language.CommandAst]) { return $false }
+        $elements = @($node.CommandElements | ForEach-Object { $_.Extent.Text })
+        return $elements.Count -ge 2 -and $elements[0] -eq '$appCert' -and $elements[1] -eq 'reset'
+    }, $true))
+    $appCertTestInvocations = @($storeScriptAst.FindAll({
+        param($node)
+        if ($node -isnot [System.Management.Automation.Language.CommandAst]) { return $false }
+        $elements = @($node.CommandElements | ForEach-Object { $_.Extent.Text })
+        return $elements.Count -ge 2 -and $elements[0] -eq '$appCert' -and $elements[1] -eq 'test'
+    }, $true))
+    Assert-True "production WACK resets AppCert before testing" (
+        $appCertResetInvocations.Count -eq 1 -and
+        $appCertTestInvocations.Count -eq 1 -and
+        $appCertResetInvocations[0].Extent.StartOffset -lt $appCertTestInvocations[0].Extent.StartOffset
+    )
+    Assert-Contains "production WACK validates its report after appcert test" $storeScript 'Assert-AppCertReportPass\s+-ReportPath\s+\$appCertReport'
+    $clearOutputIndex = $storeScript.IndexOf("Remove-Item -LiteralPath `$directory -Recurse -Force")
+    $preflightCommentIndex = $storeScript.IndexOf("# Validate every host, source, and tool input")
+    $preflightTryIndex = $storeScript.IndexOf("try {", $preflightCommentIndex)
+    $hostPreflightIndex = $storeScript.IndexOf("OperatingSystem]::IsWindows")
+    $manifestPreflightIndex = $storeScript.IndexOf("[xml]`$sourceManifest = Get-Content -Raw -LiteralPath `$manifestPath")
+    $toolPreflightIndex = $storeScript.IndexOf("`$sdkTools = Resolve-WindowsSdkTools")
+    Assert-True "Store host, manifest, and tool preflight use the protected evidence path before package output deletion" (
+        $clearOutputIndex -ge 0 -and $preflightCommentIndex -ge 0 -and $preflightTryIndex -ge 0 -and $hostPreflightIndex -gt $preflightTryIndex -and
+        $manifestPreflightIndex -ge 0 -and $toolPreflightIndex -ge 0 -and
+        $manifestPreflightIndex -lt $clearOutputIndex -and $toolPreflightIndex -lt $clearOutputIndex
+    )
+    Assert-Contains "Store package script sanitizes protected preflight evidence" $storeScript 'token\|secret\|password'
+    Assert-Contains "Store package script records post-cleanup failure evidence" $storeScript 'Write-PostCleanupFailureEvidence'
+    Assert-Contains "Store package script marks failed package output invalid" $storeScript 'Submission artifact: invalid'
+    Assert-Contains "Store package script records the failed stage in metadata" $storeScript 'Store package stage:'
+    $appCertSummaryIndex = $storeScript.IndexOf("Windows App Certification Kit exit code")
+    $appCertThrowIndex = $storeScript.IndexOf('Windows App Certification Kit validation failed')
+    Assert-True "Store package script records WACK results before throwing" ($appCertSummaryIndex -ge 0 -and $appCertThrowIndex -ge 0 -and $appCertSummaryIndex -lt $appCertThrowIndex)
+    Assert-Contains "Store package script records acceptance-only WACK omission" $storeScript "Windows App Certification Kit status: skipped"
+    Assert-Contains "Store package script keeps WACK tooling mandatory outside acceptance-only mode" $storeScript 'Resolve-WindowsSdkTools\s+-RequireAppCert:\(-not \$AcceptanceOnly\)'
+    $hashIndex = $storeScript.IndexOf("Get-FileHash -LiteralPath `$artifactPath")
+    Assert-True "Store package script hashes only after WACK validation" ($appCertThrowIndex -ge 0 -and $hashIndex -gt $appCertThrowIndex)
+}
 
 Assert-Contains "Inno has a default AppVersion define" $iss '#ifndef AppVersion'
 Assert-Contains "Inno receives AppVersion from the compiler define" $iss 'AppVersion=\{#AppVersion\}'
@@ -64,6 +335,28 @@ Assert-Contains "workflow serializes runs with a concurrency group" $workflow '(
 Assert-Contains "workflow has minimal top-level permissions" $workflow '(?m)^permissions:\s*\r?\n\s+contents:\s*read\s*$'
 Assert-Contains "workflow re-verifies the stored artifact hash in a separate job" $workflow 'actions/download-artifact@'
 Assert-Contains "workflow uploads release metadata" $workflow 'artifacts/release-metadata/'
+Assert-Contains "workflow invokes the Store package wrapper" $workflow "scripts/package-store\.ps1"
+Assert-Contains "workflow invokes the Store wrapper in explicit acceptance-only mode" $workflow 'scripts/package-store\.ps1\s+-Version \$env:STORE_VERSION\s+-AcceptanceOnly'
+Assert-Contains "workflow uploads a Store package artifact" $workflow 'DuduDesktop-\$\{\{ env\.STORE_VERSION \}\}-win-x64-store'
+Assert-Contains "workflow supports an explicit Store package version" $workflow "store_version"
+Assert-Contains "workflow requires a Store version for manual dispatch" $workflow "store_version:(?s).*required:\s*true"
+Assert-Contains "workflow keeps 1.0.0 as the push Store acceptance version" $workflow "github\.event_name\s*==\s*'push'.*1\.0\.0"
+Assert-True "workflow disables source lock-file generation during restores" (@([regex]::Matches($workflow, 'dotnet restore DuduDesktop\.slnx -p:RestorePackagesWithLockFile=false')).Count -eq 3)
+Assert-Contains "workflow writes the Store package hash to the job summary" $workflow "Store package SHA-256"
+Assert-Contains "workflow writes the hosted WACK omission to the Store job summary" $workflow "WACK status: skipped"
+Assert-Contains "workflow labels the Store artifact acceptance-only" $workflow "acceptance-only"
+Assert-Contains "workflow forbids Store artifact upload to Partner Center" $workflow "never upload it to Partner Center"
+Assert-Contains "workflow uploads Store validation evidence after package failure" $workflow 'if:\s*\$\{\{ always\(\) && steps\.package_store\.outcome == ''failure'' \}\}'
+Assert-Contains "workflow uses a separate Store failure-evidence artifact" $workflow 'DuduDesktop-\$\{\{ env\.STORE_VERSION \}\}-win-x64-store-failure-evidence'
+Assert-Contains "workflow retains Store validation summary evidence" $workflow 'artifacts/store-package-metadata/validation-summary\.txt'
+Assert-Contains "workflow retains Store AppCert evidence when present" $workflow 'artifacts/store-package-metadata/appcert-report\.xml'
+Assert-Contains "workflow retains Store preflight failure evidence" $workflow 'work/store-package-failures/\*\*/validation-summary\.txt'
+Assert-Contains "workflow writes safe Store failure metadata when packaging exits early" $workflow 'artifacts/store-package-failure-metadata/failure-metadata\.txt'
+Assert-Contains "verify runs Store package source contracts" $verify 'pwsh tests/scripts/store-package\.tests\.ps1'
+Assert-Contains "verify explicitly selects the non-public acceptance-only Store package mode" $verify 'scripts/package-store\.ps1\s+-Version 1\.0\.0\s+-AcceptanceOnly'
+Assert-Contains "workflow runs Store package source contracts" $workflow 'pwsh tests/scripts/store-package\.tests\.ps1'
+Assert-Contains "workflow keeps the Inno artifact" $workflow "DuduDesktop-1\.0\.0-win-x64-private"
+Assert-True "Store package job does not expose secrets in logs" ($workflow -notmatch "echo.*\bSTORE\b|Write-Host.*\bSTORE\b.*\bSECRET\b")
 $globalJson = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "global.json") | ConvertFrom-Json
 Assert-True "global.json pins the SDK exactly (rollForward disable)" ($globalJson.sdk.rollForward -eq "disable")
 $packagesProps = [xml](Get-Content -Raw -LiteralPath (Join-Path $repoRoot "Directory.Packages.props"))
@@ -95,8 +388,11 @@ foreach ($animationName in @('idle', 'blink', 'greeting', 'sleep', 'drink', 'foc
 
 Write-Host ""
 if ($script:FailureCount -gt 0) {
-    Write-Host "release-contract.tests.ps1: FAIL ($script:FailureCount of $script:CaseCount cases failed)"
+    $failureCount = $script:FailureCount
+    $caseCount = $script:CaseCount
+    Write-Host ("release-contract.tests.ps1: FAIL " + $failureCount + " of " + $caseCount + " cases failed")
     exit 1
 }
-Write-Host "release-contract.tests.ps1: PASS ($script:CaseCount cases)"
+$caseCount = $script:CaseCount
+Write-Host ("release-contract.tests.ps1: PASS " + $caseCount + " cases")
 exit 0

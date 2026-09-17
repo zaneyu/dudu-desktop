@@ -76,6 +76,116 @@ public sealed class StartupRegistrationServiceTests
     }
 
     [Fact]
+    public async Task Packaged_execution_uses_the_declared_startup_task_without_writing_a_shortcut()
+    {
+        var writer = new FakeWriter();
+        var task = new FakePackagedStartupTask();
+        await using var service = new StartupRegistrationService(
+            "/opt/Dudu.exe",
+            "/tmp/startup",
+            writer,
+            task);
+
+        await service.SetEnabledAsync(true, TestContext.Current.CancellationToken);
+        await service.SetEnabledAsync(false, TestContext.Current.CancellationToken);
+
+        Assert.Equal([true, false], task.Requests);
+        Assert.Empty(writer.Writes);
+        Assert.Empty(writer.Deletes);
+        Assert.False(service.IsEnabled);
+    }
+
+    [Fact]
+    public async Task Packaged_enable_removes_only_the_known_legacy_startup_shortcut_before_enabling_the_task()
+    {
+        var startupDirectory = CreateStartupDirectory();
+        var legacyShortcut = Path.Combine(startupDirectory, StartupRegistrationService.ShortcutFileName);
+        var unrelatedShortcut = Path.Combine(startupDirectory, "Another App.lnk");
+        File.WriteAllText(legacyShortcut, "legacy Inno launcher");
+        File.WriteAllText(unrelatedShortcut, "unrelated startup entry");
+        var writer = new FakeWriter();
+        var task = new FakePackagedStartupTask();
+        await using var service = new StartupRegistrationService(
+            "/opt/Dudu.exe",
+            startupDirectory,
+            writer,
+            task);
+
+        try
+        {
+            await service.SetEnabledAsync(true, TestContext.Current.CancellationToken);
+
+            Assert.Equal([legacyShortcut], writer.Deletes);
+            Assert.False(File.Exists(legacyShortcut));
+            Assert.True(File.Exists(unrelatedShortcut));
+            Assert.Equal([true], task.Requests);
+            Assert.True(service.IsEnabled);
+        }
+        finally
+        {
+            Directory.Delete(startupDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Packaged_disable_removes_the_known_legacy_startup_shortcut_before_disabling_the_task()
+    {
+        var startupDirectory = CreateStartupDirectory();
+        var legacyShortcut = Path.Combine(startupDirectory, StartupRegistrationService.ShortcutFileName);
+        File.WriteAllText(legacyShortcut, "legacy Inno launcher");
+        var writer = new FakeWriter();
+        var task = new FakePackagedStartupTask();
+        await using var service = new StartupRegistrationService(
+            "/opt/Dudu.exe",
+            startupDirectory,
+            writer,
+            task);
+
+        try
+        {
+            await service.SetEnabledAsync(false, TestContext.Current.CancellationToken);
+
+            Assert.Equal([legacyShortcut], writer.Deletes);
+            Assert.False(File.Exists(legacyShortcut));
+            Assert.Equal([false], task.Requests);
+            Assert.False(service.IsEnabled);
+        }
+        finally
+        {
+            Directory.Delete(startupDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task Packaged_legacy_shortcut_cleanup_failure_is_explicit_and_does_not_change_task_state()
+    {
+        var startupDirectory = CreateStartupDirectory();
+        var legacyShortcut = Path.Combine(startupDirectory, StartupRegistrationService.ShortcutFileName);
+        File.WriteAllText(legacyShortcut, "legacy Inno launcher");
+        var writer = new FakeWriter { FailDelete = true };
+        var task = new FakePackagedStartupTask();
+        await using var service = new StartupRegistrationService(
+            "/opt/Dudu.exe",
+            startupDirectory,
+            writer,
+            task);
+
+        try
+        {
+            await Assert.ThrowsAsync<IOException>(() =>
+                service.SetEnabledAsync(true, TestContext.Current.CancellationToken));
+
+            Assert.True(File.Exists(legacyShortcut));
+            Assert.Empty(task.Requests);
+            Assert.False(service.IsEnabled);
+        }
+        finally
+        {
+            Directory.Delete(startupDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Settings_service_persists_startup_setting_after_registration()
     {
         var writer = new FakeWriter();
@@ -292,6 +402,15 @@ public sealed class StartupRegistrationServiceTests
         true,
         TimeSpan.FromMinutes(15));
 
+    private static string CreateStartupDirectory()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(),
+            "dudu-startup-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        return directory;
+    }
+
     private static StartupSettingsService CreateSettings(
         StartupRegistrationService startup,
         IPreferencesRepository repository,
@@ -344,6 +463,18 @@ public sealed class StartupRegistrationServiceTests
 
         public Task DeleteAsync(string shortcutPath, CancellationToken cancellationToken) =>
             Task.CompletedTask;
+    }
+
+    private sealed class FakePackagedStartupTask : IPackagedStartupTaskRegistration
+    {
+        public List<bool> Requests { get; } = [];
+
+        public Task<bool> SetEnabledAsync(bool enabled, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Requests.Add(enabled);
+            return Task.FromResult(enabled);
+        }
     }
 
     private sealed class FileBackedWriter : IStartupLinkWriter

@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using Windows.ApplicationModel;
 
 namespace Dudu.App.System;
 
@@ -13,11 +14,18 @@ public interface IStartupLinkWriter
     Task DeleteAsync(string shortcutPath, CancellationToken cancellationToken);
 }
 
+internal interface IPackagedStartupTaskRegistration
+{
+    Task<bool> SetEnabledAsync(bool enabled, CancellationToken cancellationToken);
+}
+
 public sealed class StartupRegistrationService : IAsyncDisposable
 {
     public const string ShortcutFileName = "Dudu Desktop Companion.lnk";
+    public const string PackagedStartupTaskId = "DuduDesktopStartupTask";
 
     private readonly IStartupLinkWriter _writer;
+    private readonly IPackagedStartupTaskRegistration? _packagedStartupTask;
     private readonly string _installedExecutable;
     private readonly string _shortcutPath;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -32,17 +40,23 @@ public sealed class StartupRegistrationService : IAsyncDisposable
         string? installedExecutable = null,
         string? startupDirectory = null,
         IStartupLinkWriter? writer = null)
+        : this(installedExecutable, startupDirectory, writer, packagedStartupTask: null)
     {
+    }
+
+    internal StartupRegistrationService(
+        string? installedExecutable,
+        string? startupDirectory,
+        IStartupLinkWriter? writer,
+        IPackagedStartupTaskRegistration? packagedStartupTask)
+    {
+        _packagedStartupTask = packagedStartupTask ?? WindowsStartupTaskRegistration.TryCreate();
         string? executable = null;
         string? shortcut = null;
         string? error = null;
         var available = false;
         try
         {
-            executable = Path.GetFullPath(
-                installedExecutable
-                ?? Environment.ProcessPath
-                ?? throw new InvalidOperationException("The installed executable path is unavailable."));
             var startup = startupDirectory
                 ?? Environment.GetFolderPath(Environment.SpecialFolder.Startup);
             if (string.IsNullOrWhiteSpace(startup))
@@ -50,7 +64,18 @@ public sealed class StartupRegistrationService : IAsyncDisposable
                 throw new InvalidOperationException("The current-user Startup folder is unavailable.");
             }
 
-            shortcut = Path.Combine(startup, ShortcutFileName);
+            // This is the only current-user Startup file owned by Dudu. Keep
+            // the path fixed so packaged migration never deletes another app's
+            // startup entry.
+            shortcut = Path.GetFullPath(Path.Combine(startup, ShortcutFileName));
+            if (_packagedStartupTask is null)
+            {
+                executable = Path.GetFullPath(
+                    installedExecutable
+                    ?? Environment.ProcessPath
+                    ?? throw new InvalidOperationException("The installed executable path is unavailable."));
+            }
+
             available = true;
         }
         catch (Exception exception)
@@ -81,6 +106,8 @@ public sealed class StartupRegistrationService : IAsyncDisposable
 
     public string ShortcutPath => _shortcutPath;
 
+    internal string InstalledExecutable => _installedExecutable;
+
     public bool IsAvailable => _available;
 
     public string? InitializationError => _initializationError;
@@ -102,6 +129,19 @@ public sealed class StartupRegistrationService : IAsyncDisposable
             if (Volatile.Read(ref _disposed))
             {
                 throw new ObjectDisposedException(nameof(StartupRegistrationService));
+            }
+            if (_packagedStartupTask is not null)
+            {
+                await DeleteLegacyShortcutAsync(cancellationToken);
+                var applied = await _packagedStartupTask.SetEnabledAsync(enabled, cancellationToken);
+                if (applied != enabled)
+                {
+                    throw new InvalidOperationException(
+                        "Windows denied the requested packaged startup-task state.");
+                }
+
+                Volatile.Write(ref _enabled, applied);
+                return;
             }
             if (enabled)
             {
@@ -129,6 +169,18 @@ public sealed class StartupRegistrationService : IAsyncDisposable
         }
     }
 
+    private async Task DeleteLegacyShortcutAsync(CancellationToken cancellationToken)
+    {
+        if (!File.Exists(_shortcutPath)) return;
+
+        await _writer.DeleteAsync(_shortcutPath, cancellationToken);
+        if (File.Exists(_shortcutPath))
+        {
+            throw new IOException(
+                "The legacy Dudu current-user Startup shortcut could not be removed.");
+        }
+    }
+
     public ValueTask DisposeAsync()
     {
         lock (_disposeSync)
@@ -149,6 +201,55 @@ public sealed class StartupRegistrationService : IAsyncDisposable
         _gate.Release();
         _gate.Dispose();
     }
+}
+
+internal sealed class WindowsStartupTaskRegistration : IPackagedStartupTaskRegistration
+{
+    private const int ErrorInsufficientBuffer = 122;
+
+    private WindowsStartupTaskRegistration()
+    {
+    }
+
+    public static WindowsStartupTaskRegistration? TryCreate()
+    {
+        if (!OperatingSystem.IsWindows() || !HasPackageIdentity())
+        {
+            return null;
+        }
+
+        return new WindowsStartupTaskRegistration();
+    }
+
+    public async Task<bool> SetEnabledAsync(bool enabled, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var task = await StartupTask.GetAsync(StartupRegistrationService.PackagedStartupTaskId)
+            .AsTask(cancellationToken);
+        if (enabled)
+        {
+            var state = IsEnabled(task.State)
+                ? task.State
+                : await task.RequestEnableAsync().AsTask(cancellationToken);
+            return IsEnabled(state);
+        }
+
+        task.Disable();
+        return IsEnabled(task.State);
+    }
+
+    private static bool HasPackageIdentity()
+    {
+        uint length = 0;
+        var result = GetCurrentPackageFullName(ref length, null);
+        return result == ErrorInsufficientBuffer;
+    }
+
+    private static bool IsEnabled(StartupTaskState state) =>
+        state is StartupTaskState.Enabled or StartupTaskState.EnabledByPolicy;
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetCurrentPackageFullName(ref uint packageFullNameLength, char[]? packageFullName);
 }
 
 internal sealed class WindowsStartupLinkWriter : IStartupLinkWriter

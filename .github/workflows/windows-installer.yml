@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      store_version:
+        description: 'Three-part Store package version (Major.Minor.Patch)'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -14,6 +19,11 @@ permissions:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
+
+env:
+  # Manual Store package runs must name their version. Pushes remain the fixed
+  # 1.0.0 acceptance build and are never submission packages.
+  STORE_VERSION: ${{ github.event_name == 'push' && '1.0.0' || inputs.store_version }}
 
 jobs:
   installer:
@@ -51,11 +61,11 @@ jobs:
           if (-not (Test-Path $iscc)) { throw "ISCC.exe missing at $iscc" }
           & $iscc /? | Select-Object -First 2
 
-      # Directory.Build.props sets RestorePackagesWithLockFile=true, so this restore generates a
-      # packages.lock.json per project. They are never committed (AGENTS.md); publish-windows.ps1
-      # copies the generated set into the release-metadata artifact below.
+      # CI restores without lock-file generation. The Store wrapper publishes with --no-restore;
+      # the Inno wrapper captures any publish-generated locks in release metadata and moves them
+      # into ignored scratch before completing, so neither path leaves source lock files behind.
       - name: Restore
-        run: dotnet restore DuduDesktop.slnx
+        run: dotnet restore DuduDesktop.slnx -p:RestorePackagesWithLockFile=false
 
       - name: Publish and package
         shell: pwsh
@@ -125,6 +135,82 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+  store-package:
+    name: Package private Store MSIX (win-x64)
+    # This is a non-public, manually retrieved package only. The local manifest
+    # identity is deliberately non-production, so this job does not submit to
+    # Partner Center or claim that the artifact is Store-publishable. The Store
+    # artifact is acceptance-only: never upload it to Partner Center.
+    needs: tests
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          global-json-file: global.json
+      - name: Restore
+        run: dotnet restore DuduDesktop.slnx -p:RestorePackagesWithLockFile=false
+      - name: Package private Store MSIX
+        id: package_store
+        shell: pwsh
+        # GitHub-hosted Windows has no interactive desktop, so this can only
+        # produce a local-identity acceptance artifact. It is not a submission
+        # build and must never be uploaded to Partner Center.
+        run: pwsh scripts/package-store.ps1 -Version $env:STORE_VERSION -AcceptanceOnly
+      - name: Record Store package failure metadata
+        if: ${{ always() && steps.package_store.outcome == 'failure' }}
+        shell: pwsh
+        run: |
+          $failureMetadataDirectory = 'artifacts/store-package-failure-metadata'
+          New-Item -ItemType Directory -Path $failureMetadataDirectory -Force | Out-Null
+          @"
+          Store package step failed before completion.
+          WACK status: not completed; inspect validation-summary.txt or appcert-report.xml when present.
+          This diagnostic artifact is acceptance-only and contains no package payload.
+          "@ | Set-Content -LiteralPath "$failureMetadataDirectory/failure-metadata.txt" -Encoding utf8
+      - name: Upload Store package failure evidence
+        if: ${{ always() && steps.package_store.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: DuduDesktop-${{ env.STORE_VERSION }}-win-x64-store-failure-evidence
+          path: |
+            artifacts/store-package-metadata/validation-summary.txt
+            artifacts/store-package-metadata/appcert-report.xml
+            work/store-package-failures/**/validation-summary.txt
+            artifacts/store-package-failure-metadata/failure-metadata.txt
+          if-no-files-found: error
+          retention-days: 30
+      - name: Record acceptance-only Store package status and checksum
+        shell: pwsh
+        run: |
+          $checksum = Get-Content -Raw artifacts/store-package-metadata/SHA256SUMS.txt
+          $hash = ($checksum -split '\s+')[0]
+          if ($hash -notmatch '^[0-9a-f]{64}$') { throw 'Store package metadata does not contain a valid SHA-256 hash.' }
+          $validationSummary = Get-Content -Raw artifacts/store-package-metadata/validation-summary.txt
+          if ($validationSummary -notmatch 'Windows App Certification Kit status: skipped \(acceptance-only mode; not valid for Partner Center submission\)\.') {
+            throw 'Hosted Store package metadata does not record the required acceptance-only WACK omission.'
+          }
+          @"
+          ## Store package integrity
+
+          Package version: $($env:STORE_VERSION).0
+
+          WACK status: skipped — acceptance-only hosted artifact; WACK did not run and this package must never be uploaded to Partner Center.
+
+          Store package SHA-256: $hash
+          "@ >> $env:GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: DuduDesktop-${{ env.STORE_VERSION }}-win-x64-store
+          path: |
+            artifacts/store-package/
+            artifacts/store-package-metadata/
+          if-no-files-found: error
+          retention-days: 30
+
   verify-artifact:
     name: Verify uploaded installer + publish checksum
     needs: installer
@@ -176,7 +262,12 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.21.0
-      - run: dotnet restore DuduDesktop.slnx
+      - name: Release and Store package source contracts
+        shell: pwsh
+        run: |
+          pwsh tests/scripts/release-contract.tests.ps1
+          pwsh tests/scripts/store-package.tests.ps1
+      - run: dotnet restore DuduDesktop.slnx -p:RestorePackagesWithLockFile=false
       - run: dotnet build DuduDesktop.slnx -c Release --no-restore
       # One step per project with its own timeout so a hang names its project
       # and still leaves the other suites' results visible.

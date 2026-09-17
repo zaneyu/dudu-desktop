@@ -35,6 +35,9 @@ published, or included in a public asset marketplace.
 - [Windows acceptance evidence](docs/testing/windows-acceptance.md) — the manual and automated
   acceptance matrix that must be completed on a real Windows 11 24H2 x64 host before a release is
   considered fully verified.
+- [Private Store release path](docs/release.md#5-private-store-submission-and-migration-fallback) —
+  the private-audience Partner Center submission/update procedure and the Inno recovery path
+  during migration.
 - [Release runbook](docs/release.md) — prerequisites, Cloudflare relay setup, desktop build and
   install/upgrade/uninstall, pairing, backup/restore, and the private-use statements that govern
   this release.
