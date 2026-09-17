@@ -34,6 +34,45 @@ public sealed class AnimationEngineTests
     }
 
     [Fact]
+    public async Task Automatic_outfit_refreshes_when_the_local_date_rolls_over()
+    {
+        var localDate = new DateOnly(2026, 11, 30);
+        using var fixture = AnimationFixture.Create(
+            [100],
+            loop: "loop",
+            animationKey: "idle",
+            localDate: localDate,
+            localDateProvider: () => localDate);
+        using var cancellation = new CancellationTokenSource();
+        var basePresented = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var winterPresented = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Presenter.OnPresented = count =>
+        {
+            if (count == 1)
+            {
+                basePresented.TrySetResult(true);
+            }
+            else if (fixture.Presenter.Frames[^1].Source.EndsWith("winter.png", StringComparison.Ordinal))
+            {
+                winterPresented.TrySetResult(true);
+            }
+        };
+
+        var play = fixture.Engine.PlayAsync(
+            TestPresentation("idle"),
+            AnimationOptions.Default,
+            cancellation.Token);
+        await basePresented.Task.WaitAsync(TestContext.Current.CancellationToken);
+
+        localDate = new DateOnly(2026, 12, 1);
+        fixture.Clock.AdvanceBy(100);
+        await winterPresented.Task.WaitAsync(TestContext.Current.CancellationToken);
+
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => play);
+    }
+
+    [Fact]
     public async Task Looping_animation_stops_on_cancellation()
     {
         using var fixture = AnimationFixture.Create([100], loop: "loop", animationKey: "idle");
@@ -414,12 +453,15 @@ public sealed class AnimationEngineTests
             string loop,
             string animationKey,
             string packId = "fixture",
-            bool immediateClock = false)
+            bool immediateClock = false,
+            DateOnly? localDate = null,
+            Func<DateOnly>? localDateProvider = null)
         {
             var root = Path.Combine(Path.GetTempPath(), "dudu-animation-tests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
             File.WriteAllBytes(Path.Combine(root, "idle.png"), PngFixture.OnePixel);
             File.WriteAllBytes(Path.Combine(root, "celebrate.png"), PngFixture.OnePixel);
+            File.WriteAllBytes(Path.Combine(root, "winter.png"), PngFixture.OnePixel);
 
             var frames = durations
                 .Select(_ => new AssetFrame { File = animationKey == "idle" ? "idle.png" : "celebrate.png", DurationMs = _ })
@@ -469,13 +511,40 @@ public sealed class AnimationEngineTests
                 Outfits = new Dictionary<string, AssetOutfit>(StringComparer.Ordinal)
                 {
                     ["base"] = new AssetOutfit { Animations = animations },
+                    ["winter"] = new AssetOutfit
+                    {
+                        Animations = new Dictionary<string, AssetAnimation>(StringComparer.Ordinal)
+                        {
+                            ["idle"] = new AssetAnimation
+                            {
+                                Frames = [new AssetFrame { File = "winter.png", DurationMs = 100 }],
+                                Loop = "loop",
+                                NominalSize = new PixelSize(1, 1),
+                                Anchor = new PixelPoint(0, 0),
+                                ReducedMotion = "winter.png",
+                            },
+                        },
+                    },
                 },
             };
             var pack = new AssetPack(Path.Combine(root, "manifest.json"), manifest);
             var presenter = new RecordingFramePresenter();
             var clock = new ManualAnimationClock(immediateClock);
             var composer = new SkiaFrameComposer(pack);
-            return new AnimationFixture(root, new AnimationEngine(pack, presenter, clock, composer), presenter, clock, composer, pack);
+            return new AnimationFixture(
+                root,
+                new AnimationEngine(
+                    pack,
+                    presenter,
+                    clock,
+                    composer,
+                    localDate,
+                    SeasonalDates.Empty,
+                    localDateProvider),
+                presenter,
+                clock,
+                composer,
+                pack);
         }
 
         public void Dispose()

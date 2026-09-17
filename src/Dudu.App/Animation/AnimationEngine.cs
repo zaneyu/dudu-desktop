@@ -59,6 +59,7 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
     private readonly IFramePresenter _presenter;
     private readonly IAnimationClock _clock;
     private readonly SkiaFrameComposer _composer;
+    private readonly Func<DateOnly>? _localDateProvider;
     private readonly SemaphoreSlim _mutationGate = new(1, 1);
     private readonly SemaphoreSlim _runGate = new(1, 1);
     private readonly SemaphoreSlim _presentationGate = new(1, 1);
@@ -89,13 +90,15 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
         IAnimationClock? clock = null,
         SkiaFrameComposer? composer = null,
         DateOnly? localDate = null,
-        SeasonalDates? seasonalDates = null)
+        SeasonalDates? seasonalDates = null,
+        Func<DateOnly>? localDateProvider = null)
     {
         _pack = pack ?? throw new ArgumentNullException(nameof(pack));
         _presenter = presenter ?? throw new ArgumentNullException(nameof(presenter));
         _clock = clock ?? new StopwatchAnimationClock();
         _composer = composer ?? new SkiaFrameComposer(pack);
         _composer.RepaintRequested += OnComposerRepaintRequested;
+        _localDateProvider = localDateProvider;
         _localDate = localDate ?? DateOnly.FromDateTime(DateTime.Now);
         _seasonalDates = seasonalDates ?? SeasonalDates.Empty;
     }
@@ -106,8 +109,9 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
         IAnimationClock? clock = null,
         SkiaFrameComposer? composer = null,
         DateOnly? localDate = null,
-        SeasonalDates? seasonalDates = null)
-        : this(pack, presenter, clock, composer, localDate, seasonalDates)
+        SeasonalDates? seasonalDates = null,
+        Func<DateOnly>? localDateProvider = null)
+        : this(pack, presenter, clock, composer, localDate, seasonalDates, localDateProvider)
     {
     }
 
@@ -372,6 +376,16 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (options.OutfitKey is null && RefreshLocalDate())
+            {
+                resolved = ResolveAnimation(pack, presentation.AnimationKey, options.OutfitKey);
+                animation = resolved.Animation;
+                semanticDuration = GetSemanticDuration(animation);
+                frameStart = _clock.Timestamp;
+                frameIndex = 0;
+                continue;
+            }
+
             var frame = animation.Frames[frameIndex];
             var frameDuration = TimeSpan.FromMilliseconds(frame.DurationMs);
             var frameEnd = AddDuration(frameStart, frameDuration, _clock.Frequency);
@@ -625,6 +639,7 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
         string? outfitKey)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(animationKey);
+        RefreshLocalDate();
         DateOnly localDate;
         SeasonalDates seasonalDates;
         lock (_stateGate)
@@ -643,16 +658,16 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
             return (selectedAnimation, selectedAnimation.Frames[0].File);
         }
 
-        if (pack.Manifest.Outfits.TryGetValue(selectedOutfit, out selected)
-            && selected.Animations.TryGetValue("idle", out var selectedIdle))
-        {
-            return (selectedIdle, selectedIdle.Frames[0].File);
-        }
-
         if (pack.Manifest.Outfits.TryGetValue("base", out var baseOutfit)
             && baseOutfit.Animations.TryGetValue(animationKey, out var baseAnimation))
         {
             return (baseAnimation, baseAnimation.Frames[0].File);
+        }
+
+        if (pack.Manifest.Outfits.TryGetValue(selectedOutfit, out selected)
+            && selected.Animations.TryGetValue("idle", out var selectedIdle))
+        {
+            return (selectedIdle, selectedIdle.Frames[0].File);
         }
 
         if (pack.Manifest.Outfits.TryGetValue("base", out baseOutfit)
@@ -662,6 +677,26 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
         }
 
         throw new AssetManifestException("The manifest has no usable fallback idle animation.");
+    }
+
+    private bool RefreshLocalDate()
+    {
+        if (_localDateProvider is null)
+        {
+            return false;
+        }
+
+        var currentLocalDate = _localDateProvider();
+        lock (_stateGate)
+        {
+            if (currentLocalDate == _localDate)
+            {
+                return false;
+            }
+
+            _localDate = currentLocalDate;
+            return true;
+        }
     }
 
     private static TimeSpan GetSemanticDuration(AssetAnimation animation)

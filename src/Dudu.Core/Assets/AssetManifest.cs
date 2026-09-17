@@ -410,16 +410,16 @@ public sealed class AssetPack
             return selectedAnimation;
         }
 
-        if (Manifest.Outfits.TryGetValue(selectedOutfit, out outfit)
-            && outfit.Animations.TryGetValue("idle", out var outfitIdle))
-        {
-            return outfitIdle;
-        }
-
         if (Manifest.Outfits.TryGetValue("base", out var baseOutfit)
             && baseOutfit.Animations.TryGetValue(animationKey, out var baseAnimation))
         {
             return baseAnimation;
+        }
+
+        if (Manifest.Outfits.TryGetValue(selectedOutfit, out outfit)
+            && outfit.Animations.TryGetValue("idle", out var outfitIdle))
+        {
+            return outfitIdle;
         }
 
         if (Manifest.Outfits.TryGetValue("base", out baseOutfit)

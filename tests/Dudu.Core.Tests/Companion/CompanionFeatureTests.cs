@@ -93,6 +93,56 @@ public sealed class CompanionFeatureTests
             ["base"]));
 
     [Fact]
+    public void Seasonal_outfit_uses_base_animation_when_only_its_idle_pose_is_custom()
+    {
+        var baseAnimation = Animation("base-celebrate");
+        var pack = new AssetPack(
+            "fixture/manifest.json",
+            new AssetManifest
+            {
+                SchemaVersion = 1,
+                PackId = "fixture",
+                Version = "1",
+                PrivateUseOnly = true,
+                Attribution = new AssetAttribution { Creator = "fixture" },
+                Outfits = new Dictionary<string, AssetOutfit>(StringComparer.Ordinal)
+                {
+                    ["base"] = new AssetOutfit
+                    {
+                        Animations = new Dictionary<string, AssetAnimation>(StringComparer.Ordinal)
+                        {
+                            ["idle"] = Animation("base-idle"),
+                            ["celebrate"] = baseAnimation,
+                        },
+                    },
+                    ["winter"] = new AssetOutfit
+                    {
+                        Animations = new Dictionary<string, AssetAnimation>(StringComparer.Ordinal)
+                        {
+                            ["idle"] = Animation("winter-idle"),
+                        },
+                    },
+                },
+            });
+
+        var selected = pack.ResolveAnimation(
+            "celebrate",
+            new DateOnly(2026, 12, 25),
+            SeasonalDates.Empty);
+
+        Assert.Same(baseAnimation, selected);
+    }
+
+    private static AssetAnimation Animation(string file) => new()
+    {
+        Frames = [new AssetFrame { File = file + ".png", DurationMs = 100 }],
+        Loop = "loop",
+        Anchor = new PixelPoint(0, 0),
+        NominalSize = new PixelSize(1, 1),
+        ReducedMotion = file + ".png",
+    };
+
+    [Fact]
     public async Task Selector_persists_utc_shown_event_after_selection()
     {
         var fixture = NoteFixture.WithNotes("one");

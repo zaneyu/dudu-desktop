@@ -126,6 +126,21 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Appearance_refresh_preserves_february_29_dates_in_non_leap_years()
+    {
+        var fixture = FeatureFixture.Create();
+        await fixture.Context.UpdatePreferencesAsync(
+            current => current with { Birthday = new MonthDay(2, 29) },
+            TestContext.Current.CancellationToken);
+        var viewModel = new AppearanceViewModel(fixture.Context);
+
+        await viewModel.RefreshAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, viewModel.BirthdayDate?.Month);
+        Assert.Equal(29, viewModel.BirthdayDate?.Day);
+    }
+
+    [Fact]
     public void Appearance_reports_the_automatic_outfit_for_the_current_local_date()
     {
         var fixture = FeatureFixture.Create();

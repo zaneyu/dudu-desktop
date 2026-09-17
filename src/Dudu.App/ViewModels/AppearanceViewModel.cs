@@ -252,7 +252,19 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
         }
 
         var year = DateTime.Now.Year;
-        var day = Math.Min(value.Day, DateTime.DaysInMonth(year, value.Month));
-        return new DateTimeOffset(year, value.Month, day, 0, 0, 0, TimeSpan.Zero);
+        if (value.Month == 2 && value.Day == 29)
+        {
+            while (!DateTime.IsLeapYear(year))
+            {
+                year++;
+            }
+        }
+
+        if (value.Day > DateTime.DaysInMonth(year, value.Month))
+        {
+            return null;
+        }
+
+        return new DateTimeOffset(year, value.Month, value.Day, 0, 0, 0, TimeSpan.Zero);
     }
 }

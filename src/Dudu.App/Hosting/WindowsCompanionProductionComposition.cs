@@ -303,7 +303,8 @@ public static class WindowsCompanionProductionComposition
                         overlay,
                         composer: composer,
                         localDate: LocalDateNow(),
-                        seasonalDates: SeasonalDatesFor(preferences));
+                        seasonalDates: SeasonalDatesFor(preferences),
+                        localDateProvider: LocalDateNow);
                     // Shared with PresentationCoordinator below so an explicit
                     // one-shot (via PetPresentationCoordinator) and an
                     // unsolicited background release never interleave their
