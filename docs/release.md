@@ -258,23 +258,32 @@ For each Store release:
 
 1. Wait for a green Windows workflow, including its package and verification
    jobs. A CI artifact is not evidence that recipient Windows acceptance has
-   completed.
+   completed. The CI Store artifact is acceptance-only: **never upload it to
+   Partner Center**.
 2. Download the workflow artifact named
    `DuduDesktop-<version>-win-x64-store` to a newly created temporary directory.
    It contains the `.msix` package under `artifacts/store-package/` and
    the private release metadata under `artifacts/store-package-metadata/`.
-3. Before any upload, verify that this is the submission package produced by
-   the successful identity-gated command above. Compare its SHA-256 hash with
-   the `Store package SHA-256` value in the Store job summary and with
-   `store-package-metadata/SHA256SUMS.txt`; also confirm
-   `package-version.txt` matches the intended release. Keep the package and
-   all metadata private.
-4. Upload the `.msix` package (the Partner Center upload container, if the
-   portal requests one, is not the raw `.msix`) to Partner Center, keep the
-   audience private, and submit it for certification.
-5. After publication, verify from the recipient's invited Store account that
+3. Use that CI `.msix` only for acceptance and integrity verification. Compare
+   its SHA-256 hash with the `Store package SHA-256` value in the Store job
+   summary and with `store-package-metadata/SHA256SUMS.txt`; also confirm
+   `package-version.txt` matches the intended release. This comparison applies
+   only to the acceptance artifact; it is not an upload authorization.
+4. Separately configure the exact Partner Center `Identity Name` and
+   `Publisher` in the private working copy of
+   `src/Dudu.App/Package.appxmanifest`, then run the identity-gated local
+   command above. It must produce a new local `.msix` and its own metadata.
+5. Verify the locally produced `.msix` against its own
+   `store-package-metadata/SHA256SUMS.txt` and `package-version.txt`, confirming
+   the intended strictly increasing version. Do not substitute the CI package
+   or use its job-summary hash for this local package.
+6. Upload only that locally produced, identity-gated `.msix` (the Partner
+   Center upload container, if the portal requests one, is not the raw `.msix`)
+   to Partner Center, keep the audience private, and submit it for
+   certification.
+7. After publication, verify from the recipient's invited Store account that
    the private Store listing is visible and that Dudu Desktop installs.
-6. For later updates, start the workflow with `workflow_dispatch` and enter
+8. For later updates, start the workflow with `workflow_dispatch` and enter
    the explicit `store_version` three-part value. Pushes retain the `1.0.0`
    default for repeatable acceptance builds. Use a strictly increasing package
    version and confirm the corresponding package filename and

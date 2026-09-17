@@ -13,7 +13,8 @@ param(
     [ValidatePattern('^\d+\.\d+\.\d+$')]
     [string]$Version,
 
-    # This guard is for a future submission workflow. It does not submit a package.
+    # This guard is required when producing the separate package intended for submission.
+    # It does not submit a package.
     [switch]$RequirePartnerCenterIdentity,
 
     [string]$ExpectedPartnerCenterName,

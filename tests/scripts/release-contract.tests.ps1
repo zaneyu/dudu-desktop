@@ -66,6 +66,10 @@ Assert-Contains "release runbook documents Store certification" $releaseDoc "cer
 Assert-Contains "release runbook documents Store publication signing" $releaseDoc "Microsoft-signed"
 Assert-Contains "release runbook documents Inno migration fallback" $releaseDoc "two\s+Store versions"
 Assert-Contains "release runbook documents package identity migration risk" $releaseDoc "(?s)startup shortcuts.*notifications.*activation.*uninstall"
+Assert-Contains "release runbook marks the CI Store artifact acceptance-only" $releaseDoc "(?is)CI artifact.*acceptance-only"
+Assert-Contains "release runbook forbids uploading the CI Store artifact" $releaseDoc "(?is)never upload.*CI artifact|CI artifact.*never upload"
+Assert-Contains "release runbook requires a separate local gated package" $releaseDoc "identity-gated\s+local\s+command"
+Assert-Contains "release runbook uploads only the local gated package" $releaseDoc "Upload only that locally produced"
 Assert-Contains "README links Store release path" $readme "private Store"
 Assert-Contains "acceptance matrix includes Store visibility" $acceptanceDoc "Store visibility"
 Assert-Contains "acceptance matrix includes second Store update" $acceptanceDoc "second Store update"
@@ -100,6 +104,9 @@ if (Test-Path -LiteralPath $storeScriptPath) {
     Assert-Contains "Store package script requires the pinned SDK" $storeScript "dotnetVersion.*10\.0\.112"
     Assert-Contains "Store package script fixes the target runtime to win-x64" $storeScript "targetRuntimeIdentifier.*win-x64"
     Assert-Contains "Store package script exposes the production identity gate" $storeScript "RequirePartnerCenterIdentity"
+    Assert-Contains "Store package script rejects the local identity at the production gate" $storeScript '\$sourceIdentity\.Name\s+-eq\s+''DuduDesktop\.Local\.NonProduction'''
+    Assert-Contains "Store package script compares the expected production name" $storeScript '\$sourceIdentity\.Name\s+-ne\s+\$ExpectedPartnerCenterName'
+    Assert-Contains "Store package script compares the expected production publisher" $storeScript '\$sourceIdentity\.Publisher\s+-ne\s+\$ExpectedPartnerCenterPublisher'
     $appCertSummaryIndex = $storeScript.IndexOf("Add-Content -LiteralPath (Join-Path `$metadataDirectory 'validation-summary.txt')")
     $appCertThrowIndex = $storeScript.IndexOf('Windows App Certification Kit validation failed')
     Assert-True "Store package script records WACK results before throwing" ($appCertSummaryIndex -ge 0 -and $appCertThrowIndex -ge 0 -and $appCertSummaryIndex -lt $appCertThrowIndex)
@@ -127,6 +134,8 @@ Assert-Contains "workflow invokes the Store package wrapper" $workflow "scripts/
 Assert-Contains "workflow uploads a Store package artifact" $workflow 'DuduDesktop-\$\{\{ env\.STORE_VERSION \}\}-win-x64-store'
 Assert-Contains "workflow supports an explicit Store package version" $workflow "store_version"
 Assert-Contains "workflow writes the Store package hash to the job summary" $workflow "Store package SHA-256"
+Assert-Contains "workflow labels the Store artifact acceptance-only" $workflow "acceptance-only"
+Assert-Contains "workflow forbids Store artifact upload to Partner Center" $workflow "never upload it to Partner Center"
 Assert-Contains "workflow keeps the Inno artifact" $workflow "DuduDesktop-1\.0\.0-win-x64-private"
 Assert-True "Store package job does not expose secrets in logs" ($workflow -notmatch "echo.*\bSTORE\b|Write-Host.*\bSTORE\b.*\bSECRET\b")
 $globalJson = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "global.json") | ConvertFrom-Json

@@ -41,3 +41,13 @@ The submission identity values are intentionally absent from source control.
 The owner must configure them in a private working copy before producing a
 submission package. A CI artifact built with the local identity remains
 acceptance-only and must not be uploaded.
+
+## Follow-up review fix
+
+Clarified the sequence so the CI package is used only for acceptance and hash
+verification. The owner separately configures the exact Partner Center
+manifest identity, runs the identity-gated local command, verifies that local
+package against its own metadata and intended version, and uploads only that
+package. Contract tests now require the script's explicit local-identity
+rejection condition and check that the docs and workflow label the CI artifact
+acceptance-only and forbid Partner Center upload.

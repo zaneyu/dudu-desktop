@@ -138,7 +138,8 @@ jobs:
     name: Package private Store MSIX (win-x64)
     # This is a non-public, manually retrieved package only. The local manifest
     # identity is deliberately non-production, so this job does not submit to
-    # Partner Center or claim that the artifact is Store-publishable.
+    # Partner Center or claim that the artifact is Store-publishable. The Store
+    # artifact is acceptance-only: never upload it to Partner Center.
     needs: tests
     runs-on: windows-latest
     timeout-minutes: 60
