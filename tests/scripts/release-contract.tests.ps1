@@ -45,6 +45,19 @@ $workflow = Get-Content -Raw -LiteralPath (Join-Path $repoRoot ".github/workflow
 $smoke = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "tests/installer/installer-smoke.ps1")
 $innoScript = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "scripts/install-inno-setup.ps1")
 $appProject = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "src/Dudu.App/Dudu.App.csproj")
+$storeScriptPath = Join-Path $repoRoot "scripts/package-store.ps1"
+
+Assert-True "Store package script exists" (Test-Path -LiteralPath $storeScriptPath)
+if (Test-Path -LiteralPath $storeScriptPath) {
+    $storeScript = Get-Content -Raw -LiteralPath $storeScriptPath
+    Assert-Contains "Store package script requires Windows" $storeScript "OperatingSystem.*Windows"
+    Assert-Contains "Store package script enables the package mode" $storeScript "DuduStorePackage.*true"
+    Assert-Contains "Store package script targets win-x64" $storeScript "RuntimeIdentifier.*win-x64"
+    Assert-Contains "Store package script disables local signing" $storeScript "AppxPackageSigningEnabled.*false"
+    Assert-Contains "Store package script writes beneath artifacts" $storeScript "artifacts[/\\]store-package"
+    Assert-True "Store package script does not publish a relay URL" ($storeScript -notmatch "workers\.dev|DUDU_RELAY_BASE_URL")
+    Assert-True "Store package script does not embed credentials" ($storeScript -notmatch "clientSecret|accessToken|password|token\s*=")
+}
 
 Assert-Contains "Inno has a default AppVersion define" $iss '#ifndef AppVersion'
 Assert-Contains "Inno receives AppVersion from the compiler define" $iss 'AppVersion=\{#AppVersion\}'
