@@ -309,6 +309,8 @@ public sealed class StartupRegistrationServiceTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (FailWrite) throw new IOException("simulated startup write failure");
+            Directory.CreateDirectory(Path.GetDirectoryName(shortcutPath)!);
+            File.WriteAllText(shortcutPath, $"{targetPath}\n{arguments}");
             Writes.Add((shortcutPath, targetPath, arguments));
             return Task.CompletedTask;
         }
@@ -317,6 +319,7 @@ public sealed class StartupRegistrationServiceTests
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (FailDelete) throw new IOException("simulated startup delete failure");
+            File.Delete(shortcutPath);
             Deletes.Add(shortcutPath);
             return Task.CompletedTask;
         }
