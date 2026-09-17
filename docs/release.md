@@ -238,6 +238,16 @@ not Store-publishable. **Fail closed: never upload the CI package made with
 
 The owner must first configure the exact Partner Center `Identity Name` and
 `Publisher` in the private working copy of `src/Dudu.App/Package.appxmanifest`.
+Because that manifest declares `rescap:unvirtualizedResources` for the shared
+`%LocalAppData%\DuduDesktop` exception, obtain and retain Partner Center's
+restricted-capability justification/approval privately before submitting any
+production package. Retain the justification and approval outcome in private
+release records only; do not add URLs, credentials, or private evidence to the
+repository. A WACK `PASS` is not Store approval and does not replace this
+Partner Center prerequisite. If the restricted-capability approval has not
+been obtained and retained privately, stop before production submission; the
+local and CI package flows remain acceptance-only.
+
 Then the owner must produce the submission package with the identity gate:
 
 ```powershell

@@ -46,6 +46,8 @@ $smoke = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "tests/installer/ins
 $innoScript = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "scripts/install-inno-setup.ps1")
 $appProject = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "src/Dudu.App/Dudu.App.csproj")
 $storeScriptPath = Join-Path $repoRoot "scripts/package-store.ps1"
+$packageManifestPath = Join-Path $repoRoot "src/Dudu.App/Package.appxmanifest"
+$packageManifestSource = Get-Content -Raw -LiteralPath $packageManifestPath
 $readme = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "README.md")
 $releaseDoc = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "docs/release.md")
 $acceptanceDoc = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "docs/testing/windows-acceptance.md")
@@ -70,6 +72,13 @@ Assert-Contains "release runbook marks the CI Store artifact acceptance-only" $r
 Assert-Contains "release runbook forbids uploading the CI Store artifact" $releaseDoc "(?is)never upload.*CI artifact|CI artifact.*never upload"
 Assert-Contains "release runbook requires a separate local gated package" $releaseDoc "identity-gated\s+local\s+command"
 Assert-Contains "release runbook uploads only the local gated package" $releaseDoc "Upload only that locally produced"
+Assert-Contains "release runbook identifies the restricted capability" $releaseDoc "rescap:unvirtualizedResources"
+Assert-Contains "release runbook requires private restricted-capability approval" $releaseDoc "(?is)restricted-capability.*justification/approval.*retained privately"
+Assert-Contains "release runbook distinguishes WACK PASS from Store approval" $releaseDoc "(?is)WACK.*PASS.*not Store approval"
+Assert-True "manifest restricted capability has a documented Partner Center approval gate" (
+    ($packageManifestSource -notmatch 'rescap:Capability\s+Name="unvirtualizedResources"') -or
+    ($releaseDoc -match '(?is)rescap:unvirtualizedResources.*restricted-capability.*justification/approval.*retained privately')
+)
 Assert-Contains "README links Store release path" $readme "private Store"
 Assert-Contains "acceptance matrix includes Store visibility" $acceptanceDoc "Store visibility"
 Assert-Contains "acceptance matrix includes second Store update" $acceptanceDoc "second Store update"
