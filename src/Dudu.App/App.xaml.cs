@@ -249,8 +249,11 @@ public sealed partial class App : Application
         }
     }
 
-    private static void ReportStartupFailure(Exception exception) =>
+    private static void ReportStartupFailure(Exception exception)
+    {
+        StartupFailureLogger.Record(AppPaths.ForCurrentUser(), "bootstrap", exception);
         Trace.TraceError("Dudu startup failed: {0}", exception);
+    }
 
     private Task ExitApplicationAsync(CancellationToken cancellationToken) =>
         _uiDispatcher.InvokeAsync(ExitApplicationCore, cancellationToken);
