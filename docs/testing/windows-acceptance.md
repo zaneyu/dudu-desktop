@@ -51,6 +51,10 @@ Fill in "Windows build" with the OS build number (`winver`) and Dudu version act
 artifact was saved once that run happens — update each row in place rather than appending new
 ones, so this file always reflects the latest run per scenario.
 
+For Store/MSIX acceptance, confirm that the default data root is still
+`%LocalAppData%\DuduDesktop` (not the package install directory) before testing upgrade or
+uninstall behavior. `DUDU_DATA_ROOT` remains the test-only override for isolated installer runs.
+
 ## How to run each gate on Windows
 
 1. Publish a release candidate: `pwsh scripts/publish-windows.ps1` (produces
