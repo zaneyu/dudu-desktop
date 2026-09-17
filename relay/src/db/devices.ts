@@ -1,9 +1,3 @@
-import {
-  deleteMessageOwnershipStatement,
-  deleteMessagesStatement,
-  deleteMessageStatusesStatement,
-} from "./messages.js";
-
 /** Persistence for the `devices` and `sender_sessions` tables. No plaintext tokens or keys. */
 
 export interface DeviceRecord {
@@ -96,6 +90,7 @@ export interface RotateKeyParams {
   deviceId: string;
   newPublicKeySpki: string;
   newDesktopTokenHash: string;
+  expectedDesktopTokenHash: string;
   revokedUtc: string;
 }
 
@@ -113,18 +108,17 @@ export function buildRotateKeyStatements(
   db: D1Database,
   params: RotateKeyParams,
 ): D1PreparedStatement[] {
+  const guard = `EXISTS (SELECT 1 FROM devices WHERE id = ?1 AND desktop_token_hash = ?2 AND revoked_utc IS NULL)`;
   return [
-    db
-      .prepare(`UPDATE devices SET public_key_spki = ?1, desktop_token_hash = ?2 WHERE id = ?3`)
-      .bind(params.newPublicKeySpki, params.newDesktopTokenHash, params.deviceId),
-    db
-      .prepare(
-        `UPDATE sender_sessions SET revoked_utc = ?1 WHERE device_id = ?2 AND revoked_utc IS NULL`,
-      )
-      .bind(params.revokedUtc, params.deviceId),
-    deleteMessagesStatement(db, params.deviceId),
-    deleteMessageStatusesStatement(db, params.deviceId),
-    deleteMessageOwnershipStatement(db, params.deviceId),
+    db.prepare(`UPDATE sender_sessions SET revoked_utc = ?3
+      WHERE device_id = ?1 AND revoked_utc IS NULL AND ${guard}`)
+      .bind(params.deviceId, params.expectedDesktopTokenHash, params.revokedUtc),
+    ...["messages", "message_status", "message_ownership"].map((table) =>
+      db.prepare(`DELETE FROM ${table} WHERE device_id = ?1 AND ${guard}`)
+        .bind(params.deviceId, params.expectedDesktopTokenHash)),
+    db.prepare(`UPDATE devices SET public_key_spki = ?3, desktop_token_hash = ?4
+      WHERE id = ?1 AND desktop_token_hash = ?2 AND revoked_utc IS NULL`)
+      .bind(params.deviceId, params.expectedDesktopTokenHash, params.newPublicKeySpki, params.newDesktopTokenHash),
   ];
 }
 
@@ -132,20 +126,24 @@ export async function rotateDeviceKey(db: D1Database, params: RotateKeyParams): 
   await db.batch(buildRotateKeyStatements(db, params));
 }
 
+
 /**
  * Statements for one atomic device deletion: revoke the device, delete its queued ciphertext and
  * message-status rows, delete its sender sessions, and delete any unredeemed pairing codes for
  * it. Unlike rotation, this deletes `message_status` too — the device is gone for good, so there
  * is no future "is this still queued for that device" question left to answer.
  */
-export function buildDeleteDeviceStatements(db: D1Database, deviceId: string, revokedUtc: string): D1PreparedStatement[] {
+export function buildDeleteDeviceStatements(
+  db: D1Database, deviceId: string, revokedUtc: string, expectedDesktopTokenHash: string,
+): D1PreparedStatement[] {
+  const guard = `EXISTS (SELECT 1 FROM devices WHERE id = ?1 AND desktop_token_hash = ?2 AND revoked_utc IS NULL)`;
   return [
-    db.prepare(`UPDATE devices SET revoked_utc = ?1 WHERE id = ?2`).bind(revokedUtc, deviceId),
-    deleteMessagesStatement(db, deviceId),
-    deleteMessageStatusesStatement(db, deviceId),
-    deleteMessageOwnershipStatement(db, deviceId),
-    db.prepare(`DELETE FROM sender_sessions WHERE device_id = ?1`).bind(deviceId),
-    db.prepare(`DELETE FROM pairing_codes WHERE device_id = ?1`).bind(deviceId),
+    ...["messages", "message_status", "message_ownership", "sender_sessions", "pairing_codes"].map((table) =>
+      db.prepare(`DELETE FROM ${table} WHERE device_id = ?1 AND ${guard}`)
+        .bind(deviceId, expectedDesktopTokenHash)),
+    db.prepare(`UPDATE devices SET revoked_utc = ?3
+      WHERE id = ?1 AND desktop_token_hash = ?2 AND revoked_utc IS NULL`)
+      .bind(deviceId, expectedDesktopTokenHash, revokedUtc),
   ];
 }
 

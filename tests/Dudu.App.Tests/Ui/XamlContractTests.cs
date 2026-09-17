@@ -6,6 +6,23 @@ namespace Dudu.App.Tests.Ui;
 public sealed class XamlContractTests
 {
     [Fact]
+    public void App_constructor_initializes_merged_application_resources_before_startup()
+    {
+        var root = FindRepositoryRoot();
+        var appCode = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "App.xaml.cs"));
+        var appXaml = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "App.xaml"));
+        var constructorStart = appCode.IndexOf("public App()", StringComparison.Ordinal);
+        var constructorEnd = appCode.IndexOf("\n    }", constructorStart, StringComparison.Ordinal);
+
+        Assert.True(constructorStart >= 0);
+        Assert.True(constructorEnd > constructorStart);
+        var constructor = appCode[constructorStart..constructorEnd];
+        Assert.Contains("InitializeComponent();", constructor);
+        Assert.Contains("Source=\"Themes/Colors.xaml\"", appXaml);
+        Assert.Contains("Source=\"Themes/Controls.xaml\"", appXaml);
+    }
+
+    [Fact]
     public void Onboarding_and_primary_button_xaml_use_valid_accessible_contracts()
     {
         var root = FindRepositoryRoot();

@@ -11,6 +11,11 @@
     Launches the installed app before the upgrade and requires the installer to close that
     exact process. Use this on an interactive Windows desktop; headless CI may omit it.
 
+.PARAMETER ExerciseNormalLaunch
+    Launches the installed app normally (without --self-test), requires it to remain alive,
+    checks that startup-failure.log was not written, and closes the exact process cleanly. Use
+    this on an interactive Windows desktop; headless CI must omit it.
+
 .DESCRIPTION
     1. Creates an isolated per-run install/data root and a sentinel outside that root. Silently
        installs for the current user and verifies Dudu.App.exe and
@@ -31,7 +36,9 @@ param(
     [Parameter(Mandatory)]
     [string]$Installer,
 
-    [switch]$ExerciseRunningApp
+    [switch]$ExerciseRunningApp,
+
+    [switch]$ExerciseNormalLaunch
 )
 
 $ErrorActionPreference = "Stop"
@@ -65,6 +72,7 @@ $previousDataRoot = [Environment]::GetEnvironmentVariable("DUDU_DATA_ROOT", "Pro
 $previousStartupShortcut = [Environment]::GetEnvironmentVariable("DUDU_STARTUP_SHORTCUT_PATH", "Process")
 $previousStartMenuShortcut = [Environment]::GetEnvironmentVariable("DUDU_START_MENU_SHORTCUT_DIR", "Process")
 $runningApp = $null
+$normalApp = $null
 
 New-Item -ItemType Directory -Path $testRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $sentinelRoot -Force | Out-Null
@@ -130,6 +138,32 @@ function Assert-ProcessClosedByInstaller {
     Write-Host "Running-app upgrade check passed: Inno Setup closed the owned app process."
 }
 
+function Start-InstalledAppForNormalLaunch {
+    $process = Start-Process $exePath -PassThru
+    try { $process.WaitForInputIdle(10000) | Out-Null } catch { }
+    Start-Sleep -Seconds 3
+    if ($process.HasExited) {
+        Write-SelfTestDiagnostics
+        throw "Installed application exited during the normal-launch check."
+    }
+
+    $startupFailureLog = Join-Path $dataRoot "logs\startup-failure.log"
+    if (Test-Path -LiteralPath $startupFailureLog) {
+        Write-SelfTestDiagnostics
+        throw "Normal launch wrote startup-failure.log."
+    }
+    return $process
+}
+
+function Close-NormalLaunchApp {
+    param([Parameter(Mandatory)][System.Diagnostics.Process]$Process)
+
+    try { $Process.CloseMainWindow() | Out-Null } catch { }
+    if (-not $Process.WaitForExit(30000)) {
+        throw "Normal-launch application did not close cleanly within 30 s."
+    }
+}
+
 function Assert-SentinelSurvives {
     if (-not (Test-Path -LiteralPath $sentinelPath -PathType Leaf)) {
         throw "Sentinel outside the test root was deleted."
@@ -185,6 +219,12 @@ try {
 
     Invoke-SelfTest
 
+    if ($ExerciseNormalLaunch) {
+        $normalApp = Start-InstalledAppForNormalLaunch
+        Close-NormalLaunchApp -Process $normalApp
+        $normalApp = $null
+    }
+
     # --- Phase 2: marker survives an in-place upgrade ---
     New-Item -ItemType Directory -Path $dataRoot -Force | Out-Null
     Set-Content -Path $markerPath -Value "dudu-installer-smoke-marker" -NoNewline
@@ -218,6 +258,10 @@ try {
     exit 0
 }
 finally {
+    if ($null -ne $normalApp -and -not $normalApp.HasExited) {
+        try { $normalApp.CloseMainWindow() | Out-Null } catch { }
+        try { $normalApp.WaitForExit(10000) | Out-Null } catch { }
+    }
     if ($null -ne $runningApp -and -not $runningApp.HasExited) {
         try { $runningApp.CloseMainWindow() | Out-Null } catch { }
         try { $runningApp.WaitForExit(10000) | Out-Null } catch { }

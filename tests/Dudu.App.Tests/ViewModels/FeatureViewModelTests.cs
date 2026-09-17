@@ -18,6 +18,32 @@ namespace Dudu.App.Tests.ViewModels;
 public sealed class FeatureViewModelTests
 {
     [Fact]
+    public async Task Home_remembers_only_yesterdays_latest_explicit_check_in()
+    {
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        var viewModel = new HomeViewModel(fixture.Context);
+        await viewModel.RefreshAsync(ct);
+        Assert.Contains("fresh check-in", viewModel.YesterdayReflectionText);
+
+        fixture.Clock.UtcNow = DateTimeOffset.Parse("2026-09-11T20:00:00Z");
+        await fixture.Context.CheckInService.RecordAsync(MoodChoice.Rough, "earlier", ct);
+        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddHours(1);
+        await fixture.Context.CheckInService.RecordAsync(MoodChoice.Okay, "finished my work", ct);
+        fixture.Clock.UtcNow = DateTimeOffset.Parse("2026-09-12T10:00:00Z");
+        await fixture.Context.CheckInService.RecordAsync(MoodChoice.Great, "today's note", ct);
+        await viewModel.RefreshAsync(ct);
+
+        Assert.Contains("yesterday you chose okay", viewModel.YesterdayReflectionText);
+        Assert.Contains("finished my work", viewModel.YesterdayReflectionText);
+        Assert.DoesNotContain("earlier", viewModel.YesterdayReflectionText);
+        Assert.DoesNotContain("today's note", viewModel.YesterdayReflectionText);
+        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddDays(3);
+        await viewModel.RefreshAsync(ct);
+        Assert.Contains("fresh check-in", viewModel.YesterdayReflectionText);
+    }
+
+    [Fact]
     public async Task Completing_a_reminder_persists_before_dismissing_pet_state()
     {
         var fixture = FeatureFixture.Create();
@@ -742,6 +768,53 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Reminder_evening_and_bedtime_routines_opt_in_and_upsert_stably()
+    {
+        var fixture = FeatureFixture.Create();
+        var viewModel = new RemindersViewModel(fixture.Context);
+
+        await viewModel.SaveReminderPreferencesAsync(TestContext.Current.CancellationToken);
+
+        Assert.False(fixture.Context.CurrentPreferences.EveningCheckInEnabled);
+        Assert.False(fixture.Context.CurrentPreferences.BedtimeRitualEnabled);
+        Assert.DoesNotContain(fixture.Reminders.Items, item =>
+            item.Id is Dudu.Core.Reminders.LocalReminderDefaults.EveningCheckInId
+                or Dudu.Core.Reminders.LocalReminderDefaults.BedtimeId);
+
+        viewModel.EveningCheckInEnabled = true;
+        viewModel.BedtimeRitualEnabled = true;
+        await viewModel.SaveReminderPreferencesAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(fixture.Context.CurrentPreferences.EveningCheckInEnabled);
+        Assert.True(fixture.Context.CurrentPreferences.BedtimeRitualEnabled);
+        var evening = fixture.Reminders.Items.Single(item =>
+            item.Id == Dudu.Core.Reminders.LocalReminderDefaults.EveningCheckInId);
+        var bedtime = fixture.Reminders.Items.Single(item =>
+            item.Id == Dudu.Core.Reminders.LocalReminderDefaults.BedtimeId);
+        Assert.Equal("how was your day, ada?", evening.Title);
+        Assert.Equal("shuijiaojiao, ada", bedtime.Title);
+        Assert.Equal(new RecurrenceRule.Daily(new TimeOnly(20, 0)), evening.Rule);
+        Assert.Equal(new RecurrenceRule.Daily(new TimeOnly(22, 0)), bedtime.Rule);
+        Assert.All(new[] { evening, bedtime }, item =>
+        {
+            Assert.Null(item.QuietHours);
+            Assert.Equal(QuietHoursBehavior.WaitUntilQuietHoursEnd, item.QuietHoursBehavior);
+            Assert.Equal(MissedOccurrencePolicy.Skip, item.MissedPolicy);
+            Assert.Equal("UTC", item.LocalTimeZoneId);
+        });
+
+        viewModel.EveningCheckInEnabled = false;
+        await viewModel.SaveReminderPreferencesAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(4, fixture.Reminders.Items.Count(item =>
+            item.Id is "default-hydration" or "default-break"
+                or Dudu.Core.Reminders.LocalReminderDefaults.EveningCheckInId
+                or Dudu.Core.Reminders.LocalReminderDefaults.BedtimeId));
+        Assert.False(fixture.Reminders.Items.Single(item =>
+            item.Id == Dudu.Core.Reminders.LocalReminderDefaults.EveningCheckInId).Enabled);
+    }
+
+    [Fact]
     public async Task Reminder_runtime_apply_failure_restores_exact_previous_default_rows()
     {
         var fixture = FeatureFixture.Create();
@@ -1136,7 +1209,7 @@ public sealed class FeatureViewModelTests
 
     private sealed class FakeClock(string value) : IClock
     {
-        public DateTimeOffset UtcNow { get; } = DateTimeOffset.Parse(value);
+        public DateTimeOffset UtcNow { get; set; } = DateTimeOffset.Parse(value);
         public TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
     }
 
@@ -1287,8 +1360,14 @@ public sealed class FeatureViewModelTests
 
     private sealed class FakeCheckInRepository : ICheckInRepository
     {
-        public Task SaveAsync(MoodCheckIn checkIn, CancellationToken cancellationToken) => Task.CompletedTask;
-        public Task<IReadOnlyList<MoodCheckIn>> ListSinceAsync(DateTimeOffset sinceUtc, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<MoodCheckIn>>([]);
+        private readonly List<MoodCheckIn> _items = [];
+        public Task SaveAsync(MoodCheckIn checkIn, CancellationToken cancellationToken)
+        {
+            _items.Add(checkIn);
+            return Task.CompletedTask;
+        }
+        public Task<IReadOnlyList<MoodCheckIn>> ListSinceAsync(DateTimeOffset sinceUtc, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<MoodCheckIn>>(_items.Where(item => item.CreatedUtc >= sinceUtc).ToArray());
     }
 
     private sealed class FakePairing : IPairingService
@@ -1366,6 +1445,8 @@ public sealed class FeatureViewModelTests
             await preferences.SaveAsync(value, cancellationToken);
             await reminders.DeleteAsync("default-hydration", cancellationToken);
             await reminders.DeleteAsync("default-break", cancellationToken);
+            await reminders.DeleteAsync(Dudu.Core.Reminders.LocalReminderDefaults.EveningCheckInId, cancellationToken);
+            await reminders.DeleteAsync(Dudu.Core.Reminders.LocalReminderDefaults.BedtimeId, cancellationToken);
             foreach (var reminder in previousDefaultReminders)
             {
                 await reminders.SaveAsync(reminder, cancellationToken);

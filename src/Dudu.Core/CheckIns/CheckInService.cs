@@ -85,6 +85,13 @@ public sealed class CheckInService
             local = local.AddMinutes(1);
         }
 
+        if (_clock.LocalTimeZone.IsAmbiguousTime(local))
+        {
+            return _clock.LocalTimeZone.GetAmbiguousTimeOffsets(local)
+                .Select(offset => new DateTimeOffset(local, offset).ToUniversalTime())
+                .Min();
+        }
+
         return new DateTimeOffset(
             TimeZoneInfo.ConvertTimeToUtc(local, _clock.LocalTimeZone));
     }

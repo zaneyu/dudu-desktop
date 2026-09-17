@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Dudu.Core.Abstractions;
 using Dudu.Core.Models;
+using Dudu.Core.Reminders;
 
 namespace Dudu.App.Presentation;
 
@@ -26,6 +27,25 @@ public sealed class ReminderDueSink : IReminderDueSink
         _gateway = gateway ?? throw new ArgumentNullException(nameof(gateway));
     }
 
+    private static DateTimeOffset NextLocalMidnight(DateTimeOffset dueUtc, string timeZoneId)
+    {
+        var timeZone = TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
+        var midnight = TimeZoneInfo.ConvertTime(dueUtc, timeZone).Date.AddDays(1);
+        while (timeZone.IsInvalidTime(midnight))
+        {
+            midnight = midnight.AddMinutes(1);
+        }
+
+        if (timeZone.IsAmbiguousTime(midnight))
+        {
+            return timeZone.GetAmbiguousTimeOffsets(midnight)
+                .Select(offset => new DateTimeOffset(midnight, offset).ToUniversalTime())
+                .Min();
+        }
+
+        return new DateTimeOffset(midnight, timeZone.GetUtcOffset(midnight)).ToUniversalTime();
+    }
+
     public async Task NotifyAsync(
         ReminderOccurrence occurrence,
         CancellationToken cancellationToken)
@@ -37,13 +57,22 @@ public sealed class ReminderDueSink : IReminderDueSink
             var reminders = await _reminders.ListAsync(cancellationToken);
             var reminder = reminders.FirstOrDefault(candidate =>
                 string.Equals(candidate.Id, occurrence.ReminderId, StringComparison.Ordinal));
-            if (reminder is null)
+            if (reminder is null || !reminder.Enabled)
             {
                 return;
             }
 
-            var item = DurableNotification.Reminder(reminder.Id, reminder.Title);
-            var bypass = reminder.QuietHoursBehavior == QuietHoursBehavior.DeliverImmediately;
+            var routine = reminder.Id is LocalReminderDefaults.EveningCheckInId or LocalReminderDefaults.BedtimeId;
+            var body = reminder.Id == LocalReminderDefaults.EveningCheckInId
+                ? $"{reminder.Details} open Home to check in."
+                : reminder.Details;
+            var item = DurableNotification.Reminder(
+                reminder.Id,
+                reminder.Title,
+                body: routine ? body : null,
+                animationKey: reminder.Id == LocalReminderDefaults.BedtimeId ? "sleep" : null,
+                expiresUtc: routine ? NextLocalMidnight(occurrence.DueUtc, reminder.LocalTimeZoneId) : null);
+            var bypass = !routine && reminder.QuietHoursBehavior == QuietHoursBehavior.DeliverImmediately;
             await _gateway().PublishAsync(item, bypass, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

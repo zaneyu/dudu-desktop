@@ -5,7 +5,8 @@
  * properties, so this file stubs them rather than pulling in a DOM implementation; the real
  * page is covered end-to-end by `e2e/`.
  */
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { addRecentStatus, StatusTracker } from "../sender-src/status.js";
 import { MessageComposer, type ComposerElements } from "../sender-src/composer.js";
 import { createRecipientForTest } from "../sender-src/crypto.js";
 import {
@@ -106,7 +107,7 @@ function buildComposer(): ComposerHarness {
     { ...elements, reactionInputs: [] } as unknown as ComposerElements,
     { onUnauthorized: () => void (unauthorized += 1) },
   );
-  composer.setRecipientPublicKey(RECIPIENT_PUBLIC_KEY);
+  composer.setRecipientPublicKey(RECIPIENT_PUBLIC_KEY, "device-1");
   return { composer, elements, unauthorizedCount: () => unauthorized };
 }
 
@@ -242,6 +243,8 @@ describe("composer draft id", () => {
     expect(harness.unauthorizedCount()).toBe(1);
 
     sendStatus = 202;
+    harness.composer.setRecipientPublicKey(RECIPIENT_PUBLIC_KEY, "device-1");
+    harness.elements.textArea.value = "same note, unchanged";
     harness.elements.form.dispatch("submit");
     await waitFor(() => posted.length === 2);
 
@@ -260,7 +263,7 @@ describe("composer draft id", () => {
     expect(harness.elements.sendStatus.textContent).toBe("write something first");
   });
 
-  it("reuses the message id for an identical retry that was not a 401", async () => {
+  it("resends the exact encrypted envelope for an unchanged retry", async () => {
     const posted: EncryptedEnvelopeV1[] = [];
     let status = 500;
     installFetch((url, init) => {
@@ -281,7 +284,40 @@ describe("composer draft id", () => {
     harness.elements.form.dispatch("submit");
     await waitFor(() => posted.length === 2);
 
-    expect(posted[1].messageId).toBe(posted[0].messageId);
+    expect(posted[1]).toEqual(posted[0]);
+  });
+});
+
+describe("sender status polling", () => {
+  it("stops polling when a queued message status is no longer available", async () => {
+    vi.useFakeTimers();
+    const entries = new Map<string, string>();
+    vi.stubGlobal("sessionStorage", {
+      getItem: (key: string) => entries.get(key) ?? null,
+      setItem: (key: string, value: string) => entries.set(key, value),
+      removeItem: (key: string) => entries.delete(key),
+    });
+    vi.stubGlobal("document", {
+      visibilityState: "visible",
+      createElement: () => ({ textContent: "" }),
+    });
+    const fetchStatus = vi.fn(async () => new Response(null, { status: 404 }));
+    vi.stubGlobal("fetch", fetchStatus);
+    const replaceChildren = vi.fn();
+    const tracker = new StatusTracker({ replaceChildren } as unknown as HTMLElement, vi.fn());
+    try {
+      addRecentStatus("test-message", "queued");
+      tracker.start();
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(fetchStatus).toHaveBeenCalledTimes(1);
+      expect(replaceChildren).toHaveBeenLastCalledWith({ textContent: "status no longer available" });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(fetchStatus).toHaveBeenCalledTimes(1);
+    } finally {
+      tracker.stop();
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
   });
 });
 

@@ -138,6 +138,7 @@ export interface PairedFixture {
   deviceId: string;
   desktopToken: string;
   sessionCookie: string;
+  recipientPublicKey: string;
   sender: {
     postMessage(envelope: EncryptedEnvelopeV1): Promise<Response>;
     status(messageId: string): Promise<unknown>;
@@ -167,12 +168,18 @@ export async function pairedFixture(): Promise<PairedFixture> {
     deviceId: registration.deviceId,
     desktopToken: registration.desktopToken,
     sessionCookie,
+    recipientPublicKey,
     sender: {
       postMessage(envelope: EncryptedEnvelopeV1): Promise<Response> {
         return exports.default.fetch(
           new Request(`${BASE_URL}/v1/messages`, {
             method: "POST",
-            headers: jsonHeaders({ Origin: BASE_URL, Cookie: sessionCookie }),
+            headers: jsonHeaders({
+              Origin: BASE_URL,
+              Cookie: sessionCookie,
+              "X-Dudu-Device": registration.deviceId,
+              "X-Dudu-Recipient-Key": recipientPublicKey,
+            }),
             body: JSON.stringify(envelope),
           }),
         );

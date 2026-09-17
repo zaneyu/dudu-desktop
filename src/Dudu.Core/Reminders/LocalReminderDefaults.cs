@@ -5,6 +5,9 @@ namespace Dudu.Core.Reminders;
 
 public static class LocalReminderDefaults
 {
+    public const string EveningCheckInId = "default-evening-checkin";
+    public const string BedtimeId = "default-bedtime";
+
     public static IReadOnlyList<Reminder> Create(
         Preferences preferences,
         DateTimeOffset nowUtc,
@@ -32,6 +35,26 @@ public static class LocalReminderDefaults
                 quietHours,
                 nowUtc,
                 timeZone),
+            CreateReminder(
+                EveningCheckInId,
+                "how was your day, ada?",
+                preferences.EveningCheckInEnabled,
+                new TimeOnly(20, 0),
+                null,
+                nowUtc,
+                timeZone,
+                "a little space to reflect. your check-in stays on this device.",
+                MissedOccurrencePolicy.Skip),
+            CreateReminder(
+                BedtimeId,
+                "shuijiaojiao, ada",
+                preferences.BedtimeRitualEnabled,
+                new TimeOnly(22, 0),
+                null,
+                nowUtc,
+                timeZone,
+                "time to wind down. goodnight, ada.",
+                MissedOccurrencePolicy.Skip),
         ];
     }
 
@@ -40,9 +63,11 @@ public static class LocalReminderDefaults
         string title,
         bool enabled,
         TimeOnly localTime,
-        QuietHours quietHours,
+        QuietHours? quietHours,
         DateTimeOffset nowUtc,
-        TimeZoneInfo timeZone)
+        TimeZoneInfo timeZone,
+        string? details = null,
+        MissedOccurrencePolicy missedPolicy = MissedOccurrencePolicy.LatestOnly)
     {
         var localNow = TimeZoneInfo.ConvertTime(nowUtc, timeZone);
         var date = DateOnly.FromDateTime(localNow.DateTime);
@@ -57,19 +82,18 @@ public static class LocalReminderDefaults
         // ambiguous fall-back hour so the default never lands an hour late.
         var resolvedUtc = ResolveLocalDue(localDue, timeZone);
 
-        // The initial due must honor quiet hours like every later occurrence: a
-        // default that lands inside the quiet window defers to its end instead of
-        // firing (or going stale) the moment it is seeded.
-        var dueUtc = QuietHoursPolicy.NextAllowedUtc(resolvedUtc, quietHours, timeZone);
+        var dueUtc = quietHours is null
+            ? resolvedUtc
+            : QuietHoursPolicy.NextAllowedUtc(resolvedUtc, quietHours, timeZone);
         return new Reminder(
             id,
             title,
-            null,
+            details,
             enabled,
             new RecurrenceRule.Daily(localTime),
             timeZone.Id,
             QuietHoursBehavior.WaitUntilQuietHoursEnd,
-            MissedOccurrencePolicy.LatestOnly,
+            missedPolicy,
             dueUtc,
             QuietHours: quietHours);
     }

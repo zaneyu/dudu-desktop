@@ -28,7 +28,15 @@ public sealed partial class HomePage : Page
 
     private async void Page_Loaded(object sender, RoutedEventArgs args)
     {
-        await ViewModel.RefreshAsync();
+        try
+        {
+            await ViewModel.RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            global::System.Diagnostics.Trace.TraceError("Dudu home refresh failed: {0}", exception);
+        }
+
         RefreshStartupRecovery();
     }
 

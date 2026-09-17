@@ -104,6 +104,59 @@ public sealed class RelayClientTests
         Assert.Empty(secretStore.Values);
     }
 
+    [Theory]
+    [InlineData(null, "token-2", "ABC123", "2026-01-01T00:00:00Z")]
+    [InlineData("device-2", "", "ABC123", "2026-01-01T00:00:00Z")]
+    [InlineData("device-2", "token-2", " ", "2026-01-01T00:00:00Z")]
+    [InlineData("device-2", "token-2", "ABC123", "not-a-date")]
+    public async Task Incomplete_registration_response_preserves_existing_secrets(
+        string? deviceId, string token, string code, string expiry)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            deviceId,
+            desktopToken = token,
+            pairingCode = code,
+            pairingCodeExpiresUtc = expiry,
+        });
+        var handler = new FakeHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.Created)
+        {
+            Content = JsonContent(json),
+        });
+        var store = new InMemorySecretStore();
+        store.Values[RelaySecretKeys.DeviceId] = Encoding.UTF8.GetBytes("device-1");
+        store.Values[RelaySecretKeys.DesktopToken] = Encoding.UTF8.GetBytes("token-1");
+        store.Values[RelaySecretKeys.DesktopTokenStaging] = Encoding.UTF8.GetBytes("staged-token");
+        var client = new RelayClient(new HttpClient(handler), store, new RelayOptions(BaseUrl));
+
+        await Assert.ThrowsAsync<RelayProtocolException>(() =>
+            client.RegisterAsync("public-key-spki", TestContext.Current.CancellationToken));
+
+        Assert.Equal("device-1", Encoding.UTF8.GetString(store.Values[RelaySecretKeys.DeviceId]));
+        Assert.Equal("token-1", Encoding.UTF8.GetString(store.Values[RelaySecretKeys.DesktopToken]));
+        Assert.Equal("staged-token", Encoding.UTF8.GetString(store.Values[RelaySecretKeys.DesktopTokenStaging]));
+    }
+
+    [Fact]
+    public async Task Registration_marker_is_removed_before_replacing_an_existing_token()
+    {
+        var handler = new FakeHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.Created)
+        {
+            Content = JsonContent(
+                "{\"deviceId\":\"device-2\",\"desktopToken\":\"token-2\",\"pairingCode\":\"ABC123\",\"pairingCodeExpiresUtc\":\"2026-01-01T00:00:00Z\"}"),
+        });
+        var store = new FailingSecretStore(RelaySecretKeys.DeviceId);
+        store.Values[RelaySecretKeys.DeviceId] = Encoding.UTF8.GetBytes("device-1");
+        store.Values[RelaySecretKeys.DesktopToken] = Encoding.UTF8.GetBytes("token-1");
+        var client = new RelayClient(new HttpClient(handler), store, new RelayOptions(BaseUrl));
+
+        await Assert.ThrowsAsync<IOException>(() =>
+            client.RegisterAsync("public-key-spki", TestContext.Current.CancellationToken));
+
+        Assert.False(store.Values.ContainsKey(RelaySecretKeys.DeviceId));
+        Assert.Equal("token-2", Encoding.UTF8.GetString(store.Values[RelaySecretKeys.DesktopToken]));
+    }
+
     [Fact]
     public async Task Unauthorized_response_throws_RelayUnauthorizedException()
     {

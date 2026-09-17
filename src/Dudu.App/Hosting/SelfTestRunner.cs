@@ -38,7 +38,6 @@ public static class SelfTestRunner
         var packsRoot = assetPacksRoot
             ?? Path.Combine(AppContext.BaseDirectory, "Assets", "Packs");
 
-        Directory.CreateDirectory(paths.Logs);
         var logger = new SelfTestFileLogger(Path.Combine(paths.Logs, "self-test.log"));
 
         ServiceProvider? services = null;
@@ -176,7 +175,17 @@ public static class SelfTestRunner
             var line = $"{DateTimeOffset.UtcNow:O} [{logLevel}] ({eventId.Id}) {formatter(state, null)}";
             lock (_gate)
             {
-                File.AppendAllLines(logFilePath, [line]);
+                try
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(logFilePath)
+                        ?? throw new InvalidOperationException("The self-test log has no directory."));
+                    File.AppendAllLines(logFilePath, [line]);
+                }
+                catch
+                {
+                    // Diagnostics must not turn a self-test failure into an
+                    // unobserved task or a hung process.
+                }
             }
         }
     }

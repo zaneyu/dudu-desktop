@@ -38,7 +38,8 @@ public sealed class MigrationRunner
 
     public async Task RunAsync(
         SqliteConnection connection,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool createBackups = true)
     {
         ArgumentNullException.ThrowIfNull(connection);
         Database.ConfigureConnection(connection);
@@ -51,7 +52,7 @@ public sealed class MigrationRunner
                 continue;
             }
 
-            if (File.Exists(_options.DatabasePath))
+            if (createBackups && File.Exists(_options.DatabasePath))
             {
                 await _backups.CreatePreMigrationBackupAsync(connection, cancellationToken);
             }

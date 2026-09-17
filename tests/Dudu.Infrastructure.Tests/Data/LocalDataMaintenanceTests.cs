@@ -36,6 +36,7 @@ public sealed class LocalDataMaintenanceTests
 
             var backupPath = Path.Combine(backups, "recoverable.db");
             var secretPath = Path.Combine(secrets, "pairing.bin");
+            var secretTempPath = Path.Combine(secrets, "pairing.bin.temporary.tmp");
             var restoreTempPath = options.DatabasePath + ".restore-abandoned";
             var restoreOldPath = options.DatabasePath + ".restore-old-abandoned";
             var restoreFailedPath = options.DatabasePath + ".restore-failed-abandoned";
@@ -44,6 +45,7 @@ public sealed class LocalDataMaintenanceTests
             await File.WriteAllTextAsync(restoreFailedPath, "failed", TestContext.Current.CancellationToken);
             await File.WriteAllTextAsync(backupPath, "backup", TestContext.Current.CancellationToken);
             await File.WriteAllTextAsync(secretPath, "secret", TestContext.Current.CancellationToken);
+            await File.WriteAllTextAsync(secretTempPath, "secret temp", TestContext.Current.CancellationToken);
 
             var service = new LocalDataMaintenanceService(options, database, secrets);
             await service.DeleteAllUserDataAsync(TestContext.Current.CancellationToken);
@@ -57,6 +59,7 @@ public sealed class LocalDataMaintenanceTests
             Assert.Equal(0L, await ScalarAsync(verify, "SELECT COUNT(*) FROM local_notes WHERE is_default = 0;"));
             Assert.False(File.Exists(backupPath));
             Assert.False(File.Exists(secretPath));
+            Assert.False(File.Exists(secretTempPath));
             Assert.False(File.Exists(restoreTempPath));
             Assert.False(File.Exists(restoreOldPath));
             Assert.False(File.Exists(restoreFailedPath));

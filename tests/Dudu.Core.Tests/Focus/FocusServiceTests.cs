@@ -92,6 +92,23 @@ public sealed class FocusServiceTests
     }
 
     [Fact]
+    public async Task Extension_after_an_overnight_pause_uses_focus_time_not_wall_clock_time()
+    {
+        var fixture = FocusFixture.Started(TimeSpan.FromMinutes(25));
+        await fixture.Service.PauseAsync(fixture.SessionId, fixture.CancellationToken);
+        fixture.Clock.Advance(TimeSpan.FromHours(24));
+        await fixture.Service.ResumeAsync(fixture.SessionId, fixture.CancellationToken);
+        fixture.Clock.Advance(TimeSpan.FromMinutes(5));
+
+        var result = await fixture.Service.ExtendAsync(
+            fixture.SessionId,
+            TimeSpan.FromMinutes(5),
+            fixture.CancellationToken);
+
+        Assert.Equal(TimeSpan.FromMinutes(25), result.Remaining);
+    }
+
+    [Fact]
     public async Task Early_end_records_ended_early()
     {
         var fixture = FocusFixture.Started(TimeSpan.FromMinutes(25));
@@ -227,6 +244,35 @@ public sealed class FocusServiceTests
     }
 
     [Fact]
+    public async Task Paused_extension_counts_focus_already_consumed_before_the_pause()
+    {
+        var clock = new FakeClock("2026-09-11T10:00:00Z");
+        var repository = new InMemoryFocusRepository();
+        var id = Guid.NewGuid();
+        await repository.SaveAsync(
+            new FocusSession(
+                id,
+                null,
+                clock.UtcNow.AddHours(-22),
+                null,
+                TimeSpan.FromHours(1),
+                FocusStatus.Paused,
+                clock.UtcNow,
+                TimeSpan.FromHours(22)),
+            TestContext.Current.CancellationToken);
+        var service = new FocusService(repository, clock);
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() =>
+            service.ExtendAsync(id, TimeSpan.FromHours(2), TestContext.Current.CancellationToken));
+
+        var result = await service.ExtendAsync(
+            id,
+            TimeSpan.FromHours(1),
+            TestContext.Current.CancellationToken);
+        Assert.Equal(TimeSpan.FromHours(2), result.Remaining);
+    }
+
+    [Fact]
     public async Task Extend_rejects_a_paused_remainder_pushed_past_24_hours()
     {
         var clock = new FakeClock("2026-09-11T10:00:00Z");
@@ -258,6 +304,62 @@ public sealed class FocusServiceTests
 
         Assert.Equal(TimeSpan.FromHours(24), paused.Remaining);
         Assert.Equal(TimeSpan.FromHours(24), repository.Sessions[id].RemainingWhenPaused);
+    }
+
+    [Theory]
+    [InlineData(1499, FocusStatus.EndedEarly)]
+    [InlineData(1500, FocusStatus.Completed)]
+    [InlineData(1501, FocusStatus.Completed)]
+    public async Task End_classifies_the_session_using_its_deadline(int elapsedSeconds, FocusStatus expected)
+    {
+        var fixture = FocusFixture.Started(TimeSpan.FromMinutes(25));
+        fixture.Clock.Advance(TimeSpan.FromSeconds(elapsedSeconds));
+
+        var result = await fixture.Service.EndAsync(fixture.SessionId, fixture.CancellationToken);
+
+        Assert.Equal(expected, result.Status);
+        Assert.Equal(TimeSpan.Zero, result.Remaining);
+        Assert.Equal(expected, fixture.Repository.Sessions[fixture.SessionId].Status);
+        Assert.False(await fixture.Service.CompleteExpiredAsync(fixture.SessionId, fixture.CancellationToken));
+    }
+
+    [Fact]
+    public async Task Ending_a_paused_session_remains_an_early_end_after_wall_clock_time_elapses()
+    {
+        var fixture = FocusFixture.Started(TimeSpan.FromMinutes(25));
+        await fixture.Service.PauseAsync(fixture.SessionId, fixture.CancellationToken);
+        fixture.Clock.Advance(TimeSpan.FromDays(2));
+
+        var ended = await fixture.Service.EndAsync(fixture.SessionId, fixture.CancellationToken);
+
+        Assert.Equal(FocusStatus.EndedEarly, ended.Status);
+    }
+
+    [Fact]
+    public async Task Concurrent_end_and_expiry_cannot_record_an_expired_session_as_ended_early()
+    {
+        var fixture = FocusFixture.Started(TimeSpan.FromMinutes(25));
+        fixture.Clock.Advance(TimeSpan.FromMinutes(25));
+        fixture.Repository.CoordinateReads = true;
+        var token = fixture.CancellationToken;
+
+        var end = Task.Run(() => CaptureAsync(() => fixture.Service.EndAsync(fixture.SessionId, token)));
+        var expiry = Task.Run(() => fixture.Service.CompleteExpiredAsync(fixture.SessionId, token));
+        await Task.WhenAll(end, expiry);
+        var endResult = await end;
+        var expiryResult = await expiry;
+
+        Assert.Equal(FocusStatus.Completed, fixture.Repository.Sessions[fixture.SessionId].Status);
+        Assert.Equal(2, fixture.Repository.CompareAndSetAttempts);
+        Assert.Equal(!expiryResult, endResult.Succeeded);
+        if (endResult.Succeeded)
+        {
+            Assert.Equal(FocusStatus.Completed, endResult.Snapshot!.Status);
+        }
+        else
+        {
+            Assert.IsType<InvalidOperationException>(endResult.Exception);
+        }
     }
 
     private sealed class FocusFixture

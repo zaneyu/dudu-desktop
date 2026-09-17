@@ -96,6 +96,7 @@ public sealed class LocalDataMaintenanceService
         DeleteFiles(_options.BackupDirectory, "*.db", cancellationToken);
         DeleteRestoreArtifacts(cancellationToken);
         DeleteFiles(_secretsDirectory, "*.bin", cancellationToken);
+        DeleteFiles(_secretsDirectory, "*.tmp", cancellationToken);
     }
 
     private static void DeleteFiles(
@@ -117,6 +118,7 @@ public sealed class LocalDataMaintenanceService
         if (directory is null || !Directory.Exists(directory)) return;
 
         var databasePath = Path.GetFullPath(_options.DatabasePath);
+        var suffix = DatabaseBackupService.RecoverySuffix;
         var prefixes = new[]
         {
             databasePath + ".restore-",
@@ -128,6 +130,7 @@ public sealed class LocalDataMaintenanceService
             cancellationToken.ThrowIfCancellationRequested();
             if (path.Equals(databasePath + "-wal", StringComparison.OrdinalIgnoreCase)
                 || path.Equals(databasePath + "-shm", StringComparison.OrdinalIgnoreCase)
+                || path.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)
                 || prefixes.Any(prefix => path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
             {
                 File.Delete(path);

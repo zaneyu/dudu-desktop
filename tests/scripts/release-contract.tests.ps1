@@ -366,6 +366,9 @@ Assert-Contains "smoke test uses the app data-root override" $smoke 'DUDU_DATA_R
 Assert-Contains "smoke test uses an isolated installer directory" $smoke '"dudu-installer-smoke-\$runId"'
 Assert-Contains "smoke test creates an outside sentinel" $smoke 'dudu-installer-smoke-sentinel-\$runId'
 Assert-Contains "smoke test can exercise a running app during upgrade" $smoke 'ExerciseRunningApp'
+Assert-Contains "smoke test can exercise a normal interactive launch" $smoke 'ExerciseNormalLaunch'
+Assert-Contains "normal launch checks startup failure diagnostics" $smoke 'startup-failure\.log'
+Assert-Contains "normal launch closes the exact process cleanly" $smoke 'Close-NormalLaunchApp'
 Assert-True "installer contains no image-wide Dudu taskkill" ($iss -notmatch 'taskkill\s+/IM\s+Dudu\.App\.exe')
 Assert-Contains "Inno download verifies before Start-Process" $innoScript 'Assert-PinnedInnoSetupFile -Path \$downloadPath'
 Assert-Contains "app copies the private animation pack" $appProject '<Content Include="Assets/Packs/private-dudu/\*\*" CopyToOutputDirectory="PreserveNewest" />'

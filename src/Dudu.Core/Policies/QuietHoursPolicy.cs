@@ -67,7 +67,7 @@ public static class QuietHoursPolicy
         }
 
         var localEnd = localDate.ToDateTime(quietHours.End, DateTimeKind.Unspecified);
-        return ResolveLocalBoundary(localEnd, timeZone);
+        return ResolveLocalBoundary(localEnd, timeZone, utc);
     }
 
     private static bool IsQuiet(
@@ -83,7 +83,8 @@ public static class QuietHoursPolicy
 
     private static DateTimeOffset ResolveLocalBoundary(
         DateTime localBoundary,
-        TimeZoneInfo timeZone)
+        TimeZoneInfo timeZone,
+        DateTimeOffset notBeforeUtc)
     {
         while (timeZone.IsInvalidTime(localBoundary))
         {
@@ -92,11 +93,10 @@ public static class QuietHoursPolicy
 
         if (timeZone.IsAmbiguousTime(localBoundary))
         {
-            var earliestUtc = timeZone.GetAmbiguousTimeOffsets(localBoundary)
+            return timeZone.GetAmbiguousTimeOffsets(localBoundary)
                 .Select(offset => new DateTimeOffset(localBoundary, offset).ToUniversalTime())
+                .Where(candidate => candidate >= notBeforeUtc)
                 .Min();
-
-            return earliestUtc;
         }
 
         var offsetAtBoundary = timeZone.GetUtcOffset(localBoundary);

@@ -147,7 +147,12 @@ describe("message status lifetime", () => {
     const cookie = redeemed.headers.get("set-cookie")?.split(";")[0] ?? "";
     const resubmit = await fetchWorker("/v1/messages", {
       method: "POST",
-      headers: jsonHeaders({ Origin: BASE_URL, Cookie: cookie }),
+      headers: jsonHeaders({
+        Origin: BASE_URL,
+        Cookie: cookie,
+        "X-Dudu-Device": paired.deviceId,
+        "X-Dudu-Recipient-Key": TEST_PUBLIC_KEY,
+      }),
       body: JSON.stringify(envelope),
     });
     expect(resubmit.status).toBe(202);

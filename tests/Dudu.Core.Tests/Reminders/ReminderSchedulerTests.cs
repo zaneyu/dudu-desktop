@@ -420,17 +420,186 @@ public sealed class ReminderSchedulerTests
         {
             return ReminderScheduler.NextOccurrence(_reminder, _nowUtc, _timeZone);
         }
-
-        private static TimeZoneInfo FindPacificTimeZone()
-        {
-            try
-            {
-                return TimeZoneInfo.FindSystemTimeZoneById("Pacific Standard Time");
-            }
-            catch (TimeZoneNotFoundException)
-            {
-                return TimeZoneInfo.FindSystemTimeZoneById("America/Los_Angeles");
-            }
-        }
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Quiet_deferral_preserves_a_once_occurrence_until_delivery(bool snoozed)
+    {
+        var due = DateTimeOffset.Parse("2026-09-11T23:00:00Z");
+        var reminder = ReminderBuilder.AtLocalTime(23, 0)
+            .WithQuietHours(new QuietHours(true, new TimeOnly(22, 0), new TimeOnly(7, 0)))
+            .Build() with
+        {
+            Rule = new RecurrenceRule.Once(),
+            SnoozedUntilUtc = snoozed ? due : null,
+        };
+        var expected = DateTimeOffset.Parse("2026-09-12T07:00:00Z");
+
+        var deferred = ReminderScheduler.Reconcile(reminder, due, due, TimeZoneInfo.Utc);
+
+        Assert.Empty(deferred.DueNow);
+        Assert.Equal(expected, deferred.NextUtc);
+        if (!snoozed)
+        {
+            Assert.Equal(expected, ReminderScheduler.NextOccurrence(reminder, due, TimeZoneInfo.Utc));
+        }
+        reminder = reminder with { NextDueUtc = deferred.NextUtc, SnoozedUntilUtc = null };
+        var delivered = ReminderScheduler.Reconcile(reminder, expected, expected, TimeZoneInfo.Utc);
+        Assert.Equal(expected, Assert.Single(delivered.DueNow).DueUtc);
+        Assert.Null(delivered.NextUtc);
+        reminder = reminder with { NextDueUtc = delivered.NextUtc };
+        Assert.Empty(ReminderScheduler.Reconcile(reminder, expected, expected.AddMinutes(1), TimeZoneInfo.Utc).DueNow);
+    }
+
+    [Fact]
+    public void Multi_day_catch_up_keeps_the_latest_quiet_deferral()
+    {
+        var reminder = ReminderBuilder.AtLocalTime(23, 0)
+            .WithQuietHours(new QuietHours(true, new TimeOnly(22, 0), new TimeOnly(7, 0)))
+            .Build();
+        var expected = DateTimeOffset.Parse("2026-09-13T07:00:00Z");
+        var result = ReminderScheduler.Reconcile(reminder, reminder.NextDueUtc!.Value,
+            DateTimeOffset.Parse("2026-09-12T23:30:00Z"), TimeZoneInfo.Utc);
+
+        Assert.Empty(result.DueNow);
+        Assert.Equal(expected, result.NextUtc);
+        reminder = reminder with { NextDueUtc = result.NextUtc };
+        var delivered = ReminderScheduler.Reconcile(reminder, expected, expected, TimeZoneInfo.Utc);
+        Assert.Equal(expected, Assert.Single(delivered.DueNow).DueUtc);
+        Assert.Equal(expected.AddDays(1), delivered.NextUtc);
+    }
+
+    [Theory]
+    [InlineData("once")]
+    [InlineData("daily")]
+    [InlineData("interval")]
+    public void Catch_up_waits_when_the_actual_delivery_time_is_quiet(string rule)
+    {
+        var reminder = ReminderBuilder.AtLocalTime(9, 0)
+            .WithQuietHours(new QuietHours(true, new TimeOnly(22, 0), new TimeOnly(7, 0)))
+            .Build() with { Rule = RuleForTest(rule) };
+        var expected = DateTimeOffset.Parse("2026-09-12T07:00:00Z");
+        var result = ReminderScheduler.Reconcile(reminder, reminder.NextDueUtc!.Value,
+            DateTimeOffset.Parse("2026-09-11T23:00:00Z"), TimeZoneInfo.Utc);
+
+        Assert.Empty(result.DueNow);
+        Assert.Equal(expected, result.NextUtc);
+        reminder = reminder with { NextDueUtc = result.NextUtc };
+        var delivered = ReminderScheduler.Reconcile(reminder, expected, expected, TimeZoneInfo.Utc);
+        Assert.Equal(expected, Assert.Single(delivered.DueNow).DueUtc);
+        Assert.True(delivered.NextUtc is null || delivered.NextUtc > expected);
+    }
+
+    [Theory]
+    [InlineData("once", 0, true)]
+    [InlineData("daily", 0, true)]
+    [InlineData("interval", 0, true)]
+    [InlineData("once", 30, true)]
+    [InlineData("daily", 60, true)]
+    [InlineData("interval", 61, false)]
+    [InlineData("once", 3600, false)]
+    [InlineData("daily", 3600, false)]
+    [InlineData("interval", 3600, false)]
+    public void Skip_distinguishes_on_time_ticks_from_missed_occurrences(string rule, int secondsLate, bool delivers)
+    {
+        var reminder = ReminderBuilder.AtLocalTime(9, 0).Build() with
+        {
+            Rule = RuleForTest(rule),
+            MissedPolicy = MissedOccurrencePolicy.Skip,
+        };
+        var due = reminder.NextDueUtc!.Value;
+        var result = ReminderScheduler.Reconcile(reminder, due, due.AddSeconds(secondsLate), TimeZoneInfo.Utc);
+
+        Assert.Equal(delivers ? 1 : 0, result.DueNow.Count);
+        if (delivers)
+        {
+            Assert.Equal(due, result.DueNow[0].DueUtc);
+        }
+        Assert.True(result.NextUtc is null || result.NextUtc > due.AddSeconds(secondsLate));
+    }
+
+    [Fact]
+    public void Skip_delivers_a_current_interval_after_skipping_older_intervals()
+    {
+        var reminder = ReminderBuilder.Every(TimeSpan.FromHours(2))
+            .WithMissedPolicy(MissedOccurrencePolicy.Skip).Build();
+        var now = DateTimeOffset.Parse("2026-09-11T18:00:00Z");
+        var result = ReminderScheduler.Reconcile(reminder, reminder.NextDueUtc!.Value, now, TimeZoneInfo.Utc);
+
+        Assert.Equal(now, Assert.Single(result.DueNow).DueUtc);
+        Assert.Equal(now.AddHours(2), result.NextUtc);
+    }
+
+    [Fact]
+    public void Skip_does_not_resurrect_a_missed_occurrence_because_delivery_is_quiet()
+    {
+        var reminder = ReminderBuilder.AtLocalTime(9, 0)
+            .WithQuietHours(new QuietHours(true, new TimeOnly(22, 0), new TimeOnly(7, 0)))
+            .WithMissedPolicy(MissedOccurrencePolicy.Skip).Build();
+        var result = ReminderScheduler.Reconcile(reminder, reminder.NextDueUtc!.Value,
+            DateTimeOffset.Parse("2026-09-11T23:00:00Z"), TimeZoneInfo.Utc);
+
+        Assert.Empty(result.DueNow);
+        Assert.Equal(DateTimeOffset.Parse("2026-09-12T09:00:00Z"), result.NextUtc);
+    }
+
+    [Fact]
+    public void Skip_keeps_an_on_time_occurrence_deferred_by_quiet_hours()
+    {
+        var reminder = ReminderBuilder.AtLocalTime(23, 0)
+            .WithQuietHours(new QuietHours(true, new TimeOnly(22, 0), new TimeOnly(7, 0)))
+            .WithMissedPolicy(MissedOccurrencePolicy.Skip).Build();
+        var due = reminder.NextDueUtc!.Value;
+        var deferred = ReminderScheduler.Reconcile(reminder, due, due, TimeZoneInfo.Utc);
+        Assert.Empty(deferred.DueNow);
+        Assert.Equal(due.AddHours(8), deferred.NextUtc);
+        reminder = reminder with { NextDueUtc = deferred.NextUtc };
+        var delivered = ReminderScheduler.Reconcile(reminder, deferred.NextUtc!.Value,
+            deferred.NextUtc.Value.AddSeconds(30), TimeZoneInfo.Utc);
+        Assert.Equal(deferred.NextUtc, Assert.Single(delivered.DueNow).DueUtc);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void Save_boundary_rejects_nonpositive_intervals(int seconds)
+    {
+        var reminder = ReminderBuilder.Every(TimeSpan.FromSeconds(seconds)).Build();
+        Assert.Throws<ArgumentOutOfRangeException>(() => ReminderScheduler.ValidateForSave(reminder));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Save_boundary_rejects_undefined_weekdays_even_when_mixed_with_valid_days(bool mixed)
+    {
+        var days = new HashSet<DayOfWeek> { (DayOfWeek)7 };
+        if (mixed)
+        {
+            days.Add(DayOfWeek.Monday);
+        }
+        var reminder = ReminderBuilder.AtLocalTime(9, 0).Build() with
+        {
+            Rule = new RecurrenceRule.SelectedWeekdays(days, new TimeOnly(9, 0)),
+        };
+        Assert.Throws<ArgumentException>(() => ReminderScheduler.ValidateForSave(reminder));
+    }
+
+    [Fact]
+    public void Save_boundary_accepts_valid_intervals_and_weekdays()
+    {
+        ReminderScheduler.ValidateForSave(ReminderBuilder.Every(TimeSpan.FromSeconds(1)).Build());
+        ReminderScheduler.ValidateForSave(ReminderBuilder.AtLocalTime(9, 0).On(DayOfWeek.Monday).Build());
+    }
+
+    private static RecurrenceRule RuleForTest(string rule) => rule switch
+    {
+        "once" => new RecurrenceRule.Once(),
+        "daily" => new RecurrenceRule.Daily(new TimeOnly(9, 0)),
+        "interval" => new RecurrenceRule.Interval(TimeSpan.FromHours(2)),
+        _ => throw new ArgumentOutOfRangeException(nameof(rule)),
+    };
+
 }

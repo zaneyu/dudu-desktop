@@ -39,6 +39,40 @@ public sealed class CheckInServiceTests
         Assert.Single(repository.Saved);
     }
 
+    [Fact]
+    public async Task Summary_includes_check_ins_from_both_sides_of_an_ambiguous_midnight()
+    {
+        var rule = TimeZoneInfo.AdjustmentRule.CreateAdjustmentRule(
+            new DateTime(2026, 1, 1), new DateTime(2026, 12, 31), TimeSpan.FromHours(1),
+            TimeZoneInfo.TransitionTime.CreateFixedDateRule(new DateTime(1, 1, 1, 0, 0, 0), 3, 1),
+            TimeZoneInfo.TransitionTime.CreateFixedDateRule(new DateTime(1, 1, 1, 1, 0, 0), 9, 12));
+        var zone = TimeZoneInfo.CreateCustomTimeZone(
+            "ambiguous-local", TimeSpan.FromHours(1), "local", "standard", "daylight", [rule]);
+        Assert.True(zone.IsAmbiguousTime(new DateTime(2026, 9, 12, 0, 0, 0)));
+        var clock = new MutableClock(DateTimeOffset.Parse("2026-09-11T22:30:00Z")) { LocalTimeZone = zone };
+        var repository = new InMemoryCheckInRepository();
+        var service = new CheckInService(repository, clock);
+        var token = TestContext.Current.CancellationToken;
+
+        await service.RecordAsync(MoodChoice.Great, token);
+        clock.UtcNow = DateTimeOffset.Parse("2026-09-11T23:30:00Z");
+        await service.RecordAsync(MoodChoice.Tired, token);
+        clock.UtcNow = DateTimeOffset.Parse("2026-09-12T12:00:00Z");
+
+        var summary = await service.SummarizeAsync(1, token);
+
+        Assert.Equal(1, summary.Counts[MoodChoice.Great]);
+        Assert.Equal(1, summary.Counts[MoodChoice.Tired]);
+        Assert.Equal(2, summary.Recent.Count);
+    }
+
+    private sealed class MutableClock(DateTimeOffset now) : IClock
+    {
+        public DateTimeOffset UtcNow { get; set; } = now;
+
+        public TimeZoneInfo LocalTimeZone { get; set; } = TimeZoneInfo.Utc;
+    }
+
     private sealed class FakeClock(DateTimeOffset now) : IClock
     {
         public DateTimeOffset UtcNow { get; } = now;
@@ -61,5 +95,4 @@ public sealed class CheckInServiceTests
             CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<MoodCheckIn>>(
                 Saved.Where(checkIn => checkIn.CreatedUtc >= sinceUtc).ToArray());
-    }
-}
+    }}

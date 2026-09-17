@@ -49,7 +49,7 @@ describe("encrypted message queue", () => {
     expect(await paired.desktop.poll()).toEqual([]);
   });
 
-  it("compares offset deliver-after timestamps by instant, not string order", async () => {
+  it("rejects noncanonical offset deliver-after timestamps", async () => {
     const paired = await pairedFixture();
     const deliveryInstant = new Date(Date.now() + 5 * 60_000);
     // The -14:00 spelling is lexically earlier than the current UTC spelling while representing a
@@ -63,8 +63,18 @@ describe("encrypted message queue", () => {
       deliverAfterUtc: offsetTimestamp,
     });
 
-    expect((await paired.sender.postMessage(envelope)).status).toBe(202);
-    expect(await paired.desktop.poll()).toEqual([]);
+    expect((await paired.sender.postMessage(envelope)).status).toBe(422);
+  });
+
+  it("rejects an impossible deliver-after calendar instant", async () => {
+    const paired = await pairedFixture();
+    const nextDay = new Date(Date.now() + 24 * 60 * 60_000).toISOString().slice(0, 10);
+    const envelope = await validEnvelope({
+      messageId: crypto.randomUUID(),
+      deliverAfterUtc: `${nextDay}T24:00:00Z`,
+    });
+
+    expect((await paired.sender.postMessage(envelope)).status).toBe(422);
   });
 
   it("bounds one poll page by serialized bytes, and returns the remainder after the ack", async () => {
@@ -145,7 +155,12 @@ describe("encrypted message queue", () => {
     const response = await exports.default.fetch(
       new Request("https://example.test/v1/messages", {
         method: "POST",
-        headers: jsonHeaders({ Origin: "https://example.test", Cookie: paired.sessionCookie }),
+        headers: jsonHeaders({
+          Origin: "https://example.test",
+          Cookie: paired.sessionCookie,
+          "X-Dudu-Device": paired.deviceId,
+          "X-Dudu-Recipient-Key": paired.recipientPublicKey,
+        }),
         body: JSON.stringify([1, 2, 3]),
       }),
     );

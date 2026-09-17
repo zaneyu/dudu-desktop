@@ -182,7 +182,9 @@ public sealed class CompanionFeatureContext
             async (_, updated, token) =>
             {
                 previousDefaults = (await Reminders.ListAsync(token))
-                    .Where(reminder => reminder.Id is "default-hydration" or "default-break")
+                    .Where(reminder => reminder.Id is "default-hydration" or "default-break"
+                        or Dudu.Core.Reminders.LocalReminderDefaults.EveningCheckInId
+                        or Dudu.Core.Reminders.LocalReminderDefaults.BedtimeId)
                     .ToArray();
                 await FeatureTransactions.SavePreferencesAndDefaultRemindersAsync(
                     updated,

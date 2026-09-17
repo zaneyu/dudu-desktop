@@ -18,6 +18,12 @@ public sealed record RestoreResult(
 
 public sealed class DatabaseBackupService
 {
+    /// <summary>Marker appended to files preserved from a corrupt pre-restore database. A
+    /// canonical name would be mistaken for the database itself on the next open; the suffix
+    /// keeps the recovery set inert until LocalDataMaintenanceService or reconciliation
+    /// disposes of it.</summary>
+    public const string RecoverySuffix = ".corrupt-recovery";
+
     private readonly DatabaseOptions _options;
     private readonly Database _database;
     private readonly Action<string, string> _moveFile;
@@ -109,22 +115,24 @@ public sealed class DatabaseBackupService
         var candidates = Directory.Exists(_options.BackupDirectory)
             ? Directory.GetFiles(_options.BackupDirectory, "*.db")
                 .OrderByDescending(Path.GetFileName, StringComparer.Ordinal)
-            : Enumerable.Empty<string>();
+                .ToArray()
+            : [];
 
-        var found = false;
+        var failure = default(RestoreFailure?);
         foreach (var candidate in candidates)
         {
-            found = true;
             var result = await RestoreAsync(candidate, cancellationToken);
             if (result.Restored)
             {
                 return result;
             }
+
+            failure ??= result.Failure;
         }
 
         return new RestoreResult(
             false,
-            found ? RestoreFailure.IntegrityCheckFailed : RestoreFailure.NotFound);
+            failure ?? RestoreFailure.NotFound);
     }
 
     public async Task<bool> IsValidBackupAsync(
@@ -138,6 +146,11 @@ public sealed class DatabaseBackupService
 
         try
         {
+            if (!await HasSqliteHeaderAsync(backupPath, cancellationToken))
+            {
+                return false;
+            }
+
             await using var connection = new SqliteConnection(
                 new SqliteConnectionStringBuilder
                 {
@@ -189,13 +202,14 @@ public sealed class DatabaseBackupService
             using var maintenance = await _database.EnterMaintenanceAsync(cancellationToken);
             Directory.CreateDirectory(Path.GetDirectoryName(_options.DatabasePath)
                 ?? throw new InvalidOperationException("The database path has no directory."));
-            await CheckpointCurrentDatabaseAsync(cancellationToken);
+            var checkpoint = await CheckpointCurrentDatabaseAsync(cancellationToken);
             var temporaryPath = _options.DatabasePath + ".restore-" + Guid.NewGuid().ToString("N");
             var stagedMainPath = _options.DatabasePath + ".restore-old-" + Guid.NewGuid().ToString("N");
             var stagedWalPath = stagedMainPath + "-wal";
             var stagedShmPath = stagedMainPath + "-shm";
             var stagedFiles = new List<(string CanonicalPath, string StagedPath)>();
             var installAttempted = false;
+            var recoverySetKept = false;
             try
             {
                 _beforeStaging?.Invoke();
@@ -204,21 +218,42 @@ public sealed class DatabaseBackupService
                 StageFile(_options.DatabasePath + "-wal", stagedWalPath, stagedFiles);
                 StageFile(_options.DatabasePath + "-shm", stagedShmPath, stagedFiles);
 
+                if (checkpoint.Corrupt && stagedFiles.Count > 0)
+                {
+                    // The corrupt current database is left on disk as a recovery set: it is not
+                    // silently destroyed, and startup reconciliation offers it back if the
+                    // restored replacement is ever found missing.
+                    recoverySetKept = true;
+                }
+
                 installAttempted = true;
                 _moveFile(temporaryPath, _options.DatabasePath);
-                CleanupStagedFiles(stagedFiles);
+                await MigrateRestoredDatabaseAsync(cancellationToken);
+                CleanupCanonicalSidecars();
+                if (!recoverySetKept)
+                {
+                    CleanupStagedFiles(stagedFiles);
+                }
+                _database.InvalidateInitialization();
                 return new RestoreResult(true, RestoreFailure.None, backupPath);
             }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            catch (Exception exception) when (
+                exception is IOException or UnauthorizedAccessException or SqliteException)
             {
                 Exception resultException = exception;
                 try
                 {
-                    if (installAttempted && File.Exists(_options.DatabasePath))
+                    if (installAttempted)
                     {
-                        File.Move(
-                            _options.DatabasePath,
-                            _options.DatabasePath + ".restore-failed-" + Guid.NewGuid().ToString("N"));
+                        SqliteConnection.ClearAllPools();
+                        CleanupCanonicalSidecars();
+                        if (File.Exists(_options.DatabasePath))
+                        {
+                            File.Move(
+                                _options.DatabasePath,
+                                _options.DatabasePath + ".restore-failed-" + Guid.NewGuid().ToString("N"),
+                                overwrite: true);
+                        }
                     }
 
                     foreach (var (_, stagedPath) in stagedFiles.AsEnumerable().Reverse())
@@ -226,11 +261,15 @@ public sealed class DatabaseBackupService
                         if (File.Exists(stagedPath))
                         {
                             var canonicalPath = stagedFiles.First(item => item.StagedPath == stagedPath).CanonicalPath;
-                            File.Move(stagedPath, canonicalPath);
+                            File.Move(stagedPath, canonicalPath, overwrite: true);
                         }
                     }
+
+                    recoverySetKept = false;
+                    _database.InvalidateInitialization();
                 }
-                catch (Exception rollbackException) when (rollbackException is IOException or UnauthorizedAccessException)
+                catch (Exception rollbackException) when (
+                    rollbackException is IOException or UnauthorizedAccessException or SqliteException)
                 {
                     resultException = new AggregateException(exception, rollbackException);
                 }
@@ -243,11 +282,217 @@ public sealed class DatabaseBackupService
                 {
                     TryDelete(temporaryPath);
                 }
+
+                if (recoverySetKept)
+                {
+                    foreach (var (_, stagedPath) in stagedFiles)
+                    {
+                        if (!File.Exists(stagedPath))
+                        {
+                            continue;
+                        }
+
+                        try
+                        {
+                            var canonicalPath = stagedFiles.First(item => item.StagedPath == stagedPath).CanonicalPath;
+                            File.Move(
+                                stagedPath,
+                                canonicalPath + RecoverySuffix,
+                                overwrite: true);
+                        }
+                        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                        {
+                        }
+                    }
+                }
             }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SqliteException)
         {
             return new RestoreResult(false, RestoreFailure.RestoreFailed, backupPath, exception);
+        }
+    }
+
+    private async Task MigrateRestoredDatabaseAsync(CancellationToken cancellationToken)
+    {
+        // MigrationRunner.RunAsync backs up before each migration; on a freshly restored
+        // database that would snapshot a pre-migration state into the backup set and, worse,
+        // run while the caller still holds only the maintenance lease. Migrations here must
+        // not recurse into backup creation.
+        var runner = new MigrationRunner(
+            _options);
+        await using var connection = new SqliteConnection(Database.ConnectionString(_options));
+        await connection.OpenAsync(cancellationToken);
+        Database.ConfigureConnection(connection);
+        await runner.RunAsync(connection, cancellationToken, createBackups: false);
+        await connection.CloseAsync();
+        SqliteConnection.ClearAllPools();
+    }
+
+    public async Task<bool> ReconcileInterruptedRestoreAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var databasePath = _options.DatabasePath;
+        var directory = Path.GetDirectoryName(databasePath)
+            ?? throw new InvalidOperationException("The database path has no directory.");
+        Directory.CreateDirectory(directory);
+
+        var temporaryPaths = SafeFiles(directory, databasePath + ".restore-", excludeOld: true, excludeFailed: true);
+        var stagedOldPaths = SafeFiles(directory, databasePath + ".restore-old-");
+        var stagedFailedPaths = SafeFiles(directory, databasePath + ".restore-failed-");
+        var recoveryPaths = SafeFiles(directory, databasePath + ".restore-old-")
+            .Where(path => path.EndsWith(RecoverySuffix, StringComparison.Ordinal))
+            .ToArray();
+
+        if (!File.Exists(databasePath))
+        {
+            // A crash between staging the old files aside and installing the replacement
+            // leaves no canonical database. The staged-old set is the pre-restore state, so
+            // the newest staged main goes back before anything can open the path in create
+            // mode and silently seed an empty database.
+            var stagedOld = MainFiles(stagedOldPaths)
+                .OrderByDescending(Path.GetFileName, StringComparer.Ordinal)
+                .FirstOrDefault();
+            if (stagedOld is not null)
+            {
+                CleanupCanonicalSidecars();
+                RecoverFileSet(stagedOld, stagedOldPaths, databasePath);
+                CleanupRestoreArtifacts(temporaryPaths, stagedOldPaths, stagedFailedPaths, recoveryPaths);
+                return true;
+            }
+
+            var recovered = recoveryPaths.FirstOrDefault(path =>
+                !path.EndsWith("-wal" + RecoverySuffix, StringComparison.Ordinal)
+                && !path.EndsWith("-shm" + RecoverySuffix, StringComparison.Ordinal));
+            if (recovered is not null)
+            {
+                CleanupCanonicalSidecars();
+                RecoverRecoverySet(recovered, recoveryPaths, databasePath);
+                CleanupRestoreArtifacts(temporaryPaths, stagedOldPaths, stagedFailedPaths, recoveryPaths);
+                return true;
+            }
+
+            return false;
+        }
+
+        if (await IsSqliteBackupCoreAsync(databasePath, cancellationToken))
+        {
+            CleanupRestoreArtifacts(temporaryPaths, stagedOldPaths, stagedFailedPaths, recoveryPaths);
+
+            return false;
+        }
+
+        // The canonical path exists but is not a readable database: either the install was
+        // interrupted mid-move (a `.restore-*` temp may hold the validated replacement) or the
+        // file itself is truncated. Prefer a valid `.restore-*` temp, then a staged-old set.
+        foreach (var replacement in MainFiles(temporaryPaths))
+        {
+            if (await IsSqliteBackupCoreAsync(replacement, cancellationToken))
+            {
+                CleanupCanonicalSidecars();
+                _moveFile(replacement, databasePath);
+                CleanupRestoreArtifacts(temporaryPaths, stagedOldPaths, stagedFailedPaths, recoveryPaths);
+
+                return true;
+            }
+        }
+
+        var stagedOldFallback = MainFiles(stagedOldPaths)
+            .OrderByDescending(Path.GetFileName, StringComparer.Ordinal)
+            .FirstOrDefault();
+        if (stagedOldFallback is not null)
+        {
+            CleanupCanonicalSidecars();
+            RecoverFileSet(stagedOldFallback, stagedOldPaths, databasePath);
+            CleanupRestoreArtifacts(temporaryPaths, stagedOldPaths, stagedFailedPaths, recoveryPaths);
+            return true;
+        }
+
+        var recoveredFallback = recoveryPaths.FirstOrDefault(path =>
+            !path.EndsWith("-wal" + RecoverySuffix, StringComparison.Ordinal)
+            && !path.EndsWith("-shm" + RecoverySuffix, StringComparison.Ordinal));
+        if (recoveredFallback is not null)
+        {
+            CleanupCanonicalSidecars();
+            RecoverRecoverySet(recoveredFallback, recoveryPaths, databasePath);
+            CleanupRestoreArtifacts(temporaryPaths, stagedOldPaths, stagedFailedPaths, recoveryPaths);
+            return true;
+        }
+
+        return false;
+    }
+
+    private void RecoverFileSet(
+        string stagedMainPath,
+        IEnumerable<string> stagedPaths,
+        string canonicalMainPath)
+    {
+        _moveFile(stagedMainPath, canonicalMainPath);
+        foreach (var sidecar in stagedPaths.Where(path =>
+                     path.EndsWith("-wal", StringComparison.Ordinal)
+                     || path.EndsWith("-shm", StringComparison.Ordinal)))
+        {
+            var canonicalSidecar = sidecar.EndsWith("-wal", StringComparison.Ordinal)
+                ? canonicalMainPath + "-wal"
+                : canonicalMainPath + "-shm";
+            if (File.Exists(sidecar))
+            {
+                _moveFile(sidecar, canonicalSidecar);
+            }
+        }
+    }
+
+    private void RecoverRecoverySet(
+        string recoveryMainPath,
+        IEnumerable<string> recoveryPaths,
+        string canonicalMainPath)
+    {
+        _moveFile(recoveryMainPath, canonicalMainPath);
+        foreach (var sidecar in recoveryPaths.Where(path =>
+                     path.EndsWith("-wal" + RecoverySuffix, StringComparison.Ordinal)
+                     || path.EndsWith("-shm" + RecoverySuffix, StringComparison.Ordinal)))
+        {
+            var canonicalSidecar = sidecar.Contains("-wal" + RecoverySuffix, StringComparison.Ordinal)
+                ? canonicalMainPath + "-wal"
+                : canonicalMainPath + "-shm";
+            if (File.Exists(sidecar))
+            {
+                _moveFile(sidecar, canonicalSidecar);
+            }
+        }
+    }
+
+    private void CleanupRestoreArtifacts(params IEnumerable<string>[] groups)
+    {
+        foreach (var path in groups.SelectMany(group => group).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            TryDelete(path);
+        }
+    }
+
+    private static IEnumerable<string> MainFiles(IEnumerable<string> paths) =>
+        paths.Where(path =>
+            !path.EndsWith("-wal", StringComparison.Ordinal)
+            && !path.EndsWith("-shm", StringComparison.Ordinal)
+            && !path.EndsWith(RecoverySuffix, StringComparison.Ordinal));
+
+    private static IReadOnlyList<string> SafeFiles(
+        string directory,
+        string prefix,
+        bool excludeOld = false,
+        bool excludeFailed = false)
+    {
+        try
+        {
+            return Directory.GetFiles(directory)
+                .Where(path => path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                .Where(path => !(excludeOld && path.Contains(".restore-old-", StringComparison.Ordinal)))
+                .Where(path => !(excludeFailed && path.Contains(".restore-failed-", StringComparison.Ordinal)))
+                .ToList();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return [];
         }
     }
 
@@ -272,7 +517,7 @@ public sealed class DatabaseBackupService
                     _deleteFile(path);
                 }
             }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SqliteException)
             {
                 // Rotation is best effort: a locked or unreadable file must not fail the backup
                 // that was just created. The next rotation retries the leftover file.
@@ -307,6 +552,13 @@ public sealed class DatabaseBackupService
         }
     }
 
+    private void CleanupCanonicalSidecars()
+    {
+        SqliteConnection.ClearAllPools();
+        TryDelete(_options.DatabasePath + "-wal");
+        TryDelete(_options.DatabasePath + "-shm");
+    }
+
     private void TryDelete(string path)
     {
         try
@@ -318,26 +570,63 @@ public sealed class DatabaseBackupService
         }
         catch (Exception)
         {
-            // Cleanup is intentionally best effort after the new database is canonical.
+            // Try the platform default once more when a test seam or transient wrapper fails.
+            try
+            {
+                File.Delete(path);
+            }
+            catch (Exception)
+            {
+            }
         }
     }
 
-    private async Task CheckpointCurrentDatabaseAsync(CancellationToken cancellationToken)
+    private async Task<CheckpointResult> CheckpointCurrentDatabaseAsync(CancellationToken cancellationToken)
     {
         if (!File.Exists(_options.DatabasePath))
         {
-            return;
+            return default;
         }
 
-        await using var connection = new SqliteConnection(Database.ConnectionString(_options));
-        await connection.OpenAsync(cancellationToken);
-        Database.ConfigureConnection(connection);
-        await using var command = connection.CreateCommand();
-        command.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
-        await command.ExecuteNonQueryAsync(cancellationToken);
-        await connection.CloseAsync();
-        SqliteConnection.ClearAllPools();
+        try
+        {
+            await using var connection = new SqliteConnection(Database.ConnectionString(_options));
+            await connection.OpenAsync(cancellationToken);
+            Database.ConfigureConnection(connection);
+            if (!await IsSqliteIntegrityOkAsync(connection, cancellationToken))
+            {
+                SqliteConnection.ClearAllPools();
+                return new CheckpointResult(true);
+            }
+            var schemaVersion = await ReadSchemaVersionAsync(connection, cancellationToken);
+            if (!schemaVersion.HasValue)
+            {
+                SqliteConnection.ClearAllPools();
+                return new CheckpointResult(true);
+            }
+            await using var command = connection.CreateCommand();
+            command.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+            await command.ExecuteNonQueryAsync(cancellationToken);
+            await connection.CloseAsync();
+            SqliteConnection.ClearAllPools();
+            return new CheckpointResult(false);
+        }
+        catch (SqliteException exception) when (
+            exception.SqliteErrorCode is SqliteErrorCorrupt
+                or SqliteErrorNotADatabase
+                )
+        {
+            SqliteConnection.ClearAllPools();
+            // Corruption is precisely the condition a restore exists to fix: report it so the
+            // caller keeps the unreadable file as a recovery set and installs the backup anyway.
+            // Every other failure (locks, permissions, disk errors) must still abort the restore.
+            return new CheckpointResult(true);
+        }
     }
+
+    private const int SqliteErrorCorrupt = 11;
+    private const int SqliteErrorNotADatabase = 26;
+    private readonly record struct CheckpointResult(bool Corrupt);
 
     private Task<bool> IsSqliteBackupAsync(
         string backupPath,
@@ -351,6 +640,11 @@ public sealed class DatabaseBackupService
         if (!File.Exists(backupPath)) return false;
         try
         {
+            if (!await HasSqliteHeaderAsync(backupPath, cancellationToken))
+            {
+                return false;
+            }
+
             await using var connection = new SqliteConnection(
                 new SqliteConnectionStringBuilder
                 {
@@ -363,6 +657,22 @@ public sealed class DatabaseBackupService
         }
         catch (SqliteException) { return false; }
         catch (IOException) { return false; }
+    }
+
+    private static async Task<bool> HasSqliteHeaderAsync(
+        string path,
+        CancellationToken cancellationToken)
+    {
+        var header = new byte[16];
+        await using var stream = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete,
+            bufferSize: 16,
+            options: FileOptions.Asynchronous | FileOptions.SequentialScan);
+        var read = await stream.ReadAsync(header, cancellationToken);
+        return read == header.Length && header.AsSpan().SequenceEqual("SQLite format 3\0"u8);
     }
 
     private static async Task<bool> IsSqliteIntegrityOkAsync(
