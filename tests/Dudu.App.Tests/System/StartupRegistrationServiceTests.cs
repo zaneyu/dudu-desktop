@@ -76,6 +76,26 @@ public sealed class StartupRegistrationServiceTests
     }
 
     [Fact]
+    public async Task Packaged_execution_uses_the_declared_startup_task_without_writing_a_shortcut()
+    {
+        var writer = new FakeWriter();
+        var task = new FakePackagedStartupTask();
+        await using var service = new StartupRegistrationService(
+            "/opt/Dudu.exe",
+            "/tmp/startup",
+            writer,
+            task);
+
+        await service.SetEnabledAsync(true, TestContext.Current.CancellationToken);
+        await service.SetEnabledAsync(false, TestContext.Current.CancellationToken);
+
+        Assert.Equal([true, false], task.Requests);
+        Assert.Empty(writer.Writes);
+        Assert.Empty(writer.Deletes);
+        Assert.False(service.IsEnabled);
+    }
+
+    [Fact]
     public async Task Settings_service_persists_startup_setting_after_registration()
     {
         var writer = new FakeWriter();
@@ -344,6 +364,18 @@ public sealed class StartupRegistrationServiceTests
 
         public Task DeleteAsync(string shortcutPath, CancellationToken cancellationToken) =>
             Task.CompletedTask;
+    }
+
+    private sealed class FakePackagedStartupTask : IPackagedStartupTaskRegistration
+    {
+        public List<bool> Requests { get; } = [];
+
+        public Task<bool> SetEnabledAsync(bool enabled, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Requests.Add(enabled);
+            return Task.FromResult(enabled);
+        }
     }
 
     private sealed class FileBackedWriter : IStartupLinkWriter

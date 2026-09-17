@@ -2,8 +2,11 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Threading;
 using Dudu.App.Hosting;
+using Dudu.App.Notifications;
 using Dudu.App.System;
 using Dudu.App.Windows;
+using Microsoft.Windows.AppLifecycle;
+using Microsoft.Windows.AppNotifications;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 
@@ -19,6 +22,7 @@ public sealed partial class App : Application
     private Window? _settingsWindow;
     private CompanionSettingsContext? _settingsContext;
     private string _launchArguments = string.Empty;
+    private NotificationActivation? _notificationActivation;
     private readonly DispatcherQueue _dispatcherQueue;
     private readonly AwaitableUiDispatcher _uiDispatcher;
     private Timer? _performanceAllocationTimer;
@@ -54,7 +58,11 @@ public sealed partial class App : Application
     {
         ApplyTextScaleOverrideFromEnvironment();
         ApplyPerformanceAllocationReportingFromEnvironment();
-        _launchArguments = args.Arguments ?? string.Empty;
+        var activation = TryGetAppActivation();
+        _notificationActivation = TryGetNotificationActivation(activation);
+        _launchArguments = activation?.Kind == ExtendedActivationKind.StartupTask
+            ? "--background"
+            : args.Arguments ?? string.Empty;
         if (CompanionLaunchOptions.Parse(_launchArguments).SelfTest)
         {
             // Self-test short-circuits before the bootstrap factory runs: no
@@ -108,6 +116,12 @@ public sealed partial class App : Application
                     .ShouldOpenSettings(_settingsContext.Profile))
             {
                 await OpenHome(CancellationToken.None);
+            }
+
+            var notificationDestination = NotificationDestination(_notificationActivation);
+            if (notificationDestination is not null)
+            {
+                await NavigateSettingsDestinationAsync(notificationDestination, CancellationToken.None);
             }
         }
         catch (Exception exception)
@@ -254,6 +268,36 @@ public sealed partial class App : Application
         StartupFailureLogger.Record(AppPaths.ForCurrentUser(), "bootstrap", exception);
         Trace.TraceError("Dudu startup failed: {0}", exception);
     }
+
+    private static AppActivationArguments? TryGetAppActivation()
+    {
+        try
+        {
+            return AppInstance.GetCurrent().GetActivatedEventArgs();
+        }
+        catch (Exception exception)
+        {
+            // App lifecycle activation is best-effort in unpackaged launches;
+            // a normal launch must not fail because it has no package data.
+            Trace.TraceInformation("Dudu notification activation unavailable: {0}", exception.Message);
+            return null;
+        }
+    }
+
+    private static NotificationActivation? TryGetNotificationActivation(AppActivationArguments? activation) =>
+        activation?.Kind == ExtendedActivationKind.AppNotification
+            ? NotificationActivation.TryParse(
+                (activation.Data as AppNotificationActivatedEventArgs)?.Arguments)
+            : null;
+
+    private static string? NotificationDestination(NotificationActivation? activation) =>
+        activation?.Action switch
+        {
+            NotificationActivationAction.OpenNote => "notes",
+            NotificationActivationAction.ReminderDone => "reminders",
+            NotificationActivationAction.ReminderSnooze => "reminders",
+            _ => null,
+        };
 
     private Task ExitApplicationAsync(CancellationToken cancellationToken) =>
         _uiDispatcher.InvokeAsync(ExitApplicationCore, cancellationToken);

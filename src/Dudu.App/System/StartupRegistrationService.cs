@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using Windows.ApplicationModel;
 
 namespace Dudu.App.System;
 
@@ -13,11 +14,18 @@ public interface IStartupLinkWriter
     Task DeleteAsync(string shortcutPath, CancellationToken cancellationToken);
 }
 
+internal interface IPackagedStartupTaskRegistration
+{
+    Task<bool> SetEnabledAsync(bool enabled, CancellationToken cancellationToken);
+}
+
 public sealed class StartupRegistrationService : IAsyncDisposable
 {
     public const string ShortcutFileName = "Dudu Desktop Companion.lnk";
+    public const string PackagedStartupTaskId = "DuduDesktopStartupTask";
 
     private readonly IStartupLinkWriter _writer;
+    private readonly IPackagedStartupTaskRegistration? _packagedStartupTask;
     private readonly string _installedExecutable;
     private readonly string _shortcutPath;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -32,7 +40,26 @@ public sealed class StartupRegistrationService : IAsyncDisposable
         string? installedExecutable = null,
         string? startupDirectory = null,
         IStartupLinkWriter? writer = null)
+        : this(installedExecutable, startupDirectory, writer, packagedStartupTask: null)
     {
+    }
+
+    internal StartupRegistrationService(
+        string? installedExecutable,
+        string? startupDirectory,
+        IStartupLinkWriter? writer,
+        IPackagedStartupTaskRegistration? packagedStartupTask)
+    {
+        _packagedStartupTask = packagedStartupTask ?? WindowsStartupTaskRegistration.TryCreate();
+        if (_packagedStartupTask is not null)
+        {
+            _installedExecutable = string.Empty;
+            _shortcutPath = string.Empty;
+            _writer = writer ?? new WindowsStartupLinkWriter();
+            _available = true;
+            return;
+        }
+
         string? executable = null;
         string? shortcut = null;
         string? error = null;
@@ -105,6 +132,18 @@ public sealed class StartupRegistrationService : IAsyncDisposable
             {
                 throw new ObjectDisposedException(nameof(StartupRegistrationService));
             }
+            if (_packagedStartupTask is not null)
+            {
+                var applied = await _packagedStartupTask.SetEnabledAsync(enabled, cancellationToken);
+                if (applied != enabled)
+                {
+                    throw new InvalidOperationException(
+                        "Windows denied the requested packaged startup-task state.");
+                }
+
+                Volatile.Write(ref _enabled, applied);
+                return;
+            }
             if (enabled)
             {
                 // The shortcut can be removed externally while the process is
@@ -151,6 +190,55 @@ public sealed class StartupRegistrationService : IAsyncDisposable
         _gate.Release();
         _gate.Dispose();
     }
+}
+
+internal sealed class WindowsStartupTaskRegistration : IPackagedStartupTaskRegistration
+{
+    private const int ErrorInsufficientBuffer = 122;
+
+    private WindowsStartupTaskRegistration()
+    {
+    }
+
+    public static WindowsStartupTaskRegistration? TryCreate()
+    {
+        if (!OperatingSystem.IsWindows() || !HasPackageIdentity())
+        {
+            return null;
+        }
+
+        return new WindowsStartupTaskRegistration();
+    }
+
+    public async Task<bool> SetEnabledAsync(bool enabled, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var task = await StartupTask.GetAsync(StartupRegistrationService.PackagedStartupTaskId)
+            .AsTask(cancellationToken);
+        if (enabled)
+        {
+            var state = IsEnabled(task.State)
+                ? task.State
+                : await task.RequestEnableAsync().AsTask(cancellationToken);
+            return IsEnabled(state);
+        }
+
+        task.Disable();
+        return IsEnabled(task.State);
+    }
+
+    private static bool HasPackageIdentity()
+    {
+        uint length = 0;
+        var result = GetCurrentPackageFullName(ref length, null);
+        return result == ErrorInsufficientBuffer;
+    }
+
+    private static bool IsEnabled(StartupTaskState state) =>
+        state is StartupTaskState.Enabled or StartupTaskState.EnabledByPolicy;
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetCurrentPackageFullName(ref uint packageFullNameLength, char[]? packageFullName);
 }
 
 internal sealed class WindowsStartupLinkWriter : IStartupLinkWriter

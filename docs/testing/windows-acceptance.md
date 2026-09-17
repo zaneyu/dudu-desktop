@@ -64,6 +64,9 @@ ones, so this file always reflects the latest run per scenario.
 For Store/MSIX acceptance, confirm that the default data root is still
 `%LocalAppData%\DuduDesktop` (not the package install directory) before testing upgrade or
 uninstall behavior. `DUDU_DATA_ROOT` remains the test-only override for isolated installer runs.
+On a Windows 11 24H2 x64 Store/MSIX install, create data in that root, uninstall the package, and
+confirm the root remains; then verify the manifest-declared startup task and a stopped-process
+notification activation both reach the expected settings destination without recording note text.
 All Store/MSIX rows above remain pending until a real Windows 11 24H2 x64 recipient test records
 evidence. A green CI package artifact does not prove Store visibility, installation, upgrade,
 retained data, pairing, startup, notification activation, Smart App Control behavior, or

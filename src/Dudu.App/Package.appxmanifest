@@ -2,8 +2,11 @@
 <Package
     xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
     xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+    xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+    xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
     xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
-    IgnorableNamespaces="uap rescap">
+    xmlns:virtualization="http://schemas.microsoft.com/appx/manifest/virtualization/windows10"
+    IgnorableNamespaces="uap desktop com rescap virtualization">
   <!--
     This is intentionally a local, non-production identity. Partner Center's
     reserved Name and Publisher must replace both attributes before any Store
@@ -19,6 +22,13 @@
     <DisplayName>Dudu Desktop</DisplayName>
     <PublisherDisplayName>Dudu Desktop Local Development</PublisherDisplayName>
     <Logo>PackageAssets\Logo.png</Logo>
+    <!-- Windows 11 flexible virtualization: keep the shared data root visible
+         to the unpackaged companion and preserve it across package uninstall. -->
+    <virtualization:FileSystemWriteVirtualization>
+      <virtualization:ExcludedDirectories>
+        <virtualization:ExcludedDirectory>$(KnownFolder:LocalAppData)\DuduDesktop</virtualization:ExcludedDirectory>
+      </virtualization:ExcludedDirectories>
+    </virtualization:FileSystemWriteVirtualization>
   </Properties>
 
   <Dependencies>
@@ -41,10 +51,36 @@
           Square44x44Logo="PackageAssets\Logo.png"
           Square150x150Logo="PackageAssets\Square150Logo.png"
           BackgroundColor="#F4EEE8" />
+      <Extensions>
+        <desktop:Extension
+            Category="windows.startupTask"
+            Executable="Dudu.App.exe"
+            EntryPoint="Windows.FullTrustApplication">
+          <desktop:StartupTask
+              TaskId="DuduDesktopStartupTask"
+              Enabled="false"
+              DisplayName="Dudu Desktop" />
+        </desktop:Extension>
+        <desktop:Extension Category="windows.toastNotificationActivation">
+          <desktop:ToastNotificationActivation
+              ToastActivatorCLSID="41CED5B9-5F7D-46C9-BA84-90D8B16BAC84" />
+        </desktop:Extension>
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:ExeServer
+                Executable="Dudu.App.exe"
+                DisplayName="Dudu Desktop"
+                Arguments="----AppNotificationActivated:">
+              <com:Class Id="41CED5B9-5F7D-46C9-BA84-90D8B16BAC84" />
+            </com:ExeServer>
+          </com:ComServer>
+        </com:Extension>
+      </Extensions>
     </Application>
   </Applications>
 
   <Capabilities>
     <rescap:Capability Name="runFullTrust" />
+    <rescap:Capability Name="unvirtualizedResources" />
   </Capabilities>
 </Package>

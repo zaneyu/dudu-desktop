@@ -11,6 +11,11 @@ namespace Dudu.App.Notifications;
 /// </summary>
 public sealed class WindowsAppNotificationSink : INotificationSink
 {
+    // Must stay in sync with Package.appxmanifest's toast activator and COM
+    // server class. Packaged registration requires that server to point at
+    // this same executable; unpackaged registration remains automatic.
+    public const string PackagedActivatorClsid = "41CED5B9-5F7D-46C9-BA84-90D8B16BAC84";
+
     public Task<bool> TryRegisterAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
