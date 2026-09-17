@@ -7,8 +7,7 @@ on:
     inputs:
       store_version:
         description: 'Three-part Store package version (Major.Minor.Patch)'
-        required: false
-        default: '1.0.0'
+        required: true
         type: string
 
 permissions:
@@ -22,7 +21,9 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  STORE_VERSION: ${{ inputs.store_version || '1.0.0' }}
+  # Manual Store package runs must name their version. Pushes remain the fixed
+  # 1.0.0 acceptance build and are never submission packages.
+  STORE_VERSION: ${{ github.event_name == 'push' && '1.0.0' || inputs.store_version }}
 
 jobs:
   installer:
@@ -60,11 +61,11 @@ jobs:
           if (-not (Test-Path $iscc)) { throw "ISCC.exe missing at $iscc" }
           & $iscc /? | Select-Object -First 2
 
-      # Directory.Build.props sets RestorePackagesWithLockFile=true, so this restore generates a
-      # packages.lock.json per project. They are never committed (AGENTS.md); publish-windows.ps1
-      # copies the generated set into the release-metadata artifact below.
+      # CI restores without lock-file generation. The Store wrapper publishes with --no-restore;
+      # the Inno wrapper captures any publish-generated locks in release metadata and moves them
+      # into ignored scratch before completing, so neither path leaves source lock files behind.
       - name: Restore
-        run: dotnet restore DuduDesktop.slnx
+        run: dotnet restore DuduDesktop.slnx -p:RestorePackagesWithLockFile=false
 
       - name: Publish and package
         shell: pwsh
@@ -151,7 +152,7 @@ jobs:
         with:
           global-json-file: global.json
       - name: Restore
-        run: dotnet restore DuduDesktop.slnx
+        run: dotnet restore DuduDesktop.slnx -p:RestorePackagesWithLockFile=false
       - name: Package private Store MSIX
         shell: pwsh
         run: pwsh scripts/package-store.ps1 -Version $env:STORE_VERSION
@@ -228,7 +229,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.21.0
-      - run: dotnet restore DuduDesktop.slnx
+      - run: dotnet restore DuduDesktop.slnx -p:RestorePackagesWithLockFile=false
       - run: dotnet build DuduDesktop.slnx -c Release --no-restore
       # One step per project with its own timeout so a hang names its project
       # and still leaves the other suites' results visible.

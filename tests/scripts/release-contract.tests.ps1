@@ -103,6 +103,15 @@ if (Test-Path -LiteralPath $storeScriptPath) {
     Assert-Contains "Store package script requires a 64-bit OS" $storeScript "Is64BitOperatingSystem"
     Assert-Contains "Store package script requires the pinned SDK" $storeScript "dotnetVersion.*10\.0\.112"
     Assert-Contains "Store package script fixes the target runtime to win-x64" $storeScript "targetRuntimeIdentifier.*win-x64"
+    Assert-Contains "Store package publish uses the verified no-restore path" $storeScript "dotnet publish.*--no-restore"
+    Assert-Contains "Store package script requires restored assets before publishing" $storeScript "project\.assets\.json"
+    Assert-True "Store package script does not recursively select arbitrary SDK tools" ($storeScript -notmatch "function Find-Tool")
+    Assert-Contains "Store package script resolves SDK tools from the Windows Kits root" $storeScript "Windows Kits\\10"
+    Assert-Contains "Store package script enumerates versioned Windows SDK bin directories" $storeScript "Get-ChildItem -LiteralPath \`$sdkBinRoot -Directory"
+    Assert-Contains "Store package script resolves an x64 MakeAppx executable" $storeScript "x64.*makeappx\.exe"
+    Assert-Contains "Store package script requires Windows SDK 26100 or newer for package tools" $storeScript "10\.0\.26100\.0"
+    Assert-Contains "Store package script resolves AppCert from the selected Windows SDK root" $storeScript "App Certification Kit.*appcert\.exe"
+    Assert-Contains "Store package script rejects an ambiguous SDK tool resolution" $storeScript "ambiguous"
     Assert-Contains "Store package script exposes the production identity gate" $storeScript "RequirePartnerCenterIdentity"
     Assert-Contains "Store package script rejects the local identity at the production gate" $storeScript '\$sourceIdentity\.Name\s+-eq\s+''DuduDesktop\.Local\.NonProduction'''
     Assert-Contains "Store package script compares the expected production name" $storeScript '\$sourceIdentity\.Name\s+-ne\s+\$ExpectedPartnerCenterName'
@@ -130,9 +139,18 @@ if (Test-Path -LiteralPath $storeScriptPath) {
         }
         Assert-True "Store identity function rejects the local non-production identity" $rejectedLocalIdentity
     }
-    $appCertSummaryIndex = $storeScript.IndexOf("Add-Content -LiteralPath (Join-Path `$metadataDirectory 'validation-summary.txt')")
+    $clearOutputIndex = $storeScript.IndexOf("Remove-Item -LiteralPath `$directory -Recurse -Force")
+    $manifestPreflightIndex = $storeScript.IndexOf("[xml]`$sourceManifest = Get-Content -Raw -LiteralPath `$manifestPath")
+    $toolPreflightIndex = $storeScript.IndexOf("`$sdkTools = Resolve-WindowsSdkTools")
+    Assert-True "Store manifest and tool preflight precede package output deletion" (
+        $clearOutputIndex -ge 0 -and $manifestPreflightIndex -ge 0 -and $toolPreflightIndex -ge 0 -and
+        $manifestPreflightIndex -lt $clearOutputIndex -and $toolPreflightIndex -lt $clearOutputIndex
+    )
+    $appCertSummaryIndex = $storeScript.IndexOf("Windows App Certification Kit exit code")
     $appCertThrowIndex = $storeScript.IndexOf('Windows App Certification Kit validation failed')
     Assert-True "Store package script records WACK results before throwing" ($appCertSummaryIndex -ge 0 -and $appCertThrowIndex -ge 0 -and $appCertSummaryIndex -lt $appCertThrowIndex)
+    $hashIndex = $storeScript.IndexOf("Get-FileHash -LiteralPath `$artifactPath")
+    Assert-True "Store package script hashes only after WACK validation" ($appCertThrowIndex -ge 0 -and $hashIndex -gt $appCertThrowIndex)
 }
 
 Assert-Contains "Inno has a default AppVersion define" $iss '#ifndef AppVersion'
@@ -156,6 +174,9 @@ Assert-Contains "workflow uploads release metadata" $workflow 'artifacts/release
 Assert-Contains "workflow invokes the Store package wrapper" $workflow "scripts/package-store\.ps1"
 Assert-Contains "workflow uploads a Store package artifact" $workflow 'DuduDesktop-\$\{\{ env\.STORE_VERSION \}\}-win-x64-store'
 Assert-Contains "workflow supports an explicit Store package version" $workflow "store_version"
+Assert-Contains "workflow requires a Store version for manual dispatch" $workflow "store_version:(?s).*required:\s*true"
+Assert-Contains "workflow keeps 1.0.0 as the push Store acceptance version" $workflow "github\.event_name\s*==\s*'push'.*1\.0\.0"
+Assert-True "workflow disables source lock-file generation during restores" (@([regex]::Matches($workflow, 'dotnet restore DuduDesktop\.slnx -p:RestorePackagesWithLockFile=false')).Count -eq 3)
 Assert-Contains "workflow writes the Store package hash to the job summary" $workflow "Store package SHA-256"
 Assert-Contains "workflow labels the Store artifact acceptance-only" $workflow "acceptance-only"
 Assert-Contains "workflow forbids Store artifact upload to Partner Center" $workflow "never upload it to Partner Center"

@@ -48,17 +48,69 @@ function Write-MetadataText {
     Set-Content -LiteralPath (Join-Path $metadataDirectory $Name) -Value $Text -NoNewline -Encoding utf8
 }
 
-function Find-Tool {
-    param([Parameter(Mandatory)][string]$FileName, [Parameter(Mandatory)][string[]]$Roots)
-    foreach ($root in $Roots) {
-        if ($root -and (Test-Path -LiteralPath $root)) {
-            $tool = Get-ChildItem -LiteralPath $root -Filter $FileName -File -Recurse -ErrorAction SilentlyContinue |
-                Sort-Object FullName -Descending |
-                Select-Object -First 1
-            if ($tool) { return $tool.FullName }
-        }
+function Write-PreflightFailureEvidence {
+    param([Parameter(Mandatory)][string]$Message)
+
+    # Preflight must not overwrite the last known-good package metadata. Keep
+    # failed-preflight evidence in ignored host-local scratch instead.
+    $failureDirectory = Join-Path $repoRoot (Join-Path 'work/store-package-failures' ([Guid]::NewGuid().ToString('N')))
+    New-Item -ItemType Directory -Path $failureDirectory -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $failureDirectory 'validation-summary.txt') -Value $Message -NoNewline -Encoding utf8
+    Write-Host "Store package preflight evidence: $failureDirectory"
+}
+
+function ConvertTo-SdkVersion {
+    param([Parameter(Mandatory)][string]$Value)
+
+    $match = [regex]::Match($Value, '(?<version>\d+\.\d+\.\d+\.\d+)')
+    if (-not $match.Success) { return $null }
+    try { return [Version]$match.Groups['version'].Value }
+    catch { return $null }
+}
+
+function Resolve-WindowsSdkTools {
+    $windowsKitsRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10'
+    $sdkBinRoot = Join-Path $windowsKitsRoot 'bin'
+    $minimumSdkVersion = [Version]'10.0.26100.0'
+    if (-not (Test-Path -LiteralPath $sdkBinRoot)) {
+        throw "Supported Windows SDK bin directory is missing: $sdkBinRoot"
     }
-    return $null
+
+    $supportedToolsets = @(
+        Get-ChildItem -LiteralPath $sdkBinRoot -Directory | ForEach-Object {
+            $sdkVersion = ConvertTo-SdkVersion -Value $_.Name
+            $makeAppxPath = Join-Path $_.FullName 'x64\makeappx.exe'
+            if ($sdkVersion -and $sdkVersion -ge $minimumSdkVersion -and (Test-Path -LiteralPath $makeAppxPath)) {
+                [pscustomobject]@{ Version = $sdkVersion; MakeAppx = $makeAppxPath }
+            }
+        }
+    )
+    if ($supportedToolsets.Count -eq 0) {
+        throw "makeappx.exe was not found at an x64 path in a Windows SDK $minimumSdkVersion or newer."
+    }
+
+    $selectedToolset = @($supportedToolsets | Sort-Object Version -Descending | Select-Object -First 1)[0]
+    $selectedVersion = $selectedToolset.Version
+    $selectedToolsets = @($supportedToolsets | Where-Object { $_.Version -eq $selectedVersion })
+    if ($selectedToolsets.Count -ne 1) {
+        throw "Windows SDK tool resolution is ambiguous for supported x64 SDK version $selectedVersion."
+    }
+
+    $appCertPath = Join-Path $windowsKitsRoot 'App Certification Kit\appcert.exe'
+    if (-not (Test-Path -LiteralPath $appCertPath)) {
+        throw "Windows App Certification Kit (appcert.exe) is required at $appCertPath."
+    }
+    $appCertFileVersion = (Get-Item -LiteralPath $appCertPath).VersionInfo.FileVersion
+    $appCertVersion = ConvertTo-SdkVersion -Value $appCertFileVersion
+    if (-not $appCertVersion -or $appCertVersion -lt $selectedVersion) {
+        throw "Windows App Certification Kit at $appCertPath is unsupported for the selected Windows SDK $selectedVersion."
+    }
+
+    return [pscustomobject]@{
+        MakeAppx = $selectedToolsets[0].MakeAppx
+        AppCert = $appCertPath
+        Version = $selectedVersion
+    }
 }
 
 function Assert-StoreVersion {
@@ -112,6 +164,9 @@ $expectedPackageVersion = "$Version.0"
 if (-not [Environment]::Is64BitOperatingSystem) {
     throw 'Store package script requires a 64-bit Windows operating system.'
 }
+if (-not [Environment]::Is64BitProcess) {
+    throw 'Store package script must run from a 64-bit PowerShell process.'
+}
 if ([Environment]::OSVersion.Version.Build -lt 26100) {
     throw 'Store package script requires Windows build 26100 or newer.'
 }
@@ -134,6 +189,29 @@ $bundleDirectory = Assert-ChildPath -Path (Join-Path $metadataDirectory 'unbundl
 $appProject = Join-Path $repoRoot 'src/Dudu.App/Dudu.App.csproj'
 $manifestPath = Join-Path $repoRoot 'src/Dudu.App/Package.appxmanifest'
 
+# Validate every source and tool input before deleting the last known-good
+# package or metadata output. A failed preflight records evidence in ignored
+# scratch and leaves those outputs untouched.
+try {
+    if (-not (Test-Path -LiteralPath $appProject)) { throw "Store app project is missing: $appProject" }
+    if (-not (Test-Path -LiteralPath $manifestPath)) { throw "Store package manifest is missing: $manifestPath" }
+    [xml]$sourceManifest = Get-Content -Raw -LiteralPath $manifestPath
+    $sourceIdentity = $sourceManifest.Package.Identity
+    if (-not $sourceIdentity) { throw "Store package manifest has no Identity element: $manifestPath" }
+    if ($RequirePartnerCenterIdentity) {
+        Assert-PartnerCenterIdentity -sourceIdentity $sourceIdentity -ExpectedPartnerCenterName $ExpectedPartnerCenterName -ExpectedPartnerCenterPublisher $ExpectedPartnerCenterPublisher
+    }
+    $projectAssetsPath = Join-Path (Split-Path -Parent $appProject) 'obj\project.assets.json'
+    if (-not (Test-Path -LiteralPath $projectAssetsPath)) {
+        throw "Restored project assets are missing: $projectAssetsPath. Run dotnet restore before packaging."
+    }
+    $sdkTools = Resolve-WindowsSdkTools
+}
+catch {
+    Write-PreflightFailureEvidence -Message ("Store package preflight failed: " + $_.Exception.Message)
+    throw
+}
+
 foreach ($directory in @($packageDirectory, $metadataDirectory)) {
     if (Test-Path -LiteralPath $directory) {
         Remove-Item -LiteralPath $directory -Recurse -Force
@@ -144,16 +222,10 @@ New-Item -ItemType Directory -Path $publishDirectory -Force | Out-Null
 New-Item -ItemType Directory -Path $unpackDirectory -Force | Out-Null
 New-Item -ItemType Directory -Path $bundleDirectory -Force | Out-Null
 
-[xml]$sourceManifest = Get-Content -Raw -LiteralPath $manifestPath
-$sourceIdentity = $sourceManifest.Package.Identity
-if ($RequirePartnerCenterIdentity) {
-    Assert-PartnerCenterIdentity -sourceIdentity $sourceIdentity -ExpectedPartnerCenterName $ExpectedPartnerCenterName -ExpectedPartnerCenterPublisher $ExpectedPartnerCenterPublisher
-}
-
 & dotnet --info | Set-Content -LiteralPath (Join-Path $metadataDirectory 'dotnet-info.txt') -Encoding utf8
 if ($LASTEXITCODE -ne 0) { throw "dotnet --info failed with exit code $LASTEXITCODE." }
 
-& dotnet publish $appProject -c Release -r win-x64 --self-contained true `
+& dotnet publish $appProject -c Release -r win-x64 --self-contained true --no-restore `
     '-p:DuduStorePackage=true' "-p:Version=$Version" "-p:RuntimeIdentifier=$targetRuntimeIdentifier" `
     "-p:AppxPackageVersion=$expectedPackageVersion" '-p:AppxPackageSigningEnabled=false' "-p:PublishDir=$publishDirectory$([IO.Path]::DirectorySeparatorChar)" `
     "-p:AppxPackageDir=$packageDirectory$([IO.Path]::DirectorySeparatorChar)"
@@ -171,12 +243,7 @@ if ($packageCandidate.FullName -ne $artifactPath) {
     Move-Item -LiteralPath $packageCandidate.FullName -Destination $artifactPath
 }
 
-$windowsSdkRoots = @(
-    (Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'),
-    (Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\App Certification Kit')
-)
-$makeAppx = Find-Tool -FileName 'makeappx.exe' -Roots $windowsSdkRoots
-if (-not $makeAppx) { throw 'makeappx.exe was not found in the supported Windows SDK installation.' }
+$makeAppx = $sdkTools.MakeAppx
 
 & $makeAppx validate -p $artifactPath
 $makeAppxValidateExitCode = $LASTEXITCODE
@@ -229,17 +296,21 @@ foreach ($resource in $requiredResources) {
     }
 }
 
-$appCert = Find-Tool -FileName 'appcert.exe' -Roots $windowsSdkRoots
-$appCertExitCode = 'not installed'
-if ($appCert) {
-    $appCertReport = Join-Path $metadataDirectory 'appcert-report.xml'
+$appCert = $sdkTools.AppCert
+$appCertReport = Join-Path $metadataDirectory 'appcert-report.xml'
+$appCertExitCode = $null
+$appCertFailure = $null
+try {
     & $appCert test -appxpackagepath $artifactPath -reportoutputpath $appCertReport
     $appCertExitCode = $LASTEXITCODE
-    Add-Content -LiteralPath (Join-Path $metadataDirectory 'validation-summary.txt') -Value "Windows App Certification Kit exit code: $appCertExitCode"
-    if ($appCertExitCode -ne 0) { throw "Windows App Certification Kit validation failed with exit code $appCertExitCode." }
 }
-else {
-    Add-Content -LiteralPath (Join-Path $metadataDirectory 'validation-summary.txt') -Value "Windows App Certification Kit exit code: $appCertExitCode"
+catch {
+    $appCertFailure = $_
+    $appCertExitCode = 'launch failure'
+}
+Add-Content -LiteralPath (Join-Path $metadataDirectory 'validation-summary.txt') -Value "Windows App Certification Kit exit code: $appCertExitCode"
+if ($appCertFailure -or $appCertExitCode -ne 0) {
+    throw "Windows App Certification Kit validation failed with exit code $appCertExitCode."
 }
 
 $hash = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
