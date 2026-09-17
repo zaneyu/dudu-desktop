@@ -51,25 +51,12 @@ public sealed class StartupRegistrationService : IAsyncDisposable
         IPackagedStartupTaskRegistration? packagedStartupTask)
     {
         _packagedStartupTask = packagedStartupTask ?? WindowsStartupTaskRegistration.TryCreate();
-        if (_packagedStartupTask is not null)
-        {
-            _installedExecutable = string.Empty;
-            _shortcutPath = string.Empty;
-            _writer = writer ?? new WindowsStartupLinkWriter();
-            _available = true;
-            return;
-        }
-
         string? executable = null;
         string? shortcut = null;
         string? error = null;
         var available = false;
         try
         {
-            executable = Path.GetFullPath(
-                installedExecutable
-                ?? Environment.ProcessPath
-                ?? throw new InvalidOperationException("The installed executable path is unavailable."));
             var startup = startupDirectory
                 ?? Environment.GetFolderPath(Environment.SpecialFolder.Startup);
             if (string.IsNullOrWhiteSpace(startup))
@@ -77,7 +64,18 @@ public sealed class StartupRegistrationService : IAsyncDisposable
                 throw new InvalidOperationException("The current-user Startup folder is unavailable.");
             }
 
-            shortcut = Path.Combine(startup, ShortcutFileName);
+            // This is the only current-user Startup file owned by Dudu. Keep
+            // the path fixed so packaged migration never deletes another app's
+            // startup entry.
+            shortcut = Path.GetFullPath(Path.Combine(startup, ShortcutFileName));
+            if (_packagedStartupTask is null)
+            {
+                executable = Path.GetFullPath(
+                    installedExecutable
+                    ?? Environment.ProcessPath
+                    ?? throw new InvalidOperationException("The installed executable path is unavailable."));
+            }
+
             available = true;
         }
         catch (Exception exception)
@@ -134,6 +132,7 @@ public sealed class StartupRegistrationService : IAsyncDisposable
             }
             if (_packagedStartupTask is not null)
             {
+                await DeleteLegacyShortcutAsync(cancellationToken);
                 var applied = await _packagedStartupTask.SetEnabledAsync(enabled, cancellationToken);
                 if (applied != enabled)
                 {
@@ -167,6 +166,18 @@ public sealed class StartupRegistrationService : IAsyncDisposable
         finally
         {
             _gate.Release();
+        }
+    }
+
+    private async Task DeleteLegacyShortcutAsync(CancellationToken cancellationToken)
+    {
+        if (!File.Exists(_shortcutPath)) return;
+
+        await _writer.DeleteAsync(_shortcutPath, cancellationToken);
+        if (File.Exists(_shortcutPath))
+        {
+            throw new IOException(
+                "The legacy Dudu current-user Startup shortcut could not be removed.");
         }
     }
 

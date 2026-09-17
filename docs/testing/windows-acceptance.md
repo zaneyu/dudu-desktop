@@ -67,6 +67,9 @@ uninstall behavior. `DUDU_DATA_ROOT` remains the test-only override for isolated
 On a Windows 11 24H2 x64 Store/MSIX install, create data in that root, uninstall the package, and
 confirm the root remains; then verify the manifest-declared startup task and a stopped-process
 notification activation both reach the expected settings destination without recording note text.
+When upgrading an Inno installation to the Store/MSIX package, place the exact legacy
+`Dudu Desktop Companion.lnk` in the current-user Startup folder, toggle launch-at-sign-in on and
+off, and confirm that shortcut is removed without affecting an unrelated Startup entry.
 All Store/MSIX rows above remain pending until a real Windows 11 24H2 x64 recipient test records
 evidence. A green CI package artifact does not prove Store visibility, installation, upgrade,
 retained data, pairing, startup, notification activation, Smart App Control behavior, or
