@@ -90,6 +90,10 @@ Assert-Contains "workflow serializes runs with a concurrency group" $workflow '(
 Assert-Contains "workflow has minimal top-level permissions" $workflow '(?m)^permissions:\s*\r?\n\s+contents:\s*read\s*$'
 Assert-Contains "workflow re-verifies the stored artifact hash in a separate job" $workflow 'actions/download-artifact@'
 Assert-Contains "workflow uploads release metadata" $workflow 'artifacts/release-metadata/'
+Assert-Contains "workflow invokes the Store package wrapper" $workflow "scripts/package-store\.ps1"
+Assert-Contains "workflow uploads a Store package artifact" $workflow "DuduDesktop-[^\" ]*-win-x64-store"
+Assert-Contains "workflow keeps the Inno artifact" $workflow "DuduDesktop-1\.0\.0-win-x64-private"
+Assert-True "Store package job does not expose secrets in logs" ($workflow -notmatch "echo.*STORE|Write-Host.*STORE.*SECRET")
 $globalJson = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "global.json") | ConvertFrom-Json
 Assert-True "global.json pins the SDK exactly (rollForward disable)" ($globalJson.sdk.rollForward -eq "disable")
 $packagesProps = [xml](Get-Content -Raw -LiteralPath (Join-Path $repoRoot "Directory.Packages.props"))

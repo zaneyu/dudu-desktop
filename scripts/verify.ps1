@@ -183,6 +183,9 @@ try {
     dotnet --version
     node --version
 
+    Write-Host "== Release source contract ==" -ForegroundColor Cyan
+    pwsh tests/scripts/release-contract.tests.ps1
+
     Write-Host "== .NET restore / build / test ==" -ForegroundColor Cyan
     # Deviation from the brief: no --locked-mode. See the file header comment.
     dotnet restore DuduDesktop.slnx
@@ -217,6 +220,15 @@ try {
     }
     finally {
         Remove-Variable e2eNoteText
+    }
+
+    # package-store.ps1 requires the Windows SDK and MSIX tooling. Keep this
+    # guard explicit so source-level verification remains safe on macOS, while
+    # the supported Windows release path produces the private, non-public
+    # package only after the established Inno gate has completed.
+    if ([OperatingSystem]::IsWindows()) {
+        Write-Host "== Private Store package (non-public artifact) ==" -ForegroundColor Cyan
+        pwsh scripts/package-store.ps1 -Version 1.0.0
     }
 
     Write-Host "== SHA-256 manifest ==" -ForegroundColor Cyan

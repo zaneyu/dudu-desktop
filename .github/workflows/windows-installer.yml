@@ -125,6 +125,35 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+  store-package:
+    name: Package private Store MSIX (win-x64)
+    # This is a non-public, manually retrieved package only. The local manifest
+    # identity is deliberately non-production, so this job does not submit to
+    # Partner Center or claim that the artifact is Store-publishable.
+    needs: tests
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          global-json-file: global.json
+      - name: Restore
+        run: dotnet restore DuduDesktop.slnx
+      - name: Package private Store MSIX
+        shell: pwsh
+        run: pwsh scripts/package-store.ps1 -Version 1.0.0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: DuduDesktop-1.0.0-win-x64-store
+          path: |
+            artifacts/store-package/
+            artifacts/store-package-metadata/
+          if-no-files-found: error
+          retention-days: 30
+
   verify-artifact:
     name: Verify uploaded installer + publish checksum
     needs: installer
