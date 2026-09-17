@@ -107,6 +107,29 @@ if (Test-Path -LiteralPath $storeScriptPath) {
     Assert-Contains "Store package script rejects the local identity at the production gate" $storeScript '\$sourceIdentity\.Name\s+-eq\s+''DuduDesktop\.Local\.NonProduction'''
     Assert-Contains "Store package script compares the expected production name" $storeScript '\$sourceIdentity\.Name\s+-ne\s+\$ExpectedPartnerCenterName'
     Assert-Contains "Store package script compares the expected production publisher" $storeScript '\$sourceIdentity\.Publisher\s+-ne\s+\$ExpectedPartnerCenterPublisher'
+    $storeScriptAst = [System.Management.Automation.Language.Parser]::ParseFile(
+        $storeScriptPath,
+        [ref]$null,
+        [ref]$null
+    )
+    $identityFunction = @($storeScriptAst.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Assert-PartnerCenterIdentity'
+    }, $true))
+    Assert-True "Store package script exposes an executable identity validation function" ($identityFunction.Count -eq 1)
+    if ($identityFunction.Count -eq 1) {
+        . ([scriptblock]::Create($identityFunction[0].Extent.Text))
+        [xml]$localIdentityManifest = '<Package><Identity Name="DuduDesktop.Local.NonProduction" Publisher="CN=Dudu Desktop Local Package, O=Private" /></Package>'
+        $rejectedLocalIdentity = $false
+        try {
+            Assert-PartnerCenterIdentity -sourceIdentity $localIdentityManifest.Package.Identity -ExpectedPartnerCenterName 'Contoso.Dudu' -ExpectedPartnerCenterPublisher 'CN=Contoso Dudu'
+        }
+        catch {
+            $rejectedLocalIdentity = $true
+        }
+        Assert-True "Store identity function rejects the local non-production identity" $rejectedLocalIdentity
+    }
     $appCertSummaryIndex = $storeScript.IndexOf("Add-Content -LiteralPath (Join-Path `$metadataDirectory 'validation-summary.txt')")
     $appCertThrowIndex = $storeScript.IndexOf('Windows App Certification Kit validation failed')
     Assert-True "Store package script records WACK results before throwing" ($appCertSummaryIndex -ge 0 -and $appCertThrowIndex -ge 0 -and $appCertSummaryIndex -lt $appCertThrowIndex)

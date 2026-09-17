@@ -87,6 +87,23 @@ function Assert-StoreVersion {
 
 }
 
+function Assert-PartnerCenterIdentity {
+    param(
+        [Parameter(Mandatory)][System.Xml.XmlElement]$sourceIdentity,
+        [Parameter(Mandatory)][string]$ExpectedPartnerCenterName,
+        [Parameter(Mandatory)][string]$ExpectedPartnerCenterPublisher
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ExpectedPartnerCenterName) -or [string]::IsNullOrWhiteSpace($ExpectedPartnerCenterPublisher)) {
+        throw 'Partner Center identity validation requires the exact expected Name and Publisher values.'
+    }
+    if ($sourceIdentity.Name -eq 'DuduDesktop.Local.NonProduction' -or
+        $sourceIdentity.Name -ne $ExpectedPartnerCenterName -or
+        $sourceIdentity.Publisher -ne $ExpectedPartnerCenterPublisher) {
+        throw 'Store-submission identity validation failed: replace the local manifest identity with the exact Partner Center Name and Publisher before producing a submission package.'
+    }
+}
+
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $targetRuntimeIdentifier = 'win-x64'
 Assert-StoreVersion -Value $Version
@@ -130,14 +147,7 @@ New-Item -ItemType Directory -Path $bundleDirectory -Force | Out-Null
 [xml]$sourceManifest = Get-Content -Raw -LiteralPath $manifestPath
 $sourceIdentity = $sourceManifest.Package.Identity
 if ($RequirePartnerCenterIdentity) {
-    if ([string]::IsNullOrWhiteSpace($ExpectedPartnerCenterName) -or [string]::IsNullOrWhiteSpace($ExpectedPartnerCenterPublisher)) {
-        throw 'Partner Center identity validation requires the exact expected Name and Publisher values.'
-    }
-    if ($sourceIdentity.Name -eq 'DuduDesktop.Local.NonProduction' -or
-        $sourceIdentity.Name -ne $ExpectedPartnerCenterName -or
-        $sourceIdentity.Publisher -ne $ExpectedPartnerCenterPublisher) {
-        throw 'Store-submission identity validation failed: replace the local manifest identity with the exact Partner Center Name and Publisher before enabling a submission workflow.'
-    }
+    Assert-PartnerCenterIdentity -sourceIdentity $sourceIdentity -ExpectedPartnerCenterName $ExpectedPartnerCenterName -ExpectedPartnerCenterPublisher $ExpectedPartnerCenterPublisher
 }
 
 & dotnet --info | Set-Content -LiteralPath (Join-Path $metadataDirectory 'dotnet-info.txt') -Encoding utf8

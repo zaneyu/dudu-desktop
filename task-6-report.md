@@ -28,12 +28,17 @@ existing Inno Setup workflow and packaging path were left intact.
 
 On macOS, using the vendored PowerShell runtime:
 
-- `tests/scripts/release-contract.tests.ps1` — PASS, 93 cases.
+- `tests/scripts/release-contract.tests.ps1` — PASS, 104 cases, including an
+  isolated execution of the real identity-validation function against the
+  local non-production identity.
 - `tests/scripts/store-package.tests.ps1` — PASS, 26 cases.
 - `git diff --check` — PASS.
 
 The Windows-only `scripts/package-store.ps1`, MSIX validation, WACK, Inno
 packaging, and Store acceptance were not run on macOS.
+
+The identity-validation function itself is exercised without invoking the
+Windows-only package build, credentials, or Store tooling.
 
 ## Concerns
 
