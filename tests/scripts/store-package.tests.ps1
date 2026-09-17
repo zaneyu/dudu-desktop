@@ -46,6 +46,7 @@ if (Test-Path -LiteralPath $manifestPath) {
     [xml]$manifest = Get-Content -Raw -LiteralPath $manifestPath
     $namespaceManager = [System.Xml.XmlNamespaceManager]::new($manifest.NameTable)
     $namespaceManager.AddNamespace('f', 'http://schemas.microsoft.com/appx/manifest/foundation/windows10')
+    $namespaceManager.AddNamespace('uap', 'http://schemas.microsoft.com/appx/manifest/uap/windows10')
     $namespaceManager.AddNamespace('r', 'http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities')
 
     $identity = $manifest.SelectSingleNode('/f:Package/f:Identity', $namespaceManager)
