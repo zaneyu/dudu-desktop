@@ -39,7 +39,7 @@
           DisplayName="Dudu Desktop"
           Description="Dudu Desktop Companion"
           Square44x44Logo="PackageAssets\Logo.png"
-          Square150x150Logo="PackageAssets\Logo.png"
+          Square150x150Logo="PackageAssets\Square150Logo.png"
           BackgroundColor="#F4EEE8" />
     </Application>
   </Applications>
