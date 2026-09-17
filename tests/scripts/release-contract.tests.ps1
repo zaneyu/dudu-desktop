@@ -57,6 +57,19 @@ if (Test-Path -LiteralPath $storeScriptPath) {
     Assert-Contains "Store package script writes beneath artifacts" $storeScript "artifacts[/\\]store-package"
     Assert-True "Store package script does not publish a relay URL" ($storeScript -notmatch "workers\.dev|DUDU_RELAY_BASE_URL")
     Assert-True "Store package script does not embed credentials" ($storeScript -notmatch "clientSecret|accessToken|password|token\s*=")
+    Assert-Contains "Store package script accepts only MakeAppx package formats" $storeScript "\.msixbundle.*\.appxbundle"
+    Assert-Contains "Store package script unbundles supported Store package bundles" $storeScript "makeAppx unbundle"
+    Assert-True "Store package script does not pass upload containers to MakeAppx" ($storeScript -notmatch "\.msixupload|\.appxupload")
+    Assert-Contains "Store package script validates Store version component bounds" $storeScript "Assert-StoreVersion"
+    Assert-Contains "Store package script limits Store version components to 65535" $storeScript "65535"
+    Assert-Contains "Store package script fixes the fourth Store version component to zero" $storeScript 'expectedPackageVersion.*\$Version\.0'
+    Assert-Contains "Store package script requires Windows build 26100" $storeScript "OSVersion.*Build.*26100"
+    Assert-Contains "Store package script requires a 64-bit OS" $storeScript "Is64BitOperatingSystem"
+    Assert-Contains "Store package script requires the pinned SDK" $storeScript "dotnetVersion.*10\.0\.112"
+    Assert-Contains "Store package script fixes the target runtime to win-x64" $storeScript "targetRuntimeIdentifier.*win-x64"
+    $appCertSummaryIndex = $storeScript.IndexOf("Add-Content -LiteralPath (Join-Path `$metadataDirectory 'validation-summary.txt')")
+    $appCertThrowIndex = $storeScript.IndexOf('Windows App Certification Kit validation failed')
+    Assert-True "Store package script records WACK results before throwing" ($appCertSummaryIndex -ge 0 -and $appCertThrowIndex -ge 0 -and $appCertSummaryIndex -lt $appCertThrowIndex)
 }
 
 Assert-Contains "Inno has a default AppVersion define" $iss '#ifndef AppVersion'

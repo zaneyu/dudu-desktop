@@ -60,12 +60,59 @@ function Find-Tool {
     return $null
 }
 
+function Assert-StoreVersion {
+    param([Parameter(Mandatory)][string]$Value)
+
+    $components = $Value.Split('.')
+    if ($components.Count -ne 3) {
+        throw 'Store package version must use Major.Minor.Patch with three numeric components.'
+    }
+
+    $numbers = @()
+    foreach ($component in $components) {
+        try {
+            $numbers += [Int64]::Parse($component, [Globalization.CultureInfo]::InvariantCulture)
+        }
+        catch {
+            throw "Store package version component '$component' must be a non-negative integer."
+        }
+    }
+
+    if ($numbers[0] -lt 1 -or $numbers[0] -gt 65535 -or
+        $numbers[1] -lt 0 -or $numbers[1] -gt 65535 -or
+        $numbers[2] -lt 0 -or $numbers[2] -gt 65535) {
+        throw 'Store package version requires Major in 1..65535 and Minor/Patch in 0..65535; the package revision is fixed to 0.'
+    }
+
+}
+
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$targetRuntimeIdentifier = 'win-x64'
+Assert-StoreVersion -Value $Version
+$expectedPackageVersion = "$Version.0"
+
+if (-not [Environment]::Is64BitOperatingSystem) {
+    throw 'Store package script requires a 64-bit Windows operating system.'
+}
+if ([Environment]::OSVersion.Version.Build -lt 26100) {
+    throw 'Store package script requires Windows build 26100 or newer.'
+}
+if ($targetRuntimeIdentifier -ne 'win-x64') {
+    throw 'Store package script requires the win-x64 target runtime.'
+}
+
+$dotnetVersion = & dotnet --version
+if ($LASTEXITCODE -ne 0) { throw "dotnet --version failed with exit code $LASTEXITCODE." }
+if ($dotnetVersion -ne '10.0.112') {
+    throw "Store package script requires .NET SDK 10.0.112; found $dotnetVersion."
+}
+
 $artifactsRoot = Join-Path $repoRoot 'artifacts'
 $packageDirectory = Assert-ChildPath -Path (Join-Path $repoRoot 'artifacts/store-package') -Parent $artifactsRoot -Description 'Package output'
 $metadataDirectory = Assert-ChildPath -Path (Join-Path $repoRoot 'artifacts/store-package-metadata') -Parent $artifactsRoot -Description 'Package metadata output'
 $publishDirectory = Assert-ChildPath -Path (Join-Path $metadataDirectory 'publish') -Parent $metadataDirectory -Description 'Publish output'
 $unpackDirectory = Assert-ChildPath -Path (Join-Path $metadataDirectory 'unpacked') -Parent $metadataDirectory -Description 'Package validation output'
+$bundleDirectory = Assert-ChildPath -Path (Join-Path $metadataDirectory 'unbundled') -Parent $metadataDirectory -Description 'Bundle validation output'
 $appProject = Join-Path $repoRoot 'src/Dudu.App/Dudu.App.csproj'
 $manifestPath = Join-Path $repoRoot 'src/Dudu.App/Package.appxmanifest'
 
@@ -77,6 +124,7 @@ foreach ($directory in @($packageDirectory, $metadataDirectory)) {
 }
 New-Item -ItemType Directory -Path $publishDirectory -Force | Out-Null
 New-Item -ItemType Directory -Path $unpackDirectory -Force | Out-Null
+New-Item -ItemType Directory -Path $bundleDirectory -Force | Out-Null
 
 [xml]$sourceManifest = Get-Content -Raw -LiteralPath $manifestPath
 $sourceIdentity = $sourceManifest.Package.Identity
@@ -95,13 +143,13 @@ if ($RequirePartnerCenterIdentity) {
 if ($LASTEXITCODE -ne 0) { throw "dotnet --info failed with exit code $LASTEXITCODE." }
 
 & dotnet publish $appProject -c Release -r win-x64 --self-contained true `
-    '-p:DuduStorePackage=true' "-p:Version=$Version" '-p:RuntimeIdentifier=win-x64' `
-    '-p:AppxPackageSigningEnabled=false' "-p:PublishDir=$publishDirectory$([IO.Path]::DirectorySeparatorChar)" `
+    '-p:DuduStorePackage=true' "-p:Version=$Version" "-p:RuntimeIdentifier=$targetRuntimeIdentifier" `
+    "-p:AppxPackageVersion=$expectedPackageVersion" '-p:AppxPackageSigningEnabled=false' "-p:PublishDir=$publishDirectory$([IO.Path]::DirectorySeparatorChar)" `
     "-p:AppxPackageDir=$packageDirectory$([IO.Path]::DirectorySeparatorChar)"
 if ($LASTEXITCODE -ne 0) { throw "Store package publish failed with exit code $LASTEXITCODE." }
 
 $packageCandidates = @(Get-ChildItem -LiteralPath $packageDirectory -File -Recurse |
-        Where-Object { $_.Extension -in @('.msix', '.msixupload', '.appx', '.appxupload') })
+        Where-Object { $_.Extension -in @('.msix', '.msixbundle', '.appx', '.appxbundle') })
 if ($packageCandidates.Count -ne 1) {
     throw "Expected exactly one Store package candidate under $packageDirectory; found $($packageCandidates.Count)."
 }
@@ -121,16 +169,41 @@ if (-not $makeAppx) { throw 'makeappx.exe was not found in the supported Windows
 
 & $makeAppx validate -p $artifactPath
 $makeAppxValidateExitCode = $LASTEXITCODE
-& $makeAppx unpack -p $artifactPath -d $unpackDirectory -o
+if ($makeAppxValidateExitCode -ne 0) {
+    Write-MetadataText -Name 'validation-summary.txt' -Text ("makeappx validate exit code: $makeAppxValidateExitCode`nmakeappx unbundle exit code: not run`nmakeappx unpack exit code: not run`n")
+    throw 'Windows SDK package validation failed.'
+}
+$makeAppxUnbundleExitCode = 'not applicable'
+if ($artifactPath.EndsWith('bundle', [StringComparison]::OrdinalIgnoreCase)) {
+    & $makeAppx unbundle -p $artifactPath -d $bundleDirectory -o
+    $makeAppxUnbundleExitCode = $LASTEXITCODE
+    if ($makeAppxUnbundleExitCode -ne 0) {
+        Write-MetadataText -Name 'validation-summary.txt' -Text ("makeappx validate exit code: $makeAppxValidateExitCode`nmakeappx unbundle exit code: $makeAppxUnbundleExitCode`n")
+        throw 'Windows SDK bundle extraction failed.'
+    }
+
+    $bundlePackageCandidates = @(Get-ChildItem -LiteralPath $bundleDirectory -File -Recurse |
+            Where-Object {
+                $_.Extension -in @('.msix', '.appx') -and
+                $_.BaseName -match '(^|_)x64($|_)'
+            })
+    if ($bundlePackageCandidates.Count -ne 1) {
+        Write-MetadataText -Name 'validation-summary.txt' -Text ("makeappx validate exit code: $makeAppxValidateExitCode`nmakeappx unbundle exit code: $makeAppxUnbundleExitCode`nmakeappx unpack exit code: not run`n")
+        throw "Expected exactly one x64 package in Store bundle; found $($bundlePackageCandidates.Count)."
+    }
+    & $makeAppx unpack -p $bundlePackageCandidates[0].FullName -d $unpackDirectory -o
+}
+else {
+    & $makeAppx unpack -p $artifactPath -d $unpackDirectory -o
+}
 $makeAppxUnpackExitCode = $LASTEXITCODE
-Write-MetadataText -Name 'validation-summary.txt' -Text ("makeappx validate exit code: $makeAppxValidateExitCode`nmakeappx unpack exit code: $makeAppxUnpackExitCode`n")
-if ($makeAppxValidateExitCode -ne 0 -or $makeAppxUnpackExitCode -ne 0) {
+Write-MetadataText -Name 'validation-summary.txt' -Text ("makeappx validate exit code: $makeAppxValidateExitCode`nmakeappx unbundle exit code: $makeAppxUnbundleExitCode`nmakeappx unpack exit code: $makeAppxUnpackExitCode`n")
+if ($makeAppxUnpackExitCode -ne 0) {
     throw 'Windows SDK package validation failed.'
 }
 
 [xml]$packagedManifest = Get-Content -Raw -LiteralPath (Join-Path $unpackDirectory 'AppxManifest.xml')
 $packagedIdentity = $packagedManifest.Package.Identity
-$expectedPackageVersion = "$Version.0"
 if ($packagedIdentity.Name -ne $sourceIdentity.Name -or
     $packagedIdentity.Publisher -ne $sourceIdentity.Publisher -or
     $packagedIdentity.ProcessorArchitecture -ne 'x64' -or
@@ -151,9 +224,12 @@ if ($appCert) {
     $appCertReport = Join-Path $metadataDirectory 'appcert-report.xml'
     & $appCert test -appxpackagepath $artifactPath -reportoutputpath $appCertReport
     $appCertExitCode = $LASTEXITCODE
+    Add-Content -LiteralPath (Join-Path $metadataDirectory 'validation-summary.txt') -Value "Windows App Certification Kit exit code: $appCertExitCode"
     if ($appCertExitCode -ne 0) { throw "Windows App Certification Kit validation failed with exit code $appCertExitCode." }
 }
-Add-Content -LiteralPath (Join-Path $metadataDirectory 'validation-summary.txt') -Value "Windows App Certification Kit exit code: $appCertExitCode"
+else {
+    Add-Content -LiteralPath (Join-Path $metadataDirectory 'validation-summary.txt') -Value "Windows App Certification Kit exit code: $appCertExitCode"
+}
 
 $hash = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
 Write-MetadataText -Name 'SHA256SUMS.txt' -Text "$hash  $([IO.Path]::GetFileName($artifactPath))"
