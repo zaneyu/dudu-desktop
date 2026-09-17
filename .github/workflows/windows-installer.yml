@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      store_version:
+        description: 'Three-part Store package version (Major.Minor.Patch)'
+        required: false
+        default: '1.0.0'
+        type: string
 
 permissions:
   contents: read
@@ -14,6 +20,9 @@ permissions:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
+
+env:
+  STORE_VERSION: ${{ inputs.store_version || '1.0.0' }}
 
 jobs:
   installer:
@@ -144,10 +153,23 @@ jobs:
         run: dotnet restore DuduDesktop.slnx
       - name: Package private Store MSIX
         shell: pwsh
-        run: pwsh scripts/package-store.ps1 -Version 1.0.0
+        run: pwsh scripts/package-store.ps1 -Version $env:STORE_VERSION
+      - name: Record Store package checksum
+        shell: pwsh
+        run: |
+          $checksum = Get-Content -Raw artifacts/store-package-metadata/SHA256SUMS.txt
+          $hash = ($checksum -split '\s+')[0]
+          if ($hash -notmatch '^[0-9a-f]{64}$') { throw 'Store package metadata does not contain a valid SHA-256 hash.' }
+          @"
+          ## Store package integrity
+
+          Package version: $($env:STORE_VERSION).0
+
+          Store package SHA-256: $hash
+          "@ >> $env:GITHUB_STEP_SUMMARY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: DuduDesktop-1.0.0-win-x64-store
+          name: DuduDesktop-${{ env.STORE_VERSION }}-win-x64-store
           path: |
             artifacts/store-package/
             artifacts/store-package-metadata/

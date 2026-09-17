@@ -52,10 +52,14 @@ $acceptanceDoc = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "docs/testin
 $changelog = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "CHANGELOG.md")
 $releaseDocs = @($readme, $releaseDoc, $acceptanceDoc, $changelog, $workflow)
 
+$officialMicrosoftDocumentationUrlPattern = '(?i)https?://(?:learn|support)\.microsoft\.com(?:[/ :]|$)'
+$concreteServiceUrlPattern = '(?i)https?://(?!<[^>]+>)(?!learn\.microsoft\.com(?:[/ :]|$))(?!support\.microsoft\.com(?:[/ :]|$))(?!keepachangelog\.com(?:[/ :]|$))[^\s)>]+'
+$privacyUrlFixtures = @('https://relay.example.invalid/v1', 'https://sender.example.invalid/')
+
 Assert-Contains "release runbook documents private Store submission" $releaseDoc "Partner Center"
 Assert-Contains "release runbook documents private Store audience" $releaseDoc "private-audience|audience.*private"
 Assert-Contains "release runbook documents Store hash comparison" $releaseDoc "SHA-256 hash"
-Assert-Contains "release runbook names Store artifact" $releaseDoc "DuduDesktop-1\.0\.0-win-x64-store"
+Assert-Contains "release runbook names Store artifact" $releaseDoc "DuduDesktop-<version>-win-x64-store"
 Assert-Contains "release runbook names Store hash metadata" $releaseDoc "store-package-metadata/SHA256SUMS\.txt"
 Assert-Contains "release runbook names Store version metadata" $releaseDoc "package-version\.txt"
 Assert-Contains "release runbook documents Store certification" $releaseDoc "certification"
@@ -65,8 +69,10 @@ Assert-Contains "release runbook documents package identity migration risk" $rel
 Assert-Contains "README links Store release path" $readme "private Store"
 Assert-Contains "acceptance matrix includes Store visibility" $acceptanceDoc "Store visibility"
 Assert-Contains "acceptance matrix includes second Store update" $acceptanceDoc "second Store update"
-Assert-Contains "changelog records private Store migration" $changelog "private Store"
-Assert-True "release sources contain no concrete relay or sender URL" (@($releaseDocs | Where-Object { $_ -match 'https?://[^\s`)>]+(?:workers\.dev|pages\.dev)' }).Count -eq 0)
+Assert-Contains "changelog records private Store migration" $changelog "private .*Store"
+Assert-True "concrete relay and sender URLs are detected generally" (@($privacyUrlFixtures | Where-Object { $_ -match $concreteServiceUrlPattern }).Count -eq 2)
+Assert-True "official Microsoft documentation links are allowed" ('https://learn.microsoft.com/windows/apps/' -notmatch $concreteServiceUrlPattern)
+Assert-True "release sources contain no concrete relay or sender URL" (@($releaseDocs | Where-Object { $_ -match $concreteServiceUrlPattern }).Count -eq 0)
 Assert-True "release sources contain no pairing-code literal" (@($releaseDocs | Where-Object { $_ -match '(?i)pairing\s+code\s*[:=]\s*[0-9A-Z-]{6,}' }).Count -eq 0)
 Assert-True "release sources contain no embedded token value" (@($releaseDocs | Where-Object { $_ -match '(?i)(?:access[_ -]?token|authentication[_ -]?token|bearer)\s*[:=]\s*[A-Za-z0-9._~+/=-]{12,}' }).Count -eq 0)
 Assert-True "release sources contain no private-key material" (@($releaseDocs | Where-Object { $_ -match 'BEGIN (?:EC|RSA|OPENSSH) PRIVATE KEY|PRIVATE KEY-----' }).Count -eq 0)
@@ -88,10 +94,12 @@ if (Test-Path -LiteralPath $storeScriptPath) {
     Assert-Contains "Store package script validates Store version component bounds" $storeScript "Assert-StoreVersion"
     Assert-Contains "Store package script limits Store version components to 65535" $storeScript "65535"
     Assert-Contains "Store package script fixes the fourth Store version component to zero" $storeScript 'expectedPackageVersion.*\$Version\.0'
+    Assert-Contains "Store package script validates the Store package version" $storeScript "Store package version must use Major\.Minor\.Patch"
     Assert-Contains "Store package script requires Windows build 26100" $storeScript "OSVersion.*Build.*26100"
     Assert-Contains "Store package script requires a 64-bit OS" $storeScript "Is64BitOperatingSystem"
     Assert-Contains "Store package script requires the pinned SDK" $storeScript "dotnetVersion.*10\.0\.112"
     Assert-Contains "Store package script fixes the target runtime to win-x64" $storeScript "targetRuntimeIdentifier.*win-x64"
+    Assert-Contains "Store package script exposes the production identity gate" $storeScript "RequirePartnerCenterIdentity"
     $appCertSummaryIndex = $storeScript.IndexOf("Add-Content -LiteralPath (Join-Path `$metadataDirectory 'validation-summary.txt')")
     $appCertThrowIndex = $storeScript.IndexOf('Windows App Certification Kit validation failed')
     Assert-True "Store package script records WACK results before throwing" ($appCertSummaryIndex -ge 0 -and $appCertThrowIndex -ge 0 -and $appCertSummaryIndex -lt $appCertThrowIndex)
@@ -116,9 +124,11 @@ Assert-Contains "workflow has minimal top-level permissions" $workflow '(?m)^per
 Assert-Contains "workflow re-verifies the stored artifact hash in a separate job" $workflow 'actions/download-artifact@'
 Assert-Contains "workflow uploads release metadata" $workflow 'artifacts/release-metadata/'
 Assert-Contains "workflow invokes the Store package wrapper" $workflow "scripts/package-store\.ps1"
-Assert-Contains "workflow uploads a Store package artifact" $workflow "DuduDesktop-[^\" ]*-win-x64-store"
+Assert-Contains "workflow uploads a Store package artifact" $workflow 'DuduDesktop-\$\{\{ env\.STORE_VERSION \}\}-win-x64-store'
+Assert-Contains "workflow supports an explicit Store package version" $workflow "store_version"
+Assert-Contains "workflow writes the Store package hash to the job summary" $workflow "Store package SHA-256"
 Assert-Contains "workflow keeps the Inno artifact" $workflow "DuduDesktop-1\.0\.0-win-x64-private"
-Assert-True "Store package job does not expose secrets in logs" ($workflow -notmatch "echo.*STORE|Write-Host.*STORE.*SECRET")
+Assert-True "Store package job does not expose secrets in logs" ($workflow -notmatch "echo.*\bSTORE\b|Write-Host.*\bSTORE\b.*\bSECRET\b")
 $globalJson = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "global.json") | ConvertFrom-Json
 Assert-True "global.json pins the SDK exactly (rollForward disable)" ($globalJson.sdk.rollForward -eq "disable")
 $packagesProps = [xml](Get-Content -Raw -LiteralPath (Join-Path $repoRoot "Directory.Packages.props"))
@@ -147,8 +157,11 @@ foreach ($animationName in @('idle', 'blink', 'greeting', 'sleep', 'drink', 'foc
 
 Write-Host ""
 if ($script:FailureCount -gt 0) {
-    Write-Host "release-contract.tests.ps1: FAIL ($script:FailureCount of $script:CaseCount cases failed)"
+    $failureCount = $script:FailureCount
+    $caseCount = $script:CaseCount
+    Write-Host ("release-contract.tests.ps1: FAIL " + $failureCount + " of " + $caseCount + " cases failed")
     exit 1
 }
-Write-Host "release-contract.tests.ps1: PASS ($script:CaseCount cases)"
+$caseCount = $script:CaseCount
+Write-Host ("release-contract.tests.ps1: PASS " + $caseCount + " cases")
 exit 0

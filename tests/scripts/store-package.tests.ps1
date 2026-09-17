@@ -42,6 +42,15 @@ if ($storePackageProperties.Count -eq 1) {
     Assert-True "Store package mode does not generate an App Installer file" ($storePackagePropertyGroup.GenerateAppInstallerFile -eq 'false')
 }
 
+if (Test-Path -LiteralPath (Join-Path $repoRoot "scripts/package-store.ps1")) {
+    $storeScript = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "scripts/package-store.ps1")
+    Assert-True "Store package script has a fail-closed production identity gate" (
+        $storeScript -match 'RequirePartnerCenterIdentity' -and
+        $storeScript -match 'ExpectedPartnerCenterName' -and
+        $storeScript -match 'ExpectedPartnerCenterPublisher'
+    )
+}
+
 if (Test-Path -LiteralPath $manifestPath) {
     [xml]$manifest = Get-Content -Raw -LiteralPath $manifestPath
     $namespaceManager = [System.Xml.XmlNamespaceManager]::new($manifest.NameTable)
@@ -72,8 +81,8 @@ if (Test-Path -LiteralPath $manifestPath) {
         Assert-True "150px logo family includes $($asset.Name)" (Test-Path -LiteralPath $assetPath)
         if (Test-Path -LiteralPath $assetPath) {
             $pngBytes = [IO.File]::ReadAllBytes($assetPath)
-            $width = ($pngBytes[16] -shl 24) -bor ($pngBytes[17] -shl 16) -bor ($pngBytes[18] -shl 8) -bor $pngBytes[19]
-            $height = ($pngBytes[20] -shl 24) -bor ($pngBytes[21] -shl 16) -bor ($pngBytes[22] -shl 8) -bor $pngBytes[23]
+            $width = ([int]$pngBytes[16] * 16777216) + ([int]$pngBytes[17] * 65536) + ([int]$pngBytes[18] * 256) + [int]$pngBytes[19]
+            $height = ([int]$pngBytes[20] * 16777216) + ([int]$pngBytes[21] * 65536) + ([int]$pngBytes[22] * 256) + [int]$pngBytes[23]
             Assert-True "150px logo family gives $($asset.Name) the expected dimensions" ($width -eq $asset.Dimension -and $height -eq $asset.Dimension)
         }
     }
@@ -85,8 +94,11 @@ if (Test-Path -LiteralPath $manifestPath) {
 
 Write-Host ""
 if ($script:FailureCount -gt 0) {
-    Write-Host "store-package.tests.ps1: FAIL ($script:FailureCount of $script:CaseCount cases failed)"
+    $failureCount = $script:FailureCount
+    $caseCount = $script:CaseCount
+    Write-Host ("store-package.tests.ps1: FAIL " + $failureCount + " of " + $caseCount + " cases failed")
     exit 1
 }
-Write-Host "store-package.tests.ps1: PASS ($script:CaseCount cases)"
+$caseCount = $script:CaseCount
+Write-Host ("store-package.tests.ps1: PASS " + $caseCount + " cases")
 exit 0

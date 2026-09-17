@@ -233,7 +233,24 @@ The Store path is a private-audience distribution path, not a public release.
 Reserve and maintain the private-audience Store app in Partner Center, and
 keep its audience restricted to the invited recipient account(s). The local
 non-production package identity is for development and acceptance only; it is
-not Store-publishable. Store artifacts become Microsoft-signed only after
+not Store-publishable. **Fail closed: never upload the CI package made with
+`DuduDesktop.Local.NonProduction` to Partner Center.**
+
+The owner must first configure the exact Partner Center `Identity Name` and
+`Publisher` in the private working copy of `src/Dudu.App/Package.appxmanifest`.
+Then the owner must produce the submission package with the identity gate:
+
+```powershell
+pwsh scripts/package-store.ps1 -Version <Major.Minor.Patch> `
+  -RequirePartnerCenterIdentity `
+  -ExpectedPartnerCenterName '<exact Partner Center Identity Name>' `
+  -ExpectedPartnerCenterPublisher '<exact Partner Center Publisher>'
+```
+
+The command fails unless the manifest matches both exact values and is not the
+local identity. Only the package produced after that successful gate may be
+submitted; the ordinary CI artifact remains acceptance-only. Do not commit the
+private identity values. Store artifacts become Microsoft-signed only after
 Microsoft Store publication. The current Inno installer remains unsigned and
 may trigger SmartScreen or Smart App Control behavior.
 
@@ -243,19 +260,24 @@ For each Store release:
    jobs. A CI artifact is not evidence that recipient Windows acceptance has
    completed.
 2. Download the workflow artifact named
-   `DuduDesktop-1.0.0-win-x64-store` to a newly created temporary directory.
-   It contains the MSIX/MSIX upload file under `artifacts/store-package/` and
+   `DuduDesktop-<version>-win-x64-store` to a newly created temporary directory.
+   It contains the `.msix` package under `artifacts/store-package/` and
    the private release metadata under `artifacts/store-package-metadata/`.
-3. Compare the package SHA-256 hash with both the Windows workflow job summary
-   and `store-package-metadata/SHA256SUMS.txt`; also confirm
-   `package-version.txt` matches the intended release before uploading
-   anything. Keep the package and all metadata private.
-4. Upload the MSIX/MSIX upload file to Partner Center, keep the audience
-   private, and submit it for certification.
+3. Before any upload, verify that this is the submission package produced by
+   the successful identity-gated command above. Compare its SHA-256 hash with
+   the `Store package SHA-256` value in the Store job summary and with
+   `store-package-metadata/SHA256SUMS.txt`; also confirm
+   `package-version.txt` matches the intended release. Keep the package and
+   all metadata private.
+4. Upload the `.msix` package (the Partner Center upload container, if the
+   portal requests one, is not the raw `.msix`) to Partner Center, keep the
+   audience private, and submit it for certification.
 5. After publication, verify from the recipient's invited Store account that
    the private Store listing is visible and that Dudu Desktop installs.
-6. For later updates, run the workflow with a strictly increasing three-part
-   package version and confirm the corresponding package filename and
+6. For later updates, start the workflow with `workflow_dispatch` and enter
+   the explicit `store_version` three-part value. Pushes retain the `1.0.0`
+   default for repeatable acceptance builds. Use a strictly increasing package
+   version and confirm the corresponding package filename and
    `package-version.txt` before submission. If a rollout is bad, pause it in
    Partner Center and submit a corrected package with the next increasing
    version.
