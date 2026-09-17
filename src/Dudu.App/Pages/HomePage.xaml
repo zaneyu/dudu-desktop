@@ -70,8 +70,9 @@
             </StackPanel>
 
             <StackPanel Spacing="12">
-                <TextBlock Text="quick check-in" Style="{StaticResource SectionHeadingStyle}" />
-                <TextBlock Text="optional stays on this pc no mood inferred" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <TextBlock Text="how was your day, ada?" Style="{StaticResource SectionHeadingStyle}" />
+                <TextBlock Text="optional, saved on this pc only. dudu's check-in, not a message from your partner. enable the evening prompt in Reminders." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <TextBlock Text="{x:Bind ViewModel.YesterdayReflectionText, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.AutomationId="HomeYesterdayReflection" AutomationProperties.Name="yesterday's check-in" />
                 <ComboBox Header="how are u feeling?" SelectedIndex="1" SelectionChanged="MoodBox_SelectionChanged" AutomationProperties.AutomationId="HomeMoodChoice" AutomationProperties.Name="how are u feeling?">
                     <ComboBoxItem Content="great" Tag="Great" />
                     <ComboBoxItem Content="okay" Tag="Okay" />

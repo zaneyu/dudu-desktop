@@ -91,7 +91,11 @@ public sealed class HomeViewModel : FeatureViewModelBase
         get => _checkInSummary;
         private set
         {
-            if (SetProperty(ref _checkInSummary, value)) OnPropertyChanged(nameof(CheckInSummaryText));
+            if (SetProperty(ref _checkInSummary, value))
+            {
+                OnPropertyChanged(nameof(CheckInSummaryText));
+                OnPropertyChanged(nameof(YesterdayReflectionText));
+            }
         }
     }
 
@@ -114,6 +118,23 @@ public sealed class HomeViewModel : FeatureViewModelBase
     public string CheckInSummaryText => CheckInSummary is null
         ? "no check-ins yet ah"
         : $"{CheckInSummary.Recent.Count} optional check-in{(CheckInSummary.Recent.Count == 1 ? string.Empty : "s")} in the last 7 days";
+
+    public string YesterdayReflectionText
+    {
+        get
+        {
+            var zone = _context.Clock.LocalTimeZone;
+            var yesterday = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(_context.Clock.UtcNow, zone).DateTime)
+                .AddDays(-1);
+            var previous = CheckInSummary?.Recent
+                .Where(item => DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(item.CreatedUtc, zone).DateTime) == yesterday)
+                .OrderByDescending(item => item.CreatedUtc)
+                .FirstOrDefault();
+            if (previous is null) return "a fresh check-in whenever u feel like it, ada";
+            var reflection = string.IsNullOrWhiteSpace(previous.Note) ? string.Empty : $"\nyour note: {previous.Note}";
+            return $"yesterday you chose {previous.Choice.ToString().ToLowerInvariant()}.{reflection}\nhow does today feel, ada?";
+        }
+    }
 
     public string CountdownTitle
     {

@@ -18,6 +18,32 @@ namespace Dudu.App.Tests.ViewModels;
 public sealed class FeatureViewModelTests
 {
     [Fact]
+    public async Task Home_remembers_only_yesterdays_latest_explicit_check_in()
+    {
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        var viewModel = new HomeViewModel(fixture.Context);
+        await viewModel.RefreshAsync(ct);
+        Assert.Contains("fresh check-in", viewModel.YesterdayReflectionText);
+
+        fixture.Clock.UtcNow = DateTimeOffset.Parse("2026-09-11T20:00:00Z");
+        await fixture.Context.CheckInService.RecordAsync(MoodChoice.Rough, "earlier", ct);
+        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddHours(1);
+        await fixture.Context.CheckInService.RecordAsync(MoodChoice.Okay, "finished my work", ct);
+        fixture.Clock.UtcNow = DateTimeOffset.Parse("2026-09-12T10:00:00Z");
+        await fixture.Context.CheckInService.RecordAsync(MoodChoice.Great, "today's note", ct);
+        await viewModel.RefreshAsync(ct);
+
+        Assert.Contains("yesterday you chose okay", viewModel.YesterdayReflectionText);
+        Assert.Contains("finished my work", viewModel.YesterdayReflectionText);
+        Assert.DoesNotContain("earlier", viewModel.YesterdayReflectionText);
+        Assert.DoesNotContain("today's note", viewModel.YesterdayReflectionText);
+        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddDays(3);
+        await viewModel.RefreshAsync(ct);
+        Assert.Contains("fresh check-in", viewModel.YesterdayReflectionText);
+    }
+
+    [Fact]
     public async Task Completing_a_reminder_persists_before_dismissing_pet_state()
     {
         var fixture = FeatureFixture.Create();
@@ -1183,7 +1209,7 @@ public sealed class FeatureViewModelTests
 
     private sealed class FakeClock(string value) : IClock
     {
-        public DateTimeOffset UtcNow { get; } = DateTimeOffset.Parse(value);
+        public DateTimeOffset UtcNow { get; set; } = DateTimeOffset.Parse(value);
         public TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
     }
 
@@ -1334,8 +1360,14 @@ public sealed class FeatureViewModelTests
 
     private sealed class FakeCheckInRepository : ICheckInRepository
     {
-        public Task SaveAsync(MoodCheckIn checkIn, CancellationToken cancellationToken) => Task.CompletedTask;
-        public Task<IReadOnlyList<MoodCheckIn>> ListSinceAsync(DateTimeOffset sinceUtc, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<MoodCheckIn>>([]);
+        private readonly List<MoodCheckIn> _items = [];
+        public Task SaveAsync(MoodCheckIn checkIn, CancellationToken cancellationToken)
+        {
+            _items.Add(checkIn);
+            return Task.CompletedTask;
+        }
+        public Task<IReadOnlyList<MoodCheckIn>> ListSinceAsync(DateTimeOffset sinceUtc, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<MoodCheckIn>>(_items.Where(item => item.CreatedUtc >= sinceUtc).ToArray());
     }
 
     private sealed class FakePairing : IPairingService
