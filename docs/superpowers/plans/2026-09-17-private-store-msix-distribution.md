@@ -284,13 +284,20 @@
 
   ```csharp
   [Fact]
-  public void Default_data_root_is_independent_of_package_install_location()
+  public void Explicit_data_root_is_independent_of_package_install_location()
   {
-      using var environment = new TemporaryEnvironment();
-      var paths = AppPaths.ForRoot(environment.Root);
-      Assert.Equal(Path.Combine(environment.Root, "dudu.db"), paths.Database);
-      Assert.Equal(Path.Combine(environment.Root, "backups"), paths.Backups);
-      Assert.Equal(Path.Combine(environment.Root, "secrets"), paths.Secrets);
+      var root = Path.Combine(Path.GetTempPath(), $"dudu-app-path-{Guid.NewGuid():N}");
+      try
+      {
+          var paths = AppPaths.ForRoot(root);
+          Assert.Equal(Path.Combine(root, "dudu.db"), paths.Database);
+          Assert.Equal(Path.Combine(root, "backups"), paths.Backups);
+          Assert.Equal(Path.Combine(root, "secrets"), paths.Secrets);
+      }
+      finally
+      {
+          if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+      }
   }
   ```
 
