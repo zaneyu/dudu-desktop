@@ -56,14 +56,25 @@ if (Test-Path -LiteralPath (Join-Path $repoRoot "scripts/package-store.ps1")) {
         $storeScript -match 'Assert-AcceptanceOnlyIdentity' -and
         $storeScript -match 'DuduDesktop\.Local\.NonProduction'
     )
-    Assert-True "acceptance-only mode cannot combine with the Partner Center identity gate" (
-        $storeScript -match '\$AcceptanceOnly\s+-and\s+\$RequirePartnerCenterIdentity'
+    Assert-True "package mode validator rejects neither and both selected modes" (
+        $storeScript -match 'Assert-PackageMode' -and
+        $storeScript -match '\$AcceptanceOnly\s+-eq\s+\$RequirePartnerCenterIdentity'
     )
     Assert-True "acceptance-only mode records that WACK was skipped" (
         $storeScript -match 'Windows App Certification Kit status: skipped'
     )
     Assert-True "normal package mode still requires WACK tooling" (
         $storeScript -match 'Resolve-WindowsSdkTools\s+-RequireAppCert:\(-not \$AcceptanceOnly\)'
+    )
+    Assert-True "single-project package output accepts exactly one MSIX candidate" (
+        $storeScript -match "\.Extension -eq '\.msix'" -and
+        $storeScript -match 'Expected exactly one Store MSIX package candidate'
+    )
+    Assert-True "single-project package output rejects AppX and bundle formats" (
+        $storeScript -match '\.appx' -and
+        $storeScript -match '\.appxbundle' -and
+        $storeScript -match '\.msixbundle' -and
+        $storeScript -notmatch 'makeAppx unbundle'
     )
 }
 

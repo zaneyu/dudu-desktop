@@ -91,9 +91,14 @@ if (Test-Path -LiteralPath $storeScriptPath) {
     Assert-Contains "Store package script disables local signing" $storeScript "AppxPackageSigningEnabled.*false"
     Assert-Contains "Store package script writes beneath artifacts" $storeScript "artifacts[/\\]store-package"
     Assert-True "Store package script does not publish a relay URL" ($storeScript -notmatch "workers\.dev|DUDU_RELAY_BASE_URL")
-    Assert-True "Store package script does not embed credentials" ($storeScript -notmatch "clientSecret|accessToken|password|token\s*=")
-    Assert-Contains "Store package script accepts only MakeAppx package formats" $storeScript "\.msixbundle.*\.appxbundle"
-    Assert-Contains "Store package script unbundles supported Store package bundles" $storeScript "makeAppx unbundle"
+    Assert-True "Store package script does not embed credentials" ($storeScript -notmatch 'clientSecret|accessToken|password\s*=\s*[''\"][^''\"]+|token\s*=\s*[''\"][^''\"]+')
+    Assert-Contains "Store package script accepts only a single MSIX candidate" $storeScript "\.Extension -eq '\.msix'"
+    Assert-True "Store package script rejects every bundle and AppX output format" (
+        $storeScript -match "\.msixbundle" -and
+        $storeScript -match "\.appxbundle" -and
+        $storeScript -match "\.appx" -and
+        $storeScript -notmatch "makeAppx unbundle"
+    )
     Assert-True "Store package script does not pass upload containers to MakeAppx" ($storeScript -notmatch "\.msixupload|\.appxupload")
     Assert-Contains "Store package script validates Store version component bounds" $storeScript "Assert-StoreVersion"
     Assert-Contains "Store package script limits Store version components to 65535" $storeScript "65535"
@@ -114,7 +119,8 @@ if (Test-Path -LiteralPath $storeScriptPath) {
     Assert-Contains "Store package script rejects an ambiguous SDK tool resolution" $storeScript "ambiguous"
     Assert-Contains "Store package script exposes the production identity gate" $storeScript "RequirePartnerCenterIdentity"
     Assert-Contains "Store package script exposes an explicit acceptance-only mode" $storeScript "AcceptanceOnly"
-    Assert-Contains "Store package script rejects combining acceptance-only and Partner Center identity modes" $storeScript '\$AcceptanceOnly\s+-and\s+\$RequirePartnerCenterIdentity'
+    Assert-Contains "Store package script requires exactly one packaging mode" $storeScript "Assert-PackageMode"
+    Assert-Contains "Store package script rejects combining acceptance-only and Partner Center identity modes" $storeScript '\$AcceptanceOnly\s+-eq\s+\$RequirePartnerCenterIdentity'
     Assert-Contains "Store package script enforces local identity for acceptance-only packages" $storeScript "Assert-AcceptanceOnlyIdentity"
     Assert-Contains "Store package script rejects the local identity at the production gate" $storeScript '\$sourceIdentity\.Name\s+-eq\s+''DuduDesktop\.Local\.NonProduction'''
     Assert-Contains "Store package script compares the expected production name" $storeScript '\$sourceIdentity\.Name\s+-ne\s+\$ExpectedPartnerCenterName'
@@ -132,23 +138,82 @@ if (Test-Path -LiteralPath $storeScriptPath) {
     Assert-True "Store package script exposes an executable identity validation function" ($identityFunction.Count -eq 1)
     if ($identityFunction.Count -eq 1) {
         . ([scriptblock]::Create($identityFunction[0].Extent.Text))
-        [xml]$localIdentityManifest = '<Package><Identity Name="DuduDesktop.Local.NonProduction" Publisher="CN=Dudu Desktop Local Package, O=Private" /></Package>'
+        [xml]$localIdentityManifest = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'src/Dudu.App/Package.appxmanifest')
+        $localIdentity = $localIdentityManifest.Package.Identity
         $rejectedLocalIdentity = $false
         try {
-            Assert-PartnerCenterIdentity -sourceIdentity $localIdentityManifest.Package.Identity -ExpectedPartnerCenterName 'Contoso.Dudu' -ExpectedPartnerCenterPublisher 'CN=Contoso Dudu'
+            Assert-PartnerCenterIdentity -sourceIdentity $localIdentity -ExpectedPartnerCenterName 'Contoso.Dudu' -ExpectedPartnerCenterPublisher 'CN=Contoso Dudu'
         }
         catch {
             $rejectedLocalIdentity = $true
         }
         Assert-True "Store identity function rejects the local non-production identity" $rejectedLocalIdentity
     }
+    $acceptanceIdentityFunction = @($storeScriptAst.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Assert-AcceptanceOnlyIdentity'
+    }, $true))
+    Assert-True "Store package script exposes an executable acceptance-only identity validation function" ($acceptanceIdentityFunction.Count -eq 1)
+    if ($acceptanceIdentityFunction.Count -eq 1) {
+        . ([scriptblock]::Create($acceptanceIdentityFunction[0].Extent.Text))
+        [xml]$acceptanceManifest = Get-Content -Raw -LiteralPath (Join-Path $repoRoot 'src/Dudu.App/Package.appxmanifest')
+        $acceptedManifestIdentity = $true
+        try {
+            Assert-AcceptanceOnlyIdentity -sourceIdentity $acceptanceManifest.Package.Identity
+        }
+        catch {
+            $acceptedManifestIdentity = $false
+        }
+        Assert-True "acceptance-only identity guard accepts the real manifest identity" $acceptedManifestIdentity
+
+        [xml]$nonLocalManifest = '<Package><Identity Name="DuduDesktop.Local.NonProduction" Publisher="CN=Not Dudu" /></Package>'
+        $rejectedNonLocalIdentity = $false
+        try {
+            Assert-AcceptanceOnlyIdentity -sourceIdentity $nonLocalManifest.Package.Identity
+        }
+        catch {
+            $rejectedNonLocalIdentity = $true
+        }
+        Assert-True "acceptance-only identity guard rejects a different publisher" $rejectedNonLocalIdentity
+    }
+    $packageModeFunction = @($storeScriptAst.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Assert-PackageMode'
+    }, $true))
+    Assert-True "Store package script exposes an executable packaging mode validator" ($packageModeFunction.Count -eq 1)
+    if ($packageModeFunction.Count -eq 1) {
+        . ([scriptblock]::Create($packageModeFunction[0].Extent.Text))
+        $modeCases = @(
+            @{ Name = 'neither'; AcceptanceOnly = $false; RequirePartnerCenterIdentity = $false; Reject = $true },
+            @{ Name = 'both'; AcceptanceOnly = $true; RequirePartnerCenterIdentity = $true; Reject = $true },
+            @{ Name = 'acceptance-only'; AcceptanceOnly = $true; RequirePartnerCenterIdentity = $false; Reject = $false },
+            @{ Name = 'Partner Center'; AcceptanceOnly = $false; RequirePartnerCenterIdentity = $true; Reject = $false }
+        )
+        foreach ($modeCase in $modeCases) {
+            $rejectedMode = $false
+            try {
+                Assert-PackageMode -AcceptanceOnly:$modeCase.AcceptanceOnly -RequirePartnerCenterIdentity:$modeCase.RequirePartnerCenterIdentity
+            }
+            catch {
+                $rejectedMode = $true
+            }
+            Assert-True "Store package mode validator handles $($modeCase.Name) correctly" ($rejectedMode -eq $modeCase.Reject)
+        }
+    }
     $clearOutputIndex = $storeScript.IndexOf("Remove-Item -LiteralPath `$directory -Recurse -Force")
+    $preflightCommentIndex = $storeScript.IndexOf("# Validate every host, source, and tool input")
+    $preflightTryIndex = $storeScript.IndexOf("try {", $preflightCommentIndex)
+    $hostPreflightIndex = $storeScript.IndexOf("OperatingSystem]::IsWindows")
     $manifestPreflightIndex = $storeScript.IndexOf("[xml]`$sourceManifest = Get-Content -Raw -LiteralPath `$manifestPath")
     $toolPreflightIndex = $storeScript.IndexOf("`$sdkTools = Resolve-WindowsSdkTools")
-    Assert-True "Store manifest and tool preflight precede package output deletion" (
-        $clearOutputIndex -ge 0 -and $manifestPreflightIndex -ge 0 -and $toolPreflightIndex -ge 0 -and
+    Assert-True "Store host, manifest, and tool preflight use the protected evidence path before package output deletion" (
+        $clearOutputIndex -ge 0 -and $preflightCommentIndex -ge 0 -and $preflightTryIndex -ge 0 -and $hostPreflightIndex -gt $preflightTryIndex -and
+        $manifestPreflightIndex -ge 0 -and $toolPreflightIndex -ge 0 -and
         $manifestPreflightIndex -lt $clearOutputIndex -and $toolPreflightIndex -lt $clearOutputIndex
     )
+    Assert-Contains "Store package script sanitizes protected preflight evidence" $storeScript 'token\|secret\|password'
     $appCertSummaryIndex = $storeScript.IndexOf("Windows App Certification Kit exit code")
     $appCertThrowIndex = $storeScript.IndexOf('Windows App Certification Kit validation failed')
     Assert-True "Store package script records WACK results before throwing" ($appCertSummaryIndex -ge 0 -and $appCertThrowIndex -ge 0 -and $appCertSummaryIndex -lt $appCertThrowIndex)
@@ -194,6 +259,7 @@ Assert-Contains "workflow retains Store AppCert evidence when present" $workflow
 Assert-Contains "workflow retains Store preflight failure evidence" $workflow 'work/store-package-failures/\*\*/validation-summary\.txt'
 Assert-Contains "workflow writes safe Store failure metadata when packaging exits early" $workflow 'artifacts/store-package-failure-metadata/failure-metadata\.txt'
 Assert-Contains "verify runs Store package source contracts" $verify 'pwsh tests/scripts/store-package\.tests\.ps1'
+Assert-Contains "verify explicitly selects the non-public acceptance-only Store package mode" $verify 'scripts/package-store\.ps1\s+-Version 1\.0\.0\s+-AcceptanceOnly'
 Assert-Contains "workflow runs Store package source contracts" $workflow 'pwsh tests/scripts/store-package\.tests\.ps1'
 Assert-Contains "workflow keeps the Inno artifact" $workflow "DuduDesktop-1\.0\.0-win-x64-private"
 Assert-True "Store package job does not expose secrets in logs" ($workflow -notmatch "echo.*\bSTORE\b|Write-Host.*\bSTORE\b.*\bSECRET\b")

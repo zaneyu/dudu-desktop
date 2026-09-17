@@ -29,10 +29,6 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-if (-not [OperatingSystem]::IsWindows()) {
-    throw 'Store package script requires Windows 11 x64 with the supported Visual Studio and Windows SDK installation.'
-}
-
 function Assert-ChildPath {
     param(
         [Parameter(Mandatory)][string]$Path,
@@ -60,7 +56,10 @@ function Write-PreflightFailureEvidence {
     # failed-preflight evidence in ignored host-local scratch instead.
     $failureDirectory = Join-Path $repoRoot (Join-Path 'work/store-package-failures' ([Guid]::NewGuid().ToString('N')))
     New-Item -ItemType Directory -Path $failureDirectory -Force | Out-Null
-    Set-Content -LiteralPath (Join-Path $failureDirectory 'validation-summary.txt') -Value $Message -NoNewline -Encoding utf8
+    $sanitizedMessage = $Message -replace [regex]::Escape($repoRoot), '<repo>'
+    $sanitizedMessage = $sanitizedMessage -replace '(?i)\b(token|secret|password)\b\s*[:=]\s*\S+', '$1=<redacted>'
+    $sanitizedMessage = $sanitizedMessage -replace '[\r\n]+', ' '
+    Set-Content -LiteralPath (Join-Path $failureDirectory 'validation-summary.txt') -Value ("Store package preflight failed: $sanitizedMessage") -NoNewline -Encoding utf8
     Write-Host "Store package preflight evidence: $failureDirectory"
 }
 
@@ -170,60 +169,68 @@ function Assert-AcceptanceOnlyIdentity {
     param([Parameter(Mandatory)][System.Xml.XmlElement]$sourceIdentity)
 
     if ($sourceIdentity.Name -ne 'DuduDesktop.Local.NonProduction' -or
-        $sourceIdentity.Publisher -ne 'CN=Dudu Desktop Local Package, O=Private') {
+        $sourceIdentity.Publisher -ne 'CN=Dudu Desktop Local Package, O=Dudu Desktop Local Development, C=US') {
         throw 'Acceptance-only packaging requires the local non-production identity and cannot produce a Partner Center submission package.'
+    }
+}
+
+function Assert-PackageMode {
+    param(
+        [switch]$AcceptanceOnly,
+        [switch]$RequirePartnerCenterIdentity
+    )
+
+    if ($AcceptanceOnly -eq $RequirePartnerCenterIdentity) {
+        throw 'Specify exactly one package mode: -AcceptanceOnly or -RequirePartnerCenterIdentity.'
     }
 }
 
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $targetRuntimeIdentifier = 'win-x64'
-Assert-StoreVersion -Value $Version
-$expectedPackageVersion = "$Version.0"
 
-if (-not [Environment]::Is64BitOperatingSystem) {
-    throw 'Store package script requires a 64-bit Windows operating system.'
-}
-if (-not [Environment]::Is64BitProcess) {
-    throw 'Store package script must run from a 64-bit PowerShell process.'
-}
-if ([Environment]::OSVersion.Version.Build -lt 26100) {
-    throw 'Store package script requires Windows build 26100 or newer.'
-}
-if ($targetRuntimeIdentifier -ne 'win-x64') {
-    throw 'Store package script requires the win-x64 target runtime.'
-}
-
-$dotnetVersion = & dotnet --version
-if ($LASTEXITCODE -ne 0) { throw "dotnet --version failed with exit code $LASTEXITCODE." }
-if ($dotnetVersion -ne '10.0.112') {
-    throw "Store package script requires .NET SDK 10.0.112; found $dotnetVersion."
-}
-
-$artifactsRoot = Join-Path $repoRoot 'artifacts'
-$packageDirectory = Assert-ChildPath -Path (Join-Path $repoRoot 'artifacts/store-package') -Parent $artifactsRoot -Description 'Package output'
-$metadataDirectory = Assert-ChildPath -Path (Join-Path $repoRoot 'artifacts/store-package-metadata') -Parent $artifactsRoot -Description 'Package metadata output'
-$publishDirectory = Assert-ChildPath -Path (Join-Path $metadataDirectory 'publish') -Parent $metadataDirectory -Description 'Publish output'
-$unpackDirectory = Assert-ChildPath -Path (Join-Path $metadataDirectory 'unpacked') -Parent $metadataDirectory -Description 'Package validation output'
-$bundleDirectory = Assert-ChildPath -Path (Join-Path $metadataDirectory 'unbundled') -Parent $metadataDirectory -Description 'Bundle validation output'
-$appProject = Join-Path $repoRoot 'src/Dudu.App/Dudu.App.csproj'
-$manifestPath = Join-Path $repoRoot 'src/Dudu.App/Package.appxmanifest'
-
-# Validate every source and tool input before deleting the last known-good
-# package or metadata output. A failed preflight records evidence in ignored
-# scratch and leaves those outputs untouched.
+# Validate every host, source, and tool input before deleting the last
+# known-good package or metadata output. A failed preflight records sanitized
+# evidence in ignored scratch and leaves those outputs untouched.
 try {
+    if (-not [OperatingSystem]::IsWindows()) {
+        throw 'Store package script requires Windows 11 x64 with the supported Visual Studio and Windows SDK installation.'
+    }
+    Assert-StoreVersion -Value $Version
+    $expectedPackageVersion = "$Version.0"
+    Assert-PackageMode -AcceptanceOnly:$AcceptanceOnly -RequirePartnerCenterIdentity:$RequirePartnerCenterIdentity
+    if (-not [Environment]::Is64BitOperatingSystem) {
+        throw 'Store package script requires a 64-bit Windows operating system.'
+    }
+    if (-not [Environment]::Is64BitProcess) {
+        throw 'Store package script must run from a 64-bit PowerShell process.'
+    }
+    if ([Environment]::OSVersion.Version.Build -lt 26100) {
+        throw 'Store package script requires Windows build 26100 or newer.'
+    }
+    if ($targetRuntimeIdentifier -ne 'win-x64') {
+        throw 'Store package script requires the win-x64 target runtime.'
+    }
+    $dotnetVersion = & dotnet --version
+    if ($LASTEXITCODE -ne 0) { throw "dotnet --version failed with exit code $LASTEXITCODE." }
+    if ($dotnetVersion -ne '10.0.112') {
+        throw "Store package script requires .NET SDK 10.0.112; found $dotnetVersion."
+    }
+    $artifactsRoot = Join-Path $repoRoot 'artifacts'
+    $packageDirectory = Assert-ChildPath -Path (Join-Path $repoRoot 'artifacts/store-package') -Parent $artifactsRoot -Description 'Package output'
+    $metadataDirectory = Assert-ChildPath -Path (Join-Path $repoRoot 'artifacts/store-package-metadata') -Parent $artifactsRoot -Description 'Package metadata output'
+    $publishDirectory = Assert-ChildPath -Path (Join-Path $metadataDirectory 'publish') -Parent $metadataDirectory -Description 'Publish output'
+    $unpackDirectory = Assert-ChildPath -Path (Join-Path $metadataDirectory 'unpacked') -Parent $metadataDirectory -Description 'Package validation output'
+    $appProject = Join-Path $repoRoot 'src/Dudu.App/Dudu.App.csproj'
+    $manifestPath = Join-Path $repoRoot 'src/Dudu.App/Package.appxmanifest'
     if (-not (Test-Path -LiteralPath $appProject)) { throw "Store app project is missing: $appProject" }
     if (-not (Test-Path -LiteralPath $manifestPath)) { throw "Store package manifest is missing: $manifestPath" }
     [xml]$sourceManifest = Get-Content -Raw -LiteralPath $manifestPath
     $sourceIdentity = $sourceManifest.Package.Identity
     if (-not $sourceIdentity) { throw "Store package manifest has no Identity element: $manifestPath" }
-    if ($AcceptanceOnly -and $RequirePartnerCenterIdentity) {
-        throw 'Acceptance-only packaging cannot be combined with the Partner Center identity gate.'
-    }
     if ($AcceptanceOnly) {
         Assert-AcceptanceOnlyIdentity -sourceIdentity $sourceIdentity
     }
-    elseif ($RequirePartnerCenterIdentity) {
+    else {
         Assert-PartnerCenterIdentity -sourceIdentity $sourceIdentity -ExpectedPartnerCenterName $ExpectedPartnerCenterName -ExpectedPartnerCenterPublisher $ExpectedPartnerCenterPublisher
     }
     $projectAssetsPath = Join-Path (Split-Path -Parent $appProject) 'obj\project.assets.json'
@@ -233,7 +240,7 @@ try {
     $sdkTools = Resolve-WindowsSdkTools -RequireAppCert:(-not $AcceptanceOnly)
 }
 catch {
-    Write-PreflightFailureEvidence -Message ("Store package preflight failed: " + $_.Exception.Message)
+    Write-PreflightFailureEvidence -Message $_.Exception.Message
     throw
 }
 
@@ -245,7 +252,6 @@ foreach ($directory in @($packageDirectory, $metadataDirectory)) {
 }
 New-Item -ItemType Directory -Path $publishDirectory -Force | Out-Null
 New-Item -ItemType Directory -Path $unpackDirectory -Force | Out-Null
-New-Item -ItemType Directory -Path $bundleDirectory -Force | Out-Null
 
 & dotnet --info | Set-Content -LiteralPath (Join-Path $metadataDirectory 'dotnet-info.txt') -Encoding utf8
 if ($LASTEXITCODE -ne 0) { throw "dotnet --info failed with exit code $LASTEXITCODE." }
@@ -256,14 +262,18 @@ if ($LASTEXITCODE -ne 0) { throw "dotnet --info failed with exit code $LASTEXITC
     "-p:AppxPackageDir=$packageDirectory$([IO.Path]::DirectorySeparatorChar)"
 if ($LASTEXITCODE -ne 0) { throw "Store package publish failed with exit code $LASTEXITCODE." }
 
-$packageCandidates = @(Get-ChildItem -LiteralPath $packageDirectory -File -Recurse |
-        Where-Object { $_.Extension -in @('.msix', '.msixbundle', '.appx', '.appxbundle') })
+$packageFiles = @(Get-ChildItem -LiteralPath $packageDirectory -File -Recurse)
+$unsupportedPackageCandidates = @($packageFiles | Where-Object { $_.Extension -in @('.appx', '.appxbundle', '.msixbundle') })
+if ($unsupportedPackageCandidates.Count -ne 0) {
+    throw "Store package output contains unsupported AppX or bundle format(s): $($unsupportedPackageCandidates.Count)."
+}
+$packageCandidates = @($packageFiles | Where-Object { $_.Extension -eq '.msix' })
 if ($packageCandidates.Count -ne 1) {
-    throw "Expected exactly one Store package candidate under $packageDirectory; found $($packageCandidates.Count)."
+    throw "Expected exactly one Store MSIX package candidate under $packageDirectory; found $($packageCandidates.Count)."
 }
 
 $packageCandidate = $packageCandidates[0]
-$artifactPath = Join-Path $packageDirectory ("DuduDesktop-$Version-win-x64$($packageCandidate.Extension)")
+$artifactPath = Join-Path $packageDirectory "DuduDesktop-$Version-win-x64.msix"
 if ($packageCandidate.FullName -ne $artifactPath) {
     Move-Item -LiteralPath $packageCandidate.FullName -Destination $artifactPath
 }
@@ -273,34 +283,12 @@ $makeAppx = $sdkTools.MakeAppx
 & $makeAppx validate -p $artifactPath
 $makeAppxValidateExitCode = $LASTEXITCODE
 if ($makeAppxValidateExitCode -ne 0) {
-    Write-MetadataText -Name 'validation-summary.txt' -Text ("makeappx validate exit code: $makeAppxValidateExitCode`nmakeappx unbundle exit code: not run`nmakeappx unpack exit code: not run`n")
+    Write-MetadataText -Name 'validation-summary.txt' -Text ("makeappx validate exit code: $makeAppxValidateExitCode`nmakeappx unpack exit code: not run`n")
     throw 'Windows SDK package validation failed.'
 }
-$makeAppxUnbundleExitCode = 'not applicable'
-if ($artifactPath.EndsWith('bundle', [StringComparison]::OrdinalIgnoreCase)) {
-    & $makeAppx unbundle -p $artifactPath -d $bundleDirectory -o
-    $makeAppxUnbundleExitCode = $LASTEXITCODE
-    if ($makeAppxUnbundleExitCode -ne 0) {
-        Write-MetadataText -Name 'validation-summary.txt' -Text ("makeappx validate exit code: $makeAppxValidateExitCode`nmakeappx unbundle exit code: $makeAppxUnbundleExitCode`n")
-        throw 'Windows SDK bundle extraction failed.'
-    }
-
-    $bundlePackageCandidates = @(Get-ChildItem -LiteralPath $bundleDirectory -File -Recurse |
-            Where-Object {
-                $_.Extension -in @('.msix', '.appx') -and
-                $_.BaseName -match '(^|_)x64($|_)'
-            })
-    if ($bundlePackageCandidates.Count -ne 1) {
-        Write-MetadataText -Name 'validation-summary.txt' -Text ("makeappx validate exit code: $makeAppxValidateExitCode`nmakeappx unbundle exit code: $makeAppxUnbundleExitCode`nmakeappx unpack exit code: not run`n")
-        throw "Expected exactly one x64 package in Store bundle; found $($bundlePackageCandidates.Count)."
-    }
-    & $makeAppx unpack -p $bundlePackageCandidates[0].FullName -d $unpackDirectory -o
-}
-else {
-    & $makeAppx unpack -p $artifactPath -d $unpackDirectory -o
-}
+& $makeAppx unpack -p $artifactPath -d $unpackDirectory -o
 $makeAppxUnpackExitCode = $LASTEXITCODE
-Write-MetadataText -Name 'validation-summary.txt' -Text ("makeappx validate exit code: $makeAppxValidateExitCode`nmakeappx unbundle exit code: $makeAppxUnbundleExitCode`nmakeappx unpack exit code: $makeAppxUnpackExitCode`n")
+Write-MetadataText -Name 'validation-summary.txt' -Text ("makeappx validate exit code: $makeAppxValidateExitCode`nmakeappx unpack exit code: $makeAppxUnpackExitCode`n")
 if ($makeAppxUnpackExitCode -ne 0) {
     throw 'Windows SDK package validation failed.'
 }

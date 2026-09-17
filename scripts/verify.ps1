@@ -229,7 +229,7 @@ try {
     # package only after the established Inno gate has completed.
     if ([OperatingSystem]::IsWindows()) {
         Write-Host "== Private Store package (non-public artifact) ==" -ForegroundColor Cyan
-        pwsh scripts/package-store.ps1 -Version 1.0.0
+        pwsh scripts/package-store.ps1 -Version 1.0.0 -AcceptanceOnly
     }
 
     Write-Host "== SHA-256 manifest ==" -ForegroundColor Cyan
