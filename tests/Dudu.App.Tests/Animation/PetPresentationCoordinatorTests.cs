@@ -57,7 +57,7 @@ public sealed class PetPresentationCoordinatorTests
             TestContext.Current.CancellationToken);
 
         Assert.Equal(PetState.FocusTransition, presentations[0].State);
-        Assert.Equal("focus-end", presentations[0].AnimationKey);
+        Assert.Equal("celebrate", presentations[0].AnimationKey);
         Assert.Equal(PetState.Idle, presentations[^1].State);
         Assert.Equal(PetState.Idle, pet.Current.State);
     }
