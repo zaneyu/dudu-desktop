@@ -7,27 +7,34 @@ namespace Dudu.App.Tests.System;
 public sealed class PackagedStartupRegistrationTests
 {
     [Fact]
-    public async Task Packaged_executable_registers_only_the_current_user_startup_shortcut_with_background_argument()
+    public async Task Default_construction_registers_the_process_path_in_current_user_startup_with_background_argument()
     {
-        var root = Path.Combine(Path.GetTempPath(), $"dudu-packaged-startup-{Guid.NewGuid():N}");
-        var startup = Path.Combine(root, "CurrentUser", "Startup");
-        var packagedExecutable = Path.Combine(root, "WindowsApps", "Dudu.App.exe");
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.Skip("Startup registration uses the Windows current-user Startup folder.");
+        }
+
+        var processPath = Environment.ProcessPath;
+        Assert.False(string.IsNullOrWhiteSpace(processPath));
         var writer = new RecordingWriter();
-        try
+        await using var service = new StartupRegistrationService(writer: writer);
+        Assert.True(service.IsAvailable, service.InitializationError);
+        var expectedStartupShortcut = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.Startup),
+            StartupRegistrationService.ShortcutFileName);
+        Assert.Equal(expectedStartupShortcut, service.ShortcutPath);
+        if (File.Exists(service.ShortcutPath))
         {
-            await using var service = new StartupRegistrationService(packagedExecutable, startup, writer);
-
-            await service.SetEnabledAsync(true, TestContext.Current.CancellationToken);
-
-            var write = Assert.Single(writer.Writes);
-            Assert.Equal(Path.Combine(startup, StartupRegistrationService.ShortcutFileName), write.ShortcutPath);
-            Assert.Equal(Path.GetFullPath(packagedExecutable), write.TargetPath);
-            Assert.Equal("--background", write.Arguments);
+            Assert.Skip("The current user already has a Dudu startup shortcut.");
         }
-        finally
-        {
-            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
-        }
+
+        await service.SetEnabledAsync(true, TestContext.Current.CancellationToken);
+
+        var write = Assert.Single(writer.Writes);
+        Assert.Equal(Path.GetFullPath(processPath!), service.InstalledExecutable);
+        Assert.Equal(expectedStartupShortcut, write.ShortcutPath);
+        Assert.Equal(Path.GetFullPath(processPath), write.TargetPath);
+        Assert.Equal("--background", write.Arguments);
     }
 
     [Theory]

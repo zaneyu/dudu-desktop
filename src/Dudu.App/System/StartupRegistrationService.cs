@@ -81,6 +81,8 @@ public sealed class StartupRegistrationService : IAsyncDisposable
 
     public string ShortcutPath => _shortcutPath;
 
+    internal string InstalledExecutable => _installedExecutable;
+
     public bool IsAvailable => _available;
 
     public string? InitializationError => _initializationError;

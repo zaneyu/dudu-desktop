@@ -43,4 +43,26 @@ public sealed class PackagedDataPathTests
             if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
         }
     }
+
+    [Fact]
+    public void Current_user_root_defaults_to_local_application_data_when_override_is_unset()
+    {
+        var previous = Environment.GetEnvironmentVariable("DUDU_DATA_ROOT");
+        try
+        {
+            Environment.SetEnvironmentVariable("DUDU_DATA_ROOT", null);
+
+            var paths = AppPaths.ForCurrentUser();
+
+            Assert.Equal(
+                Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "DuduDesktop"),
+                paths.Root);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("DUDU_DATA_ROOT", previous);
+        }
+    }
 }
