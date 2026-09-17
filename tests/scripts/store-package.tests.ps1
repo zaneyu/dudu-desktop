@@ -66,15 +66,14 @@ if (Test-Path -LiteralPath (Join-Path $repoRoot "scripts/package-store.ps1")) {
     Assert-True "normal package mode still requires WACK tooling" (
         $storeScript -match 'Resolve-WindowsSdkTools\s+-RequireAppCert:\(-not \$AcceptanceOnly\)'
     )
-    Assert-True "single-project package output accepts exactly one MSIX candidate" (
-        $storeScript -match "\.Extension -eq '\.msix'" -and
-        $storeScript -match 'Expected exactly one Store MSIX package candidate'
+    Assert-True "single-project package output uses the strict tree validator" (
+        $storeScript -match 'Assert-StrictStorePackageOutput' -and
+        $storeScript -match 'GetRelativePath'
     )
-    Assert-True "single-project package output rejects AppX and bundle formats" (
-        $storeScript -match '\.appx' -and
-        $storeScript -match '\.appxbundle' -and
-        $storeScript -match '\.msixbundle' -and
-        $storeScript -notmatch 'makeAppx unbundle'
+    Assert-True "post-cleanup failures leave sanitized Store metadata evidence" (
+        $storeScript -match 'Write-PostCleanupFailureEvidence' -and
+        $storeScript -match 'Submission artifact: invalid' -and
+        $storeScript -match 'Store package stage:'
     )
 }
 

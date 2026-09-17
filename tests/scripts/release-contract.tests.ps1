@@ -92,14 +92,8 @@ if (Test-Path -LiteralPath $storeScriptPath) {
     Assert-Contains "Store package script writes beneath artifacts" $storeScript "artifacts[/\\]store-package"
     Assert-True "Store package script does not publish a relay URL" ($storeScript -notmatch "workers\.dev|DUDU_RELAY_BASE_URL")
     Assert-True "Store package script does not embed credentials" ($storeScript -notmatch 'clientSecret|accessToken|password\s*=\s*[''\"][^''\"]+|token\s*=\s*[''\"][^''\"]+')
-    Assert-Contains "Store package script accepts only a single MSIX candidate" $storeScript "\.Extension -eq '\.msix'"
-    Assert-True "Store package script rejects every bundle and AppX output format" (
-        $storeScript -match "\.msixbundle" -and
-        $storeScript -match "\.appxbundle" -and
-        $storeScript -match "\.appx" -and
-        $storeScript -notmatch "makeAppx unbundle"
-    )
-    Assert-True "Store package script does not pass upload containers to MakeAppx" ($storeScript -notmatch "\.msixupload|\.appxupload")
+    Assert-Contains "Store package script exposes strict package-output validation" $storeScript "Assert-StrictStorePackageOutput"
+    Assert-True "Store package script removes bundle-unpack complexity" ($storeScript -notmatch "makeAppx unbundle")
     Assert-Contains "Store package script validates Store version component bounds" $storeScript "Assert-StoreVersion"
     Assert-Contains "Store package script limits Store version components to 65535" $storeScript "65535"
     Assert-Contains "Store package script fixes the fourth Store version component to zero" $storeScript 'expectedPackageVersion.*\$Version\.0'
@@ -202,6 +196,38 @@ if (Test-Path -LiteralPath $storeScriptPath) {
             Assert-True "Store package mode validator handles $($modeCase.Name) correctly" ($rejectedMode -eq $modeCase.Reject)
         }
     }
+    $strictOutputFunction = @($storeScriptAst.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Assert-StrictStorePackageOutput'
+    }, $true))
+    Assert-True "Store package script exposes an executable strict package-output validator" ($strictOutputFunction.Count -eq 1)
+    if ($strictOutputFunction.Count -eq 1) {
+        . ([scriptblock]::Create($strictOutputFunction[0].Extent.Text))
+        $strictOutputCases = @(
+            @{ Name = 'one root MSIX'; Files = @('DuduDesktop_1.0.0.0_x64.msix'); Reject = $false },
+            @{ Name = 'no files'; Files = @(); Reject = $true },
+            @{ Name = 'two MSIX files'; Files = @('DuduDesktop_1.0.0.0_x64.msix', 'stale.msix'); Reject = $true },
+            @{ Name = 'MSIX plus extra file'; Files = @('DuduDesktop_1.0.0.0_x64.msix', 'publish.log'); Reject = $true },
+            @{ Name = 'MSIX upload container'; Files = @('DuduDesktop.msixupload'); Reject = $true },
+            @{ Name = 'AppX upload container'; Files = @('DuduDesktop.appxupload'); Reject = $true },
+            @{ Name = 'App Installer'; Files = @('DuduDesktop.appinstaller'); Reject = $true },
+            @{ Name = 'AppX package'; Files = @('DuduDesktop.appx'); Reject = $true },
+            @{ Name = 'MSIX bundle'; Files = @('DuduDesktop.msixbundle'); Reject = $true },
+            @{ Name = 'AppX bundle'; Files = @('DuduDesktop.appxbundle'); Reject = $true },
+            @{ Name = 'nested MSIX'; Files = @('nested/DuduDesktop.msix'); Reject = $true }
+        )
+        foreach ($strictOutputCase in $strictOutputCases) {
+            $rejectedOutput = $false
+            try {
+                Assert-StrictStorePackageOutput -RelativeFilePaths $strictOutputCase.Files
+            }
+            catch {
+                $rejectedOutput = $true
+            }
+            Assert-True "strict package-output validator handles $($strictOutputCase.Name) correctly" ($rejectedOutput -eq $strictOutputCase.Reject)
+        }
+    }
     $clearOutputIndex = $storeScript.IndexOf("Remove-Item -LiteralPath `$directory -Recurse -Force")
     $preflightCommentIndex = $storeScript.IndexOf("# Validate every host, source, and tool input")
     $preflightTryIndex = $storeScript.IndexOf("try {", $preflightCommentIndex)
@@ -214,6 +240,9 @@ if (Test-Path -LiteralPath $storeScriptPath) {
         $manifestPreflightIndex -lt $clearOutputIndex -and $toolPreflightIndex -lt $clearOutputIndex
     )
     Assert-Contains "Store package script sanitizes protected preflight evidence" $storeScript 'token\|secret\|password'
+    Assert-Contains "Store package script records post-cleanup failure evidence" $storeScript 'Write-PostCleanupFailureEvidence'
+    Assert-Contains "Store package script marks failed package output invalid" $storeScript 'Submission artifact: invalid'
+    Assert-Contains "Store package script records the failed stage in metadata" $storeScript 'Store package stage:'
     $appCertSummaryIndex = $storeScript.IndexOf("Windows App Certification Kit exit code")
     $appCertThrowIndex = $storeScript.IndexOf('Windows App Certification Kit validation failed')
     Assert-True "Store package script records WACK results before throwing" ($appCertSummaryIndex -ge 0 -and $appCertThrowIndex -ge 0 -and $appCertSummaryIndex -lt $appCertThrowIndex)

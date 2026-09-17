@@ -56,11 +56,53 @@ function Write-PreflightFailureEvidence {
     # failed-preflight evidence in ignored host-local scratch instead.
     $failureDirectory = Join-Path $repoRoot (Join-Path 'work/store-package-failures' ([Guid]::NewGuid().ToString('N')))
     New-Item -ItemType Directory -Path $failureDirectory -Force | Out-Null
-    $sanitizedMessage = $Message -replace [regex]::Escape($repoRoot), '<repo>'
-    $sanitizedMessage = $sanitizedMessage -replace '(?i)\b(token|secret|password)\b\s*[:=]\s*\S+', '$1=<redacted>'
-    $sanitizedMessage = $sanitizedMessage -replace '[\r\n]+', ' '
+    $sanitizedMessage = ConvertTo-SanitizedFailureText -Message $Message
     Set-Content -LiteralPath (Join-Path $failureDirectory 'validation-summary.txt') -Value ("Store package preflight failed: $sanitizedMessage") -NoNewline -Encoding utf8
     Write-Host "Store package preflight evidence: $failureDirectory"
+}
+
+function ConvertTo-SanitizedFailureText {
+    param([Parameter(Mandatory)][string]$Message)
+
+    $sanitizedMessage = $Message -replace [regex]::Escape($repoRoot), '<repo>'
+    $sanitizedMessage = $sanitizedMessage -replace '(?i)\b(token|secret|password|api[ _-]?key)\b\s*[:=]\s*\S+', '$1=<redacted>'
+    $sanitizedMessage = $sanitizedMessage -replace '(?i)\bbearer\s+\S+', 'Bearer <redacted>'
+    return ($sanitizedMessage -replace '[\r\n]+', ' ').Trim()
+}
+
+function Write-PostCleanupFailureEvidence {
+    param(
+        [Parameter(Mandatory)][string]$Stage,
+        [Parameter(Mandatory)][string]$Message
+    )
+
+    # The package directory is owned by this wrapper. A failed validation must
+    # not leave a package behind that could be mistaken for a submission artifact.
+    $packageCleanupStatus = 'not present'
+    try {
+        if (Test-Path -LiteralPath $packageDirectory) {
+            Remove-Item -LiteralPath $packageDirectory -Recurse -Force
+            $packageCleanupStatus = 'removed'
+        }
+    }
+    catch {
+        $packageCleanupStatus = 'removal failed'
+    }
+
+    New-Item -ItemType Directory -Path $metadataDirectory -Force | Out-Null
+    $failureSummary = @(
+        "Store package stage: $Stage"
+        'Store package status: failed'
+        "Failure summary: $(ConvertTo-SanitizedFailureText -Message $Message)"
+        "Submission artifact: invalid; package output removal: $packageCleanupStatus."
+    ) -join [Environment]::NewLine
+    $summaryPath = Join-Path $metadataDirectory 'validation-summary.txt'
+    if (Test-Path -LiteralPath $summaryPath) {
+        Add-Content -LiteralPath $summaryPath -Value $failureSummary -Encoding utf8
+    }
+    else {
+        Set-Content -LiteralPath $summaryPath -Value $failureSummary -NoNewline -Encoding utf8
+    }
 }
 
 function ConvertTo-SdkVersion {
@@ -185,6 +227,23 @@ function Assert-PackageMode {
     }
 }
 
+function Assert-StrictStorePackageOutput {
+    param([Parameter(Mandatory)][AllowEmptyCollection()][string[]]$RelativeFilePaths)
+
+    $files = @($RelativeFilePaths)
+    if ($files.Count -ne 1) {
+        throw "Store package output tree must contain exactly one file; found $($files.Count)."
+    }
+
+    $relativeFilePath = $files[0]
+    if ([IO.Path]::GetFileName($relativeFilePath) -cne $relativeFilePath -or
+        [IO.Path]::GetExtension($relativeFilePath) -cne '.msix') {
+        throw 'Store package output tree must contain one root canonical .msix file and no other package format.'
+    }
+
+    return $relativeFilePath
+}
+
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $targetRuntimeIdentifier = 'win-x64'
 
@@ -253,91 +312,97 @@ foreach ($directory in @($packageDirectory, $metadataDirectory)) {
 New-Item -ItemType Directory -Path $publishDirectory -Force | Out-Null
 New-Item -ItemType Directory -Path $unpackDirectory -Force | Out-Null
 
-& dotnet --info | Set-Content -LiteralPath (Join-Path $metadataDirectory 'dotnet-info.txt') -Encoding utf8
-if ($LASTEXITCODE -ne 0) { throw "dotnet --info failed with exit code $LASTEXITCODE." }
+$stage = 'dotnet diagnostic'
+try {
+    & dotnet --info | Set-Content -LiteralPath (Join-Path $metadataDirectory 'dotnet-info.txt') -Encoding utf8
+    if ($LASTEXITCODE -ne 0) { throw "dotnet --info failed with exit code $LASTEXITCODE." }
 
-& dotnet publish $appProject -c Release -r win-x64 --self-contained true --no-restore `
-    '-p:DuduStorePackage=true' "-p:Version=$Version" "-p:RuntimeIdentifier=$targetRuntimeIdentifier" `
-    "-p:AppxPackageVersion=$expectedPackageVersion" '-p:AppxPackageSigningEnabled=false' "-p:PublishDir=$publishDirectory$([IO.Path]::DirectorySeparatorChar)" `
-    "-p:AppxPackageDir=$packageDirectory$([IO.Path]::DirectorySeparatorChar)"
-if ($LASTEXITCODE -ne 0) { throw "Store package publish failed with exit code $LASTEXITCODE." }
+    $stage = 'dotnet publish'
+    & dotnet publish $appProject -c Release -r win-x64 --self-contained true --no-restore `
+        '-p:DuduStorePackage=true' "-p:Version=$Version" "-p:RuntimeIdentifier=$targetRuntimeIdentifier" `
+        "-p:AppxPackageVersion=$expectedPackageVersion" '-p:AppxPackageSigningEnabled=false' "-p:PublishDir=$publishDirectory$([IO.Path]::DirectorySeparatorChar)" `
+        "-p:AppxPackageDir=$packageDirectory$([IO.Path]::DirectorySeparatorChar)"
+    if ($LASTEXITCODE -ne 0) { throw "Store package publish failed with exit code $LASTEXITCODE." }
 
-$packageFiles = @(Get-ChildItem -LiteralPath $packageDirectory -File -Recurse)
-$unsupportedPackageCandidates = @($packageFiles | Where-Object { $_.Extension -in @('.appx', '.appxbundle', '.msixbundle') })
-if ($unsupportedPackageCandidates.Count -ne 0) {
-    throw "Store package output contains unsupported AppX or bundle format(s): $($unsupportedPackageCandidates.Count)."
-}
-$packageCandidates = @($packageFiles | Where-Object { $_.Extension -eq '.msix' })
-if ($packageCandidates.Count -ne 1) {
-    throw "Expected exactly one Store MSIX package candidate under $packageDirectory; found $($packageCandidates.Count)."
-}
-
-$packageCandidate = $packageCandidates[0]
-$artifactPath = Join-Path $packageDirectory "DuduDesktop-$Version-win-x64.msix"
-if ($packageCandidate.FullName -ne $artifactPath) {
-    Move-Item -LiteralPath $packageCandidate.FullName -Destination $artifactPath
-}
-
-$makeAppx = $sdkTools.MakeAppx
-
-& $makeAppx validate -p $artifactPath
-$makeAppxValidateExitCode = $LASTEXITCODE
-if ($makeAppxValidateExitCode -ne 0) {
-    Write-MetadataText -Name 'validation-summary.txt' -Text ("makeappx validate exit code: $makeAppxValidateExitCode`nmakeappx unpack exit code: not run`n")
-    throw 'Windows SDK package validation failed.'
-}
-& $makeAppx unpack -p $artifactPath -d $unpackDirectory -o
-$makeAppxUnpackExitCode = $LASTEXITCODE
-Write-MetadataText -Name 'validation-summary.txt' -Text ("makeappx validate exit code: $makeAppxValidateExitCode`nmakeappx unpack exit code: $makeAppxUnpackExitCode`n")
-if ($makeAppxUnpackExitCode -ne 0) {
-    throw 'Windows SDK package validation failed.'
-}
-
-[xml]$packagedManifest = Get-Content -Raw -LiteralPath (Join-Path $unpackDirectory 'AppxManifest.xml')
-$packagedIdentity = $packagedManifest.Package.Identity
-if ($packagedIdentity.Name -ne $sourceIdentity.Name -or
-    $packagedIdentity.Publisher -ne $sourceIdentity.Publisher -or
-    $packagedIdentity.ProcessorArchitecture -ne 'x64' -or
-    $packagedIdentity.Version -ne $expectedPackageVersion) {
-    throw 'Packaged manifest identity, version, or architecture does not match the expected Store package contract.'
-}
-
-$requiredResources = @('PackageAssets\Logo.png', 'PackageAssets\Square150Logo.png')
-foreach ($resource in $requiredResources) {
-    if (-not (Test-Path -LiteralPath (Join-Path $unpackDirectory $resource))) {
-        throw "Packaged resource is missing: $resource"
+    $stage = 'package output validation'
+    $packageFiles = @(Get-ChildItem -LiteralPath $packageDirectory -File -Recurse)
+    $packageRelativeFilePath = Assert-StrictStorePackageOutput -RelativeFilePaths @($packageFiles | ForEach-Object {
+            [IO.Path]::GetRelativePath($packageDirectory, $_.FullName)
+        })
+    $packageCandidate = Get-Item -LiteralPath (Join-Path $packageDirectory $packageRelativeFilePath)
+    $artifactPath = Join-Path $packageDirectory "DuduDesktop-$Version-win-x64.msix"
+    if ($packageCandidate.FullName -ne $artifactPath) {
+        Move-Item -LiteralPath $packageCandidate.FullName -Destination $artifactPath
     }
-}
 
-if ($AcceptanceOnly) {
-    Add-Content -LiteralPath (Join-Path $metadataDirectory 'validation-summary.txt') -Value 'Windows App Certification Kit status: skipped (acceptance-only mode; not valid for Partner Center submission).'
-}
-else {
-    $appCert = $sdkTools.AppCert
-    $appCertReport = Join-Path $metadataDirectory 'appcert-report.xml'
-    $appCertExitCode = $null
-    $appCertFailure = $null
-    try {
-        & $appCert test -appxpackagepath $artifactPath -reportoutputpath $appCertReport
-        $appCertExitCode = $LASTEXITCODE
+    $makeAppx = $sdkTools.MakeAppx
+    $stage = 'Windows SDK package validation'
+    & $makeAppx validate -p $artifactPath
+    $makeAppxValidateExitCode = $LASTEXITCODE
+    if ($makeAppxValidateExitCode -ne 0) {
+        Write-MetadataText -Name 'validation-summary.txt' -Text ("makeappx validate exit code: $makeAppxValidateExitCode`nmakeappx unpack exit code: not run`n")
+        throw 'Windows SDK package validation failed.'
     }
-    catch {
-        $appCertFailure = $_
-        $appCertExitCode = 'launch failure'
+    & $makeAppx unpack -p $artifactPath -d $unpackDirectory -o
+    $makeAppxUnpackExitCode = $LASTEXITCODE
+    Write-MetadataText -Name 'validation-summary.txt' -Text ("makeappx validate exit code: $makeAppxValidateExitCode`nmakeappx unpack exit code: $makeAppxUnpackExitCode`n")
+    if ($makeAppxUnpackExitCode -ne 0) {
+        throw 'Windows SDK package validation failed.'
     }
-    Add-Content -LiteralPath (Join-Path $metadataDirectory 'validation-summary.txt') -Value "Windows App Certification Kit exit code: $appCertExitCode"
-    if ($appCertFailure -or $appCertExitCode -ne 0) {
-        throw "Windows App Certification Kit validation failed with exit code $appCertExitCode."
-    }
-}
 
-$hash = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
-Write-MetadataText -Name 'SHA256SUMS.txt' -Text "$hash  $([IO.Path]::GetFileName($artifactPath))"
-Write-MetadataText -Name 'package-version.txt' -Text $packagedIdentity.Version
-Write-MetadataText -Name 'package-identity.txt' -Text ("Name=$($packagedIdentity.Name)`nPublisher=$($packagedIdentity.Publisher)`nProcessorArchitecture=$($packagedIdentity.ProcessorArchitecture)")
-Get-ChildItem -LiteralPath $packageDirectory -File -Recurse | ForEach-Object {
-    $_.FullName.Substring($packageDirectory.Length).TrimStart([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
-} | Sort-Object | Set-Content -LiteralPath (Join-Path $metadataDirectory 'package-files.txt') -Encoding utf8
+    $stage = 'packaged identity, version, and resource validation'
+    [xml]$packagedManifest = Get-Content -Raw -LiteralPath (Join-Path $unpackDirectory 'AppxManifest.xml')
+    $packagedIdentity = $packagedManifest.Package.Identity
+    if ($packagedIdentity.Name -ne $sourceIdentity.Name -or
+        $packagedIdentity.Publisher -ne $sourceIdentity.Publisher -or
+        $packagedIdentity.ProcessorArchitecture -ne 'x64' -or
+        $packagedIdentity.Version -ne $expectedPackageVersion) {
+        throw 'Packaged manifest identity, version, or architecture does not match the expected Store package contract.'
+    }
 
-Write-Host "Store package: $artifactPath"
-Write-Host "SHA-256: $hash"
+    $requiredResources = @('PackageAssets\Logo.png', 'PackageAssets\Square150Logo.png')
+    foreach ($resource in $requiredResources) {
+        if (-not (Test-Path -LiteralPath (Join-Path $unpackDirectory $resource))) {
+            throw "Packaged resource is missing: $resource"
+        }
+    }
+
+    $stage = 'Windows App Certification Kit validation'
+    if ($AcceptanceOnly) {
+        Add-Content -LiteralPath (Join-Path $metadataDirectory 'validation-summary.txt') -Value 'Windows App Certification Kit status: skipped (acceptance-only mode; not valid for Partner Center submission).'
+    }
+    else {
+        $appCert = $sdkTools.AppCert
+        $appCertReport = Join-Path $metadataDirectory 'appcert-report.xml'
+        $appCertExitCode = $null
+        $appCertFailure = $null
+        try {
+            & $appCert test -appxpackagepath $artifactPath -reportoutputpath $appCertReport
+            $appCertExitCode = $LASTEXITCODE
+        }
+        catch {
+            $appCertFailure = $_
+            $appCertExitCode = 'launch failure'
+        }
+        Add-Content -LiteralPath (Join-Path $metadataDirectory 'validation-summary.txt') -Value "Windows App Certification Kit exit code: $appCertExitCode"
+        if ($appCertFailure -or $appCertExitCode -ne 0) {
+            throw "Windows App Certification Kit validation failed with exit code $appCertExitCode."
+        }
+    }
+
+    $stage = 'metadata finalization'
+    $hash = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    Write-MetadataText -Name 'SHA256SUMS.txt' -Text "$hash  $([IO.Path]::GetFileName($artifactPath))"
+    Write-MetadataText -Name 'package-version.txt' -Text $packagedIdentity.Version
+    Write-MetadataText -Name 'package-identity.txt' -Text ("Name=$($packagedIdentity.Name)`nPublisher=$($packagedIdentity.Publisher)`nProcessorArchitecture=$($packagedIdentity.ProcessorArchitecture)")
+    Get-ChildItem -LiteralPath $packageDirectory -File -Recurse | ForEach-Object {
+        $_.FullName.Substring($packageDirectory.Length).TrimStart([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    } | Sort-Object | Set-Content -LiteralPath (Join-Path $metadataDirectory 'package-files.txt') -Encoding utf8
+
+    Write-Host "Store package: $artifactPath"
+    Write-Host "SHA-256: $hash"
+}
+catch {
+    Write-PostCleanupFailureEvidence -Stage $stage -Message $_.Exception.Message
+    throw
+}
