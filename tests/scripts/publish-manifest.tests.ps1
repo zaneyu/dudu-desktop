@@ -84,6 +84,23 @@ try {
     $threw = $false
     try { Assert-PrivateReleaseAssetPack -PackRoot $pack } catch { $threw = $_.Exception.Message -match 'source\.psd' }
     Assert-True "private pack with a non-PNG file fails and names it" $threw
+
+    # Restore-generated package locks must not remain as untracked source-tree files after a
+    # release. The publish script already copies them into release metadata; this verifies its
+    # cleanup moves only the exact project lock files into ignored scratch storage.
+    $lockRepo = Join-Path $tempRoot "lock-repo"
+    $lockScratch = Join-Path $lockRepo "work/generated-package-locks"
+    New-Item -ItemType Directory -Path (Join-Path $lockRepo "src/Dudu.Core"), (Join-Path $lockRepo "tests/Dudu.App.Tests"), (Join-Path $lockRepo "relay") -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $lockRepo "src/Dudu.Core/packages.lock.json") -Value '{}'
+    Set-Content -LiteralPath (Join-Path $lockRepo "tests/Dudu.App.Tests/packages.lock.json") -Value '{}'
+    Set-Content -LiteralPath (Join-Path $lockRepo "relay/packages.lock.json") -Value '{}'
+
+    $movedLocks = @(Move-GeneratedPackageLocksToScratch -RepoRoot $lockRepo -ScratchRoot $lockScratch)
+    Assert-True "package-lock cleanup moves only source project locks" ($movedLocks.Count -eq 2)
+    Assert-True "package-lock cleanup removes the source copies" (
+        -not (Test-Path -LiteralPath (Join-Path $lockRepo "src/Dudu.Core/packages.lock.json")) -and
+        -not (Test-Path -LiteralPath (Join-Path $lockRepo "tests/Dudu.App.Tests/packages.lock.json")))
+    Assert-True "package-lock cleanup preserves unrelated relay files" (Test-Path -LiteralPath (Join-Path $lockRepo "relay/packages.lock.json"))
 }
 finally {
     Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

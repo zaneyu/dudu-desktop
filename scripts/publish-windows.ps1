@@ -188,6 +188,36 @@ function Write-ReleaseMetadata {
     }
 }
 
+function Move-GeneratedPackageLocksToScratch {
+    <#
+        Restore-generated packages.lock.json files are host/RID-specific and must not remain as
+        untracked files in the source tree. Write-ReleaseMetadata has already copied the exact
+        files into the release metadata artifact, so move the source copies into ignored work/
+        scratch storage while preserving their project-relative paths.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [Parameter(Mandatory = $true)][string]$ScratchRoot
+    )
+
+    $runRoot = Join-Path $ScratchRoot ("release-" + [Guid]::NewGuid().ToString("N"))
+    $lockFiles = @(foreach ($root in @("src", "tests", "tools")) {
+            $rootPath = Join-Path $RepoRoot $root
+            if (Test-Path -LiteralPath $rootPath) {
+                Get-ChildItem -LiteralPath $rootPath -Recurse -File -Filter "packages.lock.json" -ErrorAction SilentlyContinue |
+                    Where-Object { $_.FullName.Replace('\', '/') -notmatch '/(?:bin|obj)/' }
+            }
+        })
+
+    foreach ($lock in $lockFiles) {
+        $relative = [IO.Path]::GetRelativePath($RepoRoot, $lock.FullName)
+        $destination = Join-Path $runRoot $relative
+        New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
+        Move-Item -LiteralPath $lock.FullName -Destination $destination
+        $destination
+    }
+}
+
 # Dot-source guard (same convention as scripts/verify.ps1): dot-sourcing loads the functions
 # above for tests/scripts/publish-manifest.tests.ps1 without publishing anything.
 if ($MyInvocation.InvocationName -eq '.') {
@@ -242,6 +272,9 @@ New-Item -ItemType Directory -Path $metadataDir -Force | Out-Null
 
 Assert-PublishManifest -PublishDir $publishDir -MetadataDir $metadataDir
 Write-ReleaseMetadata -RepoRoot $repoRoot -MetadataDir $metadataDir
+Move-GeneratedPackageLocksToScratch `
+    -RepoRoot $repoRoot `
+    -ScratchRoot (Join-Path $repoRoot "work/generated-package-locks") | Out-Null
 
 & $isccPath "/DAppVersion=$Version" $installerScriptPath
 if ($LASTEXITCODE -ne 0) {

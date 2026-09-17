@@ -29,6 +29,38 @@ public sealed class StartupRegistrationServiceTests
     }
 
     [Fact]
+    public async Task Enable_recreates_shortcut_if_it_was_deleted_externally()
+    {
+        var startupDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "dudu-startup-" + Guid.NewGuid().ToString("N"));
+        var writer = new FileBackedWriter();
+        await using var service = new StartupRegistrationService(
+            "/opt/dudu/Dudu.exe",
+            startupDirectory,
+            writer);
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        try
+        {
+            await service.SetEnabledAsync(true, cancellationToken);
+            File.Delete(service.ShortcutPath);
+
+            await service.SetEnabledAsync(true, cancellationToken);
+
+            Assert.Equal(2, writer.WriteCount);
+            Assert.True(File.Exists(service.ShortcutPath));
+        }
+        finally
+        {
+            if (Directory.Exists(startupDirectory))
+            {
+                Directory.Delete(startupDirectory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task Disable_removes_a_previously_enabled_shortcut_once()
     {
         var writer = new FakeWriter();
@@ -309,6 +341,31 @@ public sealed class StartupRegistrationServiceTests
 
         public Task DeleteAsync(string shortcutPath, CancellationToken cancellationToken) =>
             Task.CompletedTask;
+    }
+
+    private sealed class FileBackedWriter : IStartupLinkWriter
+    {
+        public int WriteCount { get; private set; }
+
+        public Task WriteAtomicAsync(
+            string shortcutPath,
+            string targetPath,
+            string arguments,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Directory.CreateDirectory(Path.GetDirectoryName(shortcutPath)!);
+            File.WriteAllText(shortcutPath, $"{targetPath}\n{arguments}");
+            WriteCount++;
+            return Task.CompletedTask;
+        }
+
+        public Task DeleteAsync(string shortcutPath, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            File.Delete(shortcutPath);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class FakePreferencesRepository : IPreferencesRepository

@@ -52,6 +52,7 @@ Assert-Contains "Inno output filename includes the compiler version" $iss 'Outpu
 Assert-Contains "publish forwards Version to Inno" $publish '"/DAppVersion=\$Version"'
 Assert-Contains "publish preflights the private asset pack" $publish 'Assert-PrivateReleaseAssetPack'
 Assert-Contains "publish checks the exact file manifest before ISCC" $publish 'Assert-PublishManifest'
+Assert-Contains "publish moves generated package locks out of the source tree" $publish 'Move-GeneratedPackageLocksToScratch'
 Assert-Contains "verify generates a per-run e2e secret" $verify '\[Guid\]::NewGuid'
 Assert-True "verify carries no static e2e secret" ($verify -notmatch 'verification-secret-1042')
 Assert-Contains "e2e scrubs secret-bearing temp files" $e2e 'Clear-SensitiveFile'

@@ -105,7 +105,10 @@ public sealed class StartupRegistrationService : IAsyncDisposable
             }
             if (enabled)
             {
-                if (_enabled) return;
+                // The shortcut can be removed externally while the process is
+                // still running. Do not let the cached state turn a retry into
+                // a no-op in that case.
+                if (_enabled && File.Exists(_shortcutPath)) return;
                 await _writer.WriteAtomicAsync(
                     _shortcutPath,
                     _installedExecutable,
