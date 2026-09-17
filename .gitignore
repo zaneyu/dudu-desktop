@@ -26,6 +26,7 @@ assets/raw/*
 # snapshots, and any generated output. Never committed.
 work/
 outputs/
+.worktrees/
 
 # Operating-system files
 .DS_Store
