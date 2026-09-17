@@ -223,11 +223,54 @@ All commands run from the repository root with `pwsh`.
    application files and shortcuts; it does not delete the local database,
    backups, or secrets under `%LocalAppData%\DuduDesktop` unless the
    recipient separately chooses "delete local data" from the app's Privacy
-   & Data page first (see §6). This matches the final acceptance checklist's
+   & Data page first (see §7). This matches the final acceptance checklist's
    "optional data deletion" requirement — deletion is optional and
    recipient-initiated, not automatic on uninstall.
 
-## 5. First pairing and sender revocation
+## 5. Private Store submission and migration fallback
+
+The Store path is a private-audience distribution path, not a public release.
+Reserve and maintain the private-audience Store app in Partner Center, and
+keep its audience restricted to the invited recipient account(s). The local
+non-production package identity is for development and acceptance only; it is
+not Store-publishable. Store artifacts become Microsoft-signed only after
+Microsoft Store publication. The current Inno installer remains unsigned and
+may trigger SmartScreen or Smart App Control behavior.
+
+For each Store release:
+
+1. Wait for a green Windows workflow, including its package and verification
+   jobs. A CI artifact is not evidence that recipient Windows acceptance has
+   completed.
+2. Download the Store package artifact to a newly created temporary directory.
+   Keep the MSIX/MSIX upload file and its release metadata private.
+3. Compare the package SHA-256 hash with both the Windows workflow job summary and the
+   matching release metadata before uploading anything.
+4. Upload the MSIX/MSIX upload file to Partner Center, keep the audience
+   private, and submit it for certification.
+5. After publication, verify from the recipient's invited Store account that
+   the private Store listing is visible and that Dudu Desktop installs.
+6. For later updates, use a strictly increasing package version. If a rollout
+   is bad, pause it in Partner Center and submit a corrected package with the
+   next increasing version.
+
+During migration, retain the Inno installer as the recovery path until two
+Store versions have upgraded successfully on the recipient's Windows device.
+A package identity change can affect startup shortcuts, notifications,
+activation, and uninstall behavior even when `%LocalAppData%\DuduDesktop` is
+preserved. Complete the Windows acceptance matrix in
+`docs/testing/windows-acceptance.md` before calling the Store path the normal
+recipient release.
+
+### Recipient procedure for the private Store path
+
+1. Sign in to Microsoft Store with the invited personal account.
+2. Open the private Store link supplied through the private release channel.
+3. Install Dudu Desktop and leave Store app updates enabled.
+4. If removing an old Inno installation, do not delete local data unless you
+   intentionally want to wipe it from Dudu's Privacy & Data page.
+
+## 6. First pairing and sender revocation
 
 1. On the desktop, open Settings → Connection and request a pairing code.
    This calls the relay's `POST /v1/devices/pairing-code` endpoint,
@@ -241,7 +284,7 @@ All commands run from the repository root with `pwsh`.
    `POST /v1/sender/disconnect`. The recipient can re-pair at any time by
    generating a new code.
 
-## 6. Database backup, restore, and damaged-database preservation
+## 7. Database backup, restore, and damaged-database preservation
 
 The local SQLite database lives at `%LocalAppData%\DuduDesktop\dudu.db`
 (override the whole data root with the `DUDU_DATA_ROOT` environment
@@ -268,7 +311,7 @@ up using SQLite's `VACUUM INTO`, validates every backup with
   `dudu.db.restore-failed-{guid}` instead of being deleted, so a human can
   recover data from it later rather than silently losing it.
 
-## 7. Private-use statements
+## 8. Private-use statements
 
 - SmartScreen may warn because the private installer is unsigned.
 - The artwork and installer must remain private.
@@ -279,7 +322,7 @@ push this tag, this branch, or the installer to any public location. Transfer
 the installer and `artifacts/SHA256SUMS.txt` to the recipient only through a
 private channel.
 
-## 8. Known deviations and pending items
+## 9. Known deviations and pending items
 
 - **`dotnet restore --locked-mode` is intentionally omitted.** `scripts/verify.ps1`
   runs `dotnet restore DuduDesktop.slnx` without `--locked-mode`. This

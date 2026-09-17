@@ -45,6 +45,16 @@ under `artifacts/performance/` or `artifacts/stability/` exists in this reposito
 | Upgrade | pending | — | — | — | `tests/installer/installer-smoke.ps1` (add `-ExerciseRunningApp` on an interactive Windows desktop) |
 | Uninstall | pending | — | — | — | `tests/installer/installer-smoke.ps1` (isolated data deletion and outside-sentinel check; requires a new green Windows run) |
 | Eight-hour stability run | pending | — | — | — | `artifacts/stability/eight-hour.json` |
+| Private Store visibility (invited account) | pending | — | — | — | private Store evidence, retained privately |
+| Private Store first install | pending | — | — | — | Store install evidence, retained privately |
+| Private Store upgrade | pending | — | — | — | Store upgrade evidence, retained privately |
+| Store upgrade retains `%LocalAppData%\DuduDesktop` data | pending | — | — | — | data-retention evidence, retained privately |
+| Pairing after Store install/upgrade | pending | — | — | — | pairing evidence, retained privately |
+| Startup after Store install/upgrade | pending | — | — | — | startup evidence, retained privately |
+| Notification activation after Store install/upgrade | pending | — | — | — | notification evidence, retained privately |
+| Smart App Control enforcement | pending | — | — | — | Windows security evidence, retained privately |
+| Store uninstall/reinstall | pending | — | — | — | uninstall/reinstall evidence, retained privately |
+| Second Store update | pending | — | — | — | second-update evidence, retained privately |
 
 Fill in "Windows build" with the OS build number (`winver`) and Dudu version actually exercised,
 "Timestamp" in UTC, "Tester" with a name or handle, and "Evidence path" with where the actual
@@ -54,6 +64,10 @@ ones, so this file always reflects the latest run per scenario.
 For Store/MSIX acceptance, confirm that the default data root is still
 `%LocalAppData%\DuduDesktop` (not the package install directory) before testing upgrade or
 uninstall behavior. `DUDU_DATA_ROOT` remains the test-only override for isolated installer runs.
+All Store/MSIX rows above remain pending until a real Windows 11 24H2 x64 recipient test records
+evidence. A green CI package artifact does not prove Store visibility, installation, upgrade,
+retained data, pairing, startup, notification activation, Smart App Control behavior, or
+uninstall/reinstall acceptance.
 
 ## How to run each gate on Windows
 

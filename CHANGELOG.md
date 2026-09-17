@@ -9,6 +9,9 @@ release cadences.
 
 ### Added
 
+- Documented the private Microsoft Store submission/update path, recipient
+  installation procedure, and Inno fallback during the package-identity
+  migration. Store distribution remains pending real Windows acceptance.
 - First-launch onboarding that names Dudu, sets appearance and quiet hours,
   offers hydration/break reminders, places the pet on the desktop, and
   optionally enables launch-at-sign-in and sender pairing, in under two

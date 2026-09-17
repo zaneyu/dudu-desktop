@@ -46,6 +46,28 @@ $smoke = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "tests/installer/ins
 $innoScript = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "scripts/install-inno-setup.ps1")
 $appProject = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "src/Dudu.App/Dudu.App.csproj")
 $storeScriptPath = Join-Path $repoRoot "scripts/package-store.ps1"
+$readme = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "README.md")
+$releaseDoc = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "docs/release.md")
+$acceptanceDoc = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "docs/testing/windows-acceptance.md")
+$changelog = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "CHANGELOG.md")
+$releaseDocs = @($readme, $releaseDoc, $acceptanceDoc, $changelog, $workflow)
+
+Assert-Contains "release runbook documents private Store submission" $releaseDoc "Partner Center"
+Assert-Contains "release runbook documents private Store audience" $releaseDoc "private-audience|audience.*private"
+Assert-Contains "release runbook documents Store hash comparison" $releaseDoc "SHA-256 hash"
+Assert-Contains "release runbook names Store release metadata" $releaseDoc "release metadata"
+Assert-Contains "release runbook documents Store certification" $releaseDoc "certification"
+Assert-Contains "release runbook documents Store publication signing" $releaseDoc "Microsoft-signed"
+Assert-Contains "release runbook documents Inno migration fallback" $releaseDoc "two\s+Store versions"
+Assert-Contains "release runbook documents package identity migration risk" $releaseDoc "(?s)startup shortcuts.*notifications.*activation.*uninstall"
+Assert-Contains "README links Store release path" $readme "private Store"
+Assert-Contains "acceptance matrix includes Store visibility" $acceptanceDoc "Store visibility"
+Assert-Contains "acceptance matrix includes second Store update" $acceptanceDoc "second Store update"
+Assert-Contains "changelog records private Store migration" $changelog "private Store"
+Assert-True "release sources contain no concrete relay or sender URL" (@($releaseDocs | Where-Object { $_ -match 'https?://[^\s`)>]+(?:workers\.dev|pages\.dev)' }).Count -eq 0)
+Assert-True "release sources contain no pairing-code literal" (@($releaseDocs | Where-Object { $_ -match '(?i)pairing\s+code\s*[:=]\s*[0-9A-Z-]{6,}' }).Count -eq 0)
+Assert-True "release sources contain no private-key material" (@($releaseDocs | Where-Object { $_ -match 'BEGIN (?:EC|RSA|OPENSSH) PRIVATE KEY|PRIVATE KEY-----' }).Count -eq 0)
+Assert-True "release sources contain no raw-artwork path" (@($releaseDocs | Where-Object { $_ -match 'assets[/\\]raw[/\\]' }).Count -eq 0)
 
 Assert-True "Store package script exists" (Test-Path -LiteralPath $storeScriptPath)
 if (Test-Path -LiteralPath $storeScriptPath) {
