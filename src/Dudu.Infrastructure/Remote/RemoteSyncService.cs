@@ -120,15 +120,21 @@ public sealed class RemoteSyncService : IAsyncDisposable
             _state = PairingAvailability.NeedsRepair;
             _statusReason = PairingStatusReason.None;
         }
-        catch (RelayProtocolException)
+        catch (RelayProtocolException exception)
         {
             // Review C1: an unreadable relay answer is a distinct, reportable condition, not
             // "offline" -- the Connection page says so instead of silently keeping a stale state.
             _statusReason = PairingStatusReason.RelayProtocolError;
+            // P1: a failed probe must leave a diagnostic; otherwise a broken relay looks
+            // identical to healthy-offline. Type name only — never the message, which for decode
+            // failures can echo wire fields.
+            PrivacySafeLog.SyncStateProbeFailed(_logger, 0, exception.GetType().Name);
         }
-        catch (RelayUnavailableException)
+        catch (RelayUnavailableException exception)
         {
             // Leave the last known state: a transient outage does not mean pairing broke.
+            // P1: still log the probe so an outage is distinguishable from healthy-offline.
+            PrivacySafeLog.SyncStateProbeFailed(_logger, 0, exception.GetType().Name);
         }
 
         return _state;
@@ -220,7 +226,16 @@ public sealed class RemoteSyncService : IAsyncDisposable
             if (loopTask is not null)
             {
                 try { await loopTask; }
-                catch (Exception) { }
+                catch (Exception exception)
+                {
+                    // P1: an observed loop fault must leave a diagnostic instead of draining
+                    // silently. Type name only — never the message, which can echo wire fields.
+                    // Cancellation is normal shutdown, not a fault.
+                    if (exception is not OperationCanceledException)
+                    {
+                        PrivacySafeLog.SyncLoopTerminal(_logger, exception.GetType().Name);
+                    }
+                }
             }
         }
         finally
@@ -263,7 +278,9 @@ public sealed class RemoteSyncService : IAsyncDisposable
             catch (RelayUnauthorizedException)
             {
                 // State is already NeedsRepair (set by PollOnceAsync); stop polling until the
-                // caller re-registers.
+                // caller re-registers. P1: log the terminal exit so NeedsRepair is auditable in
+                // logs as well as on the Connection page — in addition to any reportError call.
+                PrivacySafeLog.SyncLoopTerminal(_logger, "needs-repair");
                 return;
             }
             catch (RelayProtocolException exception)
@@ -277,10 +294,15 @@ public sealed class RemoteSyncService : IAsyncDisposable
                 // still a retry, so a relay that is fixed later recovers without a restart.
                 _statusReason = PairingStatusReason.RelayProtocolError;
                 _reportError?.Invoke("remote-sync-protocol", exception);
+                // P1: log both the terminal backoff entry and the retry, in addition to the
+                // reportError callback above. Fixed tags only — never wire content.
+                PrivacySafeLog.SyncLoopTerminal(_logger, "protocol-backoff");
                 if (!await TryDelayAsync(_backoff.MaxDelay(), cancellationToken))
                 {
                     return;
                 }
+
+                PrivacySafeLog.SyncLoopRetry(_logger, "remote-sync-protocol");
             }
             catch (RemoteSyncException exception)
             {
@@ -289,6 +311,10 @@ public sealed class RemoteSyncService : IAsyncDisposable
                 {
                     return;
                 }
+
+                // P1: a failed iteration that retries must say so in the logs, not just via
+                // the error reporter. Fixed tag matching the reportError tag.
+                PrivacySafeLog.SyncLoopRetry(_logger, "remote-sync-poll");
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
@@ -301,6 +327,9 @@ public sealed class RemoteSyncService : IAsyncDisposable
                 {
                     return;
                 }
+
+                // P1: same retry diagnostic as above for the unexpected-exception path.
+                PrivacySafeLog.SyncLoopRetry(_logger, "remote-sync-loop");
             }
         }
     }
@@ -565,54 +594,87 @@ public sealed class RemoteSyncService : IAsyncDisposable
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(messageId);
 
-        var stored = await _envelopes.GetAsync(messageId, cancellationToken)
-            ?? throw new KeyNotFoundException("aiyo cant find that note anymore");
-
-        if (stored.CreatedUtc is null)
-        {
-            // Rows written before migration 0003 (or any row missing the wire createdUtc
-            // verbatim) cannot be re-authenticated: the AAD requires the exact original string.
-            throw new RemoteSyncException("This note has no recorded timestamp and cannot be revealed.");
-        }
-
-        var envelope = new EncryptedEnvelope(
-            ProtocolVersion: Dudu.Core.ProductInfo.ProtocolVersion,
-            MessageId: stored.MessageId,
-            CreatedUtc: stored.CreatedUtc,
-            DeliverAfterUtc: stored.DeliverAfterUtc,
-            EphemeralPublicKey: Base64Url.EncodeToString(stored.EphemeralPublicKey ?? []),
-            HkdfSalt: Base64Url.EncodeToString(stored.HkdfSalt ?? []),
-            Nonce: Base64Url.EncodeToString(stored.Nonce ?? []),
-            Ciphertext: Base64Url.EncodeToString(stored.Ciphertext));
-
-        var keyMaterial = await _keyService.GetOrCreateAsync(cancellationToken);
         try
         {
-            // Freshness is judged at the moment the note was received, not now. The poll path
-            // already enforced the createdUtc window with that same clock reading; re-checking it
-            // against the current clock would make a note kept unsaved for 30+ days (or revealed
-            // after a clock change) permanently unrevealable.
-            var payload = EnvelopeCrypto.Decrypt(envelope, keyMaterial.PrivateKeyPkcs8, stored.ReceivedUtc);
-            return new RevealedRemoteNote(payload.Text, payload.Reaction);
+            var stored = await _envelopes.GetAsync(messageId, cancellationToken)
+                ?? throw new KeyNotFoundException("aiyo cant find that note anymore");
+
+            if (stored.CreatedUtc is null)
+            {
+                // Rows written before migration 0003 (or any row missing the wire createdUtc
+                // verbatim) cannot be re-authenticated: the AAD requires the exact original string.
+                throw new RemoteSyncException("This note has no recorded timestamp and cannot be revealed.");
+            }
+
+            var envelope = new EncryptedEnvelope(
+                ProtocolVersion: Dudu.Core.ProductInfo.ProtocolVersion,
+                MessageId: stored.MessageId,
+                CreatedUtc: stored.CreatedUtc,
+                DeliverAfterUtc: stored.DeliverAfterUtc,
+                EphemeralPublicKey: Base64Url.EncodeToString(stored.EphemeralPublicKey ?? []),
+                HkdfSalt: Base64Url.EncodeToString(stored.HkdfSalt ?? []),
+                Nonce: Base64Url.EncodeToString(stored.Nonce ?? []),
+                Ciphertext: Base64Url.EncodeToString(stored.Ciphertext));
+
+            var keyMaterial = await _keyService.GetOrCreateAsync(cancellationToken);
+            try
+            {
+                // Freshness is judged at the moment the note was received, not now. The poll path
+                // already enforced the createdUtc window with that same clock reading; re-checking it
+                // against the current clock would make a note kept unsaved for 30+ days (or revealed
+                // after a clock change) permanently unrevealable.
+                var payload = EnvelopeCrypto.Decrypt(envelope, keyMaterial.PrivateKeyPkcs8, stored.ReceivedUtc);
+                return new RevealedRemoteNote(payload.Text, payload.Reaction);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(keyMaterial.PrivateKeyPkcs8);
+            }
         }
-        finally
+        catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            CryptographicOperations.ZeroMemory(keyMaterial.PrivateKeyPkcs8);
+            // P1: every reveal failure used to propagate with no diagnostic. Log the envelope id
+            // with the exception type only — never the message, which for decode/decrypt failures
+            // can echo the offending wire field back into the log.
+            if (Guid.TryParse(messageId, out var envelopeId))
+            {
+                PrivacySafeLog.EnvelopeRejected(_logger, envelopeId, exception.GetType().Name);
+            }
+            else
+            {
+                PrivacySafeLog.SyncStateProbeFailed(_logger, 0, exception.GetType().Name);
+            }
+
+            throw;
         }
     }
 
     public async Task<PairingCodeResult> CreatePairingCodeAsync(CancellationToken cancellationToken)
     {
-        await EnsureRegisteredAsync(cancellationToken);
         try
         {
-            var code = await _relay.CreatePairingCodeAsync(cancellationToken);
-            _state = PairingAvailability.Available;
-            return new PairingCodeResult(PairingAvailability.Available, code.Code, code.ExpiresUtc);
+            await EnsureRegisteredAsync(cancellationToken);
+            try
+            {
+                var code = await _relay.CreatePairingCodeAsync(cancellationToken);
+                _state = PairingAvailability.Available;
+                return new PairingCodeResult(PairingAvailability.Available, code.Code, code.ExpiresUtc);
+            }
+            catch (RelayUnauthorizedException exception)
+            {
+                _state = PairingAvailability.NeedsRepair;
+                // P1: the NeedsRepair flip was previously silent in the logs. 401 plus the
+                // exception type — never the code value or its expiry.
+                PrivacySafeLog.SyncStateProbeFailed(_logger, 401, exception.GetType().Name);
+                throw;
+            }
         }
-        catch (RelayUnauthorizedException)
+        catch (Exception exception) when (exception is not OperationCanceledException
+            && exception is not RelayUnauthorizedException)
         {
-            _state = PairingAvailability.NeedsRepair;
+            // P1: transient pairing-code failures (unavailable, protocol, registration) used to
+            // propagate with no diagnostic. Type name only — never wire fields.
+            PrivacySafeLog.SyncStateProbeFailed(_logger, 0, exception.GetType().Name);
             throw;
         }
     }
@@ -651,14 +713,24 @@ public sealed class RemoteSyncService : IAsyncDisposable
     /// </summary>
     public async Task DisconnectSendersAsync(CancellationToken cancellationToken)
     {
-        var keyMaterial = await _keyService.GetOrCreateAsync(cancellationToken);
         try
         {
-            await _relay.RotateKeyAsync(keyMaterial.PublicKeySpkiBase64Url, cancellationToken);
+            var keyMaterial = await _keyService.GetOrCreateAsync(cancellationToken);
+            try
+            {
+                await _relay.RotateKeyAsync(keyMaterial.PublicKeySpkiBase64Url, cancellationToken);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(keyMaterial.PrivateKeyPkcs8);
+            }
         }
-        finally
+        catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            CryptographicOperations.ZeroMemory(keyMaterial.PrivateKeyPkcs8);
+            // P1: rotation failures used to propagate with no diagnostic. Type name only — the
+            // public key and any token material stay out of the logs.
+            PrivacySafeLog.SyncStateProbeFailed(_logger, 0, exception.GetType().Name);
+            throw;
         }
     }
 
@@ -688,15 +760,31 @@ public sealed class RemoteSyncService : IAsyncDisposable
         {
             // Already gone server-side, or the credential is dead and can never delete it.
         }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // P1: transient revoke failures used to propagate with no diagnostic, leaving local
+            // state untouched but nothing in the logs. Type name only.
+            PrivacySafeLog.SyncStateProbeFailed(_logger, 0, exception.GetType().Name);
+            throw;
+        }
 
         // Device id first: it is the registration completion marker, so a failure part-way
         // leaves a state that EnsureRegisteredAsync treats as unregistered.
-        await _secretStore.DeleteAsync(RelaySecretKeys.DeviceId, cancellationToken);
-        await _secretStore.DeleteAsync(RelaySecretKeys.DesktopToken, cancellationToken);
-        await _secretStore.DeleteAsync(RelaySecretKeys.DesktopTokenStaging, cancellationToken);
-        if (destroyEncryptionKey)
+        try
         {
-            await _secretStore.DeleteAsync(DesktopKeyService.SecretStoreKey, cancellationToken);
+            await _secretStore.DeleteAsync(RelaySecretKeys.DeviceId, cancellationToken);
+            await _secretStore.DeleteAsync(RelaySecretKeys.DesktopToken, cancellationToken);
+            await _secretStore.DeleteAsync(RelaySecretKeys.DesktopTokenStaging, cancellationToken);
+            if (destroyEncryptionKey)
+            {
+                await _secretStore.DeleteAsync(DesktopKeyService.SecretStoreKey, cancellationToken);
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // P1: a local-cleanup failure during revoke also propagated silently. Type name only.
+            PrivacySafeLog.SyncStateProbeFailed(_logger, 0, exception.GetType().Name);
+            throw;
         }
 
         _state = PairingAvailability.Offline;

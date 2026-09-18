@@ -3,6 +3,7 @@ using System.Text;
 using Dudu.Core.Abstractions;
 using Dudu.Infrastructure.Remote;
 using Dudu.Infrastructure.Tests.Crypto;
+using Microsoft.Extensions.Logging;
 using Xunit;
 
 namespace Dudu.Infrastructure.Tests.Remote;
@@ -351,6 +352,63 @@ public sealed class RelayClientTests
     private static StringContent JsonContent(string json) =>
         new(json, Encoding.UTF8, "application/json");
 
+    // P1: the staging-cleanup failure in RotateKeyAsync must leave a dedicated diagnostic
+    // (event 1008) that carries only the exception type — both token values are genuinely in
+    // scope here and must never reach the logs.
+    [Fact]
+    public async Task RotateKey_staging_cleanup_failure_is_logged_without_tokens()
+    {
+        const string activeToken = "staging-cleanup-active-9182";
+        const string rotatedToken = "staging-cleanup-rotated-9183";
+        var handler = new FakeHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = JsonContent("{\"desktopToken\":\"" + rotatedToken + "\"}"),
+        });
+        var secretStore = new DeleteFailingSecretStore(RelaySecretKeys.DesktopTokenStaging);
+        secretStore.Values[RelaySecretKeys.DesktopToken] = Encoding.UTF8.GetBytes(activeToken);
+        var sink = new RecordingLoggerSink();
+        var client = new RelayClient(
+            new HttpClient(handler), secretStore, new RelayOptions(BaseUrl), new RecordingLogger<RelayClient>(sink));
+
+        var returned = await client.RotateKeyAsync("public-key-spki", TestContext.Current.CancellationToken);
+
+        Assert.Equal(rotatedToken, returned);
+        Assert.Contains(1008, sink.EventIds);
+        Assert.Contains("IOException", sink.JoinedText, StringComparison.Ordinal);
+        Assert.DoesNotContain(activeToken, sink.JoinedText, StringComparison.Ordinal);
+        Assert.DoesNotContain(rotatedToken, sink.JoinedText, StringComparison.Ordinal);
+    }
+
+    // P1: the 401 staged-token promotion must leave a dedicated diagnostic (event 1009) that
+    // carries only the status and a fixed label — the promoted token value itself is never logged.
+    [Fact]
+    public async Task Staged_token_promotion_is_logged_without_tokens()
+    {
+        const string activeToken = "staged-promotion-active-7741";
+        const string stagedToken = "staged-promotion-staged-7742";
+        var handler = new FakeHttpMessageHandler(request =>
+        {
+            var token = request.Headers.Authorization?.Parameter;
+            return token == stagedToken
+                ? new HttpResponseMessage(HttpStatusCode.NoContent)
+                : new HttpResponseMessage(HttpStatusCode.Unauthorized);
+        });
+        var secretStore = new InMemorySecretStore();
+        secretStore.Values[RelaySecretKeys.DesktopToken] = Encoding.UTF8.GetBytes(activeToken);
+        secretStore.Values[RelaySecretKeys.DesktopTokenStaging] = Encoding.UTF8.GetBytes(stagedToken);
+        var sink = new RecordingLoggerSink();
+        var client = new RelayClient(
+            new HttpClient(handler), secretStore, new RelayOptions(BaseUrl), new RecordingLogger<RelayClient>(sink));
+
+        await client.AcknowledgeAsync("11111111-1111-1111-1111-111111111111", TestContext.Current.CancellationToken);
+
+        Assert.Contains(1009, sink.EventIds);
+        Assert.Contains("promoted-staged-token", sink.JoinedText, StringComparison.Ordinal);
+        Assert.DoesNotContain(activeToken, sink.JoinedText, StringComparison.Ordinal);
+        Assert.DoesNotContain(stagedToken, sink.JoinedText, StringComparison.Ordinal);
+        Assert.False(secretStore.Values.ContainsKey(RelaySecretKeys.DesktopTokenStaging));
+    }
+
     private sealed class FailingSecretStore(string failingKey) : ISecretStore
     {
         public Dictionary<string, byte[]> Values { get; } = new(StringComparer.Ordinal);
@@ -373,6 +431,110 @@ public sealed class RelayClientTests
         {
             Values.Remove(key);
             return Task.CompletedTask;
+        }
+    }
+
+    // P1: fails only the staging-slot delete, so RotateKeyAsync reaches its non-fatal
+    // staging-cleanup catch with real token values in scope.
+    private sealed class DeleteFailingSecretStore(string failingKey) : ISecretStore
+    {
+        public Dictionary<string, byte[]> Values { get; } = new(StringComparer.Ordinal);
+
+        public Task SetAsync(string key, ReadOnlyMemory<byte> value, CancellationToken cancellationToken = default)
+        {
+            Values[key] = value.ToArray();
+            return Task.CompletedTask;
+        }
+
+        public Task<byte[]?> GetAsync(string key, CancellationToken cancellationToken = default) =>
+            Task.FromResult(Values.TryGetValue(key, out var value) ? value.ToArray() : null);
+
+        public Task DeleteAsync(string key, CancellationToken cancellationToken = default)
+        {
+            if (key == failingKey)
+            {
+                throw new IOException("simulated secret-store failure");
+            }
+
+            Values.Remove(key);
+            return Task.CompletedTask;
+        }
+    }
+
+    // P1: captures every string the client hands to a logger, mirroring the sink in
+    // PrivacyBoundaryTests, so the new staging diagnostics can assert both presence and secrecy.
+    private sealed class RecordingLoggerSink
+    {
+        private readonly List<string> _entries = [];
+        private readonly List<int> _eventIds = [];
+        private readonly object _sync = new();
+
+        public void Add(string entry)
+        {
+            lock (_sync)
+            {
+                _entries.Add(entry);
+            }
+        }
+
+        public void AddEventId(int eventId)
+        {
+            lock (_sync)
+            {
+                _eventIds.Add(eventId);
+            }
+        }
+
+        public string JoinedText
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    return string.Join('\n', _entries);
+                }
+            }
+        }
+
+        public IReadOnlyList<int> EventIds
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    return [.. _eventIds];
+                }
+            }
+        }
+    }
+
+    private sealed class RecordingLogger<T>(RecordingLoggerSink sink) : ILogger<T>
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            sink.Add(formatter(state, exception));
+            sink.AddEventId(eventId.Id);
+            if (exception is not null)
+            {
+                sink.Add(exception.GetType().FullName ?? string.Empty);
+            }
+
+            if (state is IEnumerable<KeyValuePair<string, object?>> structuredState)
+            {
+                foreach (var pair in structuredState)
+                {
+                    sink.Add(pair.Key + "=" + pair.Value);
+                }
+            }
         }
     }
 

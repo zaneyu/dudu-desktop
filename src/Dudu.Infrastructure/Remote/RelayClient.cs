@@ -176,8 +176,9 @@ public sealed class RelayClient : IRelayClient
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
                 // Non-fatal: a stale staging row equals the active token, so a later 401 promotes
-                // it once, retries, and then drops it. Logged for visibility.
-                PrivacySafeLog.RelayFailed(_logger, 0, "staging-cleanup");
+                // it once, retries, and then drops it. P1: dedicated staging-cleanup event so the
+                // leftover is visible without the token value — type name only.
+                PrivacySafeLog.RelayStagingCleanupFailed(_logger, 0, exception.GetType().Name);
             }
 
             return body.DesktopToken;
@@ -250,7 +251,9 @@ public sealed class RelayClient : IRelayClient
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                // Best effort (see above): cleanup never masks the rotation failure.
+                // Best effort (see above): cleanup never masks the rotation failure. P1: still
+                // leaves a diagnostic by exception type — never token material.
+                PrivacySafeLog.RelayStagingCleanupFailed(_logger, 0, exception.GetType().Name);
             }
         }
     }
@@ -303,7 +306,9 @@ public sealed class RelayClient : IRelayClient
         {
             await _secretStore.SetAsync(RelaySecretKeys.DesktopToken, staged, cancellationToken);
             await _secretStore.DeleteAsync(RelaySecretKeys.DesktopTokenStaging, cancellationToken);
-            PrivacySafeLog.RelayFailed(_logger, 401, "promoted-staged-token");
+            // P1: dedicated promotion event so the 401-recovery path is auditable. Fixed label
+            // plus status only — the staged token value itself is never logged.
+            PrivacySafeLog.RelayStagingPromoted(_logger, 401, "promoted-staged-token");
             return true;
         }
         finally
