@@ -74,6 +74,10 @@ if (Test-Path -LiteralPath (Join-Path $repoRoot "scripts/package-store.ps1")) {
         $storeScript -match 'Assert-StrictStorePackageOutput' -and
         $storeScript -match 'GetRelativePath'
     )
+    Assert-True "Store package output normalizes SDK staging before strict validation" (
+        $storeScript -match 'Normalize-StorePackageOutput' -and
+        $storeScript -match 'Get-ChildItem -LiteralPath \$packageDirectory -Force -File -Recurse'
+    )
     Assert-True "post-cleanup failures leave sanitized Store metadata evidence" (
         $storeScript -match 'Write-PostCleanupFailureEvidence' -and
         $storeScript -match 'Submission artifact: invalid' -and

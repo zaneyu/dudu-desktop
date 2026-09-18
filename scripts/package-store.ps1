@@ -227,6 +227,41 @@ function Assert-PackageMode {
     }
 }
 
+function Normalize-StorePackageOutput {
+    param(
+        [Parameter(Mandatory)][string]$PackageDirectory,
+        [Parameter(Mandatory)][string]$ArtifactPath
+    )
+
+    # GenerateAppxPackageOnBuild places a single-project MSIX inside a staging
+    # directory and may leave the unpacked staging payload beside it. Flatten
+    # that SDK output before applying the strict one-file artifact contract.
+    $packageFiles = @(Get-ChildItem -LiteralPath $packageDirectory -Force -File -Recurse)
+    $msixFiles = @($packageFiles | Where-Object { $_.Extension -ieq '.msix' })
+    if ($msixFiles.Count -ne 1) {
+        throw "Store package staging must contain exactly one MSIX file; found $($msixFiles.Count)."
+    }
+
+    $disallowedPackageContainers = @('.appx', '.msixbundle', '.appxbundle', '.msixupload', '.appxupload', '.appinstaller')
+    $unexpectedContainers = @($packageFiles | Where-Object {
+            $disallowedPackageContainers -contains $_.Extension.ToLowerInvariant()
+        })
+    if ($unexpectedContainers.Count -gt 0) {
+        throw "Store package staging contains unsupported package containers: $($unexpectedContainers.Name -join ', ')."
+    }
+
+    $candidate = $msixFiles[0]
+    if ($candidate.FullName -ne $ArtifactPath) {
+        Move-Item -LiteralPath $candidate.FullName -Destination $ArtifactPath
+    }
+
+    # Remove only the exact generated package staging tree. The caller has
+    # already validated this directory beneath artifacts/.
+    Get-ChildItem -LiteralPath $packageDirectory -Force |
+        Where-Object { $_.FullName -ne $ArtifactPath } |
+        Remove-Item -Recurse -Force
+}
+
 function Assert-StrictStorePackageOutput {
     param([Parameter(Mandatory)][AllowEmptyCollection()][string[]]$RelativeFilePaths)
 
@@ -350,13 +385,16 @@ try {
         "-p:AppxPackageDir=$packageDirectory$([IO.Path]::DirectorySeparatorChar)"
     if ($LASTEXITCODE -ne 0) { throw "Store package publish failed with exit code $LASTEXITCODE." }
 
+    $stage = 'package output normalization'
+    $artifactPath = Join-Path $packageDirectory "DuduDesktop-$Version-win-x64.msix"
+    Normalize-StorePackageOutput -PackageDirectory $packageDirectory -ArtifactPath $artifactPath
+
     $stage = 'package output validation'
     $packageFiles = @(Get-ChildItem -LiteralPath $packageDirectory -File -Recurse)
     $packageRelativeFilePath = Assert-StrictStorePackageOutput -RelativeFilePaths @($packageFiles | ForEach-Object {
             [IO.Path]::GetRelativePath($packageDirectory, $_.FullName)
         })
     $packageCandidate = Get-Item -LiteralPath (Join-Path $packageDirectory $packageRelativeFilePath)
-    $artifactPath = Join-Path $packageDirectory "DuduDesktop-$Version-win-x64.msix"
     if ($packageCandidate.FullName -ne $artifactPath) {
         Move-Item -LiteralPath $packageCandidate.FullName -Destination $artifactPath
     }

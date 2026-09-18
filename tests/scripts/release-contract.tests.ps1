@@ -342,7 +342,7 @@ Assert-Contains "workflow supports an explicit Store package version" $workflow 
 Assert-Contains "workflow requires a Store version for manual dispatch" $workflow "store_version:(?s).*required:\s*true"
 Assert-Contains "workflow keeps 1.0.0 as the push Store acceptance version" $workflow "github\.event_name\s*==\s*'push'.*1\.0\.0"
 Assert-Contains "Store package restore downloads the win-x64 runtime pack" $workflow '(?is)store-package:.*?dotnet restore DuduDesktop\.slnx -r win-x64 -p:RestorePackagesWithLockFile=false'
-Assert-True "workflow disables source lock-file generation during restores" (@([regex]::Matches($workflow, 'dotnet restore DuduDesktop\.slnx -p:RestorePackagesWithLockFile=false')).Count -eq 3)
+Assert-True "workflow disables source lock-file generation during non-RID restores" (@([regex]::Matches($workflow, 'dotnet restore DuduDesktop\.slnx -p:RestorePackagesWithLockFile=false')).Count -eq 2)
 Assert-Contains "workflow writes the Store package hash to the job summary" $workflow "Store package SHA-256"
 Assert-Contains "workflow writes the hosted WACK omission to the Store job summary" $workflow "WACK status: skipped"
 Assert-Contains "workflow labels the Store artifact acceptance-only" $workflow "acceptance-only"
