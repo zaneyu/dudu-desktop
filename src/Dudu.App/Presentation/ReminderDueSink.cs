@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Dudu.App.Hosting;
 using Dudu.Core.Abstractions;
 using Dudu.Core.Models;
 using Dudu.Core.Reminders;
@@ -18,13 +19,28 @@ public sealed class ReminderDueSink : IReminderDueSink
 {
     private readonly IReminderRepository _reminders;
     private readonly Func<IUnsolicitedPresentationGateway> _gateway;
+    private IAppHostErrorReporter? _errorReporter;
 
     public ReminderDueSink(
         IReminderRepository reminders,
-        Func<IUnsolicitedPresentationGateway> gateway)
+        Func<IUnsolicitedPresentationGateway> gateway,
+        IAppHostErrorReporter? errorReporter = null)
     {
         _reminders = reminders ?? throw new ArgumentNullException(nameof(reminders));
         _gateway = gateway ?? throw new ArgumentNullException(nameof(gateway));
+        _errorReporter = errorReporter;
+    }
+
+    /// <summary>
+    /// Settable so the production composition can attach the shared AppHost
+    /// sink after construction: the sink is registered (and eagerly resolved
+    /// by <c>ReminderEngine</c> during <c>AppHost</c> construction) before
+    /// the host — and therefore its error reporter — exists.
+    /// </summary>
+    public IAppHostErrorReporter? ErrorReporter
+    {
+        get => _errorReporter;
+        set => _errorReporter = value;
     }
 
     private static DateTimeOffset NextLocalMidnight(DateTimeOffset dueUtc, string timeZoneId)
@@ -83,8 +99,26 @@ public sealed class ReminderDueSink : IReminderDueSink
         {
             // The reminder occurrence is already durably recorded by
             // ReminderEngine before this sink runs; a presentation failure
-            // here must never roll that back or break the reminder tick.
-            Trace.TraceError("Dudu reminder presentation failed: {0}", exception);
+            // here must never roll that back or break the reminder tick. It
+            // now leaves an operation-named diagnostic carrying the exception
+            // type only — reminder content is never logged.
+            ReportFailure("reminder-notify", exception);
         }
+    }
+
+    private void ReportFailure(string operation, Exception exception)
+    {
+        if (_errorReporter is not null)
+        {
+            try { _errorReporter.Report(operation, exception); }
+            catch { }
+            return;
+        }
+
+        Trace.TraceError(
+            "Dudu {0} failed: {1} (0x{2:X8})",
+            operation,
+            exception.GetType().FullName,
+            exception.HResult);
     }
 }

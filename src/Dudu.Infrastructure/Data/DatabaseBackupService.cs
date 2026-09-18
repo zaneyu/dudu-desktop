@@ -24,6 +24,12 @@ public sealed class DatabaseBackupService
     /// disposes of it.</summary>
     public const string RecoverySuffix = ".corrupt-recovery";
 
+    /// <summary>
+    /// The <c>StartupFailureLogger</c> phase for backup-prune and maintenance
+    /// failures. See <see cref="FailureReporter"/>.
+    /// </summary>
+    public const string PruneFailurePhase = "backup-prune";
+
     private readonly DatabaseOptions _options;
     private readonly Database _database;
     private readonly Action<string, string> _moveFile;
@@ -53,6 +59,15 @@ public sealed class DatabaseBackupService
         : this(new DatabaseOptions(databasePath, backupDirectory))
     {
     }
+
+    /// <summary>
+    /// Optional failure hook invoked with (<c>PruneFailurePhase</c>,
+    /// exception) when a backup-prune (rotation) deletion fails. Logging
+    /// only: rotation stays best-effort and the just-created backup still
+    /// succeeds exactly as before. A plain delegate, not an <c>ILogger</c>,
+    /// so no logging dependency enters the data layer.
+    /// </summary>
+    public Action<string, Exception>? FailureReporter { get; set; }
 
     public async Task<string?> CreatePreMigrationBackupAsync(
         CancellationToken cancellationToken = default)
@@ -520,7 +535,10 @@ public sealed class DatabaseBackupService
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SqliteException)
             {
                 // Rotation is best effort: a locked or unreadable file must not fail the backup
-                // that was just created. The next rotation retries the leftover file.
+                // that was just created. The next rotation retries the leftover file. The
+                // failure is now reported with the backup-prune phase instead of
+                // staying silent.
+                ReportFailure(PruneFailurePhase, exception);
             }
         }
     }
@@ -578,6 +596,18 @@ public sealed class DatabaseBackupService
             catch (Exception)
             {
             }
+        }
+    }
+
+    private void ReportFailure(string phase, Exception exception)
+    {
+        try
+        {
+            FailureReporter?.Invoke(phase, exception);
+        }
+        catch
+        {
+            // Failure reporting must never change backup behavior.
         }
     }
 

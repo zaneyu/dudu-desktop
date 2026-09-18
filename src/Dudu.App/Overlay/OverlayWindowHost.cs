@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using Dudu.App.Animation;
 using Dudu.Core.Assets;
 using Dudu.Core.Models;
+using Dudu.App.Hosting;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.Graphics.Gdi;
@@ -53,6 +54,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private readonly Action _showContextMenu;
     private readonly Action<uint, nint, nint>? _systemMessageHandler;
     private readonly Action<Exception> _diagnostic;
+    private readonly IAppHostErrorReporter? _errorReporter;
     private readonly IReadOnlyList<PixelRect> _bubbleHitRegions;
     private OverlayActionSurfaceController? _actionSurface;
     private bool _alwaysOnTop = true;
@@ -91,7 +93,8 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         IReadOnlyList<PixelRect>? bubbleHitRegions,
         Action<Exception>? diagnostic,
         Action<uint, nint, nint>? systemMessageHandler,
-        CancellationToken creationCancellation)
+        CancellationToken creationCancellation,
+        IAppHostErrorReporter? errorReporter = null)
     {
         _presenter = presenter ?? throw new ArgumentNullException(nameof(presenter));
         _placement = placement ?? throw new ArgumentNullException(nameof(placement));
@@ -105,7 +108,8 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         _showContextMenu = showContextMenu ?? (() => { });
         _systemMessageHandler = systemMessageHandler;
         _bubbleHitRegions = bubbleHitRegions?.ToArray() ?? [];
-        _diagnostic = diagnostic ?? ReportDiagnostic;
+        _diagnostic = diagnostic ?? DefaultDiagnostic;
+        _errorReporter = errorReporter;
         _actionDispatchQueue = new OverlayActionDispatchQueue(_diagnostic);
         _creationCancellation = creationCancellation;
         _ownerActions = new OwnerActionQueue(
@@ -133,7 +137,8 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         IReadOnlyList<PixelRect>? bubbleHitRegions = null,
         Action<Exception>? diagnostic = null,
         Action<uint, nint, nint>? systemMessageHandler = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IAppHostErrorReporter? errorReporter = null)
     {
         var host = new OverlayWindowHost(
             presenter,
@@ -144,7 +149,8 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             bubbleHitRegions,
             diagnostic,
             systemMessageHandler,
-            cancellationToken);
+            cancellationToken,
+            errorReporter);
         host._creationRegistration = cancellationToken.Register(
             static state => ((OverlayWindowHost)state!).CancelStartup(),
             host);
@@ -307,7 +313,8 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
 
     internal TimeSpan ShutdownBudget => ShutdownTimeout;
 
-    internal void ReportDisposalTimeout(Exception exception) => ReportDiagnostic(exception);
+    internal void ReportDisposalTimeout(Exception exception) =>
+        ReportFailure("overlay-dispose", exception);
 
     private void CancelStartup()
     {
@@ -345,7 +352,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         {
             if (!_ownerThread.Join(ShutdownTimeout))
             {
-                ReportDiagnostic(new TimeoutException(
+                ReportFailure("overlay-dispose", new TimeoutException(
                     "Overlay owner thread did not stop before disposal timed out."));
             }
         }
@@ -366,7 +373,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         if (!PInvoke.PostMessage(_window, ShutdownCommandMessage, 0, 0))
         {
             Volatile.Write(ref _shutdownRequestPosted, 0);
-            ReportDiagnostic(LastWin32Error("PostMessage(shutdown)"));
+            ReportFailure("overlay-dispose", LastWin32Error("PostMessage(shutdown)"));
         }
     }
 
@@ -454,7 +461,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         catch (Exception exception)
         {
             _created.TrySetException(exception);
-            ReportDiagnostic(exception);
+            ReportFailure("overlay-create", exception);
             ShutdownOnOwnerThread();
         }
         finally
@@ -486,7 +493,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             if (result < 0)
             {
                 // GetMessage failure ends the loop; teardown runs in OwnerThreadMain.
-                ReportDiagnostic(LastWin32Error("GetMessage"));
+                ReportFailure("overlay-message-loop", LastWin32Error("GetMessage"));
                 break;
             }
 
@@ -886,7 +893,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         {
             if (!PInvoke.DestroyWindow(_window))
             {
-                ReportDiagnostic(LastWin32Error("DestroyWindow"));
+                ReportFailure("overlay-dispose", LastWin32Error("DestroyWindow"));
             }
         }
         PInvoke.PostQuitMessage(0);
@@ -980,11 +987,11 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         {
             if (!_actionDispatchQueue.Completion.Wait(ShutdownTimeout))
             {
-                ReportDiagnostic(new TimeoutException(
+                ReportFailure("overlay-dispose", new TimeoutException(
                     "Overlay pointer dispatch did not stop before disposal timed out."));
             }
         }
-        catch (AggregateException exception) { ReportDiagnostic(exception.Flatten()); }
+        catch (AggregateException exception) { ReportFailure("overlay-dispose", exception.Flatten()); }
     }
 
     public static bool TryConfirmPointerCapture(
@@ -1077,8 +1084,42 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         }
     }
 
+    /// <summary>
+    /// Reports an overlay failure with its operation name through the shared
+    /// AppHost sink when one is composed, falling back to the legacy
+    /// per-host diagnostic and finally to a Trace line carrying the
+    /// operation name plus the exception type/HResult only. Behavior is
+    /// unchanged: reporting never throws and never alters the caller's
+    /// fail-closed or best-effort path.
+    /// </summary>
+    private void ReportFailure(string operation, Exception exception)
+    {
+        if (_errorReporter is not null)
+        {
+            try { _errorReporter.Report(operation, exception); }
+            catch { }
+        }
+
+        ReportDiagnostic(exception);
+
+        if (_errorReporter is null)
+        {
+            Trace.TraceError(
+                "Dudu overlay operation '{0}' failed: {1} (0x{2:X8})",
+                operation,
+                exception.GetType().FullName,
+                exception.HResult);
+        }
+    }
+
     private static InvalidOperationException LastWin32Error(string operation) =>
         new($"{operation} failed with Win32 error {Marshal.GetLastWin32Error()}.");
+
+    private static void DefaultDiagnostic(Exception exception) =>
+        Trace.TraceError(
+            "Dudu overlay diagnostic: {0} (0x{1:X8})",
+            exception.GetType().FullName,
+            exception.HResult);
 
     private sealed class MonitorEnumerationContext
     {

@@ -15,6 +15,7 @@ using Dudu.Core;
 using Dudu.Infrastructure;
 using Dudu.Infrastructure.Data;
 using Dudu.Infrastructure.Remote;
+using Dudu.Infrastructure.Security;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Windows.AppNotifications;
 
@@ -181,6 +182,14 @@ public static class WindowsCompanionProductionComposition
                     ?? throw new InvalidOperationException("The presentation gateway is not ready.")))
             .BuildServiceProvider();
         var host = new AppHost(services, paths);
+        WireDataFailureDiagnostics(services, paths);
+        if (services.GetService<IReminderDueSink>() is ReminderDueSink reminderDueSink)
+        {
+            // The sink was eagerly resolved during AppHost construction,
+            // before the host's error reporter existed; attach it now so
+            // reminder-notify diagnostics reach the shared sink.
+            reminderDueSink.ErrorReporter = host.ErrorReporter;
+        }
         var composer = default(SkiaFrameComposer);
         var presenter = default(LayeredFramePresenter);
         AnimationEngine? animationEngine = null;
@@ -193,7 +202,7 @@ public static class WindowsCompanionProductionComposition
         {
             var database = services.GetRequiredService<Database>();
             await RunStartupPhaseAsync(
-                "database",
+                "db-init",
                 () => database.InitializeAsync(cancellationToken));
             var preferencesRepository = services.GetRequiredService<IPreferencesRepository>();
             var preferences = await preferencesRepository.GetAsync(cancellationToken)
@@ -313,7 +322,8 @@ public static class WindowsCompanionProductionComposition
                         actions.Exit);
                     return command => _ = ObserveNativeCallbackAsync(
                         router.HandleAsync(command),
-                        $"tray-{command}");
+                        $"tray-{command}",
+                        host.ErrorReporter);
                 },
                 initializeOverlay: async overlay =>
                 {
@@ -338,7 +348,9 @@ public static class WindowsCompanionProductionComposition
                             OutfitKey = RuntimeOutfitKey(runtimePreferences.Current),
                         },
                         gate: petGate);
-                    notificationService = new AppNotificationService(new WindowsAppNotificationSink());
+                    notificationService = new AppNotificationService(
+                        new WindowsAppNotificationSink(),
+                        errorReporter: host.ErrorReporter);
                     AppNotificationService invokedNotifications = notificationService;
                     AppNotificationManager.Default.NotificationInvoked += (_, invokedArgs) =>
                         HandleNotificationInvoked(actions, invokedNotifications, invokedArgs.Arguments);
@@ -359,7 +371,8 @@ public static class WindowsCompanionProductionComposition
                         pauseState: () => pause.GetEffective(DateTimeOffset.UtcNow),
                         petGate: petGate,
                         ambientScheduler: services.GetRequiredService<AmbientScheduler>(),
-                        localNoteSelector: services.GetRequiredService<Dudu.Core.Notes.LocalNoteSelector>());
+                        localNoteSelector: services.GetRequiredService<Dudu.Core.Notes.LocalNoteSelector>(),
+                        errorReporter: host.ErrorReporter);
                     _ = StartAnimationPlayback(
                         animationEngine.PlayAsync(
                             pet.Current,
@@ -406,7 +419,8 @@ public static class WindowsCompanionProductionComposition
                             animationEngine?.Resume();
                         }
                     }),
-                cancellationToken: cancellationToken));
+                cancellationToken: cancellationToken,
+                errorReporter: host.ErrorReporter));
             activeRuntime = runtime;
             host.AttachPresentationGateway(presentationGateway
                 ?? throw new InvalidOperationException("The presentation gateway was not composed."));
@@ -590,6 +604,31 @@ public static class WindowsCompanionProductionComposition
     {
         _ = ObserveAnimationAsync(playback);
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Connects the data layer's failure hooks to the redacting
+    /// <see cref="StartupFailureLogger"/> so database initialization
+    /// ("db-init"), DPAPI secret read/write ("secret-read"/"secret-write"),
+    /// and backup-prune/maintenance ("backup-prune") failures leave a
+    /// persisted phase-named diagnostic. Hook-only: every failure still
+    /// propagates to its caller exactly as before, so a failing secret write
+    /// during registration still leaves the device-id-last
+    /// completion-marker ordering intact.
+    /// </summary>
+    private static void WireDataFailureDiagnostics(ServiceProvider services, AppPaths paths)
+    {
+        services.GetRequiredService<Database>().FailureReporter =
+            (phase, exception) => StartupFailureLogger.Record(paths, phase, exception);
+        if (services.GetService<ISecretStore>() is DpapiSecretStore secrets)
+        {
+            secrets.FailureReporter =
+                (phase, exception) => StartupFailureLogger.Record(paths, phase, exception);
+        }
+        services.GetRequiredService<DatabaseBackupService>().FailureReporter =
+            (phase, exception) => StartupFailureLogger.Record(paths, phase, exception);
+        services.GetRequiredService<LocalDataMaintenanceService>().FailureReporter =
+            (phase, exception) => StartupFailureLogger.Record(paths, phase, exception);
     }
 
     private static async Task RunStartupPhaseAsync(
@@ -810,7 +849,10 @@ public static class WindowsCompanionProductionComposition
         }
     }
 
-    internal static async Task ObserveNativeCallbackAsync(Task callback, string operation)
+    internal static async Task ObserveNativeCallbackAsync(
+        Task callback,
+        string operation,
+        IAppHostErrorReporter? errorReporter = null)
     {
         try
         {
@@ -821,7 +863,18 @@ public static class WindowsCompanionProductionComposition
         }
         catch (Exception exception)
         {
-            Trace.TraceError("Dudu native callback '{0}' failed: {1}", operation, exception);
+            if (errorReporter is not null)
+            {
+                try { errorReporter.Report(operation, exception); }
+                catch { }
+                return;
+            }
+
+            Trace.TraceError(
+                "Dudu native callback '{0}' failed: {1} (0x{2:X8})",
+                operation,
+                exception.GetType().FullName,
+                exception.HResult);
         }
     }
 

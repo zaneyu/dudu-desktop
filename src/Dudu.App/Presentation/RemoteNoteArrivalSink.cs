@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Dudu.App.Hosting;
 using Dudu.Core.Abstractions;
 
 namespace Dudu.App.Presentation;
@@ -13,10 +14,14 @@ namespace Dudu.App.Presentation;
 public sealed class RemoteNoteArrivalSink : IRemoteNoteArrivalSink
 {
     private readonly Func<IUnsolicitedPresentationGateway> _gateway;
+    private readonly IAppHostErrorReporter? _errorReporter;
 
-    public RemoteNoteArrivalSink(Func<IUnsolicitedPresentationGateway> gateway)
+    public RemoteNoteArrivalSink(
+        Func<IUnsolicitedPresentationGateway> gateway,
+        IAppHostErrorReporter? errorReporter = null)
     {
         _gateway = gateway ?? throw new ArgumentNullException(nameof(gateway));
+        _errorReporter = errorReporter;
     }
 
     public async Task NotifyAsync(Guid messageId, CancellationToken cancellationToken)
@@ -33,8 +38,26 @@ public sealed class RemoteNoteArrivalSink : IRemoteNoteArrivalSink
         catch (Exception exception)
         {
             // The envelope is already durably recorded before this sink runs; a presentation
-            // failure here must never roll that back or break the poll loop.
-            Trace.TraceError("Dudu remote note presentation failed: {0}", exception);
+            // failure here must never roll that back or break the poll loop. It now leaves
+            // an operation-named diagnostic carrying the exception type only — the
+            // message id itself is never logged.
+            ReportFailure("remote-note-notify", exception);
         }
+    }
+
+    private void ReportFailure(string operation, Exception exception)
+    {
+        if (_errorReporter is not null)
+        {
+            try { _errorReporter.Report(operation, exception); }
+            catch { }
+            return;
+        }
+
+        Trace.TraceError(
+            "Dudu {0} failed: {1} (0x{2:X8})",
+            operation,
+            exception.GetType().FullName,
+            exception.HResult);
     }
 }

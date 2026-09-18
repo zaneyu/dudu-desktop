@@ -136,6 +136,15 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
     public bool IsStarted => Volatile.Read(ref _started) != 0;
 
     /// <summary>
+    /// The error sink background chrome (tray, hotkey, overlay, event
+    /// callbacks) and presentation sinks report through. Exposed so the
+    /// Windows companion runtime can route its best-effort diagnostics to
+    /// the same sink instead of a bare <c>Trace</c> that a future file
+    /// sink would never capture.
+    /// </summary>
+    public IAppHostErrorReporter ErrorReporter => _errorReporter;
+
+    /// <summary>
     /// Attaches the presentation gateway this host will start, tick, and
     /// dispose. Optional: production composes the gateway after this host is
     /// constructed (it depends on objects that do not exist yet at that

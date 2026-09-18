@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
+using Dudu.App.Hosting;
 using Dudu.Core.Abstractions;
 
 namespace Dudu.App.Notifications;
@@ -36,14 +37,19 @@ public sealed class AppNotificationService : INotificationService, IRegistrableN
 
     private readonly INotificationSink _sink;
     private readonly Func<DateTimeOffset> _utcNow;
+    private readonly IAppHostErrorReporter? _errorReporter;
     private readonly SemaphoreSlim _registrationGate = new(1, 1);
     private volatile bool _notificationsAvailable = true;
     private bool _registered;
 
-    public AppNotificationService(INotificationSink sink, Func<DateTimeOffset>? utcNow = null)
+    public AppNotificationService(
+        INotificationSink sink,
+        Func<DateTimeOffset>? utcNow = null,
+        IAppHostErrorReporter? errorReporter = null)
     {
         _sink = sink ?? throw new ArgumentNullException(nameof(sink));
         _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
+        _errorReporter = errorReporter;
     }
 
     public bool NotificationsAvailable => _notificationsAvailable;
@@ -70,8 +76,9 @@ public sealed class AppNotificationService : INotificationService, IRegistrableN
         {
             throw;
         }
-        catch
+        catch (Exception exception)
         {
+            ReportFailure("toast-notify", exception);
             _notificationsAvailable = false;
             return false;
         }
@@ -137,7 +144,7 @@ public sealed class AppNotificationService : INotificationService, IRegistrableN
         }
         catch (Exception exception)
         {
-            Trace.TraceWarning("Dudu reminder toast removal failed: {0}", exception.Message);
+            ReportFailure("toast-notify", exception);
         }
     }
 
@@ -175,9 +182,26 @@ public sealed class AppNotificationService : INotificationService, IRegistrableN
         {
             throw;
         }
-        catch
+        catch (Exception exception)
         {
+            ReportFailure("toast-notify", exception);
             _notificationsAvailable = false;
         }
+    }
+
+    private void ReportFailure(string operation, Exception exception)
+    {
+        if (_errorReporter is not null)
+        {
+            try { _errorReporter.Report(operation, exception); }
+            catch { }
+            return;
+        }
+
+        Trace.TraceError(
+            "Dudu {0} failed: {1} (0x{2:X8})",
+            operation,
+            exception.GetType().FullName,
+            exception.HResult);
     }
 }

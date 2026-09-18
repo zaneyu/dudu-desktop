@@ -28,6 +28,21 @@ public sealed class SecretStoreException : Exception
 /// </remarks>
 public sealed class DpapiSecretStore : ISecretStore
 {
+    /// <summary>
+    /// The <c>StartupFailureLogger</c> phase for secret-read failures
+    /// (<see cref="GetAsync"/>). See <see cref="FailureReporter"/>.
+    /// </summary>
+    public const string ReadFailurePhase = "secret-read";
+
+    /// <summary>
+    /// The <c>StartupFailureLogger</c> phase for secret-mutation failures
+    /// (<see cref="SetAsync"/> and <see cref="DeleteAsync"/>). Deletes share
+    /// the write phase: a failed delete leaves a mutation unapplied, and the
+    /// registration completion-marker ordering (token before device id) is
+    /// unaffected by reporting — failures still propagate exactly as before.
+    /// </summary>
+    public const string WriteFailurePhase = "secret-write";
+
     private static readonly Regex KeyPattern = new(
         "\\A[a-z0-9-]{1,64}\\z",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
@@ -39,6 +54,20 @@ public sealed class DpapiSecretStore : ISecretStore
         ArgumentException.ThrowIfNullOrWhiteSpace(directory);
         _directory = Path.GetFullPath(directory);
     }
+
+    /// <summary>
+    /// Optional failure hook invoked with (phase, exception) when a secret
+    /// read, write, or delete fails. Logging only: failures still propagate
+    /// to the caller exactly as before, so a failing secret write during
+    /// registration still leaves the device-id-last completion-marker
+    /// ordering intact. Never receives secret material — only the phase name
+    /// and the exception (whose messages carry key names at most, never key
+    /// bytes). A plain delegate, not an <c>ILogger</c>: no logging dependency
+    /// enters the secret store. Absent reads (missing file) and idempotent
+    /// deletes are not failures and are never reported, nor are
+    /// cancellations or argument-validation errors.
+    /// </summary>
+    public Action<string, Exception>? FailureReporter { get; set; }
 
     public async Task SetAsync(
         string key,
@@ -85,6 +114,11 @@ public sealed class DpapiSecretStore : ISecretStore
                 CryptographicOperations.ZeroMemory(protectedBytes);
             }
         }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            ReportFailure(WriteFailurePhase, exception);
+            throw;
+        }
         finally
         {
             CryptographicOperations.ZeroMemory(plaintext);
@@ -108,6 +142,11 @@ public sealed class DpapiSecretStore : ISecretStore
         {
             // No exists-then-read race: a secret deleted concurrently simply reads as absent.
             return null;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            ReportFailure(ReadFailurePhase, exception);
+            throw;
         }
 
         var entropy = Encoding.UTF8.GetBytes("DuduDesktop:v1:" + key);
@@ -133,6 +172,11 @@ public sealed class DpapiSecretStore : ISecretStore
                     exception);
             }
         }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            ReportFailure(ReadFailurePhase, exception);
+            throw;
+        }
         finally
         {
             CryptographicOperations.ZeroMemory(protectedBytes);
@@ -157,6 +201,11 @@ public sealed class DpapiSecretStore : ISecretStore
             // Delete is idempotent: a missing file -- or a missing secrets directory, when no
             // secret was ever written -- is already the desired end state, including under a
             // concurrent delete racing this one.
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            ReportFailure(WriteFailurePhase, exception);
+            throw;
         }
 
         return Task.CompletedTask;
@@ -217,6 +266,18 @@ public sealed class DpapiSecretStore : ISecretStore
         if (!OperatingSystem.IsWindows())
         {
             throw new PlatformNotSupportedException("Windows DPAPI is required.");
+        }
+    }
+
+    private void ReportFailure(string phase, Exception exception)
+    {
+        try
+        {
+            FailureReporter?.Invoke(phase, exception);
+        }
+        catch
+        {
+            // Failure reporting must never change secret-store behavior.
         }
     }
 
