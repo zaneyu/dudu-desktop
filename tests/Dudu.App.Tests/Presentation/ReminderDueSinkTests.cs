@@ -29,7 +29,7 @@ public sealed class ReminderDueSinkTests
         var item = Assert.IsType<DurableNotification>(gateway.LastItem);
         Assert.Equal("a little space to reflect. your check-in stays on this device. open Home to check in.", item.Body);
         Assert.Null(item.AnimationKey);
-        Assert.Equal(DueUtc.AddDays(1), item.ExpiresUtc);
+        Assert.Equal(DateTimeOffset.Parse("2026-09-18T00:00:00Z"), item.ExpiresUtc);
         Assert.False(gateway.LastBypass);
     }
 
@@ -48,7 +48,7 @@ public sealed class ReminderDueSinkTests
         var item = Assert.IsType<DurableNotification>(gateway.LastItem);
         Assert.Equal("time to wind down. goodnight, ada.", item.Body);
         Assert.Equal("sleep", item.AnimationKey);
-        Assert.Null(item.ExpiresUtc);
+        Assert.Equal(DateTimeOffset.Parse("2026-09-18T00:00:00Z"), item.ExpiresUtc);
         Assert.False(gateway.LastBypass);
     }
 
