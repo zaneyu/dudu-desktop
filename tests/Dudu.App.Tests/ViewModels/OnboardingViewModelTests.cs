@@ -46,12 +46,20 @@ public sealed class OnboardingViewModelTests
         Assert.True(fixture.SavedPreferences.BreakRemindersEnabled);
         Assert.Single(fixture.SavedPlacements);
         Assert.Equal("MONITOR-2", fixture.SavedPlacements[0].MonitorDeviceName);
-        Assert.Equal(2, fixture.Reminders.Saved.Count);
+        Assert.Equal(4, fixture.Reminders.Saved.Count);
         Assert.Equal(
             new[] { false, true },
-            fixture.Reminders.Saved.OrderBy(reminder => reminder.Id == "default-break").Select(reminder => reminder.Enabled));
-        Assert.All(fixture.Reminders.Saved, reminder =>
-            Assert.Equal(fixture.SavedPreferences.QuietHours, reminder.QuietHours));
+            fixture.Reminders.Saved
+                .Where(reminder => reminder.Id is "default-hydration" or "default-break")
+                .OrderBy(reminder => reminder.Id == "default-break")
+                .Select(reminder => reminder.Enabled));
+        Assert.All(fixture.Reminders.Saved.Where(reminder =>
+            reminder.Id is "default-hydration" or "default-break"), reminder =>
+            Assert.Equal(fixture.SavedPreferences!.QuietHours, reminder.QuietHours));
+        Assert.All(fixture.Reminders.Saved.Where(reminder =>
+            reminder.Id is Dudu.Core.Reminders.LocalReminderDefaults.EveningCheckInId
+                or Dudu.Core.Reminders.LocalReminderDefaults.BedtimeId), reminder =>
+            Assert.Null(reminder.QuietHours));
         Assert.Equal(new[] { "commit", "runtime" }, fixture.Events);
     }
 

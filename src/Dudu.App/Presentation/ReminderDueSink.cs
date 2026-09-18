@@ -17,11 +17,11 @@ namespace Dudu.App.Presentation;
 public sealed class ReminderDueSink : IReminderDueSink
 {
     private readonly IReminderRepository _reminders;
-    private readonly Func<PresentationCoordinator> _gateway;
+    private readonly Func<IUnsolicitedPresentationGateway> _gateway;
 
     public ReminderDueSink(
         IReminderRepository reminders,
-        Func<PresentationCoordinator> gateway)
+        Func<IUnsolicitedPresentationGateway> gateway)
     {
         _reminders = reminders ?? throw new ArgumentNullException(nameof(reminders));
         _gateway = gateway ?? throw new ArgumentNullException(nameof(gateway));

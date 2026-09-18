@@ -777,9 +777,10 @@ public sealed class FeatureViewModelTests
 
         Assert.False(fixture.Context.CurrentPreferences.EveningCheckInEnabled);
         Assert.False(fixture.Context.CurrentPreferences.BedtimeRitualEnabled);
-        Assert.DoesNotContain(fixture.Reminders.Items, item =>
+        Assert.All(fixture.Reminders.Items.Where(item =>
             item.Id is Dudu.Core.Reminders.LocalReminderDefaults.EveningCheckInId
-                or Dudu.Core.Reminders.LocalReminderDefaults.BedtimeId);
+                or Dudu.Core.Reminders.LocalReminderDefaults.BedtimeId), item =>
+            Assert.False(item.Enabled));
 
         viewModel.EveningCheckInEnabled = true;
         viewModel.BedtimeRitualEnabled = true;

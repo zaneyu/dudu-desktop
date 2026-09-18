@@ -20,9 +20,7 @@ public sealed class ReminderDueSinkTests
         var reminders = new RecordingReminderRepository(
             MakeReminder(LocalReminderDefaults.EveningCheckInId, "how was your day, ada?"));
         var gateway = new RecordingGateway();
-        var sink = new ReminderDueSink(
-            reminders,
-            () => gateway.Coordinator);
+        var sink = new ReminderDueSink(reminders, () => gateway);
 
         await sink.NotifyAsync(
             new ReminderOccurrence(LocalReminderDefaults.EveningCheckInId, DueUtc),
@@ -41,9 +39,7 @@ public sealed class ReminderDueSinkTests
         var reminders = new RecordingReminderRepository(
             MakeReminder(LocalReminderDefaults.BedtimeId, "shuijiaojiao, ada"));
         var gateway = new RecordingGateway();
-        var sink = new ReminderDueSink(
-            reminders,
-            () => gateway.Coordinator);
+        var sink = new ReminderDueSink(reminders, () => gateway);
 
         await sink.NotifyAsync(
             new ReminderOccurrence(LocalReminderDefaults.BedtimeId, DueUtc),
@@ -62,9 +58,7 @@ public sealed class ReminderDueSinkTests
         var reminders = new RecordingReminderRepository(
             MakeReminder(LocalReminderDefaults.BedtimeId, "shuijiaojiao, ada"));
         var gateway = new RecordingGateway();
-        var sink = new ReminderDueSink(
-            reminders,
-            () => gateway.Coordinator);
+        var sink = new ReminderDueSink(reminders, () => gateway);
 
         await sink.NotifyAsync(
             new ReminderOccurrence(LocalReminderDefaults.BedtimeId, DueUtc),
@@ -84,9 +78,7 @@ public sealed class ReminderDueSinkTests
         var reminders = new RecordingReminderRepository(
             MakeReminder(LocalReminderDefaults.BedtimeId, "shuijiaojiao, ada", enabled: false));
         var gateway = new RecordingGateway();
-        var sink = new ReminderDueSink(
-            reminders,
-            () => gateway.Coordinator);
+        var sink = new ReminderDueSink(reminders, () => gateway);
 
         await sink.NotifyAsync(
             new ReminderOccurrence(LocalReminderDefaults.BedtimeId, DueUtc),
@@ -101,9 +93,7 @@ public sealed class ReminderDueSinkTests
         var reminders = new RecordingReminderRepository(
             MakeReminder("reminder-1", "Stretch"));
         var gateway = new RecordingGateway();
-        var sink = new ReminderDueSink(
-            reminders,
-            () => gateway.Coordinator);
+        var sink = new ReminderDueSink(reminders, () => gateway);
 
         await sink.NotifyAsync(
             new ReminderOccurrence("reminder-1", DueUtc),
@@ -122,9 +112,7 @@ public sealed class ReminderDueSinkTests
         var reminders = new RecordingReminderRepository(
             MakeReminder(LocalReminderDefaults.EveningCheckInId, "how was your day, ada?"));
         var gateway = new RecordingGateway();
-        var sink = new ReminderDueSink(
-            reminders,
-            () => gateway.Coordinator);
+        var sink = new ReminderDueSink(reminders, () => gateway);
 
         await sink.NotifyAsync(
             new ReminderOccurrence(LocalReminderDefaults.EveningCheckInId, DueUtc),
@@ -166,7 +154,7 @@ public sealed class ReminderDueSinkTests
             CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
-    private sealed class RecordingGateway
+    private sealed class RecordingGateway : IUnsolicitedPresentationGateway
     {
         public RecordingGateway()
         {
@@ -200,7 +188,7 @@ public sealed class ReminderDueSinkTests
         public Task PublishAsync(
             DurableNotification item,
             bool bypassSuppression,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken = default)
         {
             LastItem = item;
             LastBypass = bypassSuppression;

@@ -23,6 +23,15 @@ public interface IPresentationEnvironmentSink
     void SetFullscreen(bool fullscreen);
 }
 
+/// <summary>The publish surface used by durable unsolicited-event sinks.</summary>
+public interface IUnsolicitedPresentationGateway
+{
+    Task PublishAsync(
+        DurableNotification item,
+        bool bypassSuppression,
+        CancellationToken cancellationToken = default);
+}
+
 /// <summary>
 /// The one presentation gateway. Every unsolicited event (a remote note
 /// arriving, a reminder becoming due, or an automatically selected local
@@ -35,7 +44,8 @@ public interface IPresentationEnvironmentSink
 /// </summary>
 public sealed class PresentationCoordinator :
     IAppHostPresentationGateway,
-    IPresentationEnvironmentSink
+    IPresentationEnvironmentSink,
+    IUnsolicitedPresentationGateway
 {
     private readonly PresentationPolicy _policy;
     private readonly INotificationService _notifications;

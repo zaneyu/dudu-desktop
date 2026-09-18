@@ -95,7 +95,11 @@ public sealed class StartupRegistrationService : IAsyncDisposable
         {
             try
             {
-                _enabled = File.Exists(_shortcutPath);
+                // Packaged startup is owned by Windows StartupTask. The legacy
+                // shortcut is only migration state and must not make the
+                // packaged registration appear enabled before the task has
+                // been queried/applied.
+                _enabled = _packagedStartupTask is null && File.Exists(_shortcutPath);
             }
             catch
             {

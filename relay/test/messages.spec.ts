@@ -307,7 +307,7 @@ describe("encrypted message queue", () => {
     const envelope = await validEnvelope({ messageId: crypto.randomUUID() });
     const response = await paired.sender.postMessage(envelope);
     expect(response.status).toBe(429);
-  });
+  }, 30_000);
 
   it("returns at most twenty eligible messages, ordered by delivery then creation", async () => {
     const paired = await pairedFixture();

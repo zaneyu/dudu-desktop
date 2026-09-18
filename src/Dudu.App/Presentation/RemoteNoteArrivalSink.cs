@@ -12,9 +12,9 @@ namespace Dudu.App.Presentation;
 /// </summary>
 public sealed class RemoteNoteArrivalSink : IRemoteNoteArrivalSink
 {
-    private readonly Func<PresentationCoordinator> _gateway;
+    private readonly Func<IUnsolicitedPresentationGateway> _gateway;
 
-    public RemoteNoteArrivalSink(Func<PresentationCoordinator> gateway)
+    public RemoteNoteArrivalSink(Func<IUnsolicitedPresentationGateway> gateway)
     {
         _gateway = gateway ?? throw new ArgumentNullException(nameof(gateway));
     }

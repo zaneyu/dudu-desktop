@@ -181,11 +181,6 @@ public static class WindowsCompanionProductionComposition
                     ?? throw new InvalidOperationException("The presentation gateway is not ready.")))
             .BuildServiceProvider();
         var host = new AppHost(services, paths);
-        var remoteSync = services.GetService<RemoteSyncService>();
-        if (remoteSync is not null && !safeMode)
-        {
-            host.AttachRemoteSync(new RemoteSyncHostAdapter(remoteSync));
-        }
         var composer = default(SkiaFrameComposer);
         var presenter = default(LayeredFramePresenter);
         AnimationEngine? animationEngine = null;
@@ -415,6 +410,11 @@ public static class WindowsCompanionProductionComposition
             activeRuntime = runtime;
             host.AttachPresentationGateway(presentationGateway
                 ?? throw new InvalidOperationException("The presentation gateway was not composed."));
+            var remoteSync = services.GetService<RemoteSyncService>();
+            if (remoteSync is not null)
+            {
+                host.AttachRemoteSync(new RemoteSyncHostAdapter(remoteSync));
+            }
 
             var placementSnapshot = await RunStartupPhaseAsync(
                 "runtime-config",
