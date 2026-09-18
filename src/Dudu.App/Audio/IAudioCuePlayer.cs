@@ -23,3 +23,11 @@ public interface IAudioCuePlayer
         double volume,
         CancellationToken cancellationToken);
 }
+
+/// <summary>
+/// Optional lifecycle contract for players that own native playback resources.
+/// Existing players remain valid by implementing only <see cref="IAudioCuePlayer"/>.
+/// </summary>
+public interface IAudioCuePlayerLifecycle : IAsyncDisposable
+{
+}

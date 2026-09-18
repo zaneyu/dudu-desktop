@@ -70,7 +70,7 @@ public sealed class PetPresentationCoordinatorTests
                 if (presentation.State == PetState.Idle) restored.SetResult();
                 return Task.CompletedTask;
             },
-            playAudioAsync: (_, _) => Task.FromException(new InvalidOperationException("audio")));
+            playAudioAsync: (_, _) => throw new InvalidOperationException("audio"));
 
         await coordinator.PresentOneShotAsync(
             new PetEvent.AmbientRequested("greeting"),

@@ -69,7 +69,8 @@ public sealed class PetPresentationCoordinator
                     await playback;
                     if (_playAudioAsync is not null)
                     {
-                        await ObserveAudioAsync(_playAudioAsync(oneShot, cancellationToken));
+                        await ObserveAudioAsync(
+                            () => _playAudioAsync(oneShot, cancellationToken));
                     }
                 }
                 else
@@ -95,9 +96,9 @@ public sealed class PetPresentationCoordinator
         }
     }
 
-    private static async Task ObserveAudioAsync(Task task)
+    private static async Task ObserveAudioAsync(Func<Task> operation)
     {
-        try { await task; }
+        try { await operation(); }
         catch (OperationCanceledException) { }
         catch (Exception exception)
         {

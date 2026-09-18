@@ -279,7 +279,8 @@ public static class WindowsCompanionProductionComposition
             var savedPlacements = await services
                 .GetRequiredService<IPetPlacementRepository>()
                 .ListAsync(cancellationToken);
-            var packsRoot = Path.Combine(AppContext.BaseDirectory, "Assets", "Packs");
+            var assetsRoot = Path.Combine(AppContext.BaseDirectory, "Assets");
+            var packsRoot = Path.Combine(assetsRoot, "Packs");
             var privateManifestPath = Path.Combine(packsRoot, "private-dudu", "manifest.json");
             var fallbackManifestPath = Path.Combine(packsRoot, "fallback", "manifest.json");
             var manifestPath = File.Exists(privateManifestPath)
@@ -315,12 +316,7 @@ public static class WindowsCompanionProductionComposition
             presenter = new LayeredFramePresenter();
             var pause = new PauseStateStore();
             var runtimePreferences = new RuntimePreferencesState(preferences);
-            var audioManifestPath = Path.Combine(
-                AppContext.BaseDirectory,
-                "Assets",
-                "Audio",
-                "private-dudu",
-                "manifest.json");
+            var audioManifestPath = ResolveAudioManifestPath(assetsRoot);
             AudioCatalog audioCatalog;
             try
             {
@@ -545,14 +541,17 @@ public static class WindowsCompanionProductionComposition
                     var presentation = pet.Handle(petEvent);
                     if (animationEngine is not null)
                     {
-                        _ = StartAnimationPlayback(animationEngine.PlayAsync(
+                        var playback = animationEngine.PlayAsync(
                             pet.Current,
                             AnimationOptionsFor(runtimePreferences.Current),
-                            token));
-                    }
-                    if (AudioCueSelection.ForPresentation(presentation) is { } cue)
-                    {
-                        _ = ObserveAudioCueAsync(audioCueService, cue, token);
+                            token);
+                        _ = StartAnimationPlayback(playback);
+                        if (AudioCueSelection.ForPresentation(presentation) is { } cue)
+                        {
+                            _ = ObserveDirectAudioAfterVisualAsync(
+                                playback,
+                                () => audioCueService!.TryPlayAsync(cue, token));
+                        }
                     }
                     return Task.CompletedTask;
                 },
@@ -692,13 +691,33 @@ public static class WindowsCompanionProductionComposition
             new AudioSoundPack("dudu-yapapa", []),
         ]);
 
-    private static async Task ObserveAudioCueAsync(
-        AudioCueService? service,
-        AudioCueEvent cue,
-        CancellationToken cancellationToken)
+    internal static string ResolveAudioManifestPath(string assetsRoot) =>
+        Path.Combine(assetsRoot, "Audio", "private-dudu", "manifest.json");
+
+    internal static async Task ObserveDirectAudioAfterVisualAsync(
+        Task visualPlayback,
+        Func<Task> playAudioAsync)
     {
-        if (service is null) return;
-        try { await service.TryPlayAsync(cue, cancellationToken); }
+        try
+        {
+            await visualPlayback;
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        catch (Exception exception)
+        {
+            Trace.TraceError("Dudu direct animation failed: {0}", exception.GetType().FullName);
+            return;
+        }
+
+        await ObserveAudioCueAsync(playAudioAsync);
+    }
+
+    private static async Task ObserveAudioCueAsync(Func<Task> operation)
+    {
+        try { await operation(); }
         catch (Exception exception)
         {
             Trace.TraceError("Dudu direct audio cue failed: {0}", exception.GetType().FullName);
@@ -709,22 +728,26 @@ public static class WindowsCompanionProductionComposition
         AudioCueService? service,
         IAudioCuePlayer? player)
     {
-        if (player is IAsyncDisposable asyncDisposable)
+        if (service is not null)
         {
-            return asyncDisposable.DisposeAsync();
+            return service.DisposeAsync();
         }
 
+        if (player is IAsyncDisposable asyncDisposable)
+            return asyncDisposable.DisposeAsync();
         (player as IDisposable)?.Dispose();
         return ValueTask.CompletedTask;
     }
 
-    private sealed class NoOpAudioCuePlayer : IAudioCuePlayer
+    private sealed class NoOpAudioCuePlayer : IAudioCuePlayer, IAudioCuePlayerLifecycle
     {
         public Task<AudioPlaybackState> PlayAsync(
             AudioCue cue,
             double volume,
             CancellationToken cancellationToken) =>
             Task.FromResult(AudioPlaybackState.Suppressed);
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private static Task StartAnimationPlayback(Task playback)

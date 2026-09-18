@@ -2,6 +2,7 @@ using Dudu.Core.Abstractions;
 using Dudu.App.Animation;
 using Dudu.App.Presentation;
 using Dudu.App.System;
+using Dudu.App.Hosting;
 using Dudu.Core.Pet;
 using Dudu.Core.Notes;
 using Dudu.Core.Models;
@@ -51,7 +52,7 @@ public sealed class PresentationCoordinatorTests
             playAudioAsync: (_, _) =>
             {
                 order.Add("audio");
-                return Task.FromException(new InvalidOperationException("audio"));
+                throw new InvalidOperationException("audio");
             });
 
         await coordinator.PublishAsync(
@@ -61,6 +62,37 @@ public sealed class PresentationCoordinatorTests
 
         Assert.Equal(["visual", "audio", "notification"], order);
         Assert.Equal(1, notifications.ReminderCalls);
+    }
+
+    [Fact]
+    public async Task Direct_audio_waits_for_visual_playback_completion()
+    {
+        var visual = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var order = new List<string>();
+
+        var observation = WindowsCompanionProductionComposition.ObserveDirectAudioAfterVisualAsync(
+            visual.Task,
+            () =>
+            {
+                order.Add("audio");
+                return Task.CompletedTask;
+            });
+
+        Assert.Empty(order);
+        visual.SetResult();
+        await observation;
+
+        Assert.Equal(["audio"], order);
+    }
+
+    [Fact]
+    public void Audio_manifest_uses_the_resolved_assets_root()
+    {
+        var assetsRoot = Path.Combine("publish", "Assets");
+
+        Assert.Equal(
+            Path.Combine(assetsRoot, "Audio", "private-dudu", "manifest.json"),
+            WindowsCompanionProductionComposition.ResolveAudioManifestPath(assetsRoot));
     }
 
     [Fact]

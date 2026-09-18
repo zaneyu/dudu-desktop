@@ -3,7 +3,7 @@ using Dudu.Core.Models;
 
 namespace Dudu.App.Audio;
 
-public sealed class AudioCueService
+public sealed class AudioCueService : IAsyncDisposable
 {
     public static readonly TimeSpan GlobalCooldown = TimeSpan.FromMilliseconds(1500);
     public static readonly TimeSpan PackCooldown = TimeSpan.FromMilliseconds(5000);
@@ -23,8 +23,10 @@ public sealed class AudioCueService
     private readonly Dictionary<string, int> _variantIndexes = new(StringComparer.Ordinal);
     private readonly Dictionary<AudioCueEvent, int> _packIndexes = new();
     private readonly int _seed;
+    private readonly CancellationTokenSource _shutdown = new();
     private DateTimeOffset? _lastPlayback;
     private bool _playbackReserved;
+    private int _disposed;
 
     public AudioCueService(
         AudioCatalog catalog,
@@ -56,10 +58,14 @@ public sealed class AudioCueService
         AudioCueEvent cueEvent,
         CancellationToken cancellationToken = default)
     {
-        if (cancellationToken.IsCancellationRequested || IsSuppressed())
+        if (Volatile.Read(ref _disposed) != 0 || cancellationToken.IsCancellationRequested || IsSuppressed())
             return AudioPlaybackState.Suppressed;
 
         string? packId = null;
+        using var playbackCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _shutdown.Token);
+        var playbackToken = playbackCancellation.Token;
         try
         {
             AudioCue cue;
@@ -79,11 +85,11 @@ public sealed class AudioCueService
                 _playbackReserved = true;
             }
 
-            cancellationToken.ThrowIfCancellationRequested();
+            playbackToken.ThrowIfCancellationRequested();
             var result = await _player.PlayAsync(
                 cue,
                 Preferences.ClampSoundVolume(preferences.SoundVolume),
-                cancellationToken).ConfigureAwait(false);
+                playbackToken).ConfigureAwait(false);
             if (result.Status is AudioPlaybackStatus.Started or AudioPlaybackStatus.Completed)
             {
                 lock (_gate)
@@ -97,7 +103,7 @@ public sealed class AudioCueService
             }
             return result;
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (playbackToken.IsCancellationRequested)
         {
             return AudioPlaybackState.Suppressed;
         }
@@ -112,6 +118,31 @@ public sealed class AudioCueService
             {
                 lock (_gate) _playbackReserved = false;
             }
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        _shutdown.Cancel();
+        try
+        {
+            if (_player is IAsyncDisposable asyncDisposable)
+            {
+                await asyncDisposable.DisposeAsync().ConfigureAwait(false);
+            }
+            else if (_player is IDisposable disposable)
+            {
+                disposable.Dispose();
+            }
+        }
+        finally
+        {
+            _shutdown.Dispose();
         }
     }
 

@@ -4,7 +4,7 @@ using Windows.Foundation;
 
 namespace Dudu.App.Audio;
 
-public sealed class WindowsAudioCuePlayer : IAudioCuePlayer
+public sealed class WindowsAudioCuePlayer : IAudioCuePlayer, IAudioCuePlayerLifecycle
 {
     private readonly string? _assetRoot;
 
@@ -63,4 +63,6 @@ public sealed class WindowsAudioCuePlayer : IAudioCuePlayer
             try { player.Source = null; } catch { }
         }
     }
+
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }

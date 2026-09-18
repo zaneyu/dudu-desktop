@@ -386,7 +386,7 @@ public sealed class PresentationCoordinator :
         if (succeeded && _playAudioAsync is not null
             && AudioCueSelection.ForNotification(item) is { } audioCue)
         {
-            await ObserveAudioAsync(_playAudioAsync(audioCue, cancellationToken));
+            await ObserveAudioAsync(() => _playAudioAsync(audioCue, cancellationToken));
         }
 
         succeeded &= await ObserveAsync(
@@ -395,11 +395,11 @@ public sealed class PresentationCoordinator :
         return succeeded;
     }
 
-    private async Task ObserveAudioAsync(Task operation)
+    private async Task ObserveAudioAsync(Func<Task> operation)
     {
         try
         {
-            await operation;
+            await operation();
         }
         catch (OperationCanceledException)
         {

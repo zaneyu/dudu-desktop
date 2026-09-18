@@ -7,6 +7,14 @@ namespace Dudu.App.Tests.Audio;
 public sealed class AudioCueServiceTests
 {
     [Fact]
+    public async Task DisposeAsync_disposes_an_optional_player_lifecycle_contract()
+    {
+        var player = new DisposableRecordingPlayer();
+        await CreateService(player).DisposeAsync();
+
+        Assert.True(player.Disposed);
+    }
+    [Fact]
     public async Task Maps_events_to_the_reviewed_pack_pairs()
     {
         var player = new RecordingPlayer();
@@ -172,7 +180,7 @@ public sealed class AudioCueServiceTests
     }
 
     private static AudioCueService CreateService(
-        RecordingPlayer player,
+        IAudioCuePlayer player,
         Preferences? preferences = null,
         MutableClock? now = null,
         int seed = 0,
@@ -260,5 +268,22 @@ public sealed class AudioCueServiceTests
         }
 
         public void ReleaseFirstCall() => _release.TrySetResult(true);
+    }
+
+    private sealed class DisposableRecordingPlayer : IAudioCuePlayer, IAsyncDisposable
+    {
+        public bool Disposed { get; private set; }
+
+        public Task<AudioPlaybackState> PlayAsync(
+            AudioCue cue,
+            double volume,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(AudioPlaybackState.Completed);
+
+        public ValueTask DisposeAsync()
+        {
+            Disposed = true;
+            return ValueTask.CompletedTask;
+        }
     }
 }
