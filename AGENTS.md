@@ -467,13 +467,11 @@ temporary files must be gone.
 
 ## Diagnostics and logging
 
-Status note: the crash/sync/chrome logging described below is implemented but
-not yet merged. It lives as uncommitted changes in three isolated worktrees,
-all branched from `cc66b12`:
-`.worktrees/logging-p0` (global crash handlers + file sink + crash guard),
-`.worktrees/logging-p1` (relay/sync visibility), `.worktrees/logging-p2`
-(chrome + data-layer visibility). Review and merge those worktrees before
-treating this section as authoritative for `main`.
+The crash/sync/chrome logging described below is merged into `main` from the
+three former logging worktrees: `codex/logging-p0` (global crash handlers +
+file sink + crash guard), `codex/logging-p1` (relay/sync visibility), and
+`codex/logging-p2` (chrome + data-layer visibility). Keep this section
+authoritative for future changes.
 
 ### Log files on disk (all under `%LocalAppData%\DuduDesktop\logs\`)
 
