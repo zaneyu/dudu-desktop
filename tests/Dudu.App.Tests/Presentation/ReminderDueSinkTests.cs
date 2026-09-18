@@ -27,7 +27,7 @@ public sealed class ReminderDueSinkTests
             TestContext.Current.CancellationToken);
 
         var item = Assert.IsType<DurableNotification>(gateway.LastItem);
-        Assert.Equal("how was your day, ada? a little space to reflect. your check-in stays on this device. open Home to check in.", item.Body);
+        Assert.Equal("a little space to reflect. your check-in stays on this device. open Home to check in.", item.Body);
         Assert.Null(item.AnimationKey);
         Assert.Equal(DueUtc.AddDays(1), item.ExpiresUtc);
         Assert.False(gateway.LastBypass);
@@ -61,7 +61,7 @@ public sealed class ReminderDueSinkTests
         var sink = new ReminderDueSink(reminders, () => gateway);
 
         await sink.NotifyAsync(
-            new ReminderOccurrence(LocalReminderDefaults.BedtimeId, DueUtc),
+            new ReminderOccurrence(LocalReminderDefaults.BedtimeId, DueUtc.AddDays(-1)),
             TestContext.Current.CancellationToken);
         await gateway.Coordinator.PublishAsync(
             gateway.LastItem!,
@@ -120,7 +120,7 @@ public sealed class ReminderDueSinkTests
 
         var item = Assert.IsType<DurableNotification>(gateway.LastItem);
         Assert.Equal("how was your day, ada?", item.Title);
-        Assert.Equal("how was your day, ada? a little space to reflect. your check-in stays on this device. open Home to check in.", item.Body);
+        Assert.Equal("a little space to reflect. your check-in stays on this device. open Home to check in.", item.Body);
     }
 
     private static Reminder MakeReminder(
@@ -130,7 +130,9 @@ public sealed class ReminderDueSinkTests
         new(
             id,
             title,
-            "a little space to reflect. your check-in stays on this device.",
+            id == LocalReminderDefaults.BedtimeId
+                ? "time to wind down. goodnight, ada."
+                : "a little space to reflect. your check-in stays on this device.",
             enabled,
             new RecurrenceRule.Daily(new TimeOnly(20, 0)),
             "UTC",
