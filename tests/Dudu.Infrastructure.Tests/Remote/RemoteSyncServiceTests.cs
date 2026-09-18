@@ -9,6 +9,7 @@ using Dudu.Infrastructure.Data;
 using Dudu.Infrastructure.Data.Repositories;
 using Dudu.Infrastructure.Remote;
 using Dudu.Infrastructure.Tests.Crypto;
+using Microsoft.Extensions.Logging;
 using Xunit;
 
 namespace Dudu.Infrastructure.Tests.Remote;
@@ -370,6 +371,185 @@ public sealed class RemoteSyncServiceTests
         Assert.Contains(fixture.ReportedErrors, error => error.Tag == "remote-sync-poll");
     }
 
+    // P1: GetStateAsync probes must leave a diagnostic for transient failures instead of
+    // silently keeping the last known state, indistinguishable from healthy-offline.
+    [Fact]
+    public async Task GetState_probe_failures_are_logged_and_keep_last_known_state()
+    {
+        var (fixture, sink) = await RemoteSyncFixture.WithRegistrationAndLoggerAsync();
+        await using (fixture)
+        {
+            fixture.Relay.GetDeviceException = () => new RelayUnavailableException("simulated outage");
+            Assert.Equal(PairingAvailability.Offline, await fixture.Service.GetStateAsync(fixture.CancellationToken));
+
+            fixture.Relay.GetDeviceException = () => new RelayProtocolException("simulated bad page");
+            Assert.Equal(PairingAvailability.Offline, await fixture.Service.GetStateAsync(fixture.CancellationToken));
+
+            Assert.Equal(PairingStatusReason.RelayProtocolError, fixture.Service.StatusReason);
+            Assert.Equal(2, sink.EventIds.Count(id => id == 1005));
+            Assert.Contains("RelayUnavailableException", sink.JoinedText, StringComparison.Ordinal);
+            Assert.Contains("RelayProtocolException", sink.JoinedText, StringComparison.Ordinal);
+        }
+    }
+
+    // P1: the terminal-backoff path logs SyncLoopTerminal in addition to the reportError callback.
+    [Fact]
+    public async Task RunLoop_logs_terminal_state_on_protocol_backoff()
+    {
+        var (fixture, sink) = await RemoteSyncFixture.WithRegistrationAndLoggerAsync();
+        await using (fixture)
+        {
+            fixture.Relay.PollException = () => new RelayProtocolException("simulated unreadable page");
+
+            await fixture.Service.StartAsync(fixture.CancellationToken);
+            try
+            {
+                await WaitUntilAsync(
+                    () => sink.EventIds.Contains(1006),
+                    fixture.CancellationToken);
+
+                Assert.Contains(1006, sink.EventIds);
+                Assert.Contains("protocol-backoff", sink.JoinedText, StringComparison.Ordinal);
+                Assert.Contains(fixture.ReportedErrors, error => error.Tag == "remote-sync-protocol");
+                Assert.Equal(PairingStatusReason.RelayProtocolError, fixture.Service.StatusReason);
+            }
+            finally
+            {
+                await fixture.Service.StopAsync(fixture.CancellationToken);
+            }
+        }
+    }
+
+    // P1: a failed iteration that retries logs SyncLoopRetry in addition to reportError.
+    [Fact]
+    public async Task RunLoop_logs_retry_after_a_transient_failure()
+    {
+        var (fixture, sink) = await RemoteSyncFixture.WithRegistrationAndLoggerAsync();
+        await using (fixture)
+        {
+            fixture.Relay.PollException = () => new RelayUnavailableException("simulated outage");
+
+            await fixture.Service.StartAsync(fixture.CancellationToken);
+            try
+            {
+                await WaitUntilAsync(
+                    () => sink.EventIds.Contains(1007),
+                    fixture.CancellationToken);
+
+                Assert.Contains(1007, sink.EventIds);
+                Assert.Contains("remote-sync-poll", sink.JoinedText, StringComparison.Ordinal);
+                Assert.Contains(fixture.ReportedErrors, error => error.Tag == "remote-sync-poll");
+            }
+            finally
+            {
+                await fixture.Service.StopAsync(fixture.CancellationToken);
+            }
+        }
+    }
+
+    // P1: the NeedsRepair exit logs SyncLoopTerminal so the stop is auditable in logs too.
+    [Fact]
+    public async Task RunLoop_logs_terminal_state_on_needs_repair_exit()
+    {
+        var (fixture, sink) = await RemoteSyncFixture.WithRegistrationAndLoggerAsync();
+        await using (fixture)
+        {
+            fixture.Relay.PollException = () => new RelayUnauthorizedException("simulated dead token");
+
+            await fixture.Service.StartAsync(fixture.CancellationToken);
+            try
+            {
+                await WaitUntilAsync(
+                    () => sink.EventIds.Contains(1006),
+                    fixture.CancellationToken);
+
+                Assert.Contains(1006, sink.EventIds);
+                Assert.Contains("needs-repair", sink.JoinedText, StringComparison.Ordinal);
+                Assert.Equal(PairingAvailability.NeedsRepair, fixture.Service.State);
+            }
+            finally
+            {
+                await fixture.Service.StopAsync(fixture.CancellationToken);
+            }
+        }
+    }
+
+    // P1: reveal failures must leave a diagnostic that carries only the envelope id and the
+    // exception type — the secret note, token, and key material genuinely in scope here must
+    // never reach the logs.
+    [Fact]
+    public async Task Reveal_decrypt_failure_is_logged_without_leaking_secrets()
+    {
+        const string secretNote = "uniquely-private-phrase-6307";
+        const string secretToken = "desktop-token-6307";
+        var (fixture, sink) = await RemoteSyncFixture.WithTamperedStoredEnvelopeAndLoggerAsync(secretNote);
+        await using (fixture)
+        {
+            fixture.SecretStore.Values[RelaySecretKeys.DesktopToken] = Encoding.UTF8.GetBytes(secretToken);
+            fixture.SecretStore.Values[RelaySecretKeys.DeviceId] = Encoding.UTF8.GetBytes("device-1");
+            var storedKey = fixture.SecretStore.Values[RemoteSyncFixture.DesktopPrivateKeySecretKey];
+            var privateKeyMarker = Convert.ToBase64String(storedKey);
+
+            await Assert.ThrowsAnyAsync<Exception>(
+                () => fixture.Service.RevealAsync(fixture.MessageId, fixture.CancellationToken));
+
+            Assert.Contains(1003, sink.EventIds);
+            Assert.DoesNotContain(secretNote, sink.JoinedText, StringComparison.Ordinal);
+            Assert.DoesNotContain(secretToken, sink.JoinedText, StringComparison.Ordinal);
+            Assert.DoesNotContain(privateKeyMarker, sink.JoinedText, StringComparison.Ordinal);
+        }
+    }
+
+    // P1: pairing-code, disconnect, and revoke transient failures must leave a diagnostic.
+    [Fact]
+    public async Task CreatePairingCode_failure_is_logged()
+    {
+        var (fixture, sink) = await RemoteSyncFixture.WithRegistrationAndLoggerAsync();
+        await using (fixture)
+        {
+            fixture.Relay.CreatePairingCodeException = () => new RelayUnavailableException("simulated outage");
+
+            await Assert.ThrowsAsync<RelayUnavailableException>(
+                () => fixture.Service.CreatePairingCodeAsync(fixture.CancellationToken));
+
+            Assert.Contains(1005, sink.EventIds);
+            Assert.Contains("RelayUnavailableException", sink.JoinedText, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public async Task DisconnectSenders_failure_is_logged()
+    {
+        var (fixture, sink) = await RemoteSyncFixture.WithRegistrationAndLoggerAsync();
+        await using (fixture)
+        {
+            fixture.Relay.RotateKeyException = () => new RelayUnavailableException("simulated outage");
+
+            await Assert.ThrowsAsync<RelayUnavailableException>(
+                () => fixture.Service.DisconnectSendersAsync(fixture.CancellationToken));
+
+            Assert.Contains(1005, sink.EventIds);
+            Assert.Contains("RelayUnavailableException", sink.JoinedText, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public async Task Revoke_transient_failure_is_logged_and_keeps_registration()
+    {
+        var (fixture, sink) = await RemoteSyncFixture.WithRegistrationAndLoggerAsync();
+        await using (fixture)
+        {
+            fixture.Relay.DeleteDeviceException = () => new RelayUnavailableException("simulated outage");
+
+            await Assert.ThrowsAsync<RelayUnavailableException>(
+                () => fixture.Service.RevokeDeviceAsync(fixture.CancellationToken));
+
+            Assert.Contains(1005, sink.EventIds);
+            Assert.True(fixture.SecretStore.Values.ContainsKey(RelaySecretKeys.DeviceId));
+            Assert.True(fixture.SecretStore.Values.ContainsKey(RelaySecretKeys.DesktopToken));
+        }
+    }
+
     /// <summary>
     /// Wires a real temp SQLite <see cref="Database"/> (see
     /// tests/Dudu.Infrastructure.Tests/Data/DatabaseTests.cs's DatabaseFixture), an
@@ -581,9 +761,45 @@ public sealed class RemoteSyncServiceTests
             return fixture;
         }
 
+        public static async Task<(RemoteSyncFixture Fixture, RecordingLoggerSink Sink)> WithRegistrationAndLoggerAsync()
+        {
+            var sink = new RecordingLoggerSink();
+            var fixture = await CreateAsync(logger: new RecordingLogger<RemoteSyncService>(sink));
+            fixture.SecretStore.Values[RelaySecretKeys.DeviceId] = Encoding.UTF8.GetBytes("device-1");
+            fixture.SecretStore.Values[RelaySecretKeys.DesktopToken] = Encoding.UTF8.GetBytes("token-1");
+            return (fixture, sink);
+        }
+
+        // P1: stores one envelope carrying noteText whose ciphertext is tampered, so RevealAsync
+        // fails to decrypt with the secret note genuinely in scope for the leak assertion.
+        public static async Task<(RemoteSyncFixture Fixture, RecordingLoggerSink Sink)> WithTamperedStoredEnvelopeAndLoggerAsync(
+            string noteText)
+        {
+            var sink = new RecordingLoggerSink();
+            var fixture = await CreateAsync(logger: new RecordingLogger<RemoteSyncService>(sink));
+            var encrypted = CryptoFixture.EncryptFor(fixture.RecipientPublicKeySpki, noteText, fixture.MessageId);
+            var tamperedCiphertext = Base64Url.DecodeFromChars(encrypted.Ciphertext);
+            tamperedCiphertext[0] ^= 0xFF;
+            var stored = new RemoteEnvelope(
+                encrypted.MessageId,
+                tamperedCiphertext,
+                Base64Url.DecodeFromChars(encrypted.EphemeralPublicKey),
+                Base64Url.DecodeFromChars(encrypted.Nonce),
+                null,
+                encrypted.DeliverAfterUtc,
+                DateTimeOffset.UtcNow)
+            {
+                HkdfSalt = Base64Url.DecodeFromChars(encrypted.HkdfSalt),
+                CreatedUtc = encrypted.CreatedUtc,
+            };
+            await fixture.RealRepository.TryInsertAsync(stored, TestContext.Current.CancellationToken);
+            return (fixture, sink);
+        }
+
         internal static async Task<RemoteSyncFixture> CreateAsync(
             bool useThrowingRepository = false,
-            DateTimeOffset? clockNow = null)
+            DateTimeOffset? clockNow = null,
+            Microsoft.Extensions.Logging.ILogger<RemoteSyncService>? logger = null)
         {
             var root = Path.Combine(Path.GetTempPath(), "dudu-remote-sync-tests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
@@ -622,7 +838,8 @@ public sealed class RemoteSyncServiceTests
                 keyService,
                 clock,
                 backoff,
-                (tag, exception) => reportedErrors.Add((tag, exception)));
+                (tag, exception) => reportedErrors.Add((tag, exception)),
+                logger);
 
             return new RemoteSyncFixture(
                 root, database, realRepository, recording, relay, sink, secretStore, recipientPublicKeySpki, messageId, service,
@@ -685,6 +902,83 @@ public sealed class RemoteSyncServiceTests
     private sealed class FixedFractionRandomSource(double fraction) : IRandomSource
     {
         public int Next(int exclusiveMax) => (int)(fraction * exclusiveMax);
+    }
+
+    // P1: captures every string the service hands to a logger, mirroring the sink in
+    // PrivacyBoundaryTests, so the new diagnostics can assert both presence and secrecy.
+    private sealed class RecordingLoggerSink
+    {
+        private readonly List<string> _entries = [];
+        private readonly List<int> _eventIds = [];
+        private readonly object _sync = new();
+
+        public void Add(string entry)
+        {
+            lock (_sync)
+            {
+                _entries.Add(entry);
+            }
+        }
+
+        public void AddEventId(int eventId)
+        {
+            lock (_sync)
+            {
+                _eventIds.Add(eventId);
+            }
+        }
+
+        public string JoinedText
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    return string.Join('\n', _entries);
+                }
+            }
+        }
+
+        public IReadOnlyList<int> EventIds
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    return [.. _eventIds];
+                }
+            }
+        }
+    }
+
+    private sealed class RecordingLogger<T>(RecordingLoggerSink sink) : ILogger<T>
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            sink.Add(formatter(state, exception));
+            sink.AddEventId(eventId.Id);
+            if (exception is not null)
+            {
+                sink.Add(exception.GetType().FullName ?? string.Empty);
+            }
+
+            if (state is IEnumerable<KeyValuePair<string, object?>> structuredState)
+            {
+                foreach (var pair in structuredState)
+                {
+                    sink.Add(pair.Key + "=" + pair.Value);
+                }
+            }
+        }
     }
 
     /// <summary>Records every envelope a real repository actually inserted (as opposed to a
@@ -789,6 +1083,10 @@ public sealed class RemoteSyncServiceTests
         public Func<Exception>? PollException { get; set; }
         public Func<Exception>? AckException { get; set; }
         public Func<Exception>? DeleteDeviceException { get; set; }
+        // P1 logging tests: failure hooks for the on-demand relay calls.
+        public Func<Exception>? GetDeviceException { get; set; }
+        public Func<Exception>? CreatePairingCodeException { get; set; }
+        public Func<Exception>? RotateKeyException { get; set; }
         public List<string> AcknowledgedIds { get; } = [];
         public TaskCompletionSource<bool> PollEntered { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -809,18 +1107,33 @@ public sealed class RemoteSyncServiceTests
         public Task<RelayDeviceInfo> GetDeviceAsync(CancellationToken cancellationToken)
         {
             RequestCount++;
+            if (GetDeviceException is not null)
+            {
+                throw GetDeviceException();
+            }
+
             return Task.FromResult(new RelayDeviceInfo(DateTimeOffset.UtcNow, "fingerprint", 0));
         }
 
         public Task<RelayPairingCode> CreatePairingCodeAsync(CancellationToken cancellationToken)
         {
             RequestCount++;
+            if (CreatePairingCodeException is not null)
+            {
+                throw CreatePairingCodeException();
+            }
+
             return Task.FromResult(new RelayPairingCode("ABC123", DateTimeOffset.UtcNow.AddMinutes(10)));
         }
 
         public Task<string> RotateKeyAsync(string publicKeySpki, CancellationToken cancellationToken)
         {
             RequestCount++;
+            if (RotateKeyException is not null)
+            {
+                throw RotateKeyException();
+            }
+
             return Task.FromResult("rotated-token");
         }
 

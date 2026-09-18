@@ -28,4 +28,30 @@ public static partial class PrivacySafeLog
     /// </summary>
     [LoggerMessage(1004, LogLevel.Error, "Self-test step {Step} failed with exception type {ExceptionType}")]
     public static partial void SelfTestStepFailed(ILogger logger, string step, string exceptionType);
+
+    // Privacy: status code plus a fixed category/exception-type label only; the probe never
+    // carries a token, pairing code, key, or body, so a transient outage stays distinguishable
+    // from healthy-offline without leaking anything.
+    [LoggerMessage(1005, LogLevel.Warning, "Sync state probe failed with {StatusCode} and category {Category}")]
+    public static partial void SyncStateProbeFailed(ILogger logger, int statusCode, string category);
+
+    // Privacy: the category is a fixed loop-state tag (e.g. needs-repair, protocol-backoff) or an
+    // exception type name — never a message, token, or envelope field.
+    [LoggerMessage(1006, LogLevel.Warning, "Sync loop reached terminal state {Category}")]
+    public static partial void SyncLoopTerminal(ILogger logger, string category);
+
+    // Privacy: the category is a fixed retry tag matching the reportError tag (e.g.
+    // remote-sync-poll) or an exception type name — never a secret or wire field.
+    [LoggerMessage(1007, LogLevel.Information, "Sync loop retrying after {Category}")]
+    public static partial void SyncLoopRetry(ILogger logger, string category);
+
+    // Privacy: status code plus an exception-type/fixed label only; the staged token value itself
+    // is never passed, so a failed staging cleanup leaves a diagnostic without the credential.
+    [LoggerMessage(1008, LogLevel.Warning, "Relay staging cleanup failed with {StatusCode} and category {Category}")]
+    public static partial void RelayStagingCleanupFailed(ILogger logger, int statusCode, string category);
+
+    // Privacy: status code plus a fixed promotion label only; the promoted token value itself is
+    // never passed, so the 401-recovery path stays auditable without exposing the credential.
+    [LoggerMessage(1009, LogLevel.Information, "Relay promoted staged token with {StatusCode} and category {Category}")]
+    public static partial void RelayStagingPromoted(ILogger logger, int statusCode, string category);
 }
