@@ -401,15 +401,12 @@ try {
 
     $makeAppx = $sdkTools.MakeAppx
     $stage = 'Windows SDK package validation'
-    & $makeAppx validate -p $artifactPath
-    $makeAppxValidateExitCode = $LASTEXITCODE
-    if ($makeAppxValidateExitCode -ne 0) {
-        Write-MetadataText -Name 'validation-summary.txt' -Text ("makeappx validate exit code: $makeAppxValidateExitCode`nmakeappx unpack exit code: not run`n")
-        throw 'Windows SDK package validation failed.'
-    }
-    & $makeAppx unpack -p $artifactPath -d $unpackDirectory -o
+    # MakeAppx has no standalone `validate` command. Its documented `unpack`
+    # command verifies that the generated package can be read and extracted;
+    # package creation itself performs MakeAppx's limited semantic checks.
+    & $makeAppx unpack /p $artifactPath /d $unpackDirectory /o
     $makeAppxUnpackExitCode = $LASTEXITCODE
-    Write-MetadataText -Name 'validation-summary.txt' -Text ("makeappx validate exit code: $makeAppxValidateExitCode`nmakeappx unpack exit code: $makeAppxUnpackExitCode`n")
+    Write-MetadataText -Name 'validation-summary.txt' -Text ("makeappx unpack exit code: $makeAppxUnpackExitCode`n")
     if ($makeAppxUnpackExitCode -ne 0) {
         throw 'Windows SDK package validation failed.'
     }

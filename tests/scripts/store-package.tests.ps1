@@ -78,6 +78,12 @@ if (Test-Path -LiteralPath (Join-Path $repoRoot "scripts/package-store.ps1")) {
         $storeScript -match 'Normalize-StorePackageOutput' -and
         $storeScript -match 'Get-ChildItem -LiteralPath \$packageDirectory -Force -File -Recurse'
     )
+    Assert-True "Store package validation uses the supported MakeAppx unpack command" (
+        $storeScript -match '\$makeAppx unpack /p \$artifactPath /d \$unpackDirectory /o'
+    )
+    Assert-True "Store package script does not invoke an unsupported MakeAppx validate command" (
+        $storeScript -notmatch '\$makeAppx validate'
+    )
     Assert-True "post-cleanup failures leave sanitized Store metadata evidence" (
         $storeScript -match 'Write-PostCleanupFailureEvidence' -and
         $storeScript -match 'Submission artifact: invalid' -and
