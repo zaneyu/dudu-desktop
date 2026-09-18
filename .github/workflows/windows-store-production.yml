@@ -1,0 +1,119 @@
+name: Production Store MSIX
+
+on:
+  workflow_dispatch:
+    inputs:
+      store_version:
+        description: 'Three-part Store package version (Major.Minor.Patch)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-store-msix-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  STORE_VERSION: ${{ inputs.store_version }}
+
+jobs:
+  production-store-package:
+    name: Build production Store MSIX (win-x64)
+    # This label must be assigned to a dedicated Windows 11 x64 runner with
+    # the interactive Windows SDK/WACK tooling required by package-store.ps1.
+    runs-on: [self-hosted, Windows, X64, dudu-store]
+    environment: microsoft-store-production
+    timeout-minutes: 90
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          global-json-file: global.json
+
+      - name: Verify production runner
+        shell: pwsh
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows') { throw 'Production Store packaging requires Windows.' }
+          if ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64') { throw 'Production Store packaging requires an x64 Windows runner.' }
+          if (-not [Environment]::Is64BitProcess) { throw 'Production Store packaging requires 64-bit PowerShell.' }
+          if ([Environment]::OSVersion.Version.Build -lt 26100) { throw 'Production Store packaging requires Windows build 26100 or newer.' }
+          if ((dotnet --version) -ne '10.0.112') { throw 'The runner must provide .NET SDK 10.0.112.' }
+
+      - name: Restore
+        shell: pwsh
+        run: dotnet restore DuduDesktop.slnx -r win-x64 -p:RestorePackagesWithLockFile=false
+
+      - name: Apply Partner Center identity in the ephemeral worktree
+        shell: pwsh
+        env:
+          PARTNER_CENTER_NAME: ${{ secrets.DUDU_PARTNER_CENTER_NAME }}
+          PARTNER_CENTER_PUBLISHER: ${{ secrets.DUDU_PARTNER_CENTER_PUBLISHER }}
+          PARTNER_CENTER_PUBLISHER_DISPLAY_NAME: ${{ secrets.DUDU_PARTNER_CENTER_PUBLISHER_DISPLAY_NAME }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:PARTNER_CENTER_NAME) -or
+              [string]::IsNullOrWhiteSpace($env:PARTNER_CENTER_PUBLISHER) -or
+              [string]::IsNullOrWhiteSpace($env:PARTNER_CENTER_PUBLISHER_DISPLAY_NAME)) {
+            throw 'The microsoft-store-production environment is missing one or more Partner Center identity secrets.'
+          }
+
+          $manifestPath = Join-Path $env:GITHUB_WORKSPACE 'src/Dudu.App/Package.appxmanifest'
+          [xml]$manifest = Get-Content -Raw -LiteralPath $manifestPath
+          $identity = $manifest.Package.Identity
+          $properties = $manifest.Package.Properties
+          if ($null -eq $identity -or $null -eq $properties) {
+            throw 'The app manifest is missing Identity or Properties.'
+          }
+
+          # These values exist only in the ephemeral runner checkout. They are
+          # never committed, uploaded as source, or written to the job summary.
+          $identity.Name = $env:PARTNER_CENTER_NAME
+          $identity.Publisher = $env:PARTNER_CENTER_PUBLISHER
+          $properties.PublisherDisplayName = $env:PARTNER_CENTER_PUBLISHER_DISPLAY_NAME
+          $manifest.Save($manifestPath)
+
+      - name: Build and validate production Store package
+        shell: pwsh
+        env:
+          PARTNER_CENTER_NAME: ${{ secrets.DUDU_PARTNER_CENTER_NAME }}
+          PARTNER_CENTER_PUBLISHER: ${{ secrets.DUDU_PARTNER_CENTER_PUBLISHER }}
+        run: |
+          pwsh scripts/package-store.ps1 `
+            -Version $env:STORE_VERSION `
+            -RequirePartnerCenterIdentity `
+            -ExpectedPartnerCenterName $env:PARTNER_CENTER_NAME `
+            -ExpectedPartnerCenterPublisher $env:PARTNER_CENTER_PUBLISHER
+
+      - name: Write package checksum to the job summary
+        shell: pwsh
+        run: |
+          $checksum = Get-Content -Raw artifacts/store-package-metadata/SHA256SUMS.txt
+          $validation = Get-Content -Raw artifacts/store-package-metadata/validation-summary.txt
+          if ($validation -notmatch 'Windows App Certification Kit report: overall PASS') {
+            throw 'The production package did not record a Windows App Certification Kit PASS.'
+          }
+          @"
+          ## Production Store package
+
+          Version: $($env:STORE_VERSION).0
+
+          $checksum
+          WACK: PASS
+
+          The artifact is not submitted automatically. Upload it to the matching
+          private Partner Center submission only after reviewing the package.
+          "@ >> $env:GITHUB_STEP_SUMMARY
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: DuduDesktop-${{ inputs.store_version }}-win-x64-production-store
+          path: |
+            artifacts/store-package/
+            artifacts/store-package-metadata/
+          if-no-files-found: error
+          retention-days: 14

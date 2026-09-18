@@ -264,6 +264,38 @@ private identity values. Store artifacts become Microsoft-signed only after
 Microsoft Store publication. The current Inno installer remains unsigned and
 may trigger SmartScreen or Smart App Control behavior.
 
+### Production packaging through GitHub Actions
+
+The production workflow is deliberately separate from the hosted acceptance
+workflow: `.github/workflows/windows-store-production.yml`. It is manual-only
+and targets a dedicated Windows 11 x64 self-hosted runner with the labels
+`self-hosted`, `Windows`, `X64`, and `dudu-store`. A standard
+`windows-latest` runner must not be used for this workflow because the
+production gate requires the Windows App Certification Kit and an interactive
+Windows environment.
+
+Set up the runner from the repository's GitHub Settings → Actions → Runners
+page. The runner machine must have Windows 11 24H2/build 26100 or newer,
+PowerShell 7.4+, .NET SDK `10.0.112`, Visual Studio 2026 with the WinUI
+application development workload, and the Windows SDK/App Certification Kit.
+Keep the runner private and dedicated to this repository; do not register an
+untrusted shared machine.
+
+Create a protected GitHub environment named `microsoft-store-production` and
+add these environment secrets using the exact values shown by Partner Center's
+Product Identity page:
+
+- `DUDU_PARTNER_CENTER_NAME`
+- `DUDU_PARTNER_CENTER_PUBLISHER`
+- `DUDU_PARTNER_CENTER_PUBLISHER_DISPLAY_NAME`
+
+The workflow writes those values only into the ephemeral checkout, runs the
+identity-gated package command and WACK, then uploads a private artifact. It
+does not submit to Partner Center. Download the artifact from the successful
+run, verify `store-package-metadata/SHA256SUMS.txt`, and upload the single
+`.msix` file manually to the draft submission. Never reuse the ordinary hosted
+CI Store artifact.
+
 In production mode, the wrapper resets the Windows App Certification Kit before
 testing and accepts the package only when AppCert exits successfully and writes
 an XML `REPORT` whose `OVERALL_RESULT` is `PASS`. `-AcceptanceOnly` explicitly
