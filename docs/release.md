@@ -281,13 +281,18 @@ have Windows 11 24H2/build 26100 or newer, PowerShell 7.4+, .NET SDK
 workload, and the Windows SDK/App Certification Kit. Keep it private and
 dedicated to this repository; do not register an untrusted shared machine.
 
-Create a protected GitHub environment named `microsoft-store-production` and
-add these environment secrets using the exact values shown by Partner Center's
-Product Identity page:
+Add these repository-level Actions secrets using the exact values shown by
+Partner Center's Product Identity page. GitHub Free private repositories do
+not reliably expose environment-scoped secrets to this workflow, so the
+secrets must be repository-level for the hosted-runner path:
 
 - `DUDU_PARTNER_CENTER_NAME`
 - `DUDU_PARTNER_CENTER_PUBLISHER`
 - `DUDU_PARTNER_CENTER_PUBLISHER_DISPLAY_NAME`
+
+The workflow retains the `microsoft-store-production` environment as a future
+protection boundary, but it does not use environment-scoped copies of these
+secrets.
 
 The workflow writes those values only into the ephemeral checkout, runs the
 identity-gated package command and WACK, then uploads a private artifact. It
