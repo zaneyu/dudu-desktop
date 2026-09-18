@@ -22,6 +22,26 @@ public sealed class StartupContractTests
     }
 
     [Fact]
+    public void App_resources_merge_winui_control_resources_before_custom_dictionaries()
+    {
+        var root = FindRepositoryRoot();
+        var appXaml = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "App.xaml"));
+        var winUiResources = appXaml.IndexOf(
+            "<XamlControlsResources xmlns=\"using:Microsoft.UI.Xaml.Controls\" />",
+            StringComparison.Ordinal);
+        var colorsResources = appXaml.IndexOf(
+            "<ResourceDictionary Source=\"Themes/Colors.xaml\" />",
+            StringComparison.Ordinal);
+        var controlsResources = appXaml.IndexOf(
+            "<ResourceDictionary Source=\"Themes/Controls.xaml\" />",
+            StringComparison.Ordinal);
+
+        Assert.True(winUiResources >= 0);
+        Assert.True(colorsResources > winUiResources);
+        Assert.True(controlsResources > winUiResources);
+    }
+
+    [Fact]
     public void Safe_mode_does_not_start_the_full_overlay_host()
     {
         var root = FindRepositoryRoot();
