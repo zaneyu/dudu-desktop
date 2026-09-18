@@ -6,12 +6,63 @@ using Dudu.Core.Pet;
 using Dudu.Core.Notes;
 using Dudu.Core.Models;
 using Dudu.Core.Time;
+using Dudu.App.Audio;
 using Xunit;
 
 namespace Dudu.App.Tests.Presentation;
 
 public sealed class PresentationCoordinatorTests
 {
+    [Theory]
+    [InlineData(PresentationItemKind.RemoteNote, AudioCueEvent.RemoteNote)]
+    [InlineData(PresentationItemKind.Reminder, AudioCueEvent.Reminder)]
+    [InlineData(PresentationItemKind.LocalNote, AudioCueEvent.ManualInteraction)]
+    public void Notification_audio_mapping_uses_the_expected_cue(
+        PresentationItemKind kind,
+        AudioCueEvent expected)
+    {
+        var item = kind switch
+        {
+            PresentationItemKind.RemoteNote => DurableNotification.RemoteNote(Guid.NewGuid().ToString("D")),
+            PresentationItemKind.Reminder => DurableNotification.Reminder("reminder-1", "Stretch"),
+            PresentationItemKind.LocalNote => DurableNotification.LocalNote(
+                new LocalLoveNote("note-1", "hello"),
+                "greeting"),
+            _ => throw new ArgumentOutOfRangeException(nameof(kind)),
+        };
+
+        Assert.Equal(expected, AudioCueSelection.ForNotification(item));
+    }
+
+    [Fact]
+    public async Task Audio_runs_after_visual_and_before_notification_without_blocking_delivery_on_failure()
+    {
+        var order = new List<string>();
+        var notifications = new RecordingNotificationService(order);
+        var coordinator = new PresentationCoordinator(
+            new PresentationPolicy(TimeSpan.Zero),
+            notifications,
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => { order.Add("visual"); return Task.CompletedTask; },
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            playAudioAsync: (_, _) =>
+            {
+                order.Add("audio");
+                return Task.FromException(new InvalidOperationException("audio"));
+            });
+
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-1", "Stretch"),
+            bypassSuppression: false,
+            CancellationToken.None);
+
+        Assert.Equal(["visual", "audio", "notification"], order);
+        Assert.Equal(1, notifications.ReminderCalls);
+    }
+
     [Fact]
     public async Task PublishAsync_does_not_double_present_an_item_that_is_currently_presenting()
     {
@@ -221,11 +272,16 @@ public sealed class PresentationCoordinatorTests
 
     private sealed class RecordingNotificationService : INotificationService
     {
+        private readonly List<string>? _order;
+
+        public RecordingNotificationService(List<string>? order = null) => _order = order;
+
         public int ReminderCalls { get; private set; }
         public int RemoteNoteCalls { get; private set; }
 
         public Task ShowReminderAsync(string reminderId, string title, CancellationToken cancellationToken)
         {
+            _order?.Add("notification");
             ReminderCalls++;
             return Task.CompletedTask;
         }

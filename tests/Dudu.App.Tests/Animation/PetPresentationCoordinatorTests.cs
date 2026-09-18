@@ -1,4 +1,5 @@
 using Dudu.App.Animation;
+using Dudu.App.Audio;
 using Dudu.Core.Models;
 using Dudu.Core.Pet;
 using Xunit;
@@ -7,6 +8,79 @@ namespace Dudu.App.Tests.Animation;
 
 public sealed class PetPresentationCoordinatorTests
 {
+    [Theory]
+    [InlineData("greeting", AudioCueEvent.Greeting)]
+    [InlineData("welcome-back", AudioCueEvent.Greeting)]
+    [InlineData("celebrate", AudioCueEvent.Celebration)]
+    public void Presentation_audio_mapping_uses_the_expected_cue(string animationKey, AudioCueEvent expected)
+    {
+        var presentation = new PetPresentation(
+            PetState.Idle,
+            animationKey,
+            null,
+            null,
+            false);
+
+        Assert.Equal(expected, AudioCueSelection.ForPresentation(presentation));
+    }
+
+    [Fact]
+    public void Presentation_audio_mapping_ignores_unknown_animation()
+    {
+        var presentation = new PetPresentation(PetState.Ambient, "idle", null, null, false);
+
+        Assert.Null(AudioCueSelection.ForPresentation(presentation));
+    }
+
+    [Fact]
+    public async Task One_shot_plays_audio_after_visual_and_before_ambient_restore()
+    {
+        var pet = PetStateMachine.CreateIdle();
+        var order = new List<string>();
+        var coordinator = new PetPresentationCoordinator(
+            pet,
+            (presentation, _, _) =>
+            {
+                order.Add(presentation.State == PetState.Ambient ? "ambient" : "visual");
+                return Task.CompletedTask;
+            },
+            playAudioAsync: (presentation, _) =>
+            {
+                order.Add($"audio:{AudioCueSelection.ForPresentation(presentation)}");
+                return Task.CompletedTask;
+            });
+
+        await coordinator.PresentOneShotAsync(
+            new PetEvent.AmbientRequested("greeting"),
+            "greeting",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(["visual", "audio:Greeting", "ambient"], order);
+    }
+
+    [Fact]
+    public async Task One_shot_audio_failure_does_not_skip_acknowledgement_or_ambient_restore()
+    {
+        var pet = PetStateMachine.CreateIdle();
+        var restored = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var coordinator = new PetPresentationCoordinator(
+            pet,
+            (presentation, _, _) =>
+            {
+                if (presentation.State == PetState.Idle) restored.SetResult();
+                return Task.CompletedTask;
+            },
+            playAudioAsync: (_, _) => Task.FromException(new InvalidOperationException("audio")));
+
+        await coordinator.PresentOneShotAsync(
+            new PetEvent.AmbientRequested("greeting"),
+            "greeting",
+            TestContext.Current.CancellationToken);
+
+        await restored.Task;
+        Assert.Equal(PetState.Idle, pet.Current.State);
+    }
+
     [Fact]
     public async Task One_shot_completes_when_resolved_playback_is_an_infinite_fallback_loop()
     {

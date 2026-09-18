@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Dudu.App.Animation;
+using Dudu.App.Audio;
 using Dudu.App.Hosting;
 using Dudu.App.Notifications;
 using Dudu.App.System;
@@ -51,6 +52,7 @@ public sealed class PresentationCoordinator :
     private readonly INotificationService _notifications;
     private readonly PetStateMachine _pet;
     private readonly Func<PetPresentation, AnimationOptions, CancellationToken, Task> _playAsync;
+    private readonly Func<AudioCueEvent, CancellationToken, Task>? _playAudioAsync;
     private readonly Func<AnimationOptions> _options;
     private readonly Func<bool> _isQuietHours;
     private readonly Func<PauseState> _pauseState;
@@ -84,13 +86,15 @@ public sealed class PresentationCoordinator :
         LocalNoteSelector? localNoteSelector = null,
         Func<bool>? isFullscreenNow = null,
         Func<DateTimeOffset>? utcNow = null,
-        IAppHostErrorReporter? errorReporter = null)
+        IAppHostErrorReporter? errorReporter = null,
+        Func<AudioCueEvent, CancellationToken, Task>? playAudioAsync = null)
     {
         _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
         _policy = policy ?? throw new ArgumentNullException(nameof(policy));
         _notifications = notifications ?? throw new ArgumentNullException(nameof(notifications));
         _pet = pet ?? throw new ArgumentNullException(nameof(pet));
         _playAsync = playAsync ?? throw new ArgumentNullException(nameof(playAsync));
+        _playAudioAsync = playAudioAsync;
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _isQuietHours = isQuietHours ?? throw new ArgumentNullException(nameof(isQuietHours));
         _pauseState = pauseState ?? throw new ArgumentNullException(nameof(pauseState));
@@ -113,6 +117,16 @@ public sealed class PresentationCoordinator :
         {
             _sessionLocked = locked;
         }
+    }
+
+    public bool IsSessionLocked
+    {
+        get { lock (_gate) return _sessionLocked; }
+    }
+
+    public bool IsFullscreen
+    {
+        get { lock (_gate) return _fullscreen; }
     }
 
     public void SetFullscreen(bool fullscreen)
@@ -369,10 +383,31 @@ public sealed class PresentationCoordinator :
             _petGate.Release();
         }
 
+        if (succeeded && _playAudioAsync is not null
+            && AudioCueSelection.ForNotification(item) is { } audioCue)
+        {
+            await ObserveAudioAsync(_playAudioAsync(audioCue, cancellationToken));
+        }
+
         succeeded &= await ObserveAsync(
             () => ShowNotificationAsync(item, cancellationToken),
             "presentation-notification");
         return succeeded;
+    }
+
+    private async Task ObserveAudioAsync(Task operation)
+    {
+        try
+        {
+            await operation;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            ReportFailure("presentation-tick", exception);
+        }
     }
 
     private Task ShowNotificationAsync(DurableNotification item, CancellationToken cancellationToken) =>

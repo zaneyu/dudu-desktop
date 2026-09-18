@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Dudu.App.Animation;
+using Dudu.App.Audio;
 using Dudu.App.Notifications;
 using Dudu.App.Overlay;
 using Dudu.App.Presentation;
@@ -207,6 +208,8 @@ public static class WindowsCompanionProductionComposition
         AnimationEngine? animationEngine = null;
         PetPresentationCoordinator? presentationCoordinator = null;
         AppNotificationService? notificationService = null;
+        AudioCueService? audioCueService = null;
+        IAudioCuePlayer? audioPlayer = null;
         StartupRegistrationService? startup = null;
         var actionSurface = new OverlayActionSurfaceController();
 
@@ -312,6 +315,44 @@ public static class WindowsCompanionProductionComposition
             presenter = new LayeredFramePresenter();
             var pause = new PauseStateStore();
             var runtimePreferences = new RuntimePreferencesState(preferences);
+            var audioManifestPath = Path.Combine(
+                AppContext.BaseDirectory,
+                "Assets",
+                "Audio",
+                "private-dudu",
+                "manifest.json");
+            AudioCatalog audioCatalog;
+            try
+            {
+                audioCatalog = await AudioManifestLoader.LoadAsync(
+                    audioManifestPath,
+                    cancellationToken);
+                audioPlayer = new WindowsAudioCuePlayer(
+                    Path.GetDirectoryName(audioManifestPath));
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                host.ErrorReporter.Report("audio-manifest-load", exception);
+                audioCatalog = NoOpAudioCatalog();
+                audioPlayer = new NoOpAudioCuePlayer();
+            }
+            audioCueService = new AudioCueService(
+                audioCatalog,
+                audioPlayer,
+                () => runtimePreferences.Current,
+                isQuietHours: () => QuietHoursPolicy.IsQuiet(
+                    DateTimeOffset.UtcNow,
+                    runtimePreferences.Current.QuietHours,
+                    TimeZoneInfo.Local),
+                isPaused: () => pause.GetEffective(DateTimeOffset.UtcNow).Mode != PauseMode.None,
+                isFullscreen: () => presentationGateway?.IsFullscreen ?? false,
+                isSessionLocked: () => presentationGateway?.IsSessionLocked ?? false,
+                isSafeMode: () => safeMode,
+                errorReporter: host.ErrorReporter);
             var showOverlay = !safeMode && launchOptions.ShouldShowOverlay(preferences, profile);
 
             var runtime = await RunStartupPhaseAsync(
@@ -359,7 +400,11 @@ public static class WindowsCompanionProductionComposition
                             ReducedMotionEnabled = runtimePreferences.Current.ReducedMotion,
                             OutfitKey = RuntimeOutfitKey(runtimePreferences.Current),
                         },
-                        gate: petGate);
+                        gate: petGate,
+                        playAudioAsync: (presentation, token) =>
+                            AudioCueSelection.ForPresentation(presentation) is { } cue
+                                ? audioCueService!.TryPlayAsync(cue, token)
+                                : Task.CompletedTask);
                     notificationService = new AppNotificationService(
                         new WindowsAppNotificationSink(),
                         errorReporter: host.ErrorReporter);
@@ -394,7 +439,8 @@ public static class WindowsCompanionProductionComposition
                         petGate: petGate,
                         ambientScheduler: services.GetRequiredService<AmbientScheduler>(),
                         localNoteSelector: services.GetRequiredService<Dudu.Core.Notes.LocalNoteSelector>(),
-                        errorReporter: host.ErrorReporter);
+                        errorReporter: host.ErrorReporter,
+                        playAudioAsync: (cue, token) => audioCueService.TryPlayAsync(cue, token));
                     _ = StartAnimationPlayback(
                         animationEngine.PlayAsync(
                             pet.Current,
@@ -496,13 +542,17 @@ public static class WindowsCompanionProductionComposition
                 },
                 presentPetAsync: (petEvent, token) =>
                 {
-                    pet.Handle(petEvent);
+                    var presentation = pet.Handle(petEvent);
                     if (animationEngine is not null)
                     {
                         _ = StartAnimationPlayback(animationEngine.PlayAsync(
                             pet.Current,
                             AnimationOptionsFor(runtimePreferences.Current),
                             token));
+                    }
+                    if (AudioCueSelection.ForPresentation(presentation) is { } cue)
+                    {
+                        _ = ObserveAudioCueAsync(audioCueService, cue, token);
                     }
                     return Task.CompletedTask;
                 },
@@ -610,7 +660,9 @@ public static class WindowsCompanionProductionComposition
                 services,
                 crashGuard,
                 safeMode ? notificationService : null,
-                safeMode ? actions : null);
+                safeMode ? actions : null,
+                audioCueService,
+                audioPlayer);
         }
         catch
         {
@@ -624,10 +676,55 @@ public static class WindowsCompanionProductionComposition
                 composer?.Dispose();
             }
             presenter?.Dispose();
+            await DisposeAudioAsync(audioCueService, audioPlayer);
             await host.DisposeAsync();
             await services.DisposeAsync();
             throw;
         }
+    }
+
+    private static AudioCatalog NoOpAudioCatalog() => new(
+        [
+            new AudioSoundPack("bubu-dudu-atata", []),
+            new AudioSoundPack("tata-lala", []),
+            new AudioSoundPack("dudu-lalala", []),
+            new AudioSoundPack("dudu-atatata", []),
+            new AudioSoundPack("dudu-yapapa", []),
+        ]);
+
+    private static async Task ObserveAudioCueAsync(
+        AudioCueService? service,
+        AudioCueEvent cue,
+        CancellationToken cancellationToken)
+    {
+        if (service is null) return;
+        try { await service.TryPlayAsync(cue, cancellationToken); }
+        catch (Exception exception)
+        {
+            Trace.TraceError("Dudu direct audio cue failed: {0}", exception.GetType().FullName);
+        }
+    }
+
+    private static ValueTask DisposeAudioAsync(
+        AudioCueService? service,
+        IAudioCuePlayer? player)
+    {
+        if (player is IAsyncDisposable asyncDisposable)
+        {
+            return asyncDisposable.DisposeAsync();
+        }
+
+        (player as IDisposable)?.Dispose();
+        return ValueTask.CompletedTask;
+    }
+
+    private sealed class NoOpAudioCuePlayer : IAudioCuePlayer
+    {
+        public Task<AudioPlaybackState> PlayAsync(
+            AudioCue cue,
+            double volume,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(AudioPlaybackState.Suppressed);
     }
 
     private static Task StartAnimationPlayback(Task playback)
@@ -924,7 +1021,9 @@ public static class WindowsCompanionProductionComposition
         ServiceProvider services,
         StartupCrashGuard crashGuard,
         AppNotificationService? safeModeNotifications,
-        CompanionUiActions? safeModeActions) : IPrimaryAppRuntime
+        CompanionUiActions? safeModeActions,
+        AudioCueService? audioCueService,
+        IAudioCuePlayer? audioPlayer) : IPrimaryAppRuntime
     {
         private readonly CancellationTokenSource _stopping = new();
         private int _started;
@@ -970,6 +1069,7 @@ public static class WindowsCompanionProductionComposition
             await runtime.DisposeAsync();
             await startup.DisposeAsync();
             presenter.Dispose();
+            await DisposeAudioAsync(audioCueService, audioPlayer);
             await services.DisposeAsync();
         }
     }

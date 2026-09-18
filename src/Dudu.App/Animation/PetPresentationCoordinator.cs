@@ -1,5 +1,6 @@
 using Dudu.Core.Models;
 using Dudu.Core.Pet;
+using Dudu.App.Audio;
 
 namespace Dudu.App.Animation;
 
@@ -12,6 +13,7 @@ public sealed class PetPresentationCoordinator
     private static readonly TimeSpan DefaultMaximumDuration = TimeSpan.FromSeconds(3);
     private readonly PetStateMachine _pet;
     private readonly Func<PetPresentation, AnimationOptions, CancellationToken, Task> _playAsync;
+    private readonly Func<PetPresentation, CancellationToken, Task>? _playAudioAsync;
     private readonly Func<AnimationOptions> _options;
     private readonly Func<TimeSpan, CancellationToken, Task> _delayAsync;
     private readonly TimeSpan _maximumDuration;
@@ -30,10 +32,12 @@ public sealed class PetPresentationCoordinator
         Func<AnimationOptions>? options = null,
         Func<TimeSpan, CancellationToken, Task>? delayAsync = null,
         TimeSpan? maximumDuration = null,
-        SemaphoreSlim? gate = null)
+        SemaphoreSlim? gate = null,
+        Func<PetPresentation, CancellationToken, Task>? playAudioAsync = null)
     {
         _pet = pet ?? throw new ArgumentNullException(nameof(pet));
         _playAsync = playAsync ?? throw new ArgumentNullException(nameof(playAsync));
+        _playAudioAsync = playAudioAsync;
         _options = options ?? (() => AnimationOptions.Default);
         _delayAsync = delayAsync ?? Task.Delay;
         _maximumDuration = maximumDuration ?? DefaultMaximumDuration;
@@ -63,6 +67,10 @@ public sealed class PetPresentationCoordinator
                 {
                     timeoutCancellation.Cancel();
                     await playback;
+                    if (_playAudioAsync is not null)
+                    {
+                        await ObserveAudioAsync(_playAudioAsync(oneShot, cancellationToken));
+                    }
                 }
                 else
                 {
@@ -84,6 +92,18 @@ public sealed class PetPresentationCoordinator
         finally
         {
             _gate.Release();
+        }
+    }
+
+    private static async Task ObserveAudioAsync(Task task)
+    {
+        try { await task; }
+        catch (OperationCanceledException) { }
+        catch (Exception exception)
+        {
+            global::System.Diagnostics.Trace.TraceError(
+                "Dudu audio cue playback failed: {0}",
+                exception.GetType().FullName);
         }
     }
 
