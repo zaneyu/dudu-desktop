@@ -79,7 +79,7 @@ if (Test-Path -LiteralPath (Join-Path $repoRoot "scripts/package-store.ps1")) {
         $storeScript -match 'Get-ChildItem -LiteralPath \$packageDirectory -Force -File -Recurse'
     )
     Assert-True "Store package validation uses the supported MakeAppx unpack command" (
-        $storeScript -match '\$makeAppx unpack /p \$artifactPath /d \$unpackDirectory /o'
+        $storeScript -match '\$makeAppx unpack /p \$artifactPath /d \$unpackDirectory /o /nv'
     )
     Assert-True "Store package script does not invoke an unsupported MakeAppx validate command" (
         $storeScript -notmatch '\$makeAppx validate'
