@@ -19,6 +19,8 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
     private DateTimeOffset? _birthdayDate;
     private bool _alwaysOnTop;
     private bool _hideDuringFullscreen;
+    private bool _soundsEnabled;
+    private double _soundVolume;
     private string _globalShortcut = "Ctrl+Alt+D";
 
     public AppearanceViewModel(
@@ -33,6 +35,8 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
         _reducedMotion = preferences.ReducedMotion;
         _alwaysOnTop = preferences.AlwaysOnTop;
         _hideDuringFullscreen = preferences.HidePetDuringFullscreen;
+        _soundsEnabled = preferences.SoundsEnabled;
+        _soundVolume = Preferences.ClampSoundVolume(preferences.SoundVolume);
         _petScale = 1;
         _monitorDeviceName = "current monitor";
         OutfitOptions = new ObservableCollection<string>(
@@ -139,6 +143,17 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
     }
     public bool AlwaysOnTop { get => _alwaysOnTop; set => SetProperty(ref _alwaysOnTop, value); }
     public bool HideDuringFullscreen { get => _hideDuringFullscreen; set => SetProperty(ref _hideDuringFullscreen, value); }
+    public bool SoundsEnabled { get => _soundsEnabled; set => SetProperty(ref _soundsEnabled, value); }
+    public double SoundVolume
+    {
+        get => _soundVolume;
+        set
+        {
+            var normalized = Preferences.ClampSoundVolume(value);
+            if (SetProperty(ref _soundVolume, normalized)) OnPropertyChanged(nameof(SoundVolumeLabel));
+        }
+    }
+    public string SoundVolumeLabel => $"{SoundVolume:P0}";
     public string GlobalShortcut { get => _globalShortcut; set => SetProperty(ref _globalShortcut, value); }
 
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
@@ -156,6 +171,8 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
                 ReducedMotion = preferences.ReducedMotion;
                 AlwaysOnTop = preferences.AlwaysOnTop;
                 HideDuringFullscreen = preferences.HidePetDuringFullscreen;
+                SoundsEnabled = preferences.SoundsEnabled;
+                SoundVolume = preferences.SoundVolume;
                 _automaticSeasonalMode = preferences.AutomaticSeasonalMode;
                 OnPropertyChanged(nameof(AutomaticSeasonalMode));
                 _selectedOutfit = preferences.AutomaticSeasonalMode
@@ -185,6 +202,8 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
                 ReducedMotion = ReducedMotion,
                 AlwaysOnTop = AlwaysOnTop,
                 HidePetDuringFullscreen = HideDuringFullscreen,
+                SoundsEnabled = SoundsEnabled,
+                SoundVolume = SoundVolume,
                 OutfitKey = AutomaticSeasonalMode ? null : SelectedOutfit,
                 AutomaticSeasonalMode = AutomaticSeasonalMode,
                 Anniversary = ToMonthDay(AnniversaryDate),

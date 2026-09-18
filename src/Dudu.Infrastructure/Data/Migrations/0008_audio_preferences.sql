@@ -1,0 +1,2 @@
+ALTER TABLE preferences ADD COLUMN sounds_enabled INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE preferences ADD COLUMN sound_volume REAL NOT NULL DEFAULT 0.35;

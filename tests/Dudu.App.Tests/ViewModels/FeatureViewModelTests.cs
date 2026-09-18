@@ -220,6 +220,23 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Appearance_saves_sound_preferences_through_the_mutation_coordinator()
+    {
+        var fixture = FeatureFixture.Create();
+        var viewModel = new AppearanceViewModel(fixture.Context)
+        {
+            SoundsEnabled = false,
+            SoundVolume = 0.72,
+        };
+
+        await viewModel.SaveAsync(TestContext.Current.CancellationToken);
+
+        var saved = Assert.Single(fixture.Preferences.SaveHistory);
+        Assert.False(saved.SoundsEnabled);
+        Assert.Equal(0.72, saved.SoundVolume);
+    }
+
+    [Fact]
     public async Task Appearance_saves_manual_outfit_and_recurring_seasonal_dates()
     {
         var fixture = FeatureFixture.Create();

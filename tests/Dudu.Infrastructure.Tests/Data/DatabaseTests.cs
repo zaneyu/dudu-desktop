@@ -29,13 +29,13 @@ public sealed class DatabaseTests
         await using var fixture = await DatabaseFixture.CreateAsync();
         await using var connection = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken);
         var runner = new MigrationRunner(fixture.Options);
-        // Version 7 is now a real migration; inject the failure at the next
+        // Version 8 is now a real migration; inject the failure at the next
         // version so this test continues to exercise rollback rather than
         // replacing production schema.
-        runner.AddMigration(8, "CREATE TABLE broken(;" );
+        runner.AddMigration(9, "CREATE TABLE broken(;" );
 
         await Assert.ThrowsAsync<SqliteException>(() => runner.RunAsync(connection, TestContext.Current.CancellationToken));
-        Assert.Equal(7, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(8, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
         Assert.True(File.Exists(fixture.Options.DatabasePath));
     }
 
@@ -106,6 +106,8 @@ public sealed class DatabaseTests
             ("preferences", "birthday_day"),
             ("preferences", "evening_check_in_enabled"),
             ("preferences", "bedtime_ritual_enabled"),
+            ("preferences", "sounds_enabled"),
+            ("preferences", "sound_volume"),
         })
         {
             await using var drop = connection.CreateCommand();
@@ -125,7 +127,7 @@ public sealed class DatabaseTests
         var result = await fixture.Backups.TryRestoreAsync(
             backup!, TestContext.Current.CancellationToken);
         Assert.True(result.Restored);
-        Assert.Equal(7, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(8, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -427,6 +429,57 @@ public sealed class DatabaseTests
     }
 
     [Fact]
+    public async Task Version_seven_database_migrates_sound_preferences_with_enabled_defaults()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        await new PreferencesRepository(fixture.Database).SaveAsync(
+            Preferences.Default, TestContext.Current.CancellationToken);
+        await using (var connection = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken))
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = "ALTER TABLE preferences DROP COLUMN sounds_enabled; ALTER TABLE preferences DROP COLUMN sound_volume; UPDATE schema_version SET version = 7 WHERE id = 1;";
+            await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        fixture.Database.InvalidateInitialization();
+        await using var migratedConnection = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken);
+        await using var migratedCommand = migratedConnection.CreateCommand();
+        migratedCommand.CommandText = "SELECT sounds_enabled, sound_volume FROM preferences WHERE id = 1;";
+        await using var reader = await migratedCommand.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+        Assert.True(await reader.ReadAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(1, reader.GetInt32(0));
+        Assert.Equal(0.35, reader.GetDouble(1));
+    }
+
+    [Fact]
+    public async Task Preferences_round_trip_sound_values()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var preferences = Preferences.Default with { SoundsEnabled = false, SoundVolume = 0.72 };
+        var repository = new PreferencesRepository(fixture.Database);
+
+        await repository.SaveAsync(preferences, TestContext.Current.CancellationToken);
+
+        Assert.Equal(preferences, await repository.GetAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Theory]
+    [InlineData(-0.1, 0.0)]
+    [InlineData(1.1, 1.0)]
+    [InlineData(double.NaN, 0.35)]
+    [InlineData(double.PositiveInfinity, 0.35)]
+    [InlineData(double.NegativeInfinity, 0.35)]
+    public async Task Preferences_repository_normalizes_invalid_sound_volume(double value, double expected)
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var repository = new PreferencesRepository(fixture.Database);
+
+        await repository.SaveAsync(Preferences.Default with { SoundVolume = value }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(expected, (await repository.GetAsync(TestContext.Current.CancellationToken))!.SoundVolume);
+    }
+
+    [Fact]
     public async Task Unit_of_work_rolls_back_and_commits_multiple_repository_writes()
     {
         await using var fixture = await DatabaseFixture.CreateAsync();
@@ -641,6 +694,7 @@ public sealed class DatabaseTests
                 "outfit_key", "automatic_seasonal_mode", "anniversary_month",
                 "anniversary_day", "birthday_month", "birthday_day",
                 "evening_check_in_enabled", "bedtime_ritual_enabled",
+                "sounds_enabled", "sound_volume",
             };
             foreach (var column in columns)
             {
@@ -666,11 +720,11 @@ public sealed class DatabaseTests
         Assert.True(result.Restored, result.ToString());
 
         var preferencesRepository = new PreferencesRepository(fixture.Database);
-        Assert.Equal(7, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(8, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
         _ = await preferencesRepository.GetAsync(TestContext.Current.CancellationToken);
 
         await using var freshDatabase = await Database.OpenAsync(fixture.Options, TestContext.Current.CancellationToken);
-        Assert.Equal(7, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(8, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
         var freshPreferences = new PreferencesRepository(freshDatabase);
         _ = await freshPreferences.GetAsync(TestContext.Current.CancellationToken);
     }
@@ -1099,7 +1153,7 @@ public sealed class DatabaseTests
         await fixture.Database.InitializeAsync(TestContext.Current.CancellationToken);
         Assert.Equal(runsBefore + 1, fixture.Database.InitializationRunCount);
         Assert.Equal("Current", (await profiles.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
-        Assert.Equal(7, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(8, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]

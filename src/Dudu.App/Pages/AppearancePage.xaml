@@ -19,6 +19,9 @@
                 </ComboBox>
                 <CheckBox Content="use reduced motion" IsChecked="{x:Bind ViewModel.ReducedMotion, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceReducedMotion" AutomationProperties.Name="use reduced motion" />
                 <TextBlock Text="reduced motion uses static poses less movement" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <CheckBox Content="cute sounds" IsChecked="{x:Bind ViewModel.SoundsEnabled, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceSoundsEnabled" AutomationProperties.Name="cute sounds" />
+                <Slider Header="sound volume" Minimum="0" Maximum="1" SmallChange="0.01" Value="{x:Bind ViewModel.SoundVolume, Mode=TwoWay}" IsEnabled="{x:Bind ViewModel.SoundsEnabled, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceSoundVolume" AutomationProperties.Name="sound volume" />
+                <TextBlock Text="{x:Bind ViewModel.SoundVolumeLabel, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceSoundVolumeLabel" AutomationProperties.Name="sound volume" />
                 <Slider Header="pet size" Minimum="0.5" Maximum="2" SmallChange="0.1" Value="{x:Bind ViewModel.PetScale, Mode=TwoWay}" AutomationProperties.AutomationId="AppearancePetScale" AutomationProperties.Name="pet size" />
                 <ComboBox Header="monitor" ItemsSource="{x:Bind ViewModel.MonitorOptions, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.MonitorDeviceName, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceMonitor" AutomationProperties.Name="monitor" />
                 <StackPanel Spacing="8">

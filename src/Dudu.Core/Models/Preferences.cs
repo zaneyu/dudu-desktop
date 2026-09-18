@@ -25,7 +25,9 @@ public sealed record Preferences(
     MonthDay? Anniversary = null,
     MonthDay? Birthday = null,
     bool EveningCheckInEnabled = false,
-    bool BedtimeRitualEnabled = false)
+    bool BedtimeRitualEnabled = false,
+    bool SoundsEnabled = true,
+    double SoundVolume = 0.35)
 {
     public static Preferences Default => new(
         AppTheme.System,
@@ -35,5 +37,10 @@ public sealed record Preferences(
         LaunchAtSignIn: true,
         AlwaysOnTop: false,
         HidePetDuringFullscreen: true,
-        AmbientMinimumInterval: TimeSpan.FromMinutes(15));
+        AmbientMinimumInterval: TimeSpan.FromMinutes(15),
+        SoundsEnabled: true,
+        SoundVolume: 0.35);
+
+    public static double ClampSoundVolume(double value) =>
+        double.IsFinite(value) ? Math.Clamp(value, 0.0, 1.0) : 0.35;
 }
