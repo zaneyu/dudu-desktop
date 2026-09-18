@@ -82,6 +82,7 @@ public static class AudioManifestContract
         var packIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var pack in manifest.Packs)
         {
+            if (pack is null) { errors.Add("pack entry is null."); continue; }
             if (!IsSafeIdentifier(pack.PackId)) errors.Add($"packId '{pack.PackId}' is invalid.");
             if (!packIds.Add(pack.PackId)) errors.Add($"duplicate packId '{pack.PackId}'.");
             if (pack.Cues is null || pack.Cues.Count == 0) { errors.Add($"pack '{pack.PackId}' has no cues."); continue; }
@@ -89,6 +90,7 @@ public static class AudioManifestContract
             var cueIds = new HashSet<string>(StringComparer.Ordinal);
             foreach (var cue in pack.Cues)
             {
+                if (cue is null) { errors.Add($"pack '{pack.PackId}' cue entry is null."); continue; }
                 if (!IsSafeIdentifier(cue.CueId)) errors.Add($"cueId '{cue.CueId}' is invalid.");
                 if (!cueIds.Add(cue.CueId)) errors.Add($"duplicate cueId '{cue.CueId}'.");
                 if (Path.IsPathRooted(cue.FilePath)) errors.Add($"cue '{cue.CueId}' rooted path is invalid.");
@@ -96,10 +98,12 @@ public static class AudioManifestContract
                 else if (!cue.FilePath.EndsWith(".wav", StringComparison.Ordinal)) errors.Add($"cue '{cue.CueId}' extension is invalid.");
                 else if (!IsSafeRelativeWavePath(cue.FilePath)) errors.Add($"cue '{cue.CueId}' path is invalid.");
                 if (cue.DurationMs is < 80 or > MaxCueDurationMs) errors.Add($"cue '{cue.CueId}' duration is invalid.");
-                if (cue.Sha256.Length != 64 || cue.Sha256.Any(ch => !Uri.IsHexDigit(ch))) errors.Add($"cue '{cue.CueId}' hash is invalid.");
+                if (!IsLowercaseSha256(cue.Sha256)) errors.Add($"cue '{cue.CueId}' hash is invalid.");
             }
         }
 
+        if (packIds.Count != RequiredPackIds.Length || !RequiredPackIds.All(packIds.Contains))
+            errors.Add("pack set must contain exactly the five required packs.");
         foreach (var required in RequiredPackIds)
             if (!packIds.Contains(required)) errors.Add($"missing required pack '{required}'.");
         return errors;
@@ -109,6 +113,9 @@ public static class AudioManifestContract
         !string.IsNullOrEmpty(value) && value.All(ch => char.IsLetterOrDigit(ch) || ch is '-' or '_' or '.');
 
     public static bool IsSafeRelativePath(string value) => IsSafeRelativeWavePath(value);
+
+    public static bool IsLowercaseSha256(string value) =>
+        value.Length == 64 && value.All(ch => ch is >= '0' and <= '9' or >= 'a' and <= 'f');
 
     public static bool IsSafeRelativeWavePath(string value)
     {

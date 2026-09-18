@@ -38,7 +38,9 @@ public sealed class AudioManifestLoaderTests
             ("long duration", fixture => fixture.SetCueDurationAsync(AudioManifestContract.MaxCueDurationMs + 1)),
             ("large file", fixture => fixture.ReplaceCueBytesAsync(new byte[AudioManifestContract.MaxCueFileBytes + 1])),
             ("hash mismatch", fixture => fixture.SetCueHashAsync(new string('a', 64))),
+            ("uppercase hash", fixture => fixture.SetCueHashAsync(fixture.Sha256.ToUpperInvariant())),
             ("duplicate pack ids", fixture => fixture.DuplicatePackAsync()),
+            ("extra pack", fixture => fixture.AddExtraPackAsync()),
             ("missing required pack", fixture => fixture.RemovePackAsync("tata-lala")),
             ("non private", fixture => fixture.SetPrivateUseOnlyAsync(false)),
         };
@@ -57,6 +59,31 @@ public sealed class AudioManifestLoaderTests
             Assert.DoesNotContain("private.example", exception.Message, StringComparison.Ordinal);
             Assert.DoesNotContain("SECRET_MEDIA_BYTES", exception.Message, StringComparison.Ordinal);
         }
+    }
+
+    [Fact]
+    public async Task Rejects_null_pack_and_cue_entries()
+    {
+        await using var fixture = await AudioManifestFixture.CreateAsync(
+            ["bubu-dudu-atata", "tata-lala", "dudu-lalala", "dudu-atatata", "dudu-yapapa"]);
+
+        var nullPackJson = fixture.ManifestJson.Replace(
+            "\"packs\":[",
+            "\"packs\":[null,",
+            StringComparison.Ordinal);
+        await fixture.SetRawManifestAsync(nullPackJson);
+        var packException = await Assert.ThrowsAsync<AudioManifestException>(() =>
+            AudioManifestLoader.LoadAsync(fixture.ManifestPath, TestContext.Current.CancellationToken));
+        Assert.Contains("pack entry is null", packException.Message, StringComparison.Ordinal);
+
+        var nullCueJson = fixture.ManifestJson.Replace(
+            "\"cues\":[",
+            "\"cues\":[null,",
+            StringComparison.Ordinal);
+        await fixture.SetRawManifestAsync(nullCueJson);
+        var cueException = await Assert.ThrowsAsync<AudioManifestException>(() =>
+            AudioManifestLoader.LoadAsync(fixture.ManifestPath, TestContext.Current.CancellationToken));
+        Assert.Contains("cue entry is null", cueException.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -153,6 +180,7 @@ public sealed class AudioManifestLoaderTests
         public async Task SetCueDurationAsync(int duration) { _manifest.Packs[0].Cues[0].DurationMs = duration; await WriteAsync(); }
         public async Task SetCueHashAsync(string hash) { _manifest.Packs[0].Cues[0].Sha256 = hash; await WriteAsync(); }
         public async Task DuplicatePackAsync() { _manifest.Packs.Add(_manifest.Packs[0]); await WriteAsync(); }
+        public async Task AddExtraPackAsync() { _manifest.Packs.Add(new AudioSoundPackManifest { PackId = "extra-pack", Cues = [new AudioCueManifest { CueId = "cue-01", FilePath = "extra-pack/cue-01.wav", DurationMs = 100, Sha256 = Sha256 }] }); await WriteAsync(); }
         public async Task RemovePackAsync(string packId) { _manifest.Packs.RemoveAll(pack => pack.PackId == packId); await WriteAsync(); }
         public async Task SetPrivateUseOnlyAsync(bool value) { _manifest.PrivateUseOnly = value; await WriteAsync(); }
         public async Task SetSourceUrlAsync(string url) { _manifest.Attribution!.SourceUrls = [url]; await WriteAsync(); }

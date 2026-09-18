@@ -56,10 +56,10 @@ public static class AudioManifestLoader
         CancellationToken cancellationToken)
     {
         var root = Path.GetDirectoryName(manifestPath)!;
-        long packBytes = 0;
-        var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var pack in manifest.Packs)
         {
+            long packBytes = 0;
+            var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var cue in pack.Cues)
             {
                 if (!AudioManifestContract.IsSafeRelativeWavePath(cue.FilePath))
@@ -128,16 +128,25 @@ public static class AudioManifestLoader
         if (bytes.Length < 12 || !bytes.AsSpan(0, 4).SequenceEqual("RIFF"u8) || !bytes.AsSpan(8, 4).SequenceEqual("WAVE"u8))
             return false;
 
+        var riffSize = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(4));
+        if (riffSize < 4 || riffSize > bytes.Length - 8)
+        {
+            error = "has invalid RIFF bounds";
+            return false;
+        }
+
         var offset = 12;
         var foundFormat = false;
         var foundData = false;
         int byteRate = 0;
+        int blockAlign = 0;
         int dataBytes = 0;
         while (offset + 8 <= bytes.Length)
         {
             var chunkId = bytes.AsSpan(offset, 4);
             var chunkSize = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(offset + 4));
-            if (chunkSize < 0 || chunkSize > bytes.Length - offset - 8)
+            var paddedChunkLength = 8L + chunkSize + (chunkSize & 1);
+            if (chunkSize < 0 || paddedChunkLength > bytes.Length - offset)
             {
                 error = "has invalid RIFF chunk";
                 return false;
@@ -154,8 +163,12 @@ public static class AudioManifestLoader
                 var channels = BinaryPrimitives.ReadInt16LittleEndian(chunk[2..]);
                 var sampleRate = BinaryPrimitives.ReadInt32LittleEndian(chunk[4..]);
                 byteRate = BinaryPrimitives.ReadInt32LittleEndian(chunk[8..]);
+                blockAlign = BinaryPrimitives.ReadInt16LittleEndian(chunk[12..]);
                 var bitsPerSample = BinaryPrimitives.ReadInt16LittleEndian(chunk[14..]);
-                if (format != 1 || channels is < 1 or > 2 || sampleRate <= 0 || bitsPerSample != 16 || byteRate <= 0)
+                var expectedBlockAlign = channels * (bitsPerSample / 8);
+                var expectedByteRate = (long)sampleRate * expectedBlockAlign;
+                if (format != 1 || channels is < 1 or > 2 || sampleRate <= 0 || bitsPerSample != 16 ||
+                    blockAlign != expectedBlockAlign || byteRate != expectedByteRate)
                 {
                     error = "non-PCM format";
                     return false;
@@ -168,12 +181,18 @@ public static class AudioManifestLoader
                 foundData = true;
             }
 
-            offset += 8 + chunkSize + (chunkSize & 1);
+            offset += (int)paddedChunkLength;
         }
 
         if (!foundFormat || !foundData || byteRate <= 0 || dataBytes <= 0)
         {
             error = "has missing WAV chunks";
+            return false;
+        }
+
+        if (blockAlign <= 0 || dataBytes % blockAlign != 0)
+        {
+            error = "has unaligned PCM data";
             return false;
         }
 
