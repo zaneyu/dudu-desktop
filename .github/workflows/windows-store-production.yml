@@ -107,8 +107,8 @@ jobs:
         run: |
           $checksum = Get-Content -Raw artifacts/store-package-metadata/SHA256SUMS.txt
           $validation = Get-Content -Raw artifacts/store-package-metadata/validation-summary.txt
-          if ($validation -notmatch 'Windows App Certification Kit report: overall PASS') {
-            throw 'The production package did not record a Windows App Certification Kit PASS.'
+          if ($validation -notmatch 'Windows App Certification Kit report: Store-ready') {
+            throw 'The production package did not record a Store-ready Windows App Certification Kit report.'
           }
           @"
           ## Production Store package
@@ -116,7 +116,7 @@ jobs:
           Version: $($env:STORE_VERSION).0
 
           $checksum
-          WACK: PASS
+          WACK: Store-ready; optional informational warnings, if any, are retained in the metadata.
 
           The artifact is not submitted automatically. Upload it to the matching
           private Partner Center submission only after reviewing the package.

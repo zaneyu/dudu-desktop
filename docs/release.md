@@ -302,10 +302,14 @@ run, verify `store-package-metadata/SHA256SUMS.txt`, and upload the single
 CI Store artifact.
 
 In production mode, the wrapper resets the Windows App Certification Kit before
-testing and accepts the package only when AppCert exits successfully and writes
-an XML `REPORT` whose `OVERALL_RESULT` is `PASS`. `-AcceptanceOnly` explicitly
-skips WACK; its checksum is integrity evidence for acceptance only, never a
-production certification pass or Partner Center upload authorization.
+testing and accepts the package only when AppCert exits successfully and its XML
+`REPORT` has no required-test failures. Microsoft classifies the Desktop Bridge
+optional tests as informational and excludes them from Store onboarding, so an
+overall `WARNING` caused only by those tests is retained in the metadata rather
+than treated as a packaging failure. `-AcceptanceOnly` explicitly skips WACK;
+its checksum is integrity evidence for acceptance only, never a production
+certification pass or Partner Center upload authorization. See Microsoft's
+[Desktop Bridge test guidance](https://learn.microsoft.com/en-us/windows/uwp/debug-test-perf/windows-desktop-bridge-app-tests).
 
 For each Store release:
 

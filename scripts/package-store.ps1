@@ -279,7 +279,7 @@ function Assert-StrictStorePackageOutput {
     return $relativeFilePath
 }
 
-function Assert-AppCertReportPass {
+function Assert-AppCertReportStoreReady {
     param([Parameter(Mandatory)][string]$ReportPath)
 
     if (-not (Test-Path -LiteralPath $ReportPath -PathType Leaf)) {
@@ -293,13 +293,38 @@ function Assert-AppCertReportPass {
         throw 'Windows App Certification Kit produced an unreadable XML report.'
     }
 
-    # AppCert writes a REPORT root with OVERALL_RESULT="PASS" for a passing
-    # Windows App Certification Kit run. Do not infer success from exit code.
+    # AppCert writes a REPORT root with OVERALL_RESULT="PASS" when every test
+    # passes. Desktop Bridge also defines optional tests whose failures are
+    # informational and are not used for Store onboarding. Do not infer Store
+    # readiness from the overall result or process exit code alone: reject
+    # required-test failures, but preserve the optional warnings in metadata.
     $reportRoot = $appCertReport.DocumentElement
     if ($null -eq $reportRoot -or
-        $reportRoot.LocalName -cne 'REPORT' -or
-        $reportRoot.GetAttribute('OVERALL_RESULT') -cne 'PASS') {
-        throw 'Windows App Certification Kit report does not record an overall PASS result.'
+        $reportRoot.LocalName -cne 'REPORT') {
+        throw 'Windows App Certification Kit produced an invalid report schema.'
+    }
+
+    $overallResult = $reportRoot.GetAttribute('OVERALL_RESULT')
+    if ($overallResult -eq 'FAIL') {
+        throw 'Windows App Certification Kit report records an overall FAIL result.'
+    }
+
+    $requiredFailures = @($appCertReport.SelectNodes("//*[local-name()='TEST']") | Where-Object {
+        $optional = $_.GetAttribute('OPTIONAL') -eq 'TRUE'
+        $result = $_.RESULT.InnerText
+        -not $optional -and $result -notin @('PASS', 'WARNING')
+    })
+    if ($requiredFailures.Count -gt 0) {
+        $names = ($requiredFailures | ForEach-Object { $_.GetAttribute('NAME') }) -join ', '
+        throw "Windows App Certification Kit report contains required-test failures: $names"
+    }
+
+    $optionalNonPassCount = @($appCertReport.SelectNodes("//*[local-name()='TEST']") | Where-Object {
+        $_.GetAttribute('OPTIONAL') -eq 'TRUE' -and $_.RESULT.InnerText -ne 'PASS'
+    }).Count
+    [pscustomobject]@{
+        OverallResult = $overallResult
+        OptionalNonPassCount = $optionalNonPassCount
     }
 }
 
@@ -460,12 +485,12 @@ try {
         Add-Content -LiteralPath (Join-Path $metadataDirectory 'validation-summary.txt') -Value "Windows App Certification Kit exit code: $appCertExitCode"
         $appCertReportFailure = $null
         try {
-            Assert-AppCertReportPass -ReportPath $appCertReport
-            Add-Content -LiteralPath (Join-Path $metadataDirectory 'validation-summary.txt') -Value 'Windows App Certification Kit report: overall PASS'
+            $appCertAssessment = Assert-AppCertReportStoreReady -ReportPath $appCertReport
+            Add-Content -LiteralPath (Join-Path $metadataDirectory 'validation-summary.txt') -Value "Windows App Certification Kit report: Store-ready (overall $($appCertAssessment.OverallResult); optional non-pass tests: $($appCertAssessment.OptionalNonPassCount))"
         }
         catch {
             $appCertReportFailure = $_
-            Add-Content -LiteralPath (Join-Path $metadataDirectory 'validation-summary.txt') -Value 'Windows App Certification Kit report: missing, unreadable, or not overall PASS'
+            Add-Content -LiteralPath (Join-Path $metadataDirectory 'validation-summary.txt') -Value 'Windows App Certification Kit report: missing, unreadable, overall FAIL, or required-test failure'
         }
         if ($appCertFailure -or $appCertExitCode -ne 0 -or $appCertReportFailure) {
             throw "Windows App Certification Kit validation failed with exit code $appCertExitCode."

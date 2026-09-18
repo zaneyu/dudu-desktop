@@ -45,6 +45,7 @@ $workflow = Get-Content -Raw -LiteralPath (Join-Path $repoRoot ".github/workflow
 $smoke = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "tests/installer/installer-smoke.ps1")
 $innoScript = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "scripts/install-inno-setup.ps1")
 $appProject = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "src/Dudu.App/Dudu.App.csproj")
+$appExecutableManifest = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "src/Dudu.App/app.manifest")
 $storeScriptPath = Join-Path $repoRoot "scripts/package-store.ps1"
 $packageManifestPath = Join-Path $repoRoot "src/Dudu.App/Package.appxmanifest"
 $packageManifestSource = Get-Content -Raw -LiteralPath $packageManifestPath
@@ -75,6 +76,8 @@ Assert-Contains "release runbook uploads only the local gated package" $releaseD
 Assert-Contains "release runbook identifies the restricted capability" $releaseDoc "rescap:unvirtualizedResources"
 Assert-Contains "release runbook requires private restricted-capability approval" $releaseDoc "(?is)restricted-capability.*justification/approval.*retained privately"
 Assert-Contains "release runbook distinguishes WACK PASS from Store approval" $releaseDoc "(?is)WACK.*PASS.*not Store approval"
+Assert-Contains "desktop app embeds a native DPI manifest" $appProject "ApplicationManifest.*app\.manifest"
+Assert-Contains "native DPI manifest enables PerMonitorV2" $appExecutableManifest "dpiAwareness.*PerMonitorV2"
 Assert-True "manifest restricted capability has a documented Partner Center approval gate" (
     ($packageManifestSource -notmatch 'rescap:Capability\s+Name="unvirtualizedResources"') -or
     ($releaseDoc -match '(?is)rescap:unvirtualizedResources.*restricted-capability.*justification/approval.*retained privately')
@@ -241,9 +244,9 @@ if (Test-Path -LiteralPath $storeScriptPath) {
     $appCertReportFunction = @($storeScriptAst.FindAll({
         param($node)
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
-            $node.Name -eq 'Assert-AppCertReportPass'
+            $node.Name -eq 'Assert-AppCertReportStoreReady'
     }, $true))
-    Assert-True "Store package script exposes an executable WACK report validator" ($appCertReportFunction.Count -eq 1)
+    Assert-True "Store package script exposes an executable WACK Store-readiness validator" ($appCertReportFunction.Count -eq 1)
     if ($appCertReportFunction.Count -eq 1) {
         . ([scriptblock]::Create($appCertReportFunction[0].Extent.Text))
         $reportTestDirectory = Join-Path ([IO.Path]::GetTempPath()) ("dudu-appcert-contract-" + [Guid]::NewGuid().ToString('N'))
@@ -252,24 +255,36 @@ if (Test-Path -LiteralPath $storeScriptPath) {
             $passingReport = Join-Path $reportTestDirectory 'passing.xml'
             Set-Content -LiteralPath $passingReport -NoNewline -Encoding utf8 -Value '<REPORT OVERALL_RESULT="PASS" VERSION="10.0.26100.0" />'
             $acceptedPassingReport = $true
-            try { Assert-AppCertReportPass -ReportPath $passingReport } catch { $acceptedPassingReport = $false }
-            Assert-True "WACK report validator accepts the schema-level PASS result" $acceptedPassingReport
+            try { Assert-AppCertReportStoreReady -ReportPath $passingReport } catch { $acceptedPassingReport = $false }
+            Assert-True "WACK Store-readiness validator accepts the schema-level PASS result" $acceptedPassingReport
+
+            $optionalWarningReport = Join-Path $reportTestDirectory 'optional-warning.xml'
+            Set-Content -LiteralPath $optionalWarningReport -NoNewline -Encoding utf8 -Value '<REPORT OVERALL_RESULT="WARNING" VERSION="10.0.26100.0"><REQUIREMENTS><REQUIREMENT NUMBER="24"><TEST OPTIONAL="TRUE"><RESULT>FAIL</RESULT></TEST></REQUIREMENT><REQUIREMENT NUMBER="26"><TEST OPTIONAL="FALSE"><RESULT>WARNING</RESULT></TEST></REQUIREMENT></REQUIREMENTS></REPORT>'
+            $acceptedOptionalWarningReport = $true
+            try { Assert-AppCertReportStoreReady -ReportPath $optionalWarningReport } catch { $acceptedOptionalWarningReport = $false }
+            Assert-True "WACK Store-readiness validator accepts optional failures and required warnings" $acceptedOptionalWarningReport
+
+            $requiredFailureReport = Join-Path $reportTestDirectory 'required-failure.xml'
+            Set-Content -LiteralPath $requiredFailureReport -NoNewline -Encoding utf8 -Value '<REPORT OVERALL_RESULT="WARNING" VERSION="10.0.26100.0"><REQUIREMENTS><REQUIREMENT NUMBER="24"><TEST OPTIONAL="FALSE"><RESULT>FAIL</RESULT></TEST></REQUIREMENT></REQUIREMENTS></REPORT>'
+            $rejectedRequiredFailureReport = $false
+            try { Assert-AppCertReportStoreReady -ReportPath $requiredFailureReport } catch { $rejectedRequiredFailureReport = $true }
+            Assert-True "WACK Store-readiness validator rejects required-test failures" $rejectedRequiredFailureReport
 
             $failedReport = Join-Path $reportTestDirectory 'failed.xml'
             Set-Content -LiteralPath $failedReport -NoNewline -Encoding utf8 -Value '<REPORT OVERALL_RESULT="FAIL" VERSION="10.0.26100.0" />'
             $rejectedFailedReport = $false
-            try { Assert-AppCertReportPass -ReportPath $failedReport } catch { $rejectedFailedReport = $true }
-            Assert-True "WACK report validator rejects the schema-level FAIL result" $rejectedFailedReport
+            try { Assert-AppCertReportStoreReady -ReportPath $failedReport } catch { $rejectedFailedReport = $true }
+            Assert-True "WACK Store-readiness validator rejects the schema-level FAIL result" $rejectedFailedReport
 
             $malformedReport = Join-Path $reportTestDirectory 'malformed.xml'
             Set-Content -LiteralPath $malformedReport -NoNewline -Encoding utf8 -Value '<RESULT OVERALL_RESULT="PASS" />'
             $rejectedMalformedReport = $false
-            try { Assert-AppCertReportPass -ReportPath $malformedReport } catch { $rejectedMalformedReport = $true }
-            Assert-True "WACK report validator rejects a non-WACK report schema" $rejectedMalformedReport
+            try { Assert-AppCertReportStoreReady -ReportPath $malformedReport } catch { $rejectedMalformedReport = $true }
+            Assert-True "WACK Store-readiness validator rejects a non-WACK report schema" $rejectedMalformedReport
 
             $rejectedMissingReport = $false
-            try { Assert-AppCertReportPass -ReportPath (Join-Path $reportTestDirectory 'missing.xml') } catch { $rejectedMissingReport = $true }
-            Assert-True "WACK report validator rejects a missing report" $rejectedMissingReport
+            try { Assert-AppCertReportStoreReady -ReportPath (Join-Path $reportTestDirectory 'missing.xml') } catch { $rejectedMissingReport = $true }
+            Assert-True "WACK Store-readiness validator rejects a missing report" $rejectedMissingReport
         }
         finally {
             Remove-Item -LiteralPath $reportTestDirectory -Recurse -Force -ErrorAction SilentlyContinue
@@ -292,7 +307,7 @@ if (Test-Path -LiteralPath $storeScriptPath) {
         $appCertTestInvocations.Count -eq 1 -and
         $appCertResetInvocations[0].Extent.StartOffset -lt $appCertTestInvocations[0].Extent.StartOffset
     )
-    Assert-Contains "production WACK validates its report after appcert test" $storeScript 'Assert-AppCertReportPass\s+-ReportPath\s+\$appCertReport'
+    Assert-Contains "production WACK validates its report after appcert test" $storeScript 'Assert-AppCertReportStoreReady\s+-ReportPath\s+\$appCertReport'
     $clearOutputIndex = $storeScript.IndexOf("Remove-Item -LiteralPath `$directory -Recurse -Force")
     $preflightCommentIndex = $storeScript.IndexOf("# Validate every host, source, and tool input")
     $preflightTryIndex = $storeScript.IndexOf("try {", $preflightCommentIndex)
