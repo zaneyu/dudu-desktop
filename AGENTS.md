@@ -151,6 +151,98 @@ artifacts/SHA256SUMS.txt
 
 Do not commit or publicly upload either file.
 
+### Production Microsoft Store MSIX procedure
+
+The production Store path is separate from the ordinary acceptance-only Store
+workflow. Use `.github/workflows/windows-store-production.yml` and run it only
+from `main`; it is manual-only and uses the private repository's hosted
+Windows x64 Actions minutes. The hosted runner is authoritative for this
+package because macOS cannot run the real WinUI packaging and WACK path.
+
+Before the first run, add these repository-level Actions secrets from the
+Partner Center Product Identity page. Do not put the values in source, logs,
+workflow inputs, or chat:
+
+```text
+DUDU_STORE_PARTNER_CENTER_NAME
+DUDU_STORE_PARTNER_CENTER_PUBLISHER
+DUDU_STORE_PARTNER_CENTER_PUBLISHER_DISPLAY_NAME
+```
+
+Use repository-level secrets. Environment-scoped copies with the older
+`DUDU_PARTNER_CENTER_*` names can shadow them and appear empty on GitHub Free
+private-repository runs. The workflow keeps the
+`microsoft-store-production` environment as a future protection boundary but
+does not depend on environment-scoped copies.
+
+Trigger and watch the production package from macOS:
+
+```zsh
+cd "$DUDU_REPO"
+gh workflow run windows-store-production.yml --ref main -f store_version=1.0.0
+gh run list --workflow windows-store-production.yml --limit 1 \
+  --json databaseId,headSha,status,conclusion,url
+gh run watch <run-id> --interval 10 --exit-status
+```
+
+Do not treat the run as releasable unless it is successful and the job shows
+successful identity injection, package build, WACK execution, Store-readiness
+validation, checksum generation, and artifact upload. The production artifact
+is named:
+
+```text
+DuduDesktop-1.0.0-win-x64-production-store
+```
+
+The workflow produces a single private `.msix` plus metadata. Verify the
+artifact exists before using it:
+
+```zsh
+gh api "repos/$(gh repo view --json nameWithOwner --jq .nameWithOwner)/actions/runs/<run-id>/artifacts" \
+  --jq '.artifacts[] | {name,size_in_bytes,expired}'
+```
+
+The package wrapper requires the Partner Center identity in the ephemeral
+runner checkout and never commits it. It runs WACK and accepts a production
+package when no required WACK test fails. The Windows Desktop Bridge guidance
+classifies tests such as General Metadata correctness and Blocked executables
+as optional/informational; their warnings or failures must remain in
+`store-package-metadata/appcert-report.xml` and must not be silently removed.
+An overall WACK `WARNING` caused only by optional tests is therefore expected
+and is not a reason to discard the package. The workflow metadata must contain
+`Windows App Certification Kit report: Store-ready`. Reference:
+<https://learn.microsoft.com/en-us/windows/uwp/debug-test-perf/windows-desktop-bridge-app-tests>.
+
+The native app manifest must keep PerMonitorV2 DPI awareness enabled because
+that is a required-quality check even though the hosted WACK report may still
+show optional runtime warnings. If the production job fails, it uploads a
+short-lived private diagnostic artifact named
+`DuduDesktop-<version>-win-x64-store-diagnostics`; inspect its
+`validation-summary.txt` and `appcert-report.xml` before changing the gate.
+
+After a successful run, download the production artifact into a temporary
+directory and inspect its metadata. Do not download the ordinary CI Store
+artifact and do not upload the diagnostic artifact:
+
+```zsh
+export DUDU_STORE_RELEASE_TMP="$(mktemp -d /tmp/dudu-store-release-XXXXXX)"
+gh run download <run-id> \
+  --name DuduDesktop-1.0.0-win-x64-production-store \
+  --dir "$DUDU_STORE_RELEASE_TMP"
+find "$DUDU_STORE_RELEASE_TMP" -maxdepth 3 -type f -print
+grep -F "Windows App Certification Kit report: Store-ready" \
+  "$DUDU_STORE_RELEASE_TMP/store-package-metadata/validation-summary.txt"
+cat "$DUDU_STORE_RELEASE_TMP/store-package-metadata/SHA256SUMS.txt"
+```
+
+Keep the `.msix` and checksum private. The final transfer is manual: open the
+already-created private Partner Center submission, upload only the production
+`.msix`, review the package identity and architecture, provide any restricted
+capability justification, and submit for Microsoft's official certification.
+Do not automate or silently perform that external file upload. The Store signs
+the package during publication; local WACK is pre-submission evidence, not
+Store approval.
+
 ### Exact Mac rebuild procedure
 
 This is the procedure for rebuilding from the macOS authoring host. It is
