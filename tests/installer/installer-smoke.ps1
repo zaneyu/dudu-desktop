@@ -217,6 +217,26 @@ try {
     $privateManifest = Get-Content -Raw $privateManifestPath | ConvertFrom-Json
     if ($privateManifest.privateUseOnly -ne $true) { throw "Installed private asset manifest is not privateUseOnly: true." }
 
+    $privateAudioManifestPath = Join-Path $installRoot "Assets\Audio\private-dudu\manifest.json"
+    if (-not (Test-Path $privateAudioManifestPath)) { throw "Private audio manifest was not packaged." }
+    $privateAudioManifest = Get-Content -Raw $privateAudioManifestPath | ConvertFrom-Json
+    if ($privateAudioManifest.privateUseOnly -ne $true) { throw "Installed private audio manifest is not privateUseOnly: true." }
+    $requiredAudioPackIds = @('bubu-dudu-atata', 'tata-lala', 'dudu-lalala', 'dudu-atatata', 'dudu-yapapa')
+    $installedAudioPackIds = @(@($privateAudioManifest.packs) | ForEach-Object { [string]$_.packId })
+    if ($installedAudioPackIds.Count -ne $requiredAudioPackIds.Count -or
+        (@($installedAudioPackIds | Where-Object { $_ -notin $requiredAudioPackIds }).Count -gt 0) -or
+        (@($requiredAudioPackIds | Where-Object { $_ -notin $installedAudioPackIds }).Count -gt 0)) {
+        throw "Installed private audio manifest does not contain exactly the five required packs."
+    }
+    foreach ($audioPack in @($privateAudioManifest.packs)) {
+        foreach ($audioCue in @($audioPack.cues)) {
+            $audioPath = ([string]$audioCue.filePath).Replace('/', '\')
+            if (-not (Test-Path (Join-Path $installRoot (Join-Path 'Assets\Audio\private-dudu' $audioPath)))) {
+                throw "Installed private audio manifest references a missing WAV: '$($audioCue.filePath)'."
+            }
+        }
+    }
+
     Invoke-SelfTest
 
     if ($ExerciseNormalLaunch) {

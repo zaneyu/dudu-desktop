@@ -85,6 +85,53 @@ try {
     try { Assert-PrivateReleaseAssetPack -PackRoot $pack } catch { $threw = $_.Exception.Message -match 'source\.psd' }
     Assert-True "private pack with a non-PNG file fails and names it" $threw
 
+    # Private audio pack allowlist and manifest contract. Keep these fixtures synthetic:
+    # Task 1's real WAVs remain blocked pending waveform review.
+    $audioRoot = Join-Path $tempRoot "audio"
+    $audioPackIds = @('bubu-dudu-atata', 'tata-lala', 'dudu-lalala', 'dudu-atatata', 'dudu-yapapa')
+    New-Item -ItemType Directory -Path $audioRoot -Force | Out-Null
+    $audioPacks = @($audioPackIds | ForEach-Object {
+        New-Item -ItemType Directory -Path (Join-Path $audioRoot $_) -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $audioRoot "$_/cue-01.wav") -Value "RIFF"
+        [pscustomobject]@{
+            packId = $_
+            cues = @([pscustomobject]@{ cueId = 'cue-01'; filePath = "$_/cue-01.wav" })
+        }
+    })
+    [pscustomobject]@{ schemaVersion = 1; privateUseOnly = $true; packs = $audioPacks } |
+        ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $audioRoot 'manifest.json')
+    $ok = $true
+    try { Assert-PrivateAudioReleaseAssetPack -PackRoot $audioRoot } catch { $ok = $false }
+    Assert-True "audio pack with all five private packs and referenced WAVs passes" $ok
+
+    $audioAdversarialCases = @(
+        @{ Name = 'MP3'; Path = 'tata-lala/bad.mp3'; Content = 'mp3'; Mutate = $null },
+        @{ Name = 'root-level WAV'; Path = 'root.wav'; Content = 'wav'; Mutate = $null },
+        @{ Name = 'path traversal entry'; Path = $null; Content = $null; Mutate = { param($manifest) $manifest.packs[0].cues[0].filePath = '../outside.wav } },
+        @{ Name = 'second manifest'; Path = 'tata-lala/second-manifest.json'; Content = '{}'; Mutate = $null },
+        @{ Name = 'non-private manifest'; Path = $null; Content = $null; Mutate = { param($manifest) $manifest.privateUseOnly = $false } },
+        @{ Name = 'unknown pack id'; Path = $null; Content = $null; Mutate = { param($manifest) $manifest.packs[0].packId = 'unknown-pack' } },
+        @{ Name = 'unreferenced WAV'; Path = 'tata-lala/unreferenced.wav'; Content = 'wav'; Mutate = $null }
+    )
+    foreach ($case in $audioAdversarialCases) {
+        $caseRoot = Join-Path $tempRoot ("audio-" + ($case.Name -replace '[^A-Za-z0-9]', '-'))
+        Copy-Item -LiteralPath $audioRoot -Destination $caseRoot -Recurse
+        if ($null -ne $case.Path) {
+            $caseFile = Join-Path $caseRoot $case.Path
+            New-Item -ItemType Directory -Path (Split-Path -Parent $caseFile) -Force | Out-Null
+            Set-Content -LiteralPath $caseFile -Value $case.Content
+        }
+        if ($null -ne $case.Mutate) {
+            $caseManifest = Get-Content -Raw -LiteralPath (Join-Path $caseRoot 'manifest.json') | ConvertFrom-Json
+            & $case.Mutate $caseManifest
+            $caseManifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $caseRoot 'manifest.json')
+        }
+        $threw = $false
+        try { Assert-PrivateAudioReleaseAssetPack -PackRoot $caseRoot } catch { $threw = $true }
+        Assert-True "audio pack rejects $($case.Name) before packaging" $threw
+        Remove-Item -LiteralPath $caseRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
     # Restore-generated package locks must not remain as untracked source-tree files after a
     # release. The publish script already copies them into release metadata; this verifies its
     # cleanup moves only the exact project lock files into ignored scratch storage.

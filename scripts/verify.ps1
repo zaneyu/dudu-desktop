@@ -57,7 +57,7 @@ function Assert-NoTrackedRawAssets {
 function Assert-ManifestsPrivate {
     <#
         Every assets/sources/*.json provenance record, and the private-dudu
-        pack manifest, must declare "privateUseOnly": true so the artwork is
+        pack manifests, must declare "privateUseOnly": true so the artwork/audio is
         never mistaken for redistributable content.
 
         Deliberate exception: src/Dudu.App/Assets/Packs/fallback/manifest.json
@@ -76,6 +76,10 @@ function Assert-ManifestsPrivate {
         ForEach-Object { Join-Path $_.FullName "manifest.json" } |
         Where-Object { Test-Path $_ } |
         ForEach-Object { Get-Item $_ }
+    $audioManifest = Join-Path $RepoRoot "src/Dudu.App/Assets/Audio/private-dudu/manifest.json"
+    if (Test-Path -LiteralPath $audioManifest -PathType Leaf) {
+        $targets += Get-Item -LiteralPath $audioManifest
+    }
 
     if (-not $targets) {
         throw "No source manifests or pack manifests were found to check — the privateUseOnly gate would be vacuous."

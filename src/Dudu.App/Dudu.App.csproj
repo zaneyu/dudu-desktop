@@ -38,6 +38,7 @@
     <AdditionalFiles Include="Overlay/NativeMethods.txt" />
     <Content Include="Assets/Packs/fallback/**" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets/Packs/private-dudu/**" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets/Audio/private-dudu/**" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="PackageAssets/**" Condition="'$(DuduStorePackage)' == 'true'" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

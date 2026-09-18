@@ -190,10 +190,14 @@ All commands run from the repository root with `pwsh`.
    `scripts/publish-windows.ps1` refuses to run ISCC unless every published
    file matches `$PublishTreeAllowlist` (named executables only, root
    binaries/metadata/resources, culture `.mui` folders, the XAML and app
-   asset folders, and SkiaSharp's one native PDB) and the private pack holds
-   only `manifest.json` plus `frames/**/*.png`. A new legitimate file shape
-   fails the build naming the file; extend the allowlist and
-   `tests/scripts/publish-manifest.tests.ps1` together.
+   asset folders, the private audio manifest/WAV tree, and SkiaSharp's one
+   native PDB). A new legitimate file shape fails the build naming the file;
+   extend the allowlist and `tests/scripts/publish-manifest.tests.ps1` together.
+   The audio tree is private-use-only: it contains only
+   `Assets/Audio/private-dudu/manifest.json` and referenced `.wav` files, with
+   exactly the five reviewed pack ids. It is bundled locally and is not
+   runtime-downloaded. Do not send these copied sounds through a public or
+   Store distribution without separate redistribution rights.
 
    **Release metadata.** Each CI run also uploads
    `DuduDesktop-1.0.0-release-metadata` (90-day retention) from

@@ -337,6 +337,16 @@ Assert-Contains "Inno receives AppVersion from the compiler define" $iss 'AppVer
 Assert-Contains "Inno output filename includes the compiler version" $iss 'OutputBaseFilename=DuduDesktop-\{#AppVersion\}-win-x64-private'
 Assert-Contains "publish forwards Version to Inno" $publish '"/DAppVersion=\$Version"'
 Assert-Contains "publish preflights the private asset pack" $publish 'Assert-PrivateReleaseAssetPack'
+Assert-Contains "publish preflights the private audio pack" $publish 'Assert-PrivateAudioReleaseAssetPack'
+Assert-Contains "publish allowlist permits only the private audio manifest" $publish 'Assets/Audio/private-dudu/manifest\.json'
+Assert-Contains "publish allowlist permits only private WAV files" $publish 'Assets/Audio/private-dudu/.*\.wav'
+Assert-Contains "audio manifest requires private use" $publish 'private audio release pack manifest must declare privateUseOnly: true'
+Assert-Contains "audio manifest requires exact five-pack contract" $publish 'exactly the five required pack ids'
+foreach ($audioPackId in @('bubu-dudu-atata', 'tata-lala', 'dudu-lalala', 'dudu-atatata', 'dudu-yapapa')) {
+    Assert-Contains "publish names required audio pack $audioPackId" $publish $audioPackId
+}
+Assert-Contains "audio validator rejects unreferenced WAVs" $publish 'unreferenced WAV'
+Assert-Contains "audio validator rejects unsafe cue paths" $publish 'unsafe or non-WAV cue path'
 Assert-Contains "publish checks the exact file manifest before ISCC" $publish 'Assert-PublishManifest'
 Assert-Contains "publish moves generated package locks out of the source tree" $publish 'Move-GeneratedPackageLocksToScratch'
 Assert-Contains "verify generates a per-run e2e secret" $verify '\[Guid\]::NewGuid'
@@ -388,6 +398,14 @@ Assert-Contains "normal launch closes the exact process cleanly" $smoke 'Close-N
 Assert-True "installer contains no image-wide Dudu taskkill" ($iss -notmatch 'taskkill\s+/IM\s+Dudu\.App\.exe')
 Assert-Contains "Inno download verifies before Start-Process" $innoScript 'Assert-PinnedInnoSetupFile -Path \$downloadPath'
 Assert-Contains "app copies the private animation pack" $appProject '<Content Include="Assets/Packs/private-dudu/\*\*" CopyToOutputDirectory="PreserveNewest" />'
+Assert-Contains "app copies the private audio pack" $appProject '<Content Include="Assets/Audio/private-dudu/\*\*" CopyToOutputDirectory="PreserveNewest" />'
+Assert-True "app does not copy audio source downloads" ($appProject -notmatch 'assets[/\\]sources|work[/\\]audio-source')
+Assert-Contains "verify inspects the private audio manifest" $verify 'Assets/Audio/private-dudu/manifest\.json'
+Assert-Contains "smoke test checks the installed audio manifest" $smoke 'Assets\\Audio\\private-dudu\\manifest\.json'
+Assert-Contains "smoke test checks every referenced audio WAV" $smoke 'privateAudioManifest\.packs.*cues'
+Assert-Contains "release docs keep audio private" $releaseDoc '(?is)audio.*private-use-only'
+Assert-Contains "release docs prohibit runtime audio downloads" $releaseDoc '(?is)audio.*not runtime-downloaded'
+Assert-Contains "release docs require separate audio redistribution rights" $releaseDoc '(?is)audio.*separate redistribution rights'
 
 $manifest = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "src/Dudu.App/Assets/Packs/private-dudu/manifest.json") | ConvertFrom-Json
 Assert-True "private release manifest declares privateUseOnly" ($manifest.privateUseOnly -eq $true)

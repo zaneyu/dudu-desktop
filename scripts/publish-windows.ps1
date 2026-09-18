@@ -55,6 +55,79 @@ function Assert-PrivateReleaseAssetPack {
     }
 }
 
+function Assert-PrivateAudioReleaseAssetPack {
+    param([Parameter(Mandatory = $true)][string]$PackRoot)
+
+    $manifestPath = Join-Path $PackRoot "manifest.json"
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        throw "Private audio release pack manifest is missing: '$manifestPath'."
+    }
+
+    try {
+        $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
+    }
+    catch {
+        throw "Private audio release pack manifest is not valid JSON: '$manifestPath'."
+    }
+    if ($manifest.privateUseOnly -ne $true) {
+        throw "Private audio release pack manifest must declare privateUseOnly: true: '$manifestPath'."
+    }
+
+    $requiredPackIds = @('bubu-dudu-atata', 'tata-lala', 'dudu-lalala', 'dudu-atatata', 'dudu-yapapa')
+    $packs = @($manifest.packs)
+    $packIds = @($packs | ForEach-Object { [string]$_.packId })
+    if ($packIds.Count -ne $requiredPackIds.Count -or
+        (@($packIds | Where-Object { $_ -notin $requiredPackIds }).Count -gt 0) -or
+        (@($requiredPackIds | Where-Object { $_ -notin $packIds }).Count -gt 0) -or
+        (@($packIds | Group-Object | Where-Object { $_.Count -ne 1 }).Count -gt 0)) {
+        throw "Private audio release pack manifest must contain exactly the five required pack ids: $($requiredPackIds -join ', ')."
+    }
+
+    # The installer bundles this directory recursively. Keep it to the manifest and WAV files
+    # in pack subdirectories: no source downloads, alternate formats, nested manifests, or
+    # root-level audio can reach the installer.
+    $packFiles = @(Get-ChildItem -LiteralPath $PackRoot -Recurse -File -Force -ErrorAction SilentlyContinue |
+        ForEach-Object { [IO.Path]::GetRelativePath($PackRoot, $_.FullName).Replace('\', '/') })
+    $unexpected = @($packFiles | Where-Object {
+        $_ -cne 'manifest.json' -and $_ -notmatch '^(?:[A-Za-z0-9._-]+/)+[A-Za-z0-9._-]+\.wav$'
+    })
+    if ($unexpected) {
+        throw "Private audio release pack contains file(s) outside the allowlist (manifest.json, pack/**/*.wav):`n$($unexpected -join "`n")"
+    }
+
+    $referenced = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($pack in $packs) {
+        foreach ($cue in @($pack.cues)) {
+            $relative = ([string]$cue.filePath).Replace('\', '/')
+            if ($relative -notmatch '^(?:[A-Za-z0-9._-]+/)+[A-Za-z0-9._-]+\.wav$') {
+                throw "Private audio release pack contains an unsafe or non-WAV cue path: '$relative'."
+            }
+            if (-not $referenced.Add($relative)) {
+                throw "Private audio release pack references the WAV more than once: '$relative'."
+            }
+            if (-not (Test-Path -LiteralPath (Join-Path $PackRoot $relative) -PathType Leaf)) {
+                throw "Private audio release pack manifest references a missing WAV: '$relative'."
+            }
+        }
+    }
+
+    $actualWavs = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($file in @(Get-ChildItem -LiteralPath $PackRoot -Recurse -File -Filter '*.wav' -Force)) {
+        [void]$actualWavs.Add(([IO.Path]::GetRelativePath($PackRoot, $file.FullName)).Replace('\', '/'))
+    }
+    $unreferenced = @($actualWavs | Where-Object { -not $referenced.Contains($_) })
+    if ($unreferenced) {
+        throw "Private audio release pack contains unreferenced WAV file(s):`n$($unreferenced -join "`n")"
+    }
+    $missing = @($referenced | Where-Object { -not $actualWavs.Contains($_) })
+    if ($missing) {
+        throw "Private audio release pack manifest references WAV file(s) that are not packaged:`n$($missing -join "`n")"
+    }
+    if ($referenced.Count -eq 0) {
+        throw "Private audio release pack contains no referenced WAV files: '$PackRoot'."
+    }
+}
+
 # Allowlist for the self-contained WinUI publish tree (relative paths, '/'-separated, matched
 # case-insensitively). An exact per-file list is impractical: the tree is ~530 files whose
 # names change with every Windows App SDK / .NET servicing bump (284 DLLs, 52 WinMDs, 86
@@ -80,6 +153,8 @@ $script:PublishTreeAllowlist = @(
     # App asset packs copied by the csproj.
     '^Assets/Packs/(?:fallback|private-dudu)/manifest\.json$'
     '^Assets/Packs/(?:fallback|private-dudu)/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.png$'
+    '^Assets/Audio/private-dudu/manifest\.json$'
+    '^Assets/Audio/private-dudu/(?:[A-Za-z0-9._-]+/)+[A-Za-z0-9._-]+\.wav$'
 )
 
 function Get-UnexpectedPublishFiles {
@@ -226,6 +301,8 @@ if ($MyInvocation.InvocationName -eq '.') {
 
 $privatePackRoot = Join-Path $repoRoot "src/Dudu.App/Assets/Packs/private-dudu"
 Assert-PrivateReleaseAssetPack -PackRoot $privatePackRoot
+$privateAudioPackRoot = Join-Path $repoRoot "src/Dudu.App/Assets/Audio/private-dudu"
+Assert-PrivateAudioReleaseAssetPack -PackRoot $privateAudioPackRoot
 
 # Refuse cleanly, with no stack trace, if Inno Setup 7 is not installed.
 $isccPath = Join-Path $env:ProgramFiles "Inno Setup 7\ISCC.exe"
