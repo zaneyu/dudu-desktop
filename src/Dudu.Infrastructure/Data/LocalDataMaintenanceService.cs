@@ -13,6 +13,7 @@ public sealed class LocalDataMaintenanceService
     private readonly DatabaseOptions _options;
     private readonly Database _database;
     private readonly string _secretsDirectory;
+    private readonly Action<string> _deleteFile;
 
     public LocalDataMaintenanceService(DatabaseOptions options, Database database)
         : this(
@@ -28,13 +29,25 @@ public sealed class LocalDataMaintenanceService
     internal LocalDataMaintenanceService(
         DatabaseOptions options,
         Database database,
-        string secretsDirectory)
+        string secretsDirectory,
+        Action<string>? deleteFile = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _database = database ?? throw new ArgumentNullException(nameof(database));
         _secretsDirectory = Path.GetFullPath(
             secretsDirectory ?? throw new ArgumentNullException(nameof(secretsDirectory)));
+        _deleteFile = deleteFile ?? File.Delete;
     }
+
+    /// <summary>
+    /// Optional failure hook invoked with
+    /// (<c>DatabaseBackupService.PruneFailurePhase</c>, exception) when a
+    /// maintenance file sweep (backups, restore artifacts, secrets) fails.
+    /// Logging only: the failure still propagates to the caller exactly as
+    /// before. A plain delegate, not an <c>ILogger</c>, so no logging
+    /// dependency enters the data layer.
+    /// </summary>
+    public Action<string, Exception>? FailureReporter { get; set; }
 
     public async Task DeleteAllUserDataAsync(CancellationToken cancellationToken = default)
     {
@@ -102,16 +115,24 @@ public sealed class LocalDataMaintenanceService
         DeleteFiles(_secretsDirectory, "*.tmp", cancellationToken);
     }
 
-    private static void DeleteFiles(
+    private void DeleteFiles(
         string directory,
         string pattern,
         CancellationToken cancellationToken)
     {
         if (!Directory.Exists(directory)) return;
-        foreach (var path in Directory.EnumerateFiles(directory, pattern, SearchOption.TopDirectoryOnly))
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            File.Delete(path);
+            foreach (var path in Directory.EnumerateFiles(directory, pattern, SearchOption.TopDirectoryOnly))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                _deleteFile(path);
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            ReportFailure(DatabaseBackupService.PruneFailurePhase, exception);
+            throw;
         }
     }
 
@@ -128,16 +149,36 @@ public sealed class LocalDataMaintenanceService
             databasePath + ".restore-old-",
             databasePath + ".restore-failed-",
         };
-        foreach (var path in Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly))
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (path.Equals(databasePath + "-wal", StringComparison.OrdinalIgnoreCase)
-                || path.Equals(databasePath + "-shm", StringComparison.OrdinalIgnoreCase)
-                || path.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)
-                || prefixes.Any(prefix => path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+            foreach (var path in Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly))
             {
-                File.Delete(path);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (path.Equals(databasePath + "-wal", StringComparison.OrdinalIgnoreCase)
+                    || path.Equals(databasePath + "-shm", StringComparison.OrdinalIgnoreCase)
+                    || path.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)
+                    || prefixes.Any(prefix => path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+                {
+                    _deleteFile(path);
+                }
             }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            ReportFailure(DatabaseBackupService.PruneFailurePhase, exception);
+            throw;
+        }
+    }
+
+    private void ReportFailure(string phase, Exception exception)
+    {
+        try
+        {
+            FailureReporter?.Invoke(phase, exception);
+        }
+        catch
+        {
+            // Failure reporting must never change maintenance behavior.
         }
     }
 }

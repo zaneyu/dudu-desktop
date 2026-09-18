@@ -49,7 +49,7 @@ public sealed class ProductionStartupContractTests
         Assert.Contains("PresentOneShotAsync(petEvent, dismissalId, token)", composition);
         Assert.Contains("var fullscreen = new FullscreenDetector();", runtime);
         Assert.Contains("isFullscreen ??= fullscreen.IsForegroundFullscreen;", runtime);
-        Assert.Contains("new WindowsCompanionEventSource(fullscreen)", runtime);
+        Assert.Contains("new WindowsCompanionEventSource(fullscreen, errorReporter:", runtime);
         Assert.Contains("await StartupVisibilityGate.ApplyAsync(", runtime);
     }
 

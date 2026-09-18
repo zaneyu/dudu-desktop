@@ -33,6 +33,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
     private readonly Func<DateTimeOffset> _clock;
     private readonly Func<CancellationToken, Task>? _openHome;
     private readonly Action<Exception>? _diagnostic;
+    private readonly IAppHostErrorReporter? _errorReporter;
     private readonly TrayIconService? _tray;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly SemaphoreSlim _visibilityGate = new(1, 1);
@@ -56,7 +57,8 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         TrayIconService? tray = null,
         Func<CancellationToken, Task>? openHome = null,
         Action<Exception>? diagnostic = null,
-        bool? initialUserVisible = null)
+        bool? initialUserVisible = null,
+        IAppHostErrorReporter? errorReporter = null)
     {
         _host = host ?? throw new ArgumentNullException(nameof(host));
         _overlay = overlay ?? throw new ArgumentNullException(nameof(overlay));
@@ -69,6 +71,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         _tray = tray;
         _openHome = openHome;
         _diagnostic = diagnostic;
+        _errorReporter = errorReporter;
         _userVisible = initialUserVisible ?? overlay.IsVisible;
     }
 
@@ -367,8 +370,27 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
             try { await _tray.DisposeAsync(); }
             catch (Exception exception) { ReportFailure("shutdown-tray", exception); }
         }
-        await _host.StopAsync();
-        await _overlay.DisposeAsync();
+        try
+        {
+            await _host.StopAsync();
+        }
+        catch (Exception exception)
+        {
+            // Logging only: the shutdown failure still propagates to the
+            // caller exactly as before, but the operation name and exception
+            // type are now captured for field diagnostics.
+            ReportFailure("shutdown-host", exception);
+            throw;
+        }
+        try
+        {
+            await _overlay.DisposeAsync();
+        }
+        catch (Exception exception)
+        {
+            ReportFailure("shutdown-overlay", exception);
+            throw;
+        }
     }
 
     private async Task<GateSnapshot> CaptureAsync(CancellationToken cancellationToken)
@@ -481,6 +503,22 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
 
     private void ReportFailure(string operation, Exception exception)
     {
+        // The reporter (when composed) carries the operation name plus the
+        // exception to the shared AppHost sink so a future file sink captures
+        // it. The legacy Action<Exception> diagnostic is preserved for
+        // existing callers; the bare Trace fallback logs the operation name
+        // plus the exception type/HResult only — never a message or body that
+        // could carry private content.
+        if (_errorReporter is not null)
+        {
+            try
+            {
+                _errorReporter.Report(operation, exception);
+                return;
+            }
+            catch { }
+        }
+
         if (_diagnostic is not null)
         {
             try { _diagnostic(exception); }
@@ -488,7 +526,11 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
             return;
         }
 
-        Trace.TraceError("Dudu lifecycle operation '{0}' failed: {1}", operation, exception);
+        Trace.TraceError(
+            "Dudu lifecycle operation '{0}' failed: {1} (0x{2:X8})",
+            operation,
+            exception.GetType().FullName,
+            exception.HResult);
     }
 
     private void ThrowIfDisposed()

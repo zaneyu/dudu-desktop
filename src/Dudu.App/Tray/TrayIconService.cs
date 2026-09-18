@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using Dudu.App.Hosting;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.UI.Shell;
@@ -36,6 +38,7 @@ public sealed class TrayIconService : IDisposable, IAsyncDisposable
 
     private readonly ITrayNativeApi _native;
     private readonly Action<TrayCommand> _commandHandler;
+    private readonly IAppHostErrorReporter? _errorReporter;
     private readonly object _gate = new();
     private readonly string _tooltip;
     private Func<Action, Task>? _ownerDispatcher;
@@ -47,12 +50,14 @@ public sealed class TrayIconService : IDisposable, IAsyncDisposable
     public TrayIconService(
         ITrayNativeApi? native = null,
         Action<TrayCommand>? commandHandler = null,
-        string tooltip = "dudu")
+        string tooltip = "dudu",
+        IAppHostErrorReporter? errorReporter = null)
     {
         _native = native ?? new WindowsTrayNativeApi();
         _commandHandler = commandHandler
             ?? throw new ArgumentNullException(nameof(commandHandler));
         _tooltip = tooltip;
+        _errorReporter = errorReporter;
     }
 
     public IReadOnlyList<TrayCommand> Commands { get; } =
@@ -78,7 +83,15 @@ public sealed class TrayIconService : IDisposable, IAsyncDisposable
             if (_created) _native.Remove(_ownerWindow);
             _ownerWindow = ownerWindow;
             _created = _native.Add(ownerWindow, CallbackMessage, _tooltip);
-            if (!_created) throw new InvalidOperationException("Shell_NotifyIcon(NIM_ADD) failed.");
+            if (!_created)
+            {
+                // Logging only: the throw behavior is unchanged, but a failed
+                // native attach now leaves an operation-named diagnostic.
+                ReportFailure(
+                    "tray-attach",
+                    new InvalidOperationException("Shell_NotifyIcon(NIM_ADD) failed."));
+                throw new InvalidOperationException("Shell_NotifyIcon(NIM_ADD) failed.");
+            }
         }
     }
 
@@ -119,7 +132,18 @@ public sealed class TrayIconService : IDisposable, IAsyncDisposable
 
         if (recreate)
         {
-            Recreate();
+            try
+            {
+                Recreate();
+            }
+            catch (Exception exception)
+            {
+                // Logging only: the failure still propagates to the window
+                // procedure exactly as before, now with an operation name plus
+                // the exception type attached.
+                ReportFailure("tray-recreate", exception);
+                throw;
+            }
             return true;
         }
 
@@ -238,6 +262,15 @@ public sealed class TrayIconService : IDisposable, IAsyncDisposable
         EnsureOwnerThread();
         if (_ownerWindow == 0) return;
         _created = _native.Recreate(_ownerWindow, CallbackMessage, _tooltip);
+        if (!_created)
+        {
+            // Best-effort recreate stays best-effort: no throw, but a failed
+            // native recreate (e.g. explorer restarted into a broken state)
+            // now leaves an operation-named diagnostic instead of silence.
+            ReportFailure(
+                "tray-recreate",
+                new InvalidOperationException("Shell_NotifyIcon tray recreate reported failure."));
+        }
     }
 
     private void EnsureOwnerThread()
@@ -266,6 +299,22 @@ public sealed class TrayIconService : IDisposable, IAsyncDisposable
     private void ThrowIfDisposed()
     {
         if (_disposed) throw new ObjectDisposedException(nameof(TrayIconService));
+    }
+
+    private void ReportFailure(string operation, Exception exception)
+    {
+        if (_errorReporter is not null)
+        {
+            try { _errorReporter.Report(operation, exception); }
+            catch { }
+            return;
+        }
+
+        Trace.TraceError(
+            "Dudu tray operation '{0}' failed: {1} (0x{2:X8})",
+            operation,
+            exception.GetType().FullName,
+            exception.HResult);
     }
 }
 

@@ -5,6 +5,16 @@ namespace Dudu.Infrastructure.Data;
 
 public sealed class Database : IAsyncDisposable, IDisposable
 {
+    /// <summary>
+    /// The <c>StartupFailureLogger</c> phase recorded (by the App-layer
+    /// composition wiring <see cref="FailureReporter"/>) when database
+    /// initialization fails. Kept here so the data layer can attribute the
+    /// failure without referencing the App layer, preserving the
+    /// <c>Dudu.App</c> → <c>Dudu.Infrastructure</c> → <c>Dudu.Core</c>
+    /// dependency direction.
+    /// </summary>
+    public const string InitializationFailurePhase = "db-init";
+
     private static readonly ConcurrentDictionary<string, DatabaseAccessCoordinator> Coordinators = new(StringComparer.OrdinalIgnoreCase);
     private readonly DatabaseOptions _options;
     private readonly DatabaseAccessCoordinator _coordinator;
@@ -16,6 +26,17 @@ public sealed class Database : IAsyncDisposable, IDisposable
             Path.GetFullPath(_options.DatabasePath),
             static _ => new DatabaseAccessCoordinator());
     }
+
+    /// <summary>
+    /// Optional failure hook invoked with
+    /// (<c>InitializationFailurePhase</c>, exception) when
+    /// <see cref="InitializeAsync"/> fails. Logging only: the failure still
+    /// propagates to the caller exactly as before. Never receives secret
+    /// material — only the phase name and the exception. The App layer wires
+    /// this to <c>StartupFailureLogger.Record</c>; it is a plain delegate
+    /// (not an <c>ILogger</c>) so no logging dependency enters the data layer.
+    /// </summary>
+    public Action<string, Exception>? FailureReporter { get; set; }
 
     public DatabaseOptions Options => _options;
 
@@ -49,7 +70,15 @@ public sealed class Database : IAsyncDisposable, IDisposable
         // before initialization begins, and connection operations remain
         // independently cancellable after initialization completes.
         cancellationToken.ThrowIfCancellationRequested();
-        await _coordinator.InitializeAsync(InitializeCoreAsync);
+        try
+        {
+            await _coordinator.InitializeAsync(InitializeCoreAsync);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            ReportFailure(InitializationFailurePhase, exception);
+            throw;
+        }
     }
 
     internal void InvalidateInitialization()
@@ -200,6 +229,18 @@ public sealed class Database : IAsyncDisposable, IDisposable
 
     internal Task<IDisposable> EnterMaintenanceAsync(CancellationToken cancellationToken) =>
         _coordinator.EnterMaintenanceAsync(cancellationToken);
+
+    private void ReportFailure(string phase, Exception exception)
+    {
+        try
+        {
+            FailureReporter?.Invoke(phase, exception);
+        }
+        catch
+        {
+            // Failure reporting must never change initialization behavior.
+        }
+    }
 }
 
 internal sealed class DatabaseAccessCoordinator

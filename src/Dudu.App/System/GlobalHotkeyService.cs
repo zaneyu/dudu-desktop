@@ -1,8 +1,11 @@
+using System.Diagnostics;
 using System.Globalization;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.UI.Input.KeyboardAndMouse;
 using Windows.Win32.UI.WindowsAndMessaging;
+
+using Dudu.App.Hosting;
 
 namespace Dudu.App.System;
 
@@ -198,6 +201,7 @@ public sealed class GlobalHotkeyService : IDisposable
     public const int DefaultId = 0xD0D;
 
     private readonly IGlobalHotkeyNativeApi _native;
+    private readonly IAppHostErrorReporter? _errorReporter;
     private readonly object _gate = new();
     private HotkeyGesture _currentGesture = HotkeyGesture.Default;
     private nint _ownerWindow;
@@ -205,9 +209,12 @@ public sealed class GlobalHotkeyService : IDisposable
     private int _nextId = DefaultId + 1;
     private bool _disposed;
 
-    public GlobalHotkeyService(IGlobalHotkeyNativeApi? native = null)
+    public GlobalHotkeyService(
+        IGlobalHotkeyNativeApi? native = null,
+        IAppHostErrorReporter? errorReporter = null)
     {
         _native = native ?? new WindowsGlobalHotkeyNativeApi();
+        _errorReporter = errorReporter;
     }
 
     public HotkeyGesture CurrentGesture
@@ -254,7 +261,9 @@ public sealed class GlobalHotkeyService : IDisposable
             if (!_native.Register(ownerWindow, requestedId, previousGesture.Modifiers, previousGesture.Key))
             {
                 _native.Register(previousWindow, previousId, previousGesture.Modifiers, previousGesture.Key);
-                throw new HotkeyConflictException("aiyo cant move the global hotkey");
+                throw ReportConflict(
+                    "hotkey-attach",
+                    "aiyo cant move the global hotkey");
             }
 
             _ownerWindow = ownerWindow;
@@ -282,7 +291,9 @@ public sealed class GlobalHotkeyService : IDisposable
                 var firstId = DefaultId;
                 if (!_native.Register(_ownerWindow, firstId, gesture.Modifiers, gesture.Key))
                 {
-                    throw new HotkeyConflictException($"alala {gesture} already taken by another shortcut");
+                    throw ReportConflict(
+                        "hotkey-set-gesture",
+                        $"alala {gesture} already taken by another shortcut");
                 }
 
                 _registeredId = firstId;
@@ -300,7 +311,9 @@ public sealed class GlobalHotkeyService : IDisposable
             if (!_native.Register(_ownerWindow, requestedId, gesture.Modifiers, gesture.Key))
             {
                 _native.Register(_ownerWindow, previousId, previousGesture.Modifiers, previousGesture.Key);
-                throw new HotkeyConflictException($"alala {gesture} already taken by another shortcut");
+                throw ReportConflict(
+                    "hotkey-set-gesture",
+                    $"alala {gesture} already taken by another shortcut");
             }
 
             _registeredId = requestedId;
@@ -356,6 +369,32 @@ public sealed class GlobalHotkeyService : IDisposable
     private void ThrowIfDisposed()
     {
         if (_disposed) throw new ObjectDisposedException(nameof(GlobalHotkeyService));
+    }
+
+    /// <summary>
+    /// Reports a hotkey conflict through the shared error sink before
+    /// throwing, so an unavailable/conflicting global hotkey leaves a
+    /// persisted-or-Trace diagnostic with the operation name plus the
+    /// exception type. The throw behavior is unchanged.
+    /// </summary>
+    private HotkeyConflictException ReportConflict(string operation, string message)
+    {
+        var exception = new HotkeyConflictException(message);
+        if (_errorReporter is not null)
+        {
+            try { _errorReporter.Report(operation, exception); }
+            catch { }
+        }
+        else
+        {
+            Trace.TraceError(
+                "Dudu global hotkey operation '{0}' failed: {1} (0x{2:X8})",
+                operation,
+                exception.GetType().FullName,
+                exception.HResult);
+        }
+
+        return exception;
     }
 }
 

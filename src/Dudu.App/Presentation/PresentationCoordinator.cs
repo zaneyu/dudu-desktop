@@ -61,6 +61,7 @@ public sealed class PresentationCoordinator :
     private readonly HashSet<string> _presentingIds = new(StringComparer.Ordinal);
     private readonly Func<bool> _isFullscreenNow;
     private readonly Func<DateTimeOffset> _utcNow;
+    private readonly IAppHostErrorReporter? _errorReporter;
     private bool _sessionLocked;
     private bool _fullscreen;
 
@@ -82,7 +83,8 @@ public sealed class PresentationCoordinator :
         AmbientScheduler? ambientScheduler = null,
         LocalNoteSelector? localNoteSelector = null,
         Func<bool>? isFullscreenNow = null,
-        Func<DateTimeOffset>? utcNow = null)
+        Func<DateTimeOffset>? utcNow = null,
+        IAppHostErrorReporter? errorReporter = null)
     {
         _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
         _policy = policy ?? throw new ArgumentNullException(nameof(policy));
@@ -96,6 +98,7 @@ public sealed class PresentationCoordinator :
         _ambientScheduler = ambientScheduler;
         _localNoteSelector = localNoteSelector;
         _isFullscreenNow = isFullscreenNow ?? (() => { lock (_gate) return _fullscreen; });
+        _errorReporter = errorReporter;
         if ((_ambientScheduler is null) != (_localNoteSelector is null))
         {
             throw new ArgumentException(
@@ -142,7 +145,7 @@ public sealed class PresentationCoordinator :
         }
         catch (Exception exception)
         {
-            Trace.TraceError("Dudu notification registration failed: {0}", exception);
+            ReportFailure("presentation-tick", exception);
         }
     }
 
@@ -420,7 +423,7 @@ public sealed class PresentationCoordinator :
         catch (Exception exception)
         {
             // Single fail-closed policy: any environment fault suppresses.
-            Trace.TraceError("Dudu presentation environment read failed: {0}", exception);
+            ReportFailure("presentation-tick", exception);
             return new SuppressionSnapshot(NowQuiet: true, Fullscreen: true, Paused: true, SessionLocked: true, FocusActive: true);
         }
     }
@@ -433,7 +436,7 @@ public sealed class PresentationCoordinator :
         }
         catch (Exception exception)
         {
-            Trace.TraceError("Dudu fullscreen re-sample failed: {0}", exception);
+            ReportFailure("presentation-tick", exception);
             return true;
         }
     }
@@ -442,7 +445,7 @@ public sealed class PresentationCoordinator :
         snapshot.NowQuiet || snapshot.Fullscreen || snapshot.Paused
         || snapshot.SessionLocked || snapshot.FocusActive;
 
-    private static async Task<bool> ObserveAsync(Func<Task> operation, string name)
+    private async Task<bool> ObserveAsync(Func<Task> operation, string name)
     {
         try
         {
@@ -455,9 +458,28 @@ public sealed class PresentationCoordinator :
         }
         catch (Exception exception)
         {
-            Trace.TraceError("Dudu {0} failed: {1}", name, exception);
+            // Playback/notification failures are reported under the single
+            // presentation-tick operation carrying the exception type only —
+            // no note or reminder content is ever logged.
+            ReportFailure("presentation-tick", exception);
             return false;
         }
+    }
+
+    private void ReportFailure(string operation, Exception exception)
+    {
+        if (_errorReporter is not null)
+        {
+            try { _errorReporter.Report(operation, exception); }
+            catch { }
+            return;
+        }
+
+        Trace.TraceError(
+            "Dudu {0} failed: {1} (0x{2:X8})",
+            operation,
+            exception.GetType().FullName,
+            exception.HResult);
     }
 
     private readonly record struct SuppressionSnapshot(

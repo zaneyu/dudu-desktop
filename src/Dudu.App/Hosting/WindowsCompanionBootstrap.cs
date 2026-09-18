@@ -101,9 +101,10 @@ public sealed class WindowsCompanionBootstrap : IAsyncDisposable
                 }
                 catch (Exception exception)
                 {
-                    global::System.Diagnostics.Trace.TraceError(
-                        "Queued Dudu activation failed: {0}",
-                        exception);
+                    Trace.TraceError(
+                        "Queued Dudu activation failed: {0} (0x{1:X8})",
+                        exception.GetType().FullName,
+                        exception.HResult);
                 }
             }
 
@@ -120,7 +121,10 @@ public sealed class WindowsCompanionBootstrap : IAsyncDisposable
             }
             catch (Exception exception)
             {
-                Trace.TraceError("Dudu partial bootstrap runtime cleanup failed: {0}", exception);
+                Trace.TraceError(
+                    "Dudu partial bootstrap runtime cleanup failed: {0} (0x{1:X8})",
+                    exception.GetType().FullName,
+                    exception.HResult);
             }
 
             lock (_activationGate)
@@ -133,7 +137,10 @@ public sealed class WindowsCompanionBootstrap : IAsyncDisposable
             try { await _singleInstance.DisposeAsync(); }
             catch (Exception exception)
             {
-                Trace.TraceError("Dudu partial bootstrap instance cleanup failed: {0}", exception);
+                Trace.TraceError(
+                    "Dudu partial bootstrap instance cleanup failed: {0} (0x{1:X8})",
+                    exception.GetType().FullName,
+                    exception.HResult);
             }
             throw;
         }
@@ -357,6 +364,7 @@ public sealed class WindowsCompanionEventSource : ICompanionEventSource
 
     private readonly FullscreenDetector _fullscreen;
     private readonly TimeSpan _pollInterval;
+    private readonly IAppHostErrorReporter? _errorReporter;
     private readonly object _gate = new();
     private readonly object _callbackSync = new();
     private readonly SemaphoreSlim _callbackGate = new(1, 1);
@@ -371,11 +379,13 @@ public sealed class WindowsCompanionEventSource : ICompanionEventSource
 
     public WindowsCompanionEventSource(
         FullscreenDetector? fullscreen = null,
-        TimeSpan? pollInterval = null)
+        TimeSpan? pollInterval = null,
+        IAppHostErrorReporter? errorReporter = null)
     {
         _fullscreen = fullscreen ?? new FullscreenDetector();
         _pollInterval = pollInterval ?? TimeSpan.FromMilliseconds(250);
         if (_pollInterval <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(pollInterval));
+        _errorReporter = errorReporter;
     }
 
     public async Task StartAsync(
@@ -517,8 +527,9 @@ public sealed class WindowsCompanionEventSource : ICompanionEventSource
             }
             catch (Exception exception)
             {
-                global::System.Diagnostics.Trace.TraceError(
-                    "Dudu fullscreen poll failed: {0}", exception);
+                // Fail-closed to hidden is preserved; the failure now also
+                // leaves an operation-named diagnostic instead of only Trace.
+                ReportFailure("fullscreen-poll", exception);
                 fullscreen = true;
             }
 
@@ -582,8 +593,7 @@ public sealed class WindowsCompanionEventSource : ICompanionEventSource
         try { await task; }
         catch (Exception exception)
         {
-            global::System.Diagnostics.Trace.TraceError(
-                "Dudu native callback '{0}' failed: {1}", operation, exception);
+            ReportFailure(operation, exception);
         }
         finally
         {
@@ -593,6 +603,9 @@ public sealed class WindowsCompanionEventSource : ICompanionEventSource
             }
         }
     }
+
+    private void ReportFailure(string operation, Exception exception) =>
+        WindowsCompanionRuntime.ReportStaticFailure(_errorReporter, operation, exception);
 
     private async Task RunCallbackAsync(Func<Task> callback, CancellationToken cancellationToken)
     {
@@ -633,6 +646,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
     private readonly bool _initialUserVisible;
     private readonly Func<Preferences, CancellationToken, Task>? _onPreferencesChanged;
     private readonly IPresentationEnvironmentSink? _presentationEnvironment;
+    private readonly IAppHostErrorReporter? _errorReporter;
     private readonly object _lifecycleGate = new();
     private readonly object _callbackSync = new();
     private readonly HashSet<Task> _callbackTasks = new();
@@ -650,7 +664,8 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         ICompanionEventSource events,
         bool initialUserVisible,
         Func<Preferences, CancellationToken, Task>? onPreferencesChanged,
-        IPresentationEnvironmentSink? presentationEnvironment = null)
+        IPresentationEnvironmentSink? presentationEnvironment = null,
+        IAppHostErrorReporter? errorReporter = null)
     {
         _host = host ?? throw new ArgumentNullException(nameof(host));
         _overlay = overlay ?? throw new ArgumentNullException(nameof(overlay));
@@ -661,6 +676,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         _initialUserVisible = initialUserVisible;
         _onPreferencesChanged = onPreferencesChanged;
         _presentationEnvironment = presentationEnvironment;
+        _errorReporter = errorReporter;
     }
 
     public static async Task<WindowsCompanionRuntime> CreateAsync(
@@ -681,7 +697,8 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         bool initialUserVisible = true,
         Func<Preferences, CancellationToken, Task>? onPreferencesChanged = null,
         IPresentationEnvironmentSink? presentationEnvironment = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IAppHostErrorReporter? errorReporter = null)
     {
         ArgumentNullException.ThrowIfNull(openHome);
         if (trayCommandHandler is null && trayCommandHandlerFactory is null)
@@ -692,7 +709,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         }
         var fullscreen = new FullscreenDetector();
         isFullscreen ??= fullscreen.IsForegroundFullscreen;
-        var events = new WindowsCompanionEventSource(fullscreen);
+        var events = new WindowsCompanionEventSource(fullscreen, errorReporter: errorReporter);
         OverlayWindowHost? overlay = null;
         TrayIconService? tray = null;
         GlobalHotkeyService? hotkey = null;
@@ -708,12 +725,13 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                 {
                     _ = events.HandleWindowMessage(message, wParam, lParam);
                 },
-                cancellationToken: cancellationToken);
+                cancellationToken: cancellationToken,
+                errorReporter: errorReporter);
             var handler = trayCommandHandler
                 ?? (command => trayCommandHandlerFactory!(lifecycle
                     ?? throw new InvalidOperationException("Lifecycle is not composed."))(command));
-            tray = new TrayIconService(commandHandler: handler);
-            hotkey = new GlobalHotkeyService();
+            tray = new TrayIconService(commandHandler: handler, errorReporter: errorReporter);
+            hotkey = new GlobalHotkeyService(errorReporter: errorReporter);
             lifecycle = new AppLifecycleCoordinator(
                 host,
                 new OverlayLifecycleAdapter(overlay),
@@ -725,7 +743,8 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                 clock,
                 tray,
                 openHome,
-                initialUserVisible: initialUserVisible);
+                initialUserVisible: initialUserVisible,
+                errorReporter: errorReporter);
             if (initializeOverlay is not null)
             {
                 await initializeOverlay(overlay);
@@ -739,7 +758,8 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                 events,
                 initialUserVisible,
                 onPreferencesChanged,
-                presentationEnvironment);
+                presentationEnvironment,
+                errorReporter);
         }
         catch
         {
@@ -750,7 +770,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                 catch (Exception exception)
                 {
                     lifecycleCleanupFailed = true;
-                    Trace.TraceError("Dudu partial startup lifecycle cleanup failed: {0}", exception);
+                    ReportStaticFailure(errorReporter, "partial-startup-lifecycle-cleanup", exception);
                 }
             }
             if (lifecycle is null || lifecycleCleanupFailed)
@@ -761,14 +781,14 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                 }
                 catch (Exception exception)
                 {
-                    Trace.TraceError("Dudu partial startup overlay cleanup failed: {0}", exception);
+                    ReportStaticFailure(errorReporter, "partial-startup-overlay-cleanup", exception);
                 }
             }
 
             try { hotkey?.Dispose(); }
             catch (Exception exception)
             {
-                Trace.TraceError("Dudu partial startup hotkey cleanup failed: {0}", exception);
+                ReportStaticFailure(errorReporter, "partial-startup-hotkey-cleanup", exception);
             }
             if (lifecycle is null || lifecycleCleanupFailed)
             {
@@ -777,7 +797,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                     try { await tray.DisposeAsync(); }
                     catch (Exception exception)
                     {
-                        Trace.TraceError("Dudu partial startup tray cleanup failed: {0}", exception);
+                        ReportStaticFailure(errorReporter, "partial-startup-tray-cleanup", exception);
                     }
                 }
             }
@@ -785,7 +805,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
             try { await events.DisposeAsync(); }
             catch (Exception exception)
             {
-                Trace.TraceError("Dudu partial startup event cleanup failed: {0}", exception);
+                ReportStaticFailure(errorReporter, "partial-startup-event-cleanup", exception);
             }
             throw;
         }
@@ -857,6 +877,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                 {
                     // The global shortcut is convenience-only: another app may
                     // already own Ctrl+Alt+D. Losing it must never fail startup.
+                    ReportFailure("hotkey-attach", exception);
                     Trace.TraceWarning("Dudu global hotkey unavailable: {0}", exception.Message);
                 }
 
@@ -872,6 +893,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                     // or the notification area unavailable. The overlay and
                     // settings remain usable, and the icon is recreated on
                     // TaskbarCreated.
+                    ReportFailure("tray-attach", exception);
                     Trace.TraceWarning("Dudu tray icon unavailable: {0}", exception.Message);
                 }
             });
@@ -888,22 +910,22 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
             try { await _events.DisposeAsync(); }
             catch (Exception exception)
             {
-                Trace.TraceError("Dudu partial runtime event cleanup failed: {0}", exception);
+                ReportFailure("partial-runtime-event-cleanup", exception);
             }
             try { await _overlay.InvokeOnOwnerAsync(_hotkey.Dispose); }
             catch (Exception exception)
             {
-                Trace.TraceError("Dudu partial runtime hotkey cleanup failed: {0}", exception);
+                ReportFailure("partial-runtime-hotkey-cleanup", exception);
                 try { _hotkey.Dispose(); }
                 catch (Exception fallbackException)
                 {
-                    Trace.TraceError("Dudu partial runtime hotkey fallback dispose failed: {0}", fallbackException);
+                    ReportFailure("partial-runtime-hotkey-fallback-dispose", fallbackException);
                 }
             }
             try { await _lifecycle.DisposeAsync(); }
             catch (Exception exception)
             {
-                Trace.TraceError("Dudu partial runtime lifecycle cleanup failed: {0}", exception);
+                ReportFailure("partial-runtime-lifecycle-cleanup", exception);
             }
             throw;
         }
@@ -943,24 +965,24 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         try { await _events.DisposeAsync(); }
         catch (Exception exception)
         {
-            Trace.TraceError("Dudu runtime event shutdown failed: {0}", exception);
+            ReportFailure("runtime-event-shutdown", exception);
         }
         _hotkey.Triggered -= OnHotkeyTriggered;
         try { await _overlay.InvokeOnOwnerAsync(_hotkey.Dispose); }
         catch (Exception exception)
         {
-            Trace.TraceError("Dudu runtime hotkey shutdown failed: {0}", exception);
+            ReportFailure("runtime-hotkey-shutdown", exception);
             try { _hotkey.Dispose(); }
             catch (Exception fallbackException)
             {
-                Trace.TraceError("Dudu runtime hotkey fallback dispose failed: {0}", fallbackException);
+                ReportFailure("runtime-hotkey-fallback-dispose", fallbackException);
             }
         }
         await DrainCallbacksAsync();
         try { await _lifecycle.DisposeAsync(); }
         catch (Exception exception)
         {
-            Trace.TraceError("Dudu runtime lifecycle shutdown failed: {0}", exception);
+            ReportFailure("runtime-lifecycle-shutdown", exception);
         }
     }
 
@@ -991,10 +1013,13 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         }
         catch (Exception exception)
         {
-            Trace.TraceError("Dudu native callback '{0}' failed: {1}", operation, exception);
+            ReportFailure(operation, exception);
         }
         lock (_callbackSync) _callbackTasks.Remove(callback);
     }
+
+    private void ReportFailure(string operation, Exception exception) =>
+        ReportStaticFailure(_errorReporter, operation, exception);
 
     private async Task DrainCallbacksAsync()
     {
@@ -1051,6 +1076,32 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
 
     private void OnHotkeyTriggered(object? sender, EventArgs args) =>
         TrackCallback(() => _lifecycle.OnHotkeyAsync(), "hotkey");
+
+    /// <summary>
+    /// Reports a partial-startup/shutdown cleanup failure from a static
+    /// context through the shared AppHost sink when one was composed,
+    /// falling back to a Trace line with the operation name plus the
+    /// exception type/HResult only. Never throws and never changes the
+    /// caller's cleanup behavior.
+    /// </summary>
+    internal static void ReportStaticFailure(
+        IAppHostErrorReporter? errorReporter,
+        string operation,
+        Exception exception)
+    {
+        if (errorReporter is not null)
+        {
+            try { errorReporter.Report(operation, exception); }
+            catch { }
+            return;
+        }
+
+        Trace.TraceError(
+            "Dudu runtime operation '{0}' failed: {1} (0x{2:X8})",
+            operation,
+            exception.GetType().FullName,
+            exception.HResult);
+    }
 }
 
 internal static class StartupVisibilityGate
