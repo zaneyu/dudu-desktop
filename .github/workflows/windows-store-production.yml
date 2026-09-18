@@ -21,9 +21,11 @@ env:
 jobs:
   production-store-package:
     name: Build production Store MSIX (win-x64)
-    # This label must be assigned to a dedicated Windows 11 x64 runner with
-    # the interactive Windows SDK/WACK tooling required by package-store.ps1.
-    runs-on: [self-hosted, Windows, X64, dudu-store]
+    # This is a deliberate free-tier trial on GitHub's Windows x64 image. The
+    # package script still requires an actual WACK PASS before an artifact is
+    # accepted. If the hosted image cannot provide WACK's active user session,
+    # move this job back to the documented self-hosted Windows runner.
+    runs-on: windows-latest
     environment: microsoft-store-production
     timeout-minutes: 90
     permissions:
