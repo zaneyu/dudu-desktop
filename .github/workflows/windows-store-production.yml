@@ -91,6 +91,17 @@ jobs:
             -ExpectedPartnerCenterName $env:PARTNER_CENTER_NAME `
             -ExpectedPartnerCenterPublisher $env:PARTNER_CENTER_PUBLISHER
 
+      - name: Upload Store diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DuduDesktop-${{ inputs.store_version }}-win-x64-store-diagnostics
+          path: |
+            artifacts/store-package-metadata/
+            artifacts/store-package/
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Write package checksum to the job summary
         shell: pwsh
         run: |
