@@ -286,9 +286,9 @@ Partner Center's Product Identity page. GitHub Free private repositories do
 not reliably expose environment-scoped secrets to this workflow, so the
 secrets must be repository-level for the hosted-runner path:
 
-- `DUDU_PARTNER_CENTER_NAME`
-- `DUDU_PARTNER_CENTER_PUBLISHER`
-- `DUDU_PARTNER_CENTER_PUBLISHER_DISPLAY_NAME`
+- `DUDU_STORE_PARTNER_CENTER_NAME`
+- `DUDU_STORE_PARTNER_CENTER_PUBLISHER`
+- `DUDU_STORE_PARTNER_CENTER_PUBLISHER_DISPLAY_NAME`
 
 The workflow retains the `microsoft-store-production` environment as a future
 protection boundary, but it does not use environment-scoped copies of these

@@ -54,9 +54,9 @@ jobs:
       - name: Apply Partner Center identity in the ephemeral worktree
         shell: pwsh
         env:
-          PARTNER_CENTER_NAME: ${{ secrets.DUDU_PARTNER_CENTER_NAME }}
-          PARTNER_CENTER_PUBLISHER: ${{ secrets.DUDU_PARTNER_CENTER_PUBLISHER }}
-          PARTNER_CENTER_PUBLISHER_DISPLAY_NAME: ${{ secrets.DUDU_PARTNER_CENTER_PUBLISHER_DISPLAY_NAME }}
+          PARTNER_CENTER_NAME: ${{ secrets.DUDU_STORE_PARTNER_CENTER_NAME }}
+          PARTNER_CENTER_PUBLISHER: ${{ secrets.DUDU_STORE_PARTNER_CENTER_PUBLISHER }}
+          PARTNER_CENTER_PUBLISHER_DISPLAY_NAME: ${{ secrets.DUDU_STORE_PARTNER_CENTER_PUBLISHER_DISPLAY_NAME }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:PARTNER_CENTER_NAME) -or
               [string]::IsNullOrWhiteSpace($env:PARTNER_CENTER_PUBLISHER) -or
@@ -82,8 +82,8 @@ jobs:
       - name: Build and validate production Store package
         shell: pwsh
         env:
-          PARTNER_CENTER_NAME: ${{ secrets.DUDU_PARTNER_CENTER_NAME }}
-          PARTNER_CENTER_PUBLISHER: ${{ secrets.DUDU_PARTNER_CENTER_PUBLISHER }}
+          PARTNER_CENTER_NAME: ${{ secrets.DUDU_STORE_PARTNER_CENTER_NAME }}
+          PARTNER_CENTER_PUBLISHER: ${{ secrets.DUDU_STORE_PARTNER_CENTER_PUBLISHER }}
         run: |
           pwsh scripts/package-store.ps1 `
             -Version $env:STORE_VERSION `
