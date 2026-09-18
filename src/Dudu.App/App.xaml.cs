@@ -30,6 +30,7 @@ public sealed partial class App : Application
     public App()
     {
         InitializeComponent();
+        SubscribeGlobalCrashReporting();
         _dispatcherQueue = DispatcherQueue.GetForCurrentThread()
             ?? throw new InvalidOperationException("Dudu must start on a WinUI dispatcher thread.");
         _uiDispatcher = new AwaitableUiDispatcher(
@@ -298,6 +299,55 @@ public sealed partial class App : Application
         }
 
         Trace.TraceError("Dudu startup failed: {0}", exception);
+    }
+
+    /// <summary>
+    /// Subscribes the last-chance handlers that persist otherwise-invisible
+    /// field crashes to <c>startup-failure.log</c> (redacted). Each handler
+    /// delegates to <see cref="GlobalCrashReporting"/> and never throws out
+    /// of the handler. The WinUI handler deliberately does not mark the
+    /// exception handled, so the process still terminates as before — now
+    /// with a persisted record of why.
+    /// </summary>
+    private void SubscribeGlobalCrashReporting()
+    {
+        UnhandledException += OnUnhandledException;
+        AppDomain.CurrentDomain.UnhandledException += OnDomainUnhandledException;
+        TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
+    }
+
+    private static void OnUnhandledException(
+        object sender,
+        Microsoft.UI.Xaml.UnhandledExceptionEventArgs e)
+    {
+        GlobalCrashReporting.ReportCurrentUser(
+            GlobalCrashReporting.PhaseUnhandledUi,
+            e.Exception);
+    }
+
+    private static void OnDomainUnhandledException(
+        object? sender,
+        global::System.UnhandledExceptionEventArgs e) =>
+        GlobalCrashReporting.ReportCurrentUser(
+            GlobalCrashReporting.PhaseUnhandledDomain,
+            e.ExceptionObject as Exception);
+
+    private static void OnUnobservedTaskException(
+        object? sender,
+        UnobservedTaskExceptionEventArgs e)
+    {
+        GlobalCrashReporting.ReportCurrentUser(
+            GlobalCrashReporting.PhaseUnobservedTask,
+            e.Exception);
+        try
+        {
+            // The failure is now persisted; observing it here avoids a
+            // nondeterministic teardown at finalizer time with no context.
+            e.SetObserved();
+        }
+        catch
+        {
+        }
     }
 
     private static AppActivationArguments? TryGetAppActivation()

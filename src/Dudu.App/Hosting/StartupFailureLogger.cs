@@ -50,7 +50,12 @@ public static class StartupFailureLogger
         }
     }
 
-    private static string Redact(string value)
+    /// <summary>
+    /// Redacts URLs and secret-shaped values. Reused by
+    /// <see cref="FileDiagnosticLoggerProvider"/> so both on-disk sinks share
+    /// one redaction rule.
+    /// </summary>
+    internal static string Redact(string value)
     {
         var redacted = UrlPattern.Replace(value, "[redacted-url]");
         return SecretPattern.Replace(

@@ -70,6 +70,7 @@ public sealed class WindowsCompanionBootstrap : IAsyncDisposable
         {
             // The secondary has already sent its one-byte activation. It must
             // not construct AppHost, the overlay, tray, or hotkey services.
+            ReportSecondaryExit();
             await _singleInstance.DisposeAsync();
             return false;
         }
@@ -191,6 +192,31 @@ public sealed class WindowsCompanionBootstrap : IAsyncDisposable
         cancellationToken.CanBeCanceled
             ? await operation.WaitAsync(cancellationToken)
             : await operation;
+
+    /// <summary>
+    /// Records the secondary-instance exit to Trace and the
+    /// <c>diagnostics.log</c> file sink. A secondary never touches the crash
+    /// counter (only primary runs count as failed runs), so without this line
+    /// its silent exit was indistinguishable from a crash that left no trace.
+    /// Best-effort and never throws.
+    /// </summary>
+    private static void ReportSecondaryExit()
+    {
+        const string message =
+            "Dudu secondary instance forwarded activation to the primary and is exiting.";
+        Trace.TraceInformation(message);
+        try
+        {
+            FileDiagnosticLoggerProvider.AppendRedactedLine(
+                AppPaths.ForCurrentUser().Logs,
+                "Dudu.SingleInstance",
+                Microsoft.Extensions.Logging.LogLevel.Information,
+                message);
+        }
+        catch
+        {
+        }
+    }
 
     private Task RouteActivationAsync(AppActivation activation)
     {
