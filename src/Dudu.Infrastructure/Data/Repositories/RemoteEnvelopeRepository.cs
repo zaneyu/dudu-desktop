@@ -1,3 +1,4 @@
+using System.Globalization;
 using Dudu.Core.Abstractions;
 using Dudu.Core.Models;
 using Microsoft.Data.Sqlite;
@@ -120,15 +121,47 @@ public sealed class RemoteEnvelopeRepository : SqliteRepository, IRemoteEnvelope
         if (retention < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(retention));
         // An envelope is only prunable once both its receipt and its deliver-after moment are older
         // than the retention window: a future-scheduled note must survive even if it was received
-        // long ago. Comparisons are lexicographic over ISO-8601 roundtrip ("O") strings, which order
-        // chronologically when all values carry the same UTC offset — ReceivedUtc is normalized on
-        // write, and DeliverAfterUtc arrives verbatim from the relay in the same format.
-        var cutoff = Utc(utcNow - retention);
+        // long ago. Instants are compared in C# rather than in SQL because the relay-supplied
+        // timestamp strings must be stored VERBATIM: they are bound into the encryption AAD, so
+        // rewriting them (even to an equivalent instant) breaks Reveal. Lexicographic SQL
+        // comparison would misorder instants rendered with different UTC offsets, so candidates
+        // are selected by receipt age (received_utc is normalized on write) and each
+        // deliver-after instant is parsed before deciding.
+        var cutoff = utcNow - retention;
         await using var connection = await OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = "DELETE FROM remote_envelopes WHERE received_utc <= $cutoff AND (deliver_after_utc IS NULL OR deliver_after_utc <= $cutoff);";
-        Add(command, "$cutoff", cutoff);
-        return await command.ExecuteNonQueryAsync(cancellationToken);
+        await using var select = connection.CreateCommand();
+        select.CommandText = "SELECT message_id, deliver_after_utc FROM remote_envelopes WHERE received_utc <= $cutoff;";
+        Add(select, "$cutoff", Utc(cutoff));
+        var prunable = new List<string>();
+        await using (var reader = await select.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var id = reader.GetString(0);
+                var deliverAfter = reader.IsDBNull(1) ? null : reader.GetString(1);
+                if (deliverAfter is null || (TryParseUtc(deliverAfter, out var due) && due <= cutoff))
+                {
+                    prunable.Add(id);
+                }
+                // A malformed deliver-after stays visible in listings (treated as due),
+                // so it is never pruned here: only the user consuming it removes it.
+            }
+        }
+
+        if (prunable.Count == 0)
+        {
+            return 0;
+        }
+
+        await using var delete = connection.CreateCommand();
+        var names = prunable.Select((_, index) => "$id" + index).ToArray();
+        delete.CommandText = $"DELETE FROM remote_envelopes WHERE message_id IN ({string.Join(",", names)});";
+        for (var i = 0; i < prunable.Count; i++)
+        {
+            Add(delete, names[i], prunable[i]);
+        }
+
+        return await delete.ExecuteNonQueryAsync(cancellationToken);
     }
 
     /// <summary>True only for a parsable deliver-after later than <paramref name="now"/>. An
@@ -159,6 +192,13 @@ public sealed class RemoteEnvelopeRepository : SqliteRepository, IRemoteEnvelope
         if (messageId.Length > 256) throw new ArgumentException("Remote message IDs cannot exceed 256 characters.", nameof(messageId));
     }
     private static void AddInsert(SqliteCommand c,RemoteEnvelope e,string sql){c.CommandText=sql;Add(c,"$id",e.MessageId);Add(c,"$ciphertext",e.Ciphertext);Add(c,"$key",e.EphemeralPublicKey);Add(c,"$nonce",e.Nonce);Add(c,"$tag",e.AuthenticationTag);Add(c,"$deliverAfter",e.DeliverAfterUtc);Add(c,"$received",Utc(e.ReceivedUtc));Add(c,"$salt",e.HkdfSalt);Add(c,"$createdUtc",e.CreatedUtc);}
+
+    private static bool TryParseUtc(string value, out DateTimeOffset parsed) =>
+        DateTimeOffset.TryParse(
+            value,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+            out parsed);
     private static RemoteEnvelope Read(SqliteDataReader r)=>new(r.GetString(0),(byte[])r[1],r.IsDBNull(2)?null:(byte[])r[2],r.IsDBNull(3)?null:(byte[])r[3],r.IsDBNull(4)?null:(byte[])r[4],r.IsDBNull(5)?null:r.GetString(5),ReadUtc(r[6])){HkdfSalt=r.IsDBNull(7)?null:(byte[])r[7],CreatedUtc=r.IsDBNull(8)?null:r.GetString(8)};
 
     private static async Task RollbackSavepointAsync(SqliteConnectionLease connection, CancellationToken cancellationToken)

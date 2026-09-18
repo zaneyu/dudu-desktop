@@ -20,6 +20,7 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
         _context = context ?? throw new ArgumentNullException(nameof(context));
         RefreshCommand = new AsyncRelayCommand((CancellationToken ct) => RefreshAsync(ct));
         SaveLocalNoteCommand = new AsyncRelayCommand((CancellationToken ct) => SaveLocalNoteAsync(ct));
+        NewNoteCommand = new RelayCommand(NewNote);
         DeleteLocalNoteCommand = new AsyncRelayCommand<LocalLoveNote>((item, ct) => DeleteLocalNoteAsync(item, ct));
         RevealRemoteNoteCommand = new AsyncRelayCommand<RemoteEnvelope>((item, ct) => RevealRemoteNoteAsync(item, ct));
         SaveOpenedNoteCommand = new AsyncRelayCommand<object?>((item, ct) => SaveOpenedNoteAsync(item, ct));
@@ -28,6 +29,7 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
 
     public IAsyncRelayCommand RefreshCommand { get; }
     public IAsyncRelayCommand SaveLocalNoteCommand { get; }
+    public IRelayCommand NewNoteCommand { get; }
     public IAsyncRelayCommand<LocalLoveNote> DeleteLocalNoteCommand { get; }
     public IAsyncRelayCommand<RemoteEnvelope> RevealRemoteNoteCommand { get; }
     public IAsyncRelayCommand<object?> SaveOpenedNoteCommand { get; }
@@ -96,8 +98,18 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
                 : SelectedNote with { Text = text, Enabled = DraftEnabled };
             await _context.LocalNotes.SaveToJarAsync(note, cancellationToken);
             await MutateAsync(() => Replace(note), cancellationToken);
-            SelectedNote = note;
+            NewNote();
         }, "oki saved to the note jar");
+
+    /// <summary>Clears the editor for a fresh note. Runs after every save so typing
+    /// fresh text afterward creates a new note instead of silently overwriting the
+    /// one just saved.</summary>
+    public void NewNote()
+    {
+        SelectedNote = null;
+        DraftText = string.Empty;
+        DraftEnabled = true;
+    }
 
     public Task DeleteLocalNoteAsync(LocalLoveNote? note, CancellationToken cancellationToken = default)
     {

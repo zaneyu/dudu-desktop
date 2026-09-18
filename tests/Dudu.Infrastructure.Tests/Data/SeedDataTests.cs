@@ -56,22 +56,29 @@ public sealed class SeedDataTests
     }
 
     [Fact]
-    public async Task Deleted_default_is_absent_until_explicit_reseeding_restores_it()
+    public async Task Deleted_default_stays_deleted_across_reinitialization_and_explicit_reseed()
     {
         await using var fixture = await SeedFixture.CreateAsync();
         var cancellationToken = TestContext.Current.CancellationToken;
-        var before = await fixture.Repository.ListAsync(cancellationToken);
 
         await fixture.Repository.DeleteAsync("default-note-09", cancellationToken);
+
+        // Simulate the next process launch: drop the cached initialization so
+        // InitializeAsync really re-runs its seed step.
+        SqliteConnection.ClearAllPools();
+        fixture.Database.InvalidateInitialization();
         await fixture.Database.InitializeAsync(cancellationToken);
 
         var remaining = await fixture.Repository.ListAsync(cancellationToken);
         Assert.DoesNotContain(remaining, note => note.Id == "default-note-09");
         Assert.Equal(11, remaining.Count);
 
+        // An explicit reseed is a no-op once the watermark exists, too.
         await SeedData.SeedAsync(fixture.Connection, cancellationToken);
 
-        Assert.Equal(before, await fixture.Repository.ListAsync(cancellationToken));
+        remaining = await fixture.Repository.ListAsync(cancellationToken);
+        Assert.DoesNotContain(remaining, note => note.Id == "default-note-09");
+        Assert.Equal(11, remaining.Count);
     }
 
     private sealed class SeedFixture : IAsyncDisposable

@@ -127,6 +127,11 @@ public sealed class RelayClient : IRelayClient
     {
         var response = await SendAuthenticatedAsync(HttpMethod.Post, "/v1/devices/pairing-code", cancellationToken);
         var body = await ReadAsync(response, RelayJsonContext.Default.CreatePairingCodeResponseDto, cancellationToken);
+        if (string.IsNullOrWhiteSpace(body.Code))
+        {
+            throw new RelayProtocolException("The relay returned an empty pairing code.");
+        }
+
         return new RelayPairingCode(body.Code, ParseUtc(body.ExpiresUtc, "expiresUtc"));
     }
 

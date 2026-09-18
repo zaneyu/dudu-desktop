@@ -147,6 +147,17 @@ public static class WindowsCompanionProductionComposition
                 "The Windows companion composition requires Windows.");
         }
 
+        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 26100))
+        {
+            // The app targets Windows 11 24H2 (build 26100) for its WinRT and
+            // Win32 surface. Failing here records a clear os-version phase in
+            // startup-failure.log instead of a cryptic native error later.
+            throw new StartupPhaseException(
+                "os-version",
+                new PlatformNotSupportedException(
+                    "Dudu Desktop requires Windows 11 version 24H2 (build 26100) or newer."));
+        }
+
         var paths = AppPaths.ForCurrentUser();
         // Runs only in the primary instance, so secondary launches never count
         // as failed runs. The counter is incremented before anything is
@@ -340,8 +351,18 @@ public static class WindowsCompanionProductionComposition
                         gate: petGate);
                     notificationService = new AppNotificationService(new WindowsAppNotificationSink());
                     AppNotificationService invokedNotifications = notificationService;
-                    AppNotificationManager.Default.NotificationInvoked += (_, invokedArgs) =>
-                        HandleNotificationInvoked(actions, invokedNotifications, invokedArgs.Arguments);
+                    try
+                    {
+                        AppNotificationManager.Default.NotificationInvoked += (_, invokedArgs) =>
+                            HandleNotificationInvoked(actions, invokedNotifications, invokedArgs.Arguments);
+                    }
+                    catch (Exception exception)
+                    {
+                        // Toast activation is optional: a broken Windows App
+                        // Runtime registration must never fail startup. Durable
+                        // events still reach the user through the pet bubble.
+                        Trace.TraceWarning("Dudu toast activation unavailable: {0}", exception.Message);
+                    }
                     presentationGateway = new PresentationCoordinator(
                         new PresentationPolicy(PresentationMinimumSilentInterval),
                         notificationService,
@@ -499,7 +520,15 @@ public static class WindowsCompanionProductionComposition
                 },
                 deleteLocalDataAsync: async token =>
                 {
-                    await services.GetRequiredService<RemoteSyncService>().StopAsync(token);
+                    // RemoteSyncService only exists when a relay is configured (offline
+                    // builds register OfflinePairingService instead); wiping local data
+                    // must work either way.
+                    var remoteSync = services.GetService<RemoteSyncService>();
+                    if (remoteSync is not null)
+                    {
+                        await remoteSync.StopAsync(token);
+                    }
+
                     await services.GetRequiredService<LocalDataMaintenanceService>()
                         .DeleteAllUserDataAsync(token);
                 },
@@ -684,7 +713,15 @@ public static class WindowsCompanionProductionComposition
             restoreAsync: token => RestoreLatestAsync(services, token),
             deleteLocalDataAsync: async token =>
             {
-                await services.GetRequiredService<RemoteSyncService>().StopAsync(token);
+                // RemoteSyncService only exists when a relay is configured (offline
+                // builds register OfflinePairingService instead); wiping local data
+                // must work either way.
+                var remoteSync = services.GetService<RemoteSyncService>();
+                if (remoteSync is not null)
+                {
+                    await remoteSync.StopAsync(token);
+                }
+
                 await services.GetRequiredService<LocalDataMaintenanceService>()
                     .DeleteAllUserDataAsync(token);
             });

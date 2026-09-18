@@ -13,7 +13,7 @@
 
             <StackPanel Spacing="12">
                 <TextBlock Text="your reminders" Style="{StaticResource SectionHeadingStyle}" />
-                <ListView ItemsSource="{x:Bind ViewModel.Reminders, Mode=OneWay}" SelectionChanged="ReminderList_SelectionChanged" MaxHeight="260" AutomationProperties.AutomationId="RemindersList" AutomationProperties.Name="reminders list">
+                <ListView x:Name="ReminderList" ItemsSource="{x:Bind ViewModel.Reminders, Mode=OneWay}" SelectionChanged="ReminderList_SelectionChanged" MaxHeight="260" AutomationProperties.AutomationId="RemindersList" AutomationProperties.Name="reminders list">
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="models:Reminder">
                             <Grid Margin="4" ColumnSpacing="16">
@@ -77,6 +77,7 @@
                 </ComboBox>
                 <CheckBox Content="reminder enabled" IsChecked="{x:Bind ViewModel.Enabled, Mode=TwoWay}" AutomationProperties.AutomationId="RemindersEnabled" AutomationProperties.Name="reminder enabled" />
                 <Button x:Name="SaveReminderButton" Content="save reminder" Command="{x:Bind ViewModel.SaveCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="RemindersSave" AutomationProperties.Name="save reminder" HorizontalAlignment="Left" />
+                <Button Content="new reminder" Command="{x:Bind ViewModel.NewReminderCommand}" AutomationProperties.AutomationId="RemindersNew" AutomationProperties.Name="new reminder" HorizontalAlignment="Left" />
             </StackPanel>
 
             <StackPanel Spacing="12">

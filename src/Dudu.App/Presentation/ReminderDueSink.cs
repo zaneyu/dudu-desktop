@@ -29,7 +29,21 @@ public sealed class ReminderDueSink : IReminderDueSink
 
     private static DateTimeOffset NextLocalMidnight(DateTimeOffset dueUtc, string timeZoneId)
     {
-        var timeZone = TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
+        TimeZoneInfo timeZone;
+        try
+        {
+            timeZone = TimeZoneInfo.FindSystemTimeZoneById(timeZoneId);
+        }
+        catch (Exception exception) when (exception is TimeZoneNotFoundException
+            or InvalidTimeZoneException
+            or ArgumentException)
+        {
+            // Mirror ReminderEngine.TickAsync: an unknown zone id (e.g. an IANA id on
+            // Windows) falls back to UTC. The occurrence is already committed as
+            // delivered, so throwing here would silently lose the reminder.
+            timeZone = TimeZoneInfo.Utc;
+        }
+
         var midnight = TimeZoneInfo.ConvertTime(dueUtc, timeZone).Date.AddDays(1);
         while (timeZone.IsInvalidTime(midnight))
         {

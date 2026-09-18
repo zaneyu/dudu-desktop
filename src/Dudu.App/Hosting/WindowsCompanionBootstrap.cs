@@ -822,11 +822,32 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
             _hotkey.Triggered += OnHotkeyTriggered;
             await _overlay.InvokeOnOwnerAsync(() =>
             {
-                _hotkey.AttachOwnerWindow(_overlay.Handle);
-                _hotkey.SetGesture(HotkeyGesture.Default);
-                _tray.Attach(
-                    _overlay.Handle,
-                    action => _overlay.InvokeOnOwnerAsync(action));
+                try
+                {
+                    _hotkey.AttachOwnerWindow(_overlay.Handle);
+                    _hotkey.SetGesture(HotkeyGesture.Default);
+                }
+                catch (Exception exception)
+                {
+                    // The global shortcut is convenience-only: another app may
+                    // already own Ctrl+Alt+D. Losing it must never fail startup.
+                    Trace.TraceWarning("Dudu global hotkey unavailable: {0}", exception.Message);
+                }
+
+                try
+                {
+                    _tray.Attach(
+                        _overlay.Handle,
+                        action => _overlay.InvokeOnOwnerAsync(action));
+                }
+                catch (Exception exception)
+                {
+                    // The tray is best-effort too: Explorer may be restarting
+                    // or the notification area unavailable. The overlay and
+                    // settings remain usable, and the icon is recreated on
+                    // TaskbarCreated.
+                    Trace.TraceWarning("Dudu tray icon unavailable: {0}", exception.Message);
+                }
             });
             await StartupVisibilityGate.ApplyAsync(
                 token => _events.StartAsync(_overlay.Handle, this, token),

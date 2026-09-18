@@ -119,6 +119,71 @@ public sealed class Database : IAsyncDisposable, IDisposable
 
     private async Task InitializeCoreAsync()
     {
+        try
+        {
+            await InitializeCoreInnerAsync();
+            return;
+        }
+        catch (SqliteException exception) when (IsCorruption(exception))
+        {
+            // A corrupt canonical database (torn write, AV quarantine remnant,
+            // disk error) otherwise fails every launch — including crash-loop
+            // safe mode, which still needs this same database. Quarantine the
+            // unreadable file and start fresh instead of crash-looping forever.
+        }
+
+        QuarantineCorruptDatabase();
+        await InitializeCoreInnerAsync();
+    }
+
+    private static bool IsCorruption(SqliteException exception) =>
+        exception.SqliteErrorCode is 11 or 26;
+
+    private void QuarantineCorruptDatabase()
+    {
+        try
+        {
+            SqliteConnection.ClearAllPools();
+            Directory.CreateDirectory(_options.BackupDirectory);
+            if (File.Exists(_options.DatabasePath))
+            {
+                var timestamp = DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss");
+                var quarantine = Path.Combine(
+                    _options.BackupDirectory,
+                    $"dudu-corrupt-{timestamp}-{Guid.NewGuid():N}.db");
+                File.Move(_options.DatabasePath, quarantine);
+            }
+
+            foreach (var suffix in new[] { "-wal", "-shm", "-journal" })
+            {
+                try
+                {
+                    var sidecar = _options.DatabasePath + suffix;
+                    if (File.Exists(sidecar))
+                    {
+                        File.Delete(sidecar);
+                    }
+                }
+                catch (IOException)
+                {
+                }
+                catch (UnauthorizedAccessException)
+                {
+                }
+            }
+        }
+        catch (IOException)
+        {
+            // Best-effort: the retry below surfaces the real failure if the
+            // quarantine itself could not be completed.
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
+
+    private async Task InitializeCoreInnerAsync()
+    {
         Directory.CreateDirectory(Path.GetDirectoryName(_options.DatabasePath)
             ?? throw new InvalidOperationException("The database path has no directory."));
         Directory.CreateDirectory(_options.BackupDirectory);

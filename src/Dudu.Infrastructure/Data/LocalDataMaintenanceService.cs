@@ -80,8 +80,13 @@ public sealed class LocalDataMaintenanceService
                     DELETE FROM pet_placements;
                     DELETE FROM preferences;
                     DELETE FROM profiles;
+                    DELETE FROM seed_state;
                     """;
                 await command.ExecuteNonQueryAsync(cancellationToken);
+                // Reseed inside the same transaction: a crash between the wipe
+                // and the reseed must never leave every table empty, and the
+                // seed watermark is re-created here so the defaults return.
+                await SeedData.SeedAsync(connection, transaction, cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
             }
             catch
@@ -89,8 +94,6 @@ public sealed class LocalDataMaintenanceService
                 await transaction.RollbackAsync(CancellationToken.None);
                 throw;
             }
-
-            await SeedData.SeedAsync(connection, cancellationToken);
         }
 
         DeleteFiles(_options.BackupDirectory, "*.db", cancellationToken);

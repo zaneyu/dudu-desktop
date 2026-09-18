@@ -14,7 +14,7 @@
             <StackPanel Spacing="12">
                 <TextBlock Text="local note jar" Style="{StaticResource SectionHeadingStyle}" />
                 <TextBlock x:Name="LoveNotesDailyLimit" TextWrapping="Wrap" AutomationProperties.AutomationId="LoveNotesDailyLimit" AutomationProperties.Name="daily note limit" />
-                <ListView ItemsSource="{x:Bind ViewModel.LocalNotes, Mode=OneWay}" SelectionChanged="LocalNoteList_SelectionChanged" MaxHeight="220" AutomationProperties.AutomationId="LoveNotesLocalList" AutomationProperties.Name="local note jar list">
+                <ListView ItemsSource="{x:Bind ViewModel.LocalNotes, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.SelectedNote, Mode=TwoWay}" SelectionChanged="LocalNoteList_SelectionChanged" MaxHeight="220" AutomationProperties.AutomationId="LoveNotesLocalList" AutomationProperties.Name="local note jar list">
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="models:LocalLoveNote">
                             <TextBlock Text="{x:Bind Text}" TextWrapping="Wrap" Margin="4" />
@@ -25,6 +25,7 @@
                 <CheckBox Content="include this note in dudus local choices" IsChecked="{x:Bind ViewModel.DraftEnabled, Mode=TwoWay}" AutomationProperties.AutomationId="LoveNotesDraftEnabled" AutomationProperties.Name="include this note in dudus local choices" />
                 <StackPanel Spacing="8">
                     <Button Content="save note" Command="{x:Bind ViewModel.SaveLocalNoteCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="LoveNotesSave" AutomationProperties.Name="save note" />
+                    <Button Content="new note" Command="{x:Bind ViewModel.NewNoteCommand}" AutomationProperties.AutomationId="LoveNotesNew" AutomationProperties.Name="new note" />
                     <Button Content="delete selected" Command="{x:Bind ViewModel.DeleteLocalNoteCommand}" CommandParameter="{x:Bind ViewModel.SelectedNote}" AutomationProperties.AutomationId="LoveNotesDelete" AutomationProperties.Name="delete selected" />
                     <Button Content="let dudu choose" Command="{x:Bind ViewModel.ShowLocalNoteCommand}" AutomationProperties.AutomationId="LoveNotesChoose" AutomationProperties.Name="let dudu choose" />
                 </StackPanel>

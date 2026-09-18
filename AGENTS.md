@@ -465,6 +465,119 @@ temporary files must be gone.
 - Use the existing privacy tests and adversarial regression tests as part of any
   remote-sync change.
 
+## Diagnostics and logging
+
+Status note: the crash/sync/chrome logging described below is implemented but
+not yet merged. It lives as uncommitted changes in three isolated worktrees,
+all branched from `cc66b12`:
+`.worktrees/logging-p0` (global crash handlers + file sink + crash guard),
+`.worktrees/logging-p1` (relay/sync visibility), `.worktrees/logging-p2`
+(chrome + data-layer visibility). Review and merge those worktrees before
+treating this section as authoritative for `main`.
+
+### Log files on disk (all under `%LocalAppData%\DuduDesktop\logs\`)
+
+- `startup-failure.log` — `src/Dudu.App/Hosting/StartupFailureLogger.cs`.
+  Redacted (URLs and token-shaped values replaced before persistence), 64 KiB
+  trim-to-recent cap. Written for startup/self-test failures and now for every
+  last-chance crash (P0): phases `self-test`, `bootstrap`, `os-version`,
+  `db-init`, plus `unhandled-ui` (`Application.UnhandledException`),
+  `unhandled-domain` (`AppDomain.UnhandledException`), `unobserved-task`
+  (`TaskScheduler.UnobservedTaskException`, observed after persisting).
+  Reporting entry point: `src/Dudu.App/Hosting/GlobalCrashReporting.cs`
+  (phase constants `PhaseUnhandledUi/Domain/Task`); handlers are subscribed in
+  `App()` and never throw. The UI handler does not set `Handled` — crash
+  behavior is preserved, now with a record.
+- `diagnostics.log` — `src/Dudu.App/Hosting/FileDiagnosticLogger.cs`
+  (`FileDiagnosticLoggerProvider`, 128 KiB trim-to-recent cap, swallows its own
+  I/O errors, same redaction rules as `StartupFailureLogger`). Wired via
+  `AddFileDiagnosticLogging(paths)` in
+  `WindowsCompanionProductionComposition`, so `AppHost.ResolveErrorReporter`
+  now finds a file-backed `ILoggerFactory` instead of falling back to
+  `Trace`+`Console.Error`. `Trace.*` remains as a secondary signal only.
+- `startup-crash-count` (in the data root, not `logs/`) — consecutive failed
+  runs for `StartupCrashGuard`; `BeginRun` now records the count and an
+  explicit safe-mode entry to `diagnostics.log` + `Trace` (never to
+  `startup-failure.log`). Counter format and `MarkCleanRun` semantics are
+  unchanged.
+
+### Logging surfaces and rules for new code
+
+- Relay/remote-sync path: `src/Dudu.Infrastructure/Logging/PrivacySafeLog.cs`
+  is the ONLY allowed surface. Callers must not call `ILogger` directly for
+  anything touching the relay or an envelope. Event IDs: `1001` poll ok,
+  `1002` relay failed (status + category), `1003` envelope rejected
+  (message ID + reason), `1004` self-test step failed, `1005`
+  `SyncStateProbeFailed` (on-demand `GetStateAsync` transient failures —
+  previously swallowed silently), `1006` `SyncLoopTerminal`
+  (`protocol-backoff` / `needs-repair` / drain faults), `1007` `SyncLoopRetry`
+  (logged in ADDITION to the `_reportError` callback, never instead of it),
+  `1008` `RelayStagingCleanupFailed`, `1009` `RelayStagingPromoted` (replaces
+  the old generic 401 `promoted-staged-token` line). Every method carries only
+  counts, status codes, fixed tags, exception-type names, or envelope GUIDs.
+- Chrome/data path: failures route through `IAppHostErrorReporter`
+  (`AppHost.ErrorReporter`, shared with `AppLifecycleCoordinator`,
+  overlay, tray, hotkey, event source, presentation and notification sinks)
+  where one is composed, else legacy diagnostic, else a `Trace` line with
+  operation + exception type/HResult only. Operation names in use:
+  `hotkey-attach`, `hotkey-set-gesture`, `tray-attach`, `tray-recreate`,
+  `taskbar-tray-recreate`, `overlay-create`, `overlay-dispose`,
+  `overlay-message-loop`, `fullscreen-poll` (fail-closed to hidden, unchanged),
+  native callbacks (`session-lock/unlock`, `suspend`, `resume`,
+  `display-change`, `taskbar-created`, `hotkey`), `remote-note-notify`,
+  `reminder-notify`, `presentation-tick`, `toast-notify`,
+  `startup-chrome-attach`, `partial-startup-*` / `partial-runtime-*` /
+  `runtime-*-shutdown` cleanup ops, `shutdown-host`, `shutdown-overlay`,
+  `shutdown-tray`. All best-effort/fail-closed behavior is unchanged —
+  logging only, report-and-(re)throw where the original threw.
+- Data-layer failure phases recorded via `StartupFailureLogger`
+  (report-and-(re)throw, ordering guarantees untouched):
+  `Database.InitializationFailurePhase = "db-init"`,
+  `DpapiSecretStore` `ReadFailurePhase = "secret-read"` /
+  `WriteFailurePhase = "secret-write"` (absent reads, idempotent deletes,
+  cancellations, and validation never report),
+  `DatabaseBackupService.PruneFailurePhase = "backup-prune"`
+  (best-effort prune, still swallowed) and the same phase on
+  `LocalDataMaintenanceService` sweep failure (still propagates).
+- Never log note plaintext, tokens, pairing codes, keys, ciphertext, URLs, or
+  request/response bodies. `DesktopKeyService` must never take an `ILogger`
+  (enforced by a structural test in `PrivacyBoundaryTests`). `Trace`
+  fallbacks carry type+HResult only, never message/stack; full exceptions go
+  to the reporter sink only.
+- Relay worker (`relay/`): keep the no-PII rule — per-route category counters
+  only (`route`, `method`, `status code`, error class), never bodies, headers,
+  tokens, or envelope fields. Not yet implemented; `router.ts` still logs one
+  generic line.
+
+### How to diagnose errors
+
+Symptom-first lookup (data root overridable via `DUDU_DATA_ROOT`):
+
+- App never opens / exits immediately: read `logs\startup-failure.log`
+  (newest entry first — check `phase=`); cross-check `startup-crash-count`
+  and `diagnostics.log` safe-mode lines for 3+ consecutive failed runs.
+- Pet disappears, tray icon or hotkey stops working: search `diagnostics.log`
+  for `tray-attach`, `tray-recreate`, `hotkey-attach`, `overlay-create`,
+  `fullscreen-poll`, `session-lock`, `suspend`, `display-change`.
+- Notes stop arriving / Connection page stale: search for `1005`/`1006`/`1007`
+  (probe failures, terminal loop state, retries) and `remote-sync-protocol`
+  reports; `1009` confirms a staged-token promotion after an interrupted
+  key rotation; repeated `1003` with reason `oversize` means poison envelopes
+  are being acked-and-skipped by design.
+- Unopened-note or settings data loss after crash: check for `db-init`,
+  `secret-read`, `secret-write`, `backup-prune` phases; secret-write ordering
+  (token before device ID) is a recovery invariant — do not "fix" it.
+- Relay-side 5xx spike: `wrangler tail`, correlate `route` + status code +
+  error class; never ask for or paste request bodies.
+- Tests for any of the above: `FieldDiagnosticsContractTests`,
+  `FileDiagnosticLoggerTests`, `GlobalCrashReportingTests`,
+  `StartupCrashGuardDiagnosticsTests`, `ChromeDiagnosticsTests`,
+  `SinkDiagnosticsTests`, `DataFailureDiagnosticsTests`,
+  `DpapiSecretStoreDiagnosticsTests`, plus the extended `RemoteSyncServiceTests`
+  / `RelayClientTests` leak assertions (follow the `Logs_never_include`
+  marker pattern). `Dudu.App.Tests` cannot execute on macOS (WinUI) — it
+  compiles there and runs on Windows CI.
+
 ## Release handoff
 
 Before handing the installer to anyone:

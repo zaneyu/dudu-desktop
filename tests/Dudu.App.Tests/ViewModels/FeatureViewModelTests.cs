@@ -1,5 +1,6 @@
 using Dudu.App.Overlay;
 using Dudu.App.Hosting;
+using Dudu.App.Presentation;
 using Dudu.App.System;
 using Dudu.App.ViewModels;
 using Dudu.Core.Abstractions;
@@ -9,6 +10,7 @@ using Dudu.Core.Focus;
 using Dudu.Core.Models;
 using Dudu.Core.Notes;
 using Dudu.Core.Pet;
+using Dudu.Core.Reminders;
 using Dudu.Core.Tasks;
 using Dudu.Core.Time;
 using Xunit;
@@ -54,6 +56,94 @@ public sealed class FeatureViewModelTests
         await viewModel.CompleteCommand.ExecuteAsync(reminder);
 
         Assert.Equal(["repository.complete", "pet.dismiss"], fixture.Events);
+    }
+
+    [Fact]
+    public async Task Saving_a_note_clears_the_editor_so_fresh_text_creates_a_new_note()
+    {
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        var viewModel = new LoveNotesViewModel(fixture.Context);
+
+        viewModel.DraftText = "first";
+        await viewModel.SaveLocalNoteCommand.ExecuteAsync(null);
+
+        Assert.Null(viewModel.SelectedNote);
+        Assert.Equal(string.Empty, viewModel.DraftText);
+        Assert.Equal("first", Assert.Single(fixture.LocalNotes.Notes).Text);
+
+        viewModel.DraftText = "second";
+        await viewModel.SaveLocalNoteCommand.ExecuteAsync(null);
+
+        Assert.Equal(2, fixture.LocalNotes.Notes.Count);
+        Assert.Equal("first", fixture.LocalNotes.Notes[0].Text);
+        Assert.Equal("second", fixture.LocalNotes.Notes[1].Text);
+    }
+
+    [Fact]
+    public async Task Saving_a_reminder_clears_the_editor_so_fresh_text_creates_a_new_reminder()
+    {
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        var viewModel = new RemindersViewModel(fixture.Context);
+
+        viewModel.Title = "first";
+        await viewModel.SaveCommand.ExecuteAsync(null);
+
+        Assert.Null(viewModel.SelectedReminder);
+        Assert.Equal(string.Empty, viewModel.Title);
+        Assert.Single(fixture.Reminders.Items);
+
+        viewModel.Title = "second";
+        await viewModel.SaveCommand.ExecuteAsync(null);
+
+        Assert.Equal(2, fixture.Reminders.Items.Count);
+        Assert.Equal("first", fixture.Reminders.Items[0].Title);
+        Assert.Equal("second", fixture.Reminders.Items[1].Title);
+    }
+
+    [Fact]
+    public async Task Null_selection_reports_select_one_first_instead_of_internals()
+    {
+        var fixture = FeatureFixture.Create();
+        var reminders = new RemindersViewModel(fixture.Context);
+        await reminders.CompleteCommand.ExecuteAsync(null);
+        Assert.Equal("select one first", reminders.ErrorMessage);
+
+        var notes = new LoveNotesViewModel(fixture.Context);
+        await notes.DeleteLocalNoteCommand.ExecuteAsync(null);
+        Assert.Equal("select one first", notes.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task Routine_reminder_with_unknown_time_zone_still_presents_in_utc()
+    {
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        var published = new List<DurableNotification>();
+        var sink = new ReminderDueSink(fixture.Reminders, () => new CapturingGateway(published));
+        var reminder = fixture.Reminder with
+        {
+            Id = LocalReminderDefaults.EveningCheckInId,
+            LocalTimeZoneId = "Nope/Nowhere",
+        };
+        fixture.Reminders.Items.Add(reminder);
+
+        await sink.NotifyAsync(
+            new ReminderOccurrence(reminder.Id, DateTimeOffset.Parse("2026-09-12T10:00:00Z")),
+            ct);
+
+        var item = Assert.Single(published);
+        Assert.Equal(new DateTimeOffset(2026, 9, 13, 0, 0, 0, TimeSpan.Zero), item.ExpiresUtc);
+    }
+
+    private sealed class CapturingGateway(List<DurableNotification> published) : IUnsolicitedPresentationGateway
+    {
+        public Task PublishAsync(DurableNotification item, bool bypassSuppression, CancellationToken cancellationToken)
+        {
+            published.Add(item);
+            return Task.CompletedTask;
+        }
     }
 
     [Fact]

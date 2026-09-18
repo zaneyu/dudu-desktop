@@ -78,11 +78,16 @@ public sealed partial class TasksFocusPage : Page
         }
         else
         {
-            TaskDueValidation.Text = "use a date like 12/31/2026 5:00 pm";
+            TaskDueValidation.Text = $"use a date like {DateHintExample()}";
             TaskDueValidation.Visibility = Visibility.Visible;
             SaveTaskButton.IsEnabled = false;
         }
     }
+
+    /// <summary>Locale-correct date example, rendered with the same general pattern the
+    /// free-text parser accepts, so following the hint always parses.</summary>
+    private static string DateHintExample() =>
+        new DateTimeOffset(2026, 12, 31, 17, 0, 0, TimeSpan.Zero).ToLocalTime().ToString("g");
 
     private void FocusPresetBox_SelectionChanged(object sender, SelectionChangedEventArgs args)
     {

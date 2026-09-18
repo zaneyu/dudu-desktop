@@ -101,6 +101,7 @@ namespace Dudu.App.Pages
 
     public sealed partial class RemindersPage
     {
+        private ListView ReminderList = null!;
         private ComboBox ScheduleBox = null!;
         private TextBox LocalTimeBox = null!;
         private TextBlock RemindersLocalTimeValidation = null!;
@@ -117,6 +118,7 @@ namespace Dudu.App.Pages
 
         private void InitializeComponent()
         {
+            ReminderList = new ListView();
             ScheduleBox = new ComboBox();
             LocalTimeBox = new TextBox();
             RemindersLocalTimeValidation = new TextBlock();

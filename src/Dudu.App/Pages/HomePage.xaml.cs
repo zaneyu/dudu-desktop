@@ -87,7 +87,7 @@ public sealed partial class HomePage : Page
         }
         else
         {
-            SetCountdownTargetValidation(false, "use a date like 12/31/2026 5:00 pm");
+            SetCountdownTargetValidation(false, $"use a date like {DateHintExample()}");
         }
     }
 
@@ -97,6 +97,11 @@ public sealed partial class HomePage : Page
         CountdownTargetValidation.Text = message ?? string.Empty;
         CountdownTargetValidation.Visibility = isValid ? Visibility.Collapsed : Visibility.Visible;
     }
+
+    /// <summary>Locale-correct date example, rendered with the same general pattern the
+    /// free-text parser accepts, so following the hint always parses.</summary>
+    private static string DateHintExample() =>
+        new DateTimeOffset(2026, 12, 31, 17, 0, 0, TimeSpan.Zero).ToLocalTime().ToString("g");
 
     private void MoodBox_SelectionChanged(object sender, SelectionChangedEventArgs args)
     {

@@ -29,13 +29,13 @@ public sealed class DatabaseTests
         await using var fixture = await DatabaseFixture.CreateAsync();
         await using var connection = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken);
         var runner = new MigrationRunner(fixture.Options);
-        // Version 6 is now a real migration; inject the failure at the next
+        // Version 7 is now a real migration; inject the failure at the next
         // version so this test continues to exercise rollback rather than
         // replacing production schema.
-        runner.AddMigration(7, "CREATE TABLE broken(;" );
+        runner.AddMigration(8, "CREATE TABLE broken(;" );
 
         await Assert.ThrowsAsync<SqliteException>(() => runner.RunAsync(connection, TestContext.Current.CancellationToken));
-        Assert.Equal(6, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(7, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
         Assert.True(File.Exists(fixture.Options.DatabasePath));
     }
 
@@ -125,7 +125,7 @@ public sealed class DatabaseTests
         var result = await fixture.Backups.TryRestoreAsync(
             backup!, TestContext.Current.CancellationToken);
         Assert.True(result.Restored);
-        Assert.Equal(6, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(7, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -666,11 +666,11 @@ public sealed class DatabaseTests
         Assert.True(result.Restored, result.ToString());
 
         var preferencesRepository = new PreferencesRepository(fixture.Database);
-        Assert.Equal(6, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(7, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
         _ = await preferencesRepository.GetAsync(TestContext.Current.CancellationToken);
 
         await using var freshDatabase = await Database.OpenAsync(fixture.Options, TestContext.Current.CancellationToken);
-        Assert.Equal(6, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(7, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
         var freshPreferences = new PreferencesRepository(freshDatabase);
         _ = await freshPreferences.GetAsync(TestContext.Current.CancellationToken);
     }
@@ -950,6 +950,156 @@ public sealed class DatabaseTests
         Assert.True(
             recoveryFiles.Any(path => path.Contains(DatabaseBackupService.RecoverySuffix, StringComparison.Ordinal)),
             string.Join(Environment.NewLine, recoveryFiles));
+    }
+
+    [Fact]
+    public async Task Initialize_quarantines_a_corrupt_database_and_starts_fresh()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var profiles = new ProfileRepository(fixture.Database);
+        await profiles.SaveAsync(new Profile("Before", true), TestContext.Current.CancellationToken);
+
+        // Simulate the next process launch finding a torn write: drop the
+        // shared initialization so this InitializeAsync really re-runs.
+        SqliteConnection.ClearAllPools();
+        await File.WriteAllTextAsync(
+            fixture.Options.DatabasePath,
+            "not a sqlite database",
+            TestContext.Current.CancellationToken);
+        fixture.Database.InvalidateInitialization();
+
+        await fixture.Database.InitializeAsync(TestContext.Current.CancellationToken);
+
+        // The unreadable file is preserved for forensics, and the fresh
+        // database is usable (seeded defaults, no stale profile).
+        Assert.Single(Directory.GetFiles(fixture.Options.BackupDirectory, "dudu-corrupt-*.db"));
+        Assert.Null(await profiles.GetAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(12, (await new LocalNoteRepository(fixture.Database)
+            .ListEnabledAsync(TestContext.Current.CancellationToken)).Count);
+    }
+
+    [Fact]
+    public async Task Prune_compares_deliver_after_chronologically_across_utc_offsets()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var repository = new RemoteEnvelopeRepository(fixture.Database);
+        var cancellationToken = TestContext.Current.CancellationToken;
+        // Cutoff renders as +00:00. Both rows are received long ago; only their
+        // deliver-after instants differ, each rendered in a non-UTC offset whose
+        // lexical order disagrees with chronological order.
+        var now = new DateTimeOffset(2026, 9, 20, 0, 0, 0, TimeSpan.Zero);
+        var upcoming = new RemoteEnvelope(
+            "upcoming", [1], null, null, null,
+            "2026-09-19T20:00:00-05:00", // 2026-09-20T01:00Z: future, but lexically below the cutoff
+            new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        var stale = new RemoteEnvelope(
+            "stale", [2], null, null, null,
+            "2026-09-19T15:00:00+08:00", // 2026-09-19T07:00Z: past, but lexically above the cutoff
+            new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero));
+        Assert.True(await repository.TryInsertAsync(upcoming, cancellationToken));
+        Assert.True(await repository.TryInsertAsync(stale, cancellationToken));
+
+        var pruned = await repository.PruneExpiredAsync(now, TimeSpan.Zero, cancellationToken);
+
+        Assert.Equal(1, pruned);
+        Assert.NotNull(await repository.GetAsync("upcoming", cancellationToken));
+        Assert.Null(await repository.GetAsync("stale", cancellationToken));
+        // Relay-supplied timestamps stay byte-for-byte verbatim: they are bound
+        // into the encryption AAD, so even an equivalent-instant rewrite would
+        // break Reveal.
+        Assert.Equal(
+            "2026-09-19T20:00:00-05:00",
+            (await repository.GetAsync("upcoming", cancellationToken))?.DeliverAfterUtc);
+    }
+
+    [Fact]
+    public async Task Record_advance_returns_false_on_a_lost_compare_and_set_race()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var repository = new ReminderRepository(fixture.Database);
+        var reminder = new Reminder("cas", "CAS", null, true, new RecurrenceRule.Once(), "UTC",
+            QuietHoursBehavior.DeliverImmediately, MissedOccurrencePolicy.LatestOnly,
+            DateTimeOffset.Parse("2026-09-12T09:00:00Z"));
+        await repository.SaveAsync(reminder, cancellationToken);
+
+        // A concurrent edit wins first: the due instant moves under us.
+        await using (var connection = await fixture.Database.CreateConnectionAsync(cancellationToken))
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "UPDATE reminders SET next_due_utc = $next WHERE id = 'cas';";
+            command.Parameters.AddWithValue("$next", "2026-09-13T09:00:00+00:00");
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        var stale = reminder;
+        var occurrence = new ReminderOccurrence("cas", DateTimeOffset.Parse("2026-09-12T09:00:00Z"));
+        Assert.False(await repository.RecordOccurrencesAndAdvanceAsync(
+            stale, [occurrence], DateTimeOffset.Parse("2026-09-13T09:00:00Z"), cancellationToken));
+    }
+
+    [Fact]
+    public async Task Concurrent_active_starts_yield_exactly_one_session()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var repository = new FocusSessionRepository(fixture.Database);
+        for (var round = 0; round < 20; round++)
+        {
+            using var barrier = new Barrier(8);
+            var attempts = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ =>
+                Task.Run(async () =>
+                {
+                    barrier.SignalAndWait(TimeSpan.FromSeconds(30));
+                    return await repository.TryCreateActiveAsync(
+                        NewRunningSession(), TestContext.Current.CancellationToken);
+                })));
+            Assert.Single(attempts, won => won);
+
+            await using (var connection = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken))
+            await using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "DELETE FROM focus_sessions;";
+                await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+            }
+        }
+
+        static FocusSession NewRunningSession()
+        {
+            var now = DateTimeOffset.UtcNow;
+            return new FocusSession(Guid.NewGuid(), null, now, now.AddMinutes(25), TimeSpan.Zero, FocusStatus.Running, now);
+        }
+    }
+
+    [Fact]
+    public async Task Non_io_restore_failure_invalidates_cached_initialization()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var profiles = new ProfileRepository(fixture.Database);
+        await profiles.SaveAsync(new Profile("Current", true), TestContext.Current.CancellationToken);
+        var backup = await fixture.Backups.CreatePreMigrationBackupAsync(TestContext.Current.CancellationToken);
+        var runsBefore = fixture.Database.InitializationRunCount;
+
+        var failingInstall = new DatabaseBackupService(
+            fixture.Options,
+            moveFile: (source, destination) =>
+            {
+                if (destination == fixture.Options.DatabasePath)
+                {
+                    throw new InvalidOperationException("injected install failure");
+                }
+
+                File.Move(source, destination);
+            });
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => failingInstall.TryRestoreAsync(
+            backup!, TestContext.Current.CancellationToken));
+
+        // The cached initialization was dropped, so the next initialize really
+        // re-runs against the rolled-back original instead of skipping it.
+        await fixture.Database.InitializeAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(runsBefore + 1, fixture.Database.InitializationRunCount);
+        Assert.Equal("Current", (await profiles.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
+        Assert.Equal(7, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]

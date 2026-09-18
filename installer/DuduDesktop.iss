@@ -26,6 +26,11 @@ PrivilegesRequired=lowest
 ; Brief said SetupArchitecture=x64 (not a real directive); controller ruling: ArchitecturesAllowed/ArchitecturesInstallIn64BitMode.
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+; The app targets Windows 11 24H2 (build 26100) for its WinRT/Win32 surface.
+; Refusing to install on older Windows turns a guaranteed first-start crash
+; into a clear installer message. Keep in sync with the os-version startup
+; gate in WindowsCompanionProductionComposition.CreateRuntimeAsync.
+MinVersion=10.0.26100
 OutputDir=..\artifacts
 OutputBaseFilename=DuduDesktop-{#AppVersion}-win-x64-private
 Compression=lzma2

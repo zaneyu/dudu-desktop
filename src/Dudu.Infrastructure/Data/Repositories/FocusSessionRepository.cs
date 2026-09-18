@@ -6,6 +6,13 @@ namespace Dudu.Infrastructure.Data.Repositories;
 
 public sealed class FocusSessionRepository : SqliteRepository, IFocusSessionRepository
 {
+    /// <summary>Serializes active-session creation inside this process. The single-active
+    /// invariant is otherwise enforced only by a read-then-write predicate, so two
+    /// overlapping starters (double-clicked start, overlay action racing the settings
+    /// button) could both observe "no active session" and both insert. Cross-process
+    /// starters cannot exist: the single-instance gate guarantees one primary.</summary>
+    private static readonly SemaphoreSlim CreationGate = new(1, 1);
+
     public FocusSessionRepository(Database database) : base(database) { }
     internal FocusSessionRepository(Database database, SqliteTransactionContext context) : base(database, context) { }
     public async Task<FocusSession?> GetAsync(Guid id, CancellationToken cancellationToken)
@@ -45,6 +52,19 @@ public sealed class FocusSessionRepository : SqliteRepository, IFocusSessionRepo
     }
 
     public async Task<bool> TryCreateActiveAsync(FocusSession session, CancellationToken cancellationToken)
+    {
+        await CreationGate.WaitAsync(cancellationToken);
+        try
+        {
+            return await TryCreateActiveCoreAsync(session, cancellationToken);
+        }
+        finally
+        {
+            CreationGate.Release();
+        }
+    }
+
+    private async Task<bool> TryCreateActiveCoreAsync(FocusSession session, CancellationToken cancellationToken)
     {
         if (IsTransactionBound)
         {

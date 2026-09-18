@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using Dudu.App.ViewModels;
 using Dudu.Core.Models;
 using Microsoft.UI.Xaml;
@@ -21,14 +22,33 @@ public sealed partial class RemindersPage : Page
 
     private async void Page_Loaded(object sender, RoutedEventArgs args)
     {
+        ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
+        ViewModel.PropertyChanged += ViewModel_PropertyChanged;
         await ViewModel.RefreshAsync();
         SyncEditorFromViewModel();
     }
 
+    private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        // The view model clears its selection after every save and on "new
+        // reminder": mirror that into the list highlight and the unbound
+        // editor controls so the form never shows one reminder while another
+        // is selected.
+        if (args.PropertyName == nameof(RemindersViewModel.SelectedReminder))
+        {
+            SyncEditorFromViewModel();
+            if (!Equals(ReminderList.SelectedItem, ViewModel.SelectedReminder))
+            {
+                ReminderList.SelectedItem = ViewModel.SelectedReminder;
+            }
+        }
+    }
+
     private void ReminderList_SelectionChanged(object sender, SelectionChangedEventArgs args)
     {
+        // Editor sync happens in ViewModel_PropertyChanged so programmatic
+        // selection clears (save, new reminder) sync the form too.
         if (sender is ListView list) ViewModel.SelectedReminder = list.SelectedItem as Reminder;
-        SyncEditorFromViewModel();
     }
 
     private void ScheduleBox_SelectionChanged(object sender, SelectionChangedEventArgs args)

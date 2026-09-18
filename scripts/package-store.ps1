@@ -309,9 +309,14 @@ function Assert-AppCertReportStoreReady {
         throw 'Windows App Certification Kit report records an overall FAIL result.'
     }
 
+    # NOTE: resolve RESULT via SelectSingleNode, not the $_.RESULT adapter property:
+    # PowerShell stringifies single-text child elements, so $_.RESULT is already a
+    # System.String and $_.RESULT.InnerText is always $null (which is -notin every
+    # allowlist and would reject valid reports).
     $requiredFailures = @($appCertReport.SelectNodes("//*[local-name()='TEST']") | Where-Object {
         $optional = $_.GetAttribute('OPTIONAL') -eq 'TRUE'
-        $result = $_.RESULT.InnerText
+        $resultNode = $_.SelectSingleNode('RESULT')
+        $result = if ($null -eq $resultNode) { $null } else { $resultNode.InnerText }
         -not $optional -and $result -notin @('PASS', 'WARNING')
     })
     if ($requiredFailures.Count -gt 0) {
@@ -320,7 +325,8 @@ function Assert-AppCertReportStoreReady {
     }
 
     $optionalNonPassCount = @($appCertReport.SelectNodes("//*[local-name()='TEST']") | Where-Object {
-        $_.GetAttribute('OPTIONAL') -eq 'TRUE' -and $_.RESULT.InnerText -ne 'PASS'
+        $optionalResult = $_.SelectSingleNode('RESULT')
+        $_.GetAttribute('OPTIONAL') -eq 'TRUE' -and ($null -eq $optionalResult -or $optionalResult.InnerText -ne 'PASS')
     }).Count
     [pscustomobject]@{
         OverallResult = $overallResult

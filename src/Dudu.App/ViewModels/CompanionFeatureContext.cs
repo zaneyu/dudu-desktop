@@ -334,6 +334,10 @@ public abstract class FeatureViewModelBase : CommunityToolkit.Mvvm.ComponentMode
     protected static string ToUserMessage(Exception exception) =>
         exception switch
         {
+            // Null command parameters mean "nothing selected" (buttons stay enabled
+            // with no selection). This must precede ArgumentException: the raw
+            // "Value cannot be null" text is meaningless to the recipient.
+            ArgumentNullException => "select one first",
             NotSupportedException => exception.Message,
             ArgumentException => exception.Message,
             KeyNotFoundException => exception.Message,

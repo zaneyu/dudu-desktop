@@ -276,6 +276,33 @@ public sealed class DatabaseBackupService
 
                 return new RestoreResult(false, RestoreFailure.RestoreFailed, backupPath, resultException);
             }
+            catch when (installAttempted)
+            {
+                // A non-IO failure after the replacement was installed (cancellation
+                // mid-migration, an unexpected throw from a seam): roll the staged
+                // originals back best-effort, then drop the cached initialization
+                // before rethrowing — the canonical file is already the new
+                // database, and every later connection must not skip migrations
+                // and reconciliation on it.
+                foreach (var (_, stagedPath) in stagedFiles.AsEnumerable().Reverse())
+                {
+                    try
+                    {
+                        if (File.Exists(stagedPath))
+                        {
+                            var canonicalPath = stagedFiles.First(item => item.StagedPath == stagedPath).CanonicalPath;
+                            File.Move(stagedPath, canonicalPath, overwrite: true);
+                        }
+                    }
+                    catch (Exception rollbackException) when (
+                        rollbackException is IOException or UnauthorizedAccessException)
+                    {
+                    }
+                }
+
+                _database.InvalidateInitialization();
+                throw;
+            }
             finally
             {
                 if (File.Exists(temporaryPath))

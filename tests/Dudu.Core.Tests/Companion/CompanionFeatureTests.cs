@@ -74,6 +74,22 @@ public sealed class CompanionFeatureTests
     }
 
     [Fact]
+    public void Leap_day_anniversary_matches_feb_28_in_non_leap_years()
+    {
+        Assert.True(new MonthDay(2, 29).Matches(new DateOnly(2024, 2, 29)));
+        Assert.True(new MonthDay(2, 29).Matches(new DateOnly(2025, 2, 28)));
+        Assert.False(new MonthDay(2, 29).Matches(new DateOnly(2025, 3, 1)));
+        Assert.False(new MonthDay(2, 28).Matches(new DateOnly(2025, 2, 27)));
+
+        var selected = SeasonalOutfitPolicy.Select(
+            new DateOnly(2025, 2, 28),
+            new SeasonalDates(Anniversary: new MonthDay(2, 29), Birthday: null),
+            availableKeys: ["base", "anniversary"]);
+
+        Assert.Equal("anniversary", selected);
+    }
+
+    [Fact]
     public Task Manual_request_bypasses_unsolicited_cap() =>
         CompanionAssertions.ManualRequestReturnsNoteAfterCapAsync();
 

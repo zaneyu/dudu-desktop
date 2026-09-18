@@ -74,7 +74,7 @@ public sealed class ReminderRepository : SqliteRepository, IReminderRepository, 
             AddCompareAndSet(update, reminder, nextDueUtc);
             if (await update.ExecuteNonQueryAsync(cancellationToken) != 1)
             {
-                await transaction.RollbackAsync(cancellationToken);
+                await transaction.RollbackAsync(CancellationToken.None);
                 return false;
             }
 

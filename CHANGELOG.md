@@ -5,6 +5,46 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project is private-use and does not follow public semantic-versioning
 release cadences.
 
+## [Unreleased]
+
+### Fixed
+
+- Harden first-start reliability after install: the global shortcut and
+  tray icon are now best-effort (an already-owned hotkey or an unavailable
+  notification area no longer exits the app), toast activation subscribes
+  best-effort when the Windows App Runtime registration is broken, a
+  corrupt local database is quarantined to `backups/dudu-corrupt-*.db`
+  and recreated instead of crash-looping every launch (including safe
+  mode), and launches on older Windows fail with a clear `os-version`
+  startup phase — the installer now requires Windows 11 24H2
+  (build 26100) up front.
+- Merge the WinUI control resources (`XamlControlsResources`) before the
+  app's custom dictionaries so standard controls resolve their default
+  styles on first launch and in safe mode.
+
+### Fixed (audit batch 2)
+
+- Local data: a corrupt database is quarantined and recreated instead of
+  crash-looping; wipe-and-reseed is a single transaction; restores that
+  fail outside IO/SQLite still drop the cached initialization; reminder
+  compare-and-set rollback no longer observes caller cancellation;
+  envelope pruning compares deliver-after instants (relay timestamp
+  strings stay byte-for-byte verbatim because they are bound into the
+  encryption AAD); default notes are seeded once (deleted defaults stay
+  deleted; full wipe still restores them); concurrent focus starts yield
+  exactly one active session.
+- App behavior: wiping local data works with no relay configured; routine
+  reminders with an unknown time zone fall back to UTC instead of being
+  silently lost; the settings pet timer freezes on its last frame instead
+  of crashing the app; null selections report "select one first"; saving
+  a note/reminder clears the editor (plus explicit New buttons) so fresh
+  input cannot overwrite the just-saved item; date hints follow the
+  device locale; Feb-29 anniversaries/birthdays celebrate on Feb-28 in
+  non-leap years; empty relay pairing codes are rejected loudly.
+- Release tooling: the WACK Store-readiness check no longer rejects valid
+  WARNING reports (the XML adapter already stringifies `RESULT`, so
+  `.InnerText` was always null).
+
 ## [1.0.0-private.1] - 2026-09-13
 
 ### Added

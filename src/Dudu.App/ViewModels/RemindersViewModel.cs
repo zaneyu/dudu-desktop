@@ -39,6 +39,7 @@ public sealed class RemindersViewModel : FeatureViewModelBase
         _bedtimeRitualEnabled = context.CurrentPreferences.BedtimeRitualEnabled;
         RefreshCommand = new AsyncRelayCommand((CancellationToken ct) => RefreshAsync(ct));
         SaveCommand = new AsyncRelayCommand((CancellationToken ct) => SaveAsync(ct));
+        NewReminderCommand = new RelayCommand(NewReminder);
         CompleteCommand = new AsyncRelayCommand<Reminder>((item, ct) => CompleteAsync(item, ct));
         SnoozeCommand = new AsyncRelayCommand<Reminder>((item, ct) => SnoozeAsync(item, ct));
         SaveReminderPreferencesCommand = new AsyncRelayCommand(
@@ -47,6 +48,7 @@ public sealed class RemindersViewModel : FeatureViewModelBase
 
     public IAsyncRelayCommand RefreshCommand { get; }
     public IAsyncRelayCommand SaveCommand { get; }
+    public IRelayCommand NewReminderCommand { get; }
     public IAsyncRelayCommand<Reminder> CompleteCommand { get; }
     public IAsyncRelayCommand<Reminder> SnoozeCommand { get; }
     public IAsyncRelayCommand SaveReminderPreferencesCommand { get; }
@@ -181,8 +183,24 @@ public sealed class RemindersViewModel : FeatureViewModelBase
             await _context.ReminderWriter.SaveAsync(reminder, cancellationToken);
             var saved = reminder;
             await MutateAsync(() => Replace(saved), cancellationToken);
-            SelectedReminder = reminder;
+            NewReminder();
         }, "oki reminder saved");
+
+    /// <summary>Clears the editor for a fresh reminder. Runs after every save so typing
+    /// a fresh title afterward creates a new reminder instead of silently overwriting
+    /// the one just saved.</summary>
+    public void NewReminder()
+    {
+        SelectedReminder = null;
+        Title = string.Empty;
+        Details = null;
+        ScheduleKind = ReminderScheduleKind.Once;
+        LocalTime = new TimeOnly(9, 0);
+        IntervalMinutes = 60;
+        Enabled = true;
+        QuietHoursBehavior = QuietHoursBehavior.WaitUntilQuietHoursEnd;
+        SelectedWeekdays = new HashSet<DayOfWeek> { DayOfWeek.Monday, DayOfWeek.Wednesday, DayOfWeek.Friday };
+    }
 
     public Task CompleteAsync(Reminder? reminder, CancellationToken cancellationToken = default)
     {

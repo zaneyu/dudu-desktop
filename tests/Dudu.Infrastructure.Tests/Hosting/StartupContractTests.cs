@@ -42,6 +42,88 @@ public sealed class StartupContractTests
     }
 
     [Fact]
+    public void Startup_hotkey_and_tray_registration_are_best_effort()
+    {
+        var root = FindRepositoryRoot();
+        var bootstrap = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "Dudu.App",
+            "Hosting",
+            "WindowsCompanionBootstrap.cs"));
+
+        Assert.Contains("_hotkey.SetGesture(HotkeyGesture.Default)", bootstrap);
+        Assert.Contains("Dudu global hotkey unavailable", bootstrap);
+        Assert.Contains("_tray.Attach(", bootstrap);
+        Assert.Contains("Dudu tray icon unavailable", bootstrap);
+    }
+
+    [Fact]
+    public void Startup_toast_activation_subscription_is_best_effort()
+    {
+        var root = FindRepositoryRoot();
+        var composition = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "Dudu.App",
+            "Hosting",
+            "WindowsCompanionProductionComposition.cs"));
+
+        Assert.Contains("NotificationInvoked +=", composition);
+        Assert.Contains("Dudu toast activation unavailable", composition);
+    }
+
+    [Fact]
+    public void Startup_requires_windows_11_24h2_with_a_dedicated_phase()
+    {
+        var root = FindRepositoryRoot();
+        var composition = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "Dudu.App",
+            "Hosting",
+            "WindowsCompanionProductionComposition.cs"));
+
+        Assert.Contains("IsWindowsVersionAtLeast(10, 0, 26100)", composition);
+        Assert.Contains("\"os-version\"", composition);
+
+        var installer = File.ReadAllText(Path.Combine(root, "installer", "DuduDesktop.iss"));
+        Assert.Contains("MinVersion=10.0.26100", installer);
+    }
+
+    [Fact]
+    public void Delete_local_data_does_not_require_a_configured_relay()
+    {
+        var root = FindRepositoryRoot();
+        var composition = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "Dudu.App",
+            "Hosting",
+            "WindowsCompanionProductionComposition.cs"));
+
+        // RemoteSyncService only exists when a relay URL resolves; the offline
+        // wipe must degrade to local-only instead of throwing.
+        Assert.DoesNotContain("GetRequiredService<RemoteSyncService>()", composition);
+        Assert.Contains("GetService<RemoteSyncService>()", composition);
+    }
+
+    [Fact]
+    public void Corrupt_database_is_quarantined_instead_of_crash_looping()
+    {
+        var root = FindRepositoryRoot();
+        var database = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "Dudu.Infrastructure",
+            "Data",
+            "Database.cs"));
+
+        Assert.Contains("dudu-corrupt-", database);
+        Assert.Contains("IsCorruption", database);
+    }
+
+    [Fact]
     public void Safe_mode_does_not_start_the_full_overlay_host()
     {
         var root = FindRepositoryRoot();

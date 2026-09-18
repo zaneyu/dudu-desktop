@@ -149,6 +149,22 @@ public sealed partial class SettingsWindow : UserControl
 
     private void DuduTimer_Tick(object? sender, object args)
     {
+        try
+        {
+            DuduTimer_TickCore();
+        }
+        catch (Exception exception)
+        {
+            // A throw on a DispatcherTimer tick is unhandled and repeats every
+            // 150 ms. Freeze on the last good frame instead of crashing the app.
+            _duduTimer.Stop();
+            DuduCompanionStatus.Text = "dudu art unavailable this run";
+            global::System.Diagnostics.Trace.TraceError("Dudu settings companion tick failed: {0}", exception);
+        }
+    }
+
+    private void DuduTimer_TickCore()
+    {
         if (_duduPack is null) return;
 
         var preferences = _context.Features?.CurrentPreferences ?? Preferences.Default;

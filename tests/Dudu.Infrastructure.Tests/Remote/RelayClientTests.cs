@@ -170,6 +170,29 @@ public sealed class RelayClientTests
             () => client.GetDeviceAsync(TestContext.Current.CancellationToken));
     }
 
+    [Theory]
+    [InlineData(" ")]
+    [InlineData("")]
+    public async Task Empty_pairing_code_response_throws_RelayProtocolException(string code)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            code,
+            expiresUtc = "2026-01-01T00:00:00Z",
+        });
+        var handler = new FakeHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.Created)
+        {
+            Content = JsonContent(json),
+        });
+        var secretStore = new InMemorySecretStore();
+        await secretStore.SetAsync(
+            "relay-desktop-token-v1", Encoding.UTF8.GetBytes("token"), TestContext.Current.CancellationToken);
+        var client = new RelayClient(new HttpClient(handler), secretStore, new RelayOptions(BaseUrl));
+
+        await Assert.ThrowsAsync<RelayProtocolException>(
+            () => client.CreatePairingCodeAsync(TestContext.Current.CancellationToken));
+    }
+
     [Fact]
     public async Task Server_error_response_throws_RelayUnavailableException()
     {
