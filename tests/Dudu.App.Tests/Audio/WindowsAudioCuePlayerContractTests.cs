@@ -22,6 +22,8 @@ public sealed class WindowsAudioCuePlayerContractTests
         var source = File.ReadAllText(Path.Combine("src", "Dudu.App", "Audio", "WindowsAudioCuePlayer.cs"));
 
         Assert.Contains("MediaPlayer", source);
+        Assert.Contains("player.Source = null", source);
+        Assert.DoesNotContain("player.Pause", source);
         Assert.DoesNotContain("SoundPlayer", source);
         Assert.DoesNotContain("http://", source, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("https://", source, StringComparison.OrdinalIgnoreCase);

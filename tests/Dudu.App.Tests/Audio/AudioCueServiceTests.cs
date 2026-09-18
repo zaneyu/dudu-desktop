@@ -10,7 +10,8 @@ public sealed class AudioCueServiceTests
     public async Task Maps_events_to_the_reviewed_pack_pairs()
     {
         var player = new RecordingPlayer();
-        var service = CreateService(player, seed: 0);
+        var now = new MutableClock();
+        var service = CreateService(player, now: now, seed: 0);
 
         foreach (var (eventKind, expected) in new[]
         {
@@ -24,7 +25,49 @@ public sealed class AudioCueServiceTests
             var result = await PlayAsync(service, eventKind);
             Assert.Equal(AudioPlaybackStatus.Completed, result.Status);
             Assert.Contains(player.Played[^1], expected);
+            now.Advance(AudioCueService.GlobalCooldown);
         }
+    }
+
+    [Fact]
+    public async Task Selects_deterministic_cue_variants_within_a_pack()
+    {
+        var now = new MutableClock();
+        var firstPlayer = new RecordingPlayer();
+        var secondPlayer = new RecordingPlayer();
+        var first = CreateService(firstPlayer, now: now, seed: 0, catalog: CreateCatalogWithVariants());
+        var second = CreateService(secondPlayer, now: new MutableClock(), seed: 0, catalog: CreateCatalogWithVariants());
+
+        Assert.Equal(AudioPlaybackStatus.Completed, (await PlayAsync(first, AudioCueEvent.Greeting)).Status);
+        Assert.Equal(AudioPlaybackStatus.Completed, (await PlayAsync(second, AudioCueEvent.Greeting)).Status);
+        Assert.Equal(firstPlayer.Played, secondPlayer.Played);
+        Assert.Contains(firstPlayer.Played[0], new[] { "tata-lala/one.wav", "tata-lala/two.wav" });
+    }
+
+    [Fact]
+    public async Task Failed_playback_does_not_consume_cooldown_or_variant_reservation()
+    {
+        var now = new MutableClock();
+        var player = new RecordingPlayer { FailFirstCall = true };
+        var service = CreateService(player, now: now, catalog: CreateCatalogWithVariants());
+
+        Assert.Equal(AudioPlaybackStatus.Failed, (await PlayAsync(service, AudioCueEvent.Greeting)).Status);
+        Assert.Equal(AudioPlaybackStatus.Completed, (await PlayAsync(service, AudioCueEvent.Greeting)).Status);
+        Assert.Equal("tata-lala/one.wav", player.Played[1]);
+    }
+
+    [Fact]
+    public async Task Cancelled_playback_does_not_consume_cooldown()
+    {
+        var player = new RecordingPlayer { BlockFirstCall = true };
+        var service = CreateService(player);
+        using var cancellation = new CancellationTokenSource();
+        var first = service.TryPlayAsync(AudioCueEvent.Greeting, cancellation.Token);
+        await player.FirstCallStarted.Task.WaitAsync(TestContext.Current.CancellationToken);
+
+        cancellation.Cancel();
+        Assert.Equal(AudioPlaybackStatus.Suppressed, (await first).Status);
+        Assert.Equal(AudioPlaybackStatus.Completed, (await PlayAsync(service, AudioCueEvent.Greeting)).Status);
     }
 
     [Fact]
@@ -134,12 +177,13 @@ public sealed class AudioCueServiceTests
         MutableClock? now = null,
         int seed = 0,
         bool isQuiet = false,
-        EnvironmentFlags? flags = null)
+        EnvironmentFlags? flags = null,
+        AudioCatalog? catalog = null)
     {
         flags ??= new EnvironmentFlags();
         now ??= new MutableClock();
         return new AudioCueService(
-            CreateCatalog(),
+            catalog ?? CreateCatalog(),
             player,
             () => preferences ?? Preferences.Default,
             () => isQuiet,
@@ -158,6 +202,19 @@ public sealed class AudioCueServiceTests
     {
         Pack("bubu-dudu-atata"), Pack("tata-lala"), Pack("dudu-lalala"),
         Pack("dudu-atatata"), Pack("dudu-yapapa"),
+    });
+
+    private static AudioCatalog CreateCatalogWithVariants() => new(new[]
+    {
+        new AudioSoundPack("bubu-dudu-atata", new[] { new AudioCue("bubu-dudu-atata/one.wav", 100, "hash") }),
+        new AudioSoundPack("tata-lala", new[]
+        {
+            new AudioCue("tata-lala/one.wav", 100, "hash"),
+            new AudioCue("tata-lala/two.wav", 100, "hash"),
+        }),
+        new AudioSoundPack("dudu-lalala", new[] { new AudioCue("dudu-lalala/one.wav", 100, "hash") }),
+        new AudioSoundPack("dudu-atatata", new[] { new AudioCue("dudu-atatata/one.wav", 100, "hash") }),
+        new AudioSoundPack("dudu-yapapa", new[] { new AudioCue("dudu-yapapa/one.wav", 100, "hash") }),
     });
 
     private static AudioSoundPack Pack(string id) =>

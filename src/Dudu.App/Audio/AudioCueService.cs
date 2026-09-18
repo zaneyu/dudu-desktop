@@ -20,7 +20,8 @@ public sealed class AudioCueService
     private readonly IAppHostErrorReporter? _errorReporter;
     private readonly object _gate = new();
     private readonly Dictionary<string, DateTimeOffset> _lastPackPlayback = new(StringComparer.Ordinal);
-    private readonly Dictionary<AudioCueEvent, int> _variantIndexes = new();
+    private readonly Dictionary<string, int> _variantIndexes = new(StringComparer.Ordinal);
+    private readonly Dictionary<AudioCueEvent, int> _packIndexes = new();
     private readonly int _seed;
     private DateTimeOffset? _lastPlayback;
     private bool _playbackReserved;
@@ -62,6 +63,8 @@ public sealed class AudioCueService
         try
         {
             AudioCue cue;
+            int cueIndex;
+            int packIndex;
             Preferences preferences;
             lock (_gate)
             {
@@ -69,20 +72,30 @@ public sealed class AudioCueService
                 if (_playbackReserved || now - (_lastPlayback ?? DateTimeOffset.MinValue) < GlobalCooldown)
                     return AudioPlaybackState.Suppressed;
 
-                (packId, cue) = ReserveCue(cueEvent, now);
+                (packId, cue, cueIndex, packIndex) = ReserveCue(cueEvent, now);
                 if (packId is null)
                     return AudioPlaybackState.Suppressed;
                 preferences = _preferences();
                 _playbackReserved = true;
-                _lastPlayback = now;
-                _lastPackPlayback[packId] = now;
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            return await _player.PlayAsync(
+            var result = await _player.PlayAsync(
                 cue,
                 Preferences.ClampSoundVolume(preferences.SoundVolume),
                 cancellationToken).ConfigureAwait(false);
+            if (result.Status is AudioPlaybackStatus.Started or AudioPlaybackStatus.Completed)
+            {
+                lock (_gate)
+                {
+                    var now = _utcNow();
+                    _lastPlayback = now;
+                    _lastPackPlayback[packId!] = now;
+                    _variantIndexes[packId!] = cueIndex + 1;
+                    _packIndexes[cueEvent] = (packIndex + 1) % AudioCueSelection.PacksFor(cueEvent).Count;
+                }
+            }
+            return result;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -113,26 +126,30 @@ public sealed class AudioCueService
             || _isSafeMode();
     }
 
-    private (string? PackId, AudioCue Cue) ReserveCue(AudioCueEvent cueEvent, DateTimeOffset now)
+    private (string? PackId, AudioCue Cue, int CueIndex, int PackIndex) ReserveCue(AudioCueEvent cueEvent, DateTimeOffset now)
     {
         var packs = AudioCueSelection.PacksFor(cueEvent);
-        if (packs.Count == 0) return (null, null!);
+        if (packs.Count == 0) return (null, null!, 0, 0);
         var deterministicSeed = unchecked((uint)(_seed * 31L + (int)cueEvent));
         var start = (int)(deterministicSeed % (uint)packs.Count);
-        var offset = _variantIndexes.TryGetValue(cueEvent, out var previous) ? previous : start;
+        var offset = _packIndexes.TryGetValue(cueEvent, out var previous) ? previous : start;
         for (var attempt = 0; attempt < packs.Count; attempt++)
         {
-            var packId = packs[(offset + attempt) % packs.Count];
+            var packIndex = (offset + attempt) % packs.Count;
+            var packId = packs[packIndex];
             if (_lastPackPlayback.TryGetValue(packId, out var lastPack)
                 && now - lastPack < PackCooldown)
                 continue;
 
             var pack = _catalog.Resolve(packId);
             if (pack.Cues.Count == 0) continue;
-            _variantIndexes[cueEvent] = (offset + attempt + 1) % packs.Count;
-            return (packId, pack.Cues[0]);
+            var cueSeed = unchecked((uint)(_seed * 31L + (int)cueEvent + attempt));
+            var cueIndex = _variantIndexes.TryGetValue(packId, out var previousCue)
+                ? previousCue % pack.Cues.Count
+                : (int)(cueSeed % (uint)pack.Cues.Count);
+            return (packId, pack.Cues[cueIndex], cueIndex, packIndex);
         }
 
-        return (null, null!);
+        return (null, null!, 0, 0);
     }
 }

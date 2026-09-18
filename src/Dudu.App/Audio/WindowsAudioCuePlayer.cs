@@ -38,7 +38,7 @@ public sealed class WindowsAudioCuePlayer : IAudioCuePlayer
         player.MediaFailed += failed;
         using var cancellation = cancellationToken.Register(() =>
         {
-            try { player.Pause(); } catch { }
+            try { player.Source = null; } catch { }
             completion.TrySetResult(AudioPlaybackState.Suppressed);
         });
 
@@ -60,7 +60,7 @@ public sealed class WindowsAudioCuePlayer : IAudioCuePlayer
         {
             player.MediaEnded -= ended;
             player.MediaFailed -= failed;
-            try { player.Pause(); } catch { }
+            try { player.Source = null; } catch { }
         }
     }
 }
