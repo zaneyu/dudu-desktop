@@ -30,7 +30,7 @@ $storePackageProperties = @($appProjectXml.Project.PropertyGroup | Where-Object 
 
 Assert-True "package manifest exists" (Test-Path -LiteralPath $manifestPath)
 Assert-True "Store package project explicitly includes manifest assets" (
-    $appProject -match '<Content Include="PackageAssets/\*\*" CopyToOutputDirectory="PreserveNewest" />'
+    $appProject -match '<Content Include="PackageAssets/\*\*" Condition="''\$\(DuduStorePackage\)'' == ''true''" CopyToOutputDirectory="PreserveNewest" />'
 )
 Assert-True "app project keeps unpackaged mode as the default" (
     $appProject -match '<WindowsPackageType>None</WindowsPackageType>'
