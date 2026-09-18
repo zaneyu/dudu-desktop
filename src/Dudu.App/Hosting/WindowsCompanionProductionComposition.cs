@@ -175,6 +175,7 @@ public static class WindowsCompanionProductionComposition
                 // handoff. The resolved origin is traced at startup without secrets.
                 RelayConfiguration.Resolve(logResolvedBaseUrl: static origin =>
                     Trace.TraceInformation("Dudu relay base URL resolved to {0}.", origin)))
+            .AddFileDiagnosticLogging(paths)
             .AddSingleton<IReminderDueSink>(provider => new ReminderDueSink(
                 provider.GetRequiredService<IReminderRepository>(),
                 () => presentationGateway

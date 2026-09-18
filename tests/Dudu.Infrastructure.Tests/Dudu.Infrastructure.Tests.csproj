@@ -19,8 +19,11 @@
   <ItemGroup>
     <Compile Include="../../src/Dudu.App/Hosting/AppHost.cs" Link="Hosting/AppHost.cs" />
     <Compile Include="../../src/Dudu.App/Hosting/AppPaths.cs" Link="Hosting/AppPaths.cs" />
+    <Compile Include="../../src/Dudu.App/Hosting/FileDiagnosticLogger.cs" Link="Hosting/FileDiagnosticLogger.cs" />
+    <Compile Include="../../src/Dudu.App/Hosting/GlobalCrashReporting.cs" Link="Hosting/GlobalCrashReporting.cs" />
     <Compile Include="../../src/Dudu.App/Hosting/RelayConfiguration.cs" Link="Hosting/RelayConfiguration.cs" />
     <Compile Include="../../src/Dudu.App/Hosting/SelfTestRunner.cs" Link="Hosting/SelfTestRunner.cs" />
+    <Compile Include="../../src/Dudu.App/Hosting/StartupCrashGuard.cs" Link="Hosting/StartupCrashGuard.cs" />
     <Compile Include="../../src/Dudu.App/Hosting/StartupFailureLogger.cs" Link="Hosting/StartupFailureLogger.cs" />
     <Compile Include="../../src/Dudu.App/Animation/AssetManifestLoader.cs" Link="Animation/AssetManifestLoader.cs" />
     <Compile Include="../../src/Dudu.App/Notifications/NotificationActivation.cs" Link="Notifications/NotificationActivation.cs" />
