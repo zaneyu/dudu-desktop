@@ -110,7 +110,7 @@ public static class AudioManifestLoader
                         errors.Add($"cue '{cue.CueId}' duration disagreement.");
 
                     var actualHash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
-                    if (!string.Equals(actualHash, cue.Sha256, StringComparison.OrdinalIgnoreCase))
+                    if (!string.Equals(actualHash, cue.Sha256, StringComparison.Ordinal))
                         errors.Add($"cue '{cue.CueId}' hash mismatch.");
                 }
                 catch (IOException)
@@ -129,9 +129,10 @@ public static class AudioManifestLoader
             return false;
 
         var riffSize = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(4));
-        if (riffSize < 4 || riffSize > bytes.Length - 8)
+        var riffEnd = 8L + riffSize;
+        if (riffSize < 4 || riffEnd > bytes.Length || riffEnd != bytes.Length)
         {
-            error = "has invalid RIFF bounds";
+            error = "has invalid RIFF boundary";
             return false;
         }
 
@@ -141,12 +142,17 @@ public static class AudioManifestLoader
         int byteRate = 0;
         int blockAlign = 0;
         int dataBytes = 0;
-        while (offset + 8 <= bytes.Length)
+        while (offset < riffEnd)
         {
+            if (riffEnd - offset < 8)
+            {
+                error = "has invalid RIFF chunk";
+                return false;
+            }
             var chunkId = bytes.AsSpan(offset, 4);
             var chunkSize = BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(offset + 4));
             var paddedChunkLength = 8L + chunkSize + (chunkSize & 1);
-            if (chunkSize < 0 || paddedChunkLength > bytes.Length - offset)
+            if (chunkSize < 0 || paddedChunkLength > riffEnd - offset)
             {
                 error = "has invalid RIFF chunk";
                 return false;
@@ -182,6 +188,12 @@ public static class AudioManifestLoader
             }
 
             offset += (int)paddedChunkLength;
+        }
+
+        if (offset != riffEnd)
+        {
+                error = "has invalid RIFF boundary";
+            return false;
         }
 
         if (!foundFormat || !foundData || byteRate <= 0 || dataBytes <= 0)

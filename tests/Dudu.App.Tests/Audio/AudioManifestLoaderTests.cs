@@ -34,6 +34,7 @@ public sealed class AudioManifestLoaderTests
             ("extension", fixture => fixture.SetCuePathAsync("bubu-dudu-atata/cue.mp3")),
             ("missing file", fixture => fixture.DeleteCueAsync()),
             ("bad signature", fixture => fixture.ReplaceCueBytesAsync("not-a-wave"u8.ToArray())),
+            ("RIFF boundary", fixture => fixture.AppendCueBytesAsync("outside-container"u8.ToArray())),
             ("non pcm", fixture => fixture.SetPcmFormatAsync(3)),
             ("long duration", fixture => fixture.SetCueDurationAsync(AudioManifestContract.MaxCueDurationMs + 1)),
             ("large file", fixture => fixture.ReplaceCueBytesAsync(new byte[AudioManifestContract.MaxCueFileBytes + 1])),
@@ -176,6 +177,7 @@ public sealed class AudioManifestLoaderTests
         public async Task SetCuePathAsync(string path) { _manifest.Packs[0].Cues[0].FilePath = path; await WriteAsync(); }
         public async Task DeleteCueAsync() { await WriteAsync(); File.Delete(Path.Combine(_root, _manifest.Packs[0].Cues[0].FilePath)); }
         public async Task ReplaceCueBytesAsync(byte[] bytes) { _cueBytes = bytes; await WriteAsync(); }
+        public async Task AppendCueBytesAsync(byte[] suffix) { _cueBytes = [.. _cueBytes, .. suffix]; await WriteAsync(); }
         public async Task SetPcmFormatAsync(short format) { _cueBytes = CreateWave(100, format); await WriteAsync(); }
         public async Task SetCueDurationAsync(int duration) { _manifest.Packs[0].Cues[0].DurationMs = duration; await WriteAsync(); }
         public async Task SetCueHashAsync(string hash) { _manifest.Packs[0].Cues[0].Sha256 = hash; await WriteAsync(); }
