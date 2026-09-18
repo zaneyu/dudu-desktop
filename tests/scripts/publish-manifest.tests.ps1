@@ -111,6 +111,7 @@ try {
         @{ Name = 'second manifest'; Path = 'tata-lala/second-manifest.json'; Content = '{}'; Mutate = $null },
         @{ Name = 'non-private manifest'; Path = $null; Content = $null; Mutate = { param($manifest) $manifest.privateUseOnly = $false } },
         @{ Name = 'unknown pack id'; Path = $null; Content = $null; Mutate = { param($manifest) $manifest.packs[0].packId = 'unknown-pack' } },
+        @{ Name = 'cue under wrong pack directory'; Path = 'unknown-pack/cue-01.wav'; Content = 'wav'; Mutate = { param($manifest) $manifest.packs[0].cues[0].filePath = 'unknown-pack/cue-01.wav' } },
         @{ Name = 'unreferenced WAV'; Path = 'tata-lala/unreferenced.wav'; Content = 'wav'; Mutate = $null }
     )
     foreach ($case in $audioAdversarialCases) {

@@ -102,6 +102,9 @@ function Assert-PrivateAudioReleaseAssetPack {
             if ($relative -notmatch '^(?:[A-Za-z0-9._-]+/)+[A-Za-z0-9._-]+\.wav$') {
                 throw "Private audio release pack contains an unsafe or non-WAV cue path: '$relative'."
             }
+            if ($relative.Split('/')[0] -cne [string]$pack.packId) {
+                throw "Private audio release pack cue path must begin with its owning pack id '$($pack.packId)': '$relative'."
+            }
             if (-not $referenced.Add($relative)) {
                 throw "Private audio release pack references the WAV more than once: '$relative'."
             }
