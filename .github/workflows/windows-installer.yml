@@ -152,7 +152,9 @@ jobs:
         with:
           global-json-file: global.json
       - name: Restore
-        run: dotnet restore DuduDesktop.slnx -p:RestorePackagesWithLockFile=false
+        # The Store wrapper publishes with --no-restore; explicitly restore
+        # the self-contained win-x64 runtime pack that publish needs.
+        run: dotnet restore DuduDesktop.slnx -r win-x64 -p:RestorePackagesWithLockFile=false
       - name: Package private Store MSIX
         id: package_store
         shell: pwsh
