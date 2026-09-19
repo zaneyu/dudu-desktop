@@ -49,7 +49,7 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
 
     public ObservableCollection<TaskItem> ActiveTasks { get; } = [];
     public ObservableCollection<TaskItem> CompletedTasks { get; } = [];
-    public ObservableCollection<FocusSession> FocusHistory { get; } = [];
+    public ObservableCollection<FocusHistoryEntry> FocusHistory { get; } = [];
     public IReadOnlyList<int> FocusPresets { get; } = [15, 25, 45, 60];
 
     public TaskItem? SelectedTask
@@ -132,7 +132,7 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
                 foreach (var task in completed) CompletedTasks.Add(task);
                 ActiveFocus = focus;
                 FocusHistory.Clear();
-                foreach (var session in history) FocusHistory.Add(session);
+                foreach (var session in history) FocusHistory.Add(ToHistoryEntry(session));
                 OnPropertyChanged(nameof(IsFocusActive));
                 // The shell caches pages/view models across visits: a stale pending
                 // confirmation from a previous visit must not resurface on this one.
@@ -279,4 +279,23 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
         var roundedMinutes = Math.Max(0, (int)Math.Ceiling(duration.TotalMinutes));
         return roundedMinutes == 1 ? "1 minute" : $"{roundedMinutes} minutes";
     }
+
+    /// <summary>Projects a raw FocusSession into display-ready text: the enum
+    /// name and UTC timestamp are framework/storage details, not something a
+    /// non-technical user should read in the history list.</summary>
+    private static FocusHistoryEntry ToHistoryEntry(FocusSession session) =>
+        new(FormatStatus(session.Status), session.StartedUtc.ToLocalTime().ToString("g"));
+
+    private static string FormatStatus(FocusStatus status) => status switch
+    {
+        FocusStatus.Running => "running",
+        FocusStatus.Paused => "paused",
+        FocusStatus.Completed => "completed",
+        FocusStatus.EndedEarly => "ended early",
+        _ => status.ToString().ToLowerInvariant(),
+    };
 }
+
+/// <summary>Display-ready projection of a FocusSession for the focus-history
+/// list, so the page never binds directly to the raw enum/UTC fields.</summary>
+public sealed record FocusHistoryEntry(string StatusText, string StartedText);

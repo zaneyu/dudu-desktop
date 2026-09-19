@@ -1060,6 +1060,26 @@ public sealed class FeatureViewModelTests
         Assert.Equal(FocusStatus.EndedEarly, viewModel.ActiveFocus!.Status);
     }
 
+    [Fact]
+    public async Task Focus_history_shows_friendly_status_text_and_local_time()
+    {
+        // Regression: the history list used to bind straight to the raw FocusSession, showing
+        // the bare enum name (e.g. "EndedEarly") and an unconverted UTC timestamp.
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        var startedUtc = DateTimeOffset.Parse("2026-09-12T10:30:00Z");
+        var session = new FocusSession(
+            Guid.NewGuid(), null, startedUtc, null, TimeSpan.Zero, FocusStatus.EndedEarly, startedUtc);
+        await fixture.FocusSessions.SaveAsync(session, ct);
+        var viewModel = new TasksFocusViewModel(fixture.Context);
+
+        await viewModel.RefreshAsync(ct);
+
+        var entry = Assert.Single(viewModel.FocusHistory);
+        Assert.Equal("ended early", entry.StatusText);
+        Assert.Equal(startedUtc.ToLocalTime().ToString("g"), entry.StartedText);
+    }
+
     [Theory]
     [InlineData(true, false, "another focus session is active")]
     [InlineData(false, true, "injected focus repository failure")]
