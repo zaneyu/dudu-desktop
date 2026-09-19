@@ -146,6 +146,12 @@ public sealed class XamlContractTests
         var privacy = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "PrivacyDataPage.xaml"));
         Assert.Contains("AutomationProperties.AutomationId=\"PrivacyConfirmationMessage\"", privacy);
         Assert.Contains("AutomationProperties.AutomationId=\"PrivacyConfirm\"", privacy);
+        // LOW: the Connection page's own destructive-confirmation flow (F3/H3's forget-pairing
+        // path among them) deserves the same automation coverage Privacy's already has.
+        var connection = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "ConnectionPage.xaml"));
+        Assert.Contains("AutomationProperties.AutomationId=\"ConnectionForgetPairing\"", connection);
+        Assert.Contains("AutomationProperties.AutomationId=\"ConnectionConfirm\"", connection);
+        Assert.Contains("AutomationProperties.AutomationId=\"ConnectionCancel\"", connection);
         Assert.Contains("automatic mode checks these dates", allPages);
         var automationIds = Regex.Matches(
                 allPages,

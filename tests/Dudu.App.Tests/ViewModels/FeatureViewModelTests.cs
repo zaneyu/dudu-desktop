@@ -604,12 +604,15 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
-    public async Task Forget_pairing_works_locally_even_while_pairing_is_offline()
+    public async Task Forget_pairing_works_locally_even_while_pairing_needs_repair()
     {
         // F2's escape hatch: unlike revoke/delete above, forgetting the pairing never calls
         // GetStateAsync and must succeed with the relay unreachable (or, in production, with a
-        // secret store DPAPI cannot read) -- that combination is exactly why it exists.
-        var pairing = new FakePairing { State = PairingAvailability.Offline };
+        // secret store DPAPI cannot read) -- that combination is exactly why it exists. Starting
+        // from NeedsRepair (not the default Offline) makes the final Availability assertion below
+        // meaningful: ForgetPairingAsync always forces Availability to Offline regardless of
+        // where it started, and NeedsRepair is the actual scenario this escape hatch exists for.
+        var pairing = new FakePairing { State = PairingAvailability.NeedsRepair };
         var fixture = FeatureFixture.Create(pairing: pairing);
         var viewModel = new ConnectionViewModel(fixture.Context);
 
