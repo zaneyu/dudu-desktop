@@ -117,6 +117,30 @@ public sealed record CompanionLaunchOptions(bool Background, bool SelfTest = fal
         profile?.OnboardingComplete == true && ShouldShowOverlay(preferences);
 }
 
+/// <summary>
+/// Overrides Dudu.Infrastructure's Null* safe defaults for
+/// <see cref="IReminderDueSink"/> and <see cref="IRemoteNoteArrivalSink"/>
+/// with the real WinUI-backed sinks. Extracted out of the composition root so
+/// a real <see cref="IServiceCollection"/> can be built and its resolved
+/// types asserted in a test, instead of only pattern-matching the
+/// composition source as text -- a source-text test still passes with the
+/// registration commented out or reordered.
+/// </summary>
+internal static class ProductionPresentationSinks
+{
+    internal static IServiceCollection AddProductionPresentationSinks(
+        this IServiceCollection services,
+        Func<IUnsolicitedPresentationGateway> gateway)
+    {
+        ArgumentNullException.ThrowIfNull(gateway);
+        return services
+            .AddSingleton<IReminderDueSink>(provider => new ReminderDueSink(
+                provider.GetRequiredService<IReminderRepository>(),
+                gateway))
+            .AddSingleton<IRemoteNoteArrivalSink>(provider => new RemoteNoteArrivalSink(gateway));
+    }
+}
+
 public static class WindowsCompanionProductionComposition
 {
     /// <summary>
@@ -187,6 +211,9 @@ public static class WindowsCompanionProductionComposition
         // captures this variable and resolves the gateway lazily once the
         // rest of the runtime is ready.
         PresentationCoordinator? presentationGateway = null;
+        IUnsolicitedPresentationGateway ResolveGateway() =>
+            presentationGateway
+                ?? throw new InvalidOperationException("The presentation gateway is not ready.");
         var services = new ServiceCollection()
             .AddDuduInfrastructure(
                 new DatabaseOptions(paths.Database, paths.Backups),
@@ -196,13 +223,7 @@ public static class WindowsCompanionProductionComposition
                 RelayConfiguration.Resolve(logResolvedBaseUrl: static origin =>
                     Trace.TraceInformation("Dudu relay base URL resolved to {0}.", origin)))
             .AddFileDiagnosticLogging(paths)
-            .AddSingleton<IReminderDueSink>(provider => new ReminderDueSink(
-                provider.GetRequiredService<IReminderRepository>(),
-                () => presentationGateway
-                    ?? throw new InvalidOperationException("The presentation gateway is not ready.")))
-            .AddSingleton<IRemoteNoteArrivalSink>(provider => new RemoteNoteArrivalSink(
-                () => presentationGateway
-                    ?? throw new InvalidOperationException("The presentation gateway is not ready.")))
+            .AddProductionPresentationSinks(ResolveGateway)
             .BuildServiceProvider();
         var host = new AppHost(services, paths);
         WireDataFailureDiagnostics(services, paths);
