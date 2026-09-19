@@ -35,7 +35,7 @@ public sealed class AudioManifestLoaderTests
             ("missing file", fixture => fixture.DeleteCueAsync()),
             ("bad signature", fixture => fixture.ReplaceCueBytesAsync("not-a-wave"u8.ToArray())),
             ("RIFF boundary", fixture => fixture.AppendCueBytesAsync("outside-container"u8.ToArray())),
-            ("non pcm", fixture => fixture.SetPcmFormatAsync(3)),
+            ("non-PCM", fixture => fixture.SetPcmFormatAsync(3)),
             ("long duration", fixture => fixture.SetCueDurationAsync(AudioManifestContract.MaxCueDurationMs + 1)),
             ("large file", fixture => fixture.ReplaceCueBytesAsync(new byte[AudioManifestContract.MaxCueFileBytes + 1])),
             ("hash mismatch", fixture => fixture.SetCueHashAsync(new string('a', 64))),
@@ -69,8 +69,8 @@ public sealed class AudioManifestLoaderTests
             ["bubu-dudu-atata", "tata-lala", "dudu-lalala", "dudu-atatata", "dudu-yapapa"]);
 
         var nullPackJson = fixture.ManifestJson.Replace(
-            "\"packs\":[",
-            "\"packs\":[null,",
+            "\"Packs\":[",
+            "\"Packs\":[null,",
             StringComparison.Ordinal);
         await fixture.SetRawManifestAsync(nullPackJson);
         var packException = await Assert.ThrowsAsync<AudioManifestException>(() =>
@@ -78,8 +78,8 @@ public sealed class AudioManifestLoaderTests
         Assert.Contains("pack entry is null", packException.Message, StringComparison.Ordinal);
 
         var nullCueJson = fixture.ManifestJson.Replace(
-            "\"cues\":[",
-            "\"cues\":[null,",
+            "\"Cues\":[",
+            "\"Cues\":[null,",
             StringComparison.Ordinal);
         await fixture.SetRawManifestAsync(nullCueJson);
         var cueException = await Assert.ThrowsAsync<AudioManifestException>(() =>
@@ -93,7 +93,7 @@ public sealed class AudioManifestLoaderTests
         await using var fixture = await AudioManifestFixture.CreateAsync(
             ["bubu-dudu-atata", "tata-lala", "dudu-lalala", "dudu-atatata", "dudu-yapapa"]);
         await fixture.SetRawManifestAsync(fixture.ManifestJson.Replace(
-            "\"schemaVersion\":1",
+            "\"SchemaVersion\":1",
             "\"SchemaVersion\":1,\"unexpected\":true",
             StringComparison.Ordinal));
 
@@ -190,12 +190,14 @@ public sealed class AudioManifestLoaderTests
 
         private async Task WriteAsync()
         {
-            var cuePath = _manifest.Packs[0].Cues[0].FilePath;
-            if (AudioManifestContract.IsSafeRelativePath(cuePath))
+            foreach (var cue in _manifest.Packs.SelectMany(pack => pack.Cues))
             {
-                var fullPath = Path.Combine(_root, cuePath);
-                Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-                await File.WriteAllBytesAsync(fullPath, _cueBytes);
+                if (AudioManifestContract.IsSafeRelativePath(cue.FilePath))
+                {
+                    var fullPath = Path.Combine(_root, cue.FilePath);
+                    Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+                    await File.WriteAllBytesAsync(fullPath, _cueBytes);
+                }
             }
 
             Sha256 = Convert.ToHexString(SHA256.HashData(_cueBytes)).ToLowerInvariant();

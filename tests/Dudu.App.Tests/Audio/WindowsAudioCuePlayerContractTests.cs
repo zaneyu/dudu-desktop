@@ -19,7 +19,9 @@ public sealed class WindowsAudioCuePlayerContractTests
     [Fact]
     public void Source_uses_local_media_player_and_does_not_use_sound_player_or_network_urls()
     {
-        var source = File.ReadAllText(Path.Combine("src", "Dudu.App", "Audio", "WindowsAudioCuePlayer.cs"));
+        var root = FindRepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.App", "Audio", "WindowsAudioCuePlayer.cs"));
 
         Assert.Contains("MediaPlayer", source);
         Assert.Contains("player.Source = null", source);
@@ -27,5 +29,19 @@ public sealed class WindowsAudioCuePlayerContractTests
         Assert.DoesNotContain("SoundPlayer", source);
         Assert.DoesNotContain("http://", source, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("https://", source, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "PRODUCT.md")))
+                return directory.FullName;
+
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Repository root was not found from the test output path.");
     }
 }

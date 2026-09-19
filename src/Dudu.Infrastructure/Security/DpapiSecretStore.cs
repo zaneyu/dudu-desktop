@@ -78,8 +78,6 @@ public sealed class DpapiSecretStore : ISecretStore
         ValidateKey(key);
         cancellationToken.ThrowIfCancellationRequested();
 
-        Directory.CreateDirectory(_directory);
-        RestrictDirectoryToCurrentUser(_directory);
         var path = GetPath(key);
         var temporaryPath = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         var plaintext = value.ToArray();
@@ -87,6 +85,8 @@ public sealed class DpapiSecretStore : ISecretStore
 
         try
         {
+            Directory.CreateDirectory(_directory);
+            RestrictDirectoryToCurrentUser(_directory);
             var protectedBytes = ProtectedData.Protect(
                 plaintext,
                 entropy,

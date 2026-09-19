@@ -40,8 +40,8 @@ public sealed class RemindersViewModel : FeatureViewModelBase
         RefreshCommand = new AsyncRelayCommand((CancellationToken ct) => RefreshAsync(ct));
         SaveCommand = new AsyncRelayCommand((CancellationToken ct) => SaveAsync(ct));
         NewReminderCommand = new RelayCommand(NewReminder);
-        CompleteCommand = new AsyncRelayCommand<Reminder>((item, ct) => CompleteAsync(item, ct));
-        SnoozeCommand = new AsyncRelayCommand<Reminder>((item, ct) => SnoozeAsync(item, ct));
+        CompleteCommand = new AsyncRelayCommand<Reminder?>((item, ct) => CompleteAsync(item, ct));
+        SnoozeCommand = new AsyncRelayCommand<Reminder?>((item, ct) => SnoozeAsync(item, ct));
         SaveReminderPreferencesCommand = new AsyncRelayCommand(
             (CancellationToken ct) => SaveReminderPreferencesAsync(ct));
     }
@@ -49,8 +49,8 @@ public sealed class RemindersViewModel : FeatureViewModelBase
     public IAsyncRelayCommand RefreshCommand { get; }
     public IAsyncRelayCommand SaveCommand { get; }
     public IRelayCommand NewReminderCommand { get; }
-    public IAsyncRelayCommand<Reminder> CompleteCommand { get; }
-    public IAsyncRelayCommand<Reminder> SnoozeCommand { get; }
+    public IAsyncRelayCommand<Reminder?> CompleteCommand { get; }
+    public IAsyncRelayCommand<Reminder?> SnoozeCommand { get; }
     public IAsyncRelayCommand SaveReminderPreferencesCommand { get; }
 
     public ObservableCollection<Reminder> Reminders { get; } = [];
@@ -204,9 +204,9 @@ public sealed class RemindersViewModel : FeatureViewModelBase
 
     public Task CompleteAsync(Reminder? reminder, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(reminder);
         return RunAsync(async () =>
         {
+            ArgumentNullException.ThrowIfNull(reminder);
             var now = _context.Clock.UtcNow.ToUniversalTime();
             var zone = ResolveTimeZone(reminder.LocalTimeZoneId);
             var next = ReminderScheduler.NextOccurrence(reminder with { SnoozedUntilUtc = null }, now, zone);
@@ -224,9 +224,9 @@ public sealed class RemindersViewModel : FeatureViewModelBase
 
     public Task SnoozeAsync(Reminder? reminder, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(reminder);
         return RunAsync(async () =>
         {
+            ArgumentNullException.ThrowIfNull(reminder);
             var snoozed = reminder with { SnoozedUntilUtc = _context.Clock.UtcNow.ToUniversalTime().AddMinutes(15) };
             await _context.ReminderWriter.SaveAsync(snoozed, cancellationToken);
             await MutateAsync(() => Replace(snoozed), cancellationToken);

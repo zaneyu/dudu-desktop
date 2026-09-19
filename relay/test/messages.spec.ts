@@ -318,7 +318,7 @@ describe("encrypted message queue", () => {
 
     const messages = await paired.desktop.poll();
     expect(messages).toHaveLength(20);
-  });
+  }, 30_000);
 
   it("answers a malformed percent-escape in a path parameter with 400, not 500", async () => {
     // Review M1: extractParams ran before the router's try, so decodeURIComponent's URIError

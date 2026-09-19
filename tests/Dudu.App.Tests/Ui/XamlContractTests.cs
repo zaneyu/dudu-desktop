@@ -76,7 +76,7 @@ public sealed class XamlContractTests
         var expectedNamedElements = new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
             ["HomePage"] = ["HomeNextReminder", "HomeActiveFocus", "HomePetState", "HomePetAnimation", "HomeActionStatus", "CountdownTargetBox", "CountdownTargetValidation", "HomeSaveCountdownButton", "HomeCheckInSummary", "HomeCheckInHistory", "StartupRecoveryPanel", "StartupRecoveryMessage", "RetryStartupButton"],
-            ["RemindersPage"] = ["ScheduleBox", "LocalTimeBox", "RemindersLocalTimeValidation", "SundayBox", "MondayBox", "TuesdayBox", "WednesdayBox", "ThursdayBox", "FridayBox", "SaturdayBox", "IntervalBox", "QuietHoursBox", "SaveReminderButton"],
+            ["RemindersPage"] = ["ReminderList", "ScheduleBox", "LocalTimeBox", "RemindersLocalTimeValidation", "SundayBox", "MondayBox", "TuesdayBox", "WednesdayBox", "ThursdayBox", "FridayBox", "SaturdayBox", "IntervalBox", "QuietHoursBox", "SaveReminderButton"],
             ["TasksFocusPage"] = ["TaskDueBox", "TaskDueValidation", "SaveTaskButton", "FocusCurrent"],
             ["LoveNotesPage"] = ["LoveNotesDailyLimit", "LoveNotesPendingCount"],
             ["AppearancePage"] = ["ThemeBox"],

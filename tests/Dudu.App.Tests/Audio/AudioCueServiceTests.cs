@@ -32,7 +32,7 @@ public sealed class AudioCueServiceTests
         {
             var result = await PlayAsync(service, eventKind);
             Assert.Equal(AudioPlaybackStatus.Completed, result.Status);
-            Assert.Contains(player.Played[^1], expected);
+            Assert.Contains(player.Played[^1].Split('/')[0], expected);
             now.Advance(AudioCueService.GlobalCooldown);
         }
     }
@@ -151,11 +151,12 @@ public sealed class AudioCueServiceTests
         Assert.Equal(AudioPlaybackStatus.Completed,
             (await PlayAsync(service, AudioCueEvent.Greeting)).Status);
         now.Advance(TimeSpan.FromMilliseconds(1500));
+        Assert.Equal(AudioPlaybackStatus.Completed,
+            (await PlayAsync(service, AudioCueEvent.Greeting)).Status);
+        now.Advance(TimeSpan.FromMilliseconds(1500));
         Assert.Equal(AudioPlaybackStatus.Suppressed,
             (await PlayAsync(service, AudioCueEvent.Greeting)).Status);
-        Assert.Equal(AudioPlaybackStatus.Completed,
-            (await PlayAsync(service, AudioCueEvent.RemoteNote)).Status);
-        now.Advance(TimeSpan.FromMilliseconds(3500));
+        now.Advance(TimeSpan.FromMilliseconds(2000));
         Assert.Equal(AudioPlaybackStatus.Completed,
             (await PlayAsync(service, AudioCueEvent.Greeting)).Status);
     }

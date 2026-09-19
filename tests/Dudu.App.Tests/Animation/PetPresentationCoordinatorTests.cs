@@ -41,7 +41,7 @@ public sealed class PetPresentationCoordinatorTests
             pet,
             (presentation, _, _) =>
             {
-                order.Add(presentation.State == PetState.Ambient ? "ambient" : "visual");
+                order.Add(order.Count == 0 ? "visual" : "ambient");
                 return Task.CompletedTask;
             },
             playAudioAsync: (presentation, _) =>

@@ -135,10 +135,18 @@ public sealed class Database : IAsyncDisposable, IDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
             var connection = new SqliteConnection(ConnectionString(_options));
-            await connection.OpenAsync(cancellationToken);
-            ConfigureConnection(connection);
-            _coordinator.Track(connection);
-            return connection;
+            try
+            {
+                await connection.OpenAsync(cancellationToken);
+                ConfigureConnection(connection);
+                _coordinator.Track(connection);
+                return connection;
+            }
+            catch
+            {
+                await connection.DisposeAsync();
+                throw;
+            }
         }
         finally
         {

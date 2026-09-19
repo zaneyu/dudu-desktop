@@ -73,8 +73,8 @@ public sealed class StartupCrashGuard
     /// Correlates this run with the crash history: always records the
     /// consecutive-failed-run count seen at startup, plus an explicit entry
     /// when that count puts the run in safe mode. Writes to Trace and the
-    /// <c>diagnostics.log</c> file sink only — never to
-    /// <c>startup-failure.log</c>, which is reserved for actual failures.
+    /// <c>diagnostics.log</c> file sink only; the startup failure sink is
+    /// reserved for actual failures.
     /// Best-effort: the counter file format and <see cref="MarkCleanRun"/>
     /// semantics are untouched, and this method never throws.
     /// </summary>
