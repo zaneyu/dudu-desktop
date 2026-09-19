@@ -50,6 +50,13 @@ internal sealed class SchemaThreeFixture : IAsyncDisposable
     public const string ReminderId = "reminder-1";
     public const string TaskId = "task-1";
 
+    /// <summary>local_note_history rows this "used install" accumulated by actually
+    /// being shown notes. Regression coverage for B1: local_note_history.note_id
+    /// REFERENCES local_notes(id) ON DELETE CASCADE, so a migration that rebuilds
+    /// local_notes via DROP TABLE with FK enforcement on would silently cascade-
+    /// delete these unless the migration runner disables enforcement first.</summary>
+    public const int HistoryRowCount = 2;
+
     private SchemaThreeFixture(string root, DatabaseOptions options)
     {
         Root = root;
@@ -155,6 +162,22 @@ internal sealed class SchemaThreeFixture : IAsyncDisposable
                 """;
             task.Parameters.AddWithValue("$id", TaskId);
             await task.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        // Two history rows: one against the user's own note, one against a
+        // shipped default that survives (not one of DeletedDefaultNoteIds).
+        // HistoryRowCount above must track the number of inserts here.
+        await using (var history = connection.CreateCommand())
+        {
+            history.CommandText = """
+                INSERT INTO local_note_history (note_id, shown_utc, local_date, unsolicited)
+                VALUES
+                    ($userNoteId, '2026-01-02T09:00:00Z', '2026-01-02', 0),
+                    ($defaultNoteId, '2026-01-01T09:00:00Z', '2026-01-01', 1);
+                """;
+            history.Parameters.AddWithValue("$userNoteId", UserNoteId);
+            history.Parameters.AddWithValue("$defaultNoteId", ShippedDefaultNotes[0].Id);
+            await history.ExecuteNonQueryAsync(cancellationToken);
         }
     }
 }

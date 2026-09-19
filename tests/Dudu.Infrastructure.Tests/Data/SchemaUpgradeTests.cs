@@ -113,16 +113,44 @@ public sealed class SchemaUpgradeTests
             SchemaThreeFixture.ShippedDefaultNotes.Length - SchemaThreeFixture.DeletedDefaultNoteIds.Length + 1,
             notes.Count);
 
-        await using var connection = await database.CreateConnectionAsync(cancellationToken);
-        await using var reminderCount = connection.CreateCommand();
-        reminderCount.CommandText = "SELECT COUNT(*) FROM reminders WHERE id = $id;";
-        reminderCount.Parameters.AddWithValue("$id", SchemaThreeFixture.ReminderId);
-        Assert.Equal(1L, Convert.ToInt64(await reminderCount.ExecuteScalarAsync(cancellationToken)));
+        // Row-level: the user's own note kept its exact text and stayed enabled,
+        // not just "a note with this id exists" (M4).
+        var userNote = Assert.Single(notes, note => note.Id == SchemaThreeFixture.UserNoteId);
+        Assert.Equal(SchemaThreeFixture.UserNoteText, userNote.Text);
+        Assert.True(userNote.Enabled);
 
-        await using var taskCount = connection.CreateCommand();
-        taskCount.CommandText = "SELECT COUNT(*) FROM tasks WHERE id = $id;";
-        taskCount.Parameters.AddWithValue("$id", SchemaThreeFixture.TaskId);
-        Assert.Equal(1L, Convert.ToInt64(await taskCount.ExecuteScalarAsync(cancellationToken)));
+        await using var connection = await database.CreateConnectionAsync(cancellationToken);
+
+        await using (var reminder = connection.CreateCommand())
+        {
+            reminder.CommandText = """
+                SELECT title, enabled, next_due_utc, snoozed_until_utc
+                FROM reminders WHERE id = $id;
+                """;
+            reminder.Parameters.AddWithValue("$id", SchemaThreeFixture.ReminderId);
+            await using var reader = await reminder.ExecuteReaderAsync(cancellationToken);
+            Assert.True(await reader.ReadAsync(cancellationToken));
+            Assert.Equal("Drink water", reader.GetString(0));
+            Assert.Equal(1L, reader.GetInt64(1));
+            Assert.Equal("2026-01-01T09:00:00Z", reader.GetString(2));
+            Assert.True(reader.IsDBNull(3));
+        }
+
+        await using (var task = connection.CreateCommand())
+        {
+            task.CommandText = """
+                SELECT title, is_completed, created_utc, updated_utc, completed_utc
+                FROM tasks WHERE id = $id;
+                """;
+            task.Parameters.AddWithValue("$id", SchemaThreeFixture.TaskId);
+            await using var reader = await task.ExecuteReaderAsync(cancellationToken);
+            Assert.True(await reader.ReadAsync(cancellationToken));
+            Assert.Equal("Fold laundry", reader.GetString(0));
+            Assert.Equal(0L, reader.GetInt64(1));
+            Assert.Equal("2026-01-01T08:00:00Z", reader.GetString(2));
+            Assert.Equal("2026-01-01T08:00:00Z", reader.GetString(3));
+            Assert.True(reader.IsDBNull(4));
+        }
 
         // An explicit re-seed (as a later launch's db-init would trigger) stays a no-op.
         await using var reseedConnection = await database.CreateConnectionAsync(cancellationToken);
@@ -133,6 +161,40 @@ public sealed class SchemaUpgradeTests
             Assert.DoesNotContain(afterReseed, note => note.Id == deletedId);
         }
         Assert.Equal(notes.Count, afterReseed.Count);
+    }
+
+    [Fact]
+    public async Task Upgrading_from_schema_three_keeps_local_note_history_rows()
+    {
+        // B1 regression: local_note_history.note_id REFERENCES local_notes(id)
+        // ON DELETE CASCADE. Migration 0009 rebuilds local_notes via DROP TABLE;
+        // with FK enforcement on (the default for migration connections), that
+        // DROP performs an implicit DELETE FROM local_notes first, which fires
+        // the cascade and would silently empty local_note_history unless the
+        // migration runner disables FK enforcement around the rebuild.
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await using var fixture = await SchemaThreeFixture.CreateAsync(cancellationToken);
+
+        await using var database = await Database.OpenAsync(fixture.Options, cancellationToken);
+        await using var connection = await database.CreateConnectionAsync(cancellationToken);
+
+        await using var historyCount = connection.CreateCommand();
+        historyCount.CommandText = "SELECT COUNT(*) FROM local_note_history;";
+        Assert.Equal(
+            (long)SchemaThreeFixture.HistoryRowCount,
+            Convert.ToInt64(await historyCount.ExecuteScalarAsync(cancellationToken)));
+
+        await using var userNoteHistory = connection.CreateCommand();
+        userNoteHistory.CommandText = """
+            SELECT shown_utc, local_date, unsolicited
+            FROM local_note_history WHERE note_id = $noteId;
+            """;
+        userNoteHistory.Parameters.AddWithValue("$noteId", SchemaThreeFixture.UserNoteId);
+        await using var reader = await userNoteHistory.ExecuteReaderAsync(cancellationToken);
+        Assert.True(await reader.ReadAsync(cancellationToken));
+        Assert.Equal("2026-01-02T09:00:00Z", reader.GetString(0));
+        Assert.Equal("2026-01-02", reader.GetString(1));
+        Assert.Equal(0L, reader.GetInt64(2));
     }
 
     [Fact]
