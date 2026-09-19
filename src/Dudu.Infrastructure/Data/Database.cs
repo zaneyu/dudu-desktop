@@ -485,8 +485,36 @@ internal sealed class DatabaseAccessCoordinator
             // attempts (retention is finite). Restore-from-backup and any
             // deliberate retry path call ResetInitialization()/
             // InvalidateInitialization() explicitly to re-arm this.
+            //
+            // The one exception: SQLITE_BUSY/SQLITE_LOCKED at first touch (e.g. an AV
+            // scanner holding the file past busy_timeout) is transient, not a genuine
+            // failure -- every repository call goes through here, so latching it would
+            // brick all data access until relaunch. Clear the source so the next
+            // InitializeAsync call gets a fresh attempt instead of replaying this fault
+            // forever; this attempt's own callers still see it fail.
+            if (IsTransientBusyOrLocked(exception))
+            {
+                lock (_sync)
+                {
+                    if (ReferenceEquals(_initializationSource, source))
+                    {
+                        _initializationSource = null;
+                    }
+                }
+            }
+
             source.TrySetException(exception);
         }
+    }
+
+    private const int SqliteErrorBusy = 5;
+    private const int SqliteErrorLocked = 6;
+
+    private static bool IsTransientBusyOrLocked(Exception exception)
+    {
+        var sqliteException = exception as SqliteException ?? exception.InnerException as SqliteException;
+        return sqliteException is not null
+            && sqliteException.SqliteErrorCode is SqliteErrorBusy or SqliteErrorLocked;
     }
 
     private static TaskCompletionSource<bool> CompletedSource()
