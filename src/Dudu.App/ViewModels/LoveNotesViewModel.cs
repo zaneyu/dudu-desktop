@@ -23,7 +23,7 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
         SaveLocalNoteCommand = new AsyncRelayCommand((CancellationToken ct) => SaveLocalNoteAsync(ct));
         NewNoteCommand = new RelayCommand(NewNote);
         DeleteLocalNoteCommand = new AsyncRelayCommand<LocalLoveNote?>((item, ct) => DeleteLocalNoteAsync(item, ct));
-        RequestDeleteLocalNoteCommand = new RelayCommand<LocalLoveNote>(note => PendingDeleteNote = note);
+        RequestDeleteLocalNoteCommand = new RelayCommand<LocalLoveNote>(RequestDeleteLocalNote);
         CancelDeleteLocalNoteCommand = new RelayCommand(() => PendingDeleteNote = null);
         RevealRemoteNoteCommand = new AsyncRelayCommand<RemoteEnvelope>((item, ct) => RevealRemoteNoteAsync(item, ct));
         SaveOpenedNoteCommand = new AsyncRelayCommand<object?>((item, ct) => SaveOpenedNoteAsync(item, ct));
@@ -43,16 +43,36 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
     public ObservableCollection<LocalLoveNote> LocalNotes { get; } = [];
     public ObservableCollection<RemoteEnvelope> PendingRemoteNotes { get; } = [];
 
-    public LocalLoveNote? SelectedNote { get => _selectedNote; set => SetProperty(ref _selectedNote, value); }
+    public LocalLoveNote? SelectedNote
+    {
+        get => _selectedNote;
+        set
+        {
+            if (!SetProperty(ref _selectedNote, value)) return;
+            // The pending confirmation names a specific note; once the user looks at
+            // something else, confirming should not delete the note they left behind.
+            if (PendingDeleteNote is not null && PendingDeleteNote.Id != value?.Id)
+            {
+                PendingDeleteNote = null;
+            }
+        }
+    }
     public LocalLoveNote? PendingDeleteNote
     {
         get => _pendingDeleteNote;
         private set
         {
-            if (SetProperty(ref _pendingDeleteNote, value)) OnPropertyChanged(nameof(IsConfirmingDeleteNote));
+            if (SetProperty(ref _pendingDeleteNote, value))
+            {
+                OnPropertyChanged(nameof(IsConfirmingDeleteNote));
+                OnPropertyChanged(nameof(DeleteNotePrompt));
+            }
         }
     }
     public bool IsConfirmingDeleteNote => PendingDeleteNote is not null;
+    public string? DeleteNotePrompt => PendingDeleteNote is null
+        ? null
+        : $"delete \"{TruncateForPrompt(PendingDeleteNote.Text)}\" for good? cannot undo";
     public RemoteEnvelope? SelectedRemoteEnvelope
     {
         get => _selectedRemoteEnvelope;
@@ -98,6 +118,9 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
                 OnPropertyChanged(nameof(UnopenedRemoteNoteCountText));
                 OnPropertyChanged(nameof(DailyLocalNoteLimit));
                 OnPropertyChanged(nameof(DailyLocalNoteLimitText));
+                // The shell caches pages/view models across visits: a stale pending
+                // confirmation from a previous visit must not resurface on this one.
+                PendingDeleteNote = null;
             }, ct);
         }, cancellationToken);
     }
@@ -133,7 +156,11 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
             await _context.LocalNotes.DeleteAsync(note.Id, cancellationToken);
             await MutateAsync(() =>
             {
-                LocalNotes.Remove(note);
+                // LocalLoveNote is a record: Remove(note) would use value equality across
+                // every field, so a note edited since it was loaded (or a stale UI copy)
+                // would silently fail to remove. Match by Id like Home and Tasks do.
+                var existing = LocalNotes.FirstOrDefault(item => item.Id == note.Id);
+                if (existing is not null) LocalNotes.Remove(existing);
                 if (SelectedNote?.Id == note.Id) SelectedNote = null;
                 if (PendingDeleteNote?.Id == note.Id) PendingDeleteNote = null;
             }, cancellationToken);
@@ -220,4 +247,23 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
         if (existing is not null) LocalNotes[LocalNotes.IndexOf(existing)] = note;
         else LocalNotes.Add(note);
     }
+
+    private void RequestDeleteLocalNote(LocalLoveNote? note)
+    {
+        if (note is null)
+        {
+            ErrorMessage = SelectOneFirstMessage;
+            return;
+        }
+
+        ErrorMessage = null;
+        PendingDeleteNote = note;
+    }
+
+    /// <summary>Note text is free-form and can be long; keep the confirmation prompt
+    /// on one readable line instead of dumping the whole note into it.</summary>
+    private const int PromptTruncateLength = 40;
+
+    private static string TruncateForPrompt(string text) =>
+        text.Length <= PromptTruncateLength ? text : text[..PromptTruncateLength].TrimEnd() + "…";
 }

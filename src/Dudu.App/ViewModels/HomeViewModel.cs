@@ -33,7 +33,7 @@ public sealed class HomeViewModel : FeatureViewModelBase
             SaveCountdownAsync(ct));
         SelectCountdownCommand = new RelayCommand<Countdown>(SelectCountdown);
         DeleteCountdownCommand = new AsyncRelayCommand<Countdown>((item, ct) => DeleteCountdownAsync(item, ct));
-        RequestDeleteCountdownCommand = new RelayCommand<Countdown>(countdown => PendingDeleteCountdown = countdown);
+        RequestDeleteCountdownCommand = new RelayCommand<Countdown>(RequestDeleteCountdown);
         CancelDeleteCountdownCommand = new RelayCommand(() => PendingDeleteCountdown = null);
         RecordCheckInCommand = new AsyncRelayCommand((CancellationToken ct) =>
             RecordCheckInAsync(ct));
@@ -88,7 +88,16 @@ public sealed class HomeViewModel : FeatureViewModelBase
     public Countdown? SelectedCountdown
     {
         get => _selectedCountdown;
-        set => SetProperty(ref _selectedCountdown, value);
+        set
+        {
+            if (!SetProperty(ref _selectedCountdown, value)) return;
+            // The pending confirmation names a specific countdown; once the user looks at
+            // something else, confirming should not delete the countdown they left behind.
+            if (PendingDeleteCountdown is not null && PendingDeleteCountdown.Id != value?.Id)
+            {
+                PendingDeleteCountdown = null;
+            }
+        }
     }
 
     public Countdown? PendingDeleteCountdown
@@ -96,11 +105,19 @@ public sealed class HomeViewModel : FeatureViewModelBase
         get => _pendingDeleteCountdown;
         private set
         {
-            if (SetProperty(ref _pendingDeleteCountdown, value)) OnPropertyChanged(nameof(IsConfirmingDeleteCountdown));
+            if (SetProperty(ref _pendingDeleteCountdown, value))
+            {
+                OnPropertyChanged(nameof(IsConfirmingDeleteCountdown));
+                OnPropertyChanged(nameof(DeleteCountdownPrompt));
+            }
         }
     }
 
     public bool IsConfirmingDeleteCountdown => PendingDeleteCountdown is not null;
+
+    public string? DeleteCountdownPrompt => PendingDeleteCountdown is null
+        ? null
+        : $"delete \"{PendingDeleteCountdown.Title}\" for good? cannot undo";
 
     public CheckInSummary? CheckInSummary
     {
@@ -223,6 +240,9 @@ public sealed class HomeViewModel : FeatureViewModelBase
                 OnPropertyChanged(nameof(PetStateText));
                 OnPropertyChanged(nameof(PetAnimationText));
                 OnPropertyChanged(nameof(CheckInSummaryText));
+                // The shell caches pages/view models across visits: a stale pending
+                // confirmation from a previous visit must not resurface on this one.
+                PendingDeleteCountdown = null;
             }, ct);
         }, cancellationToken);
     }
@@ -255,6 +275,18 @@ public sealed class HomeViewModel : FeatureViewModelBase
         SelectedCountdown = countdown;
         CountdownTitle = countdown?.Title ?? string.Empty;
         CountdownTargetUtc = countdown?.TargetUtc;
+    }
+
+    private void RequestDeleteCountdown(Countdown? countdown)
+    {
+        if (countdown is null)
+        {
+            ErrorMessage = SelectOneFirstMessage;
+            return;
+        }
+
+        ErrorMessage = null;
+        PendingDeleteCountdown = countdown;
     }
 
     public Task CreateCountdownAsync(CancellationToken cancellationToken = default) =>

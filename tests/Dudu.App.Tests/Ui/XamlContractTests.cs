@@ -272,20 +272,39 @@ public sealed class XamlContractTests
         // x:Bind defaults to OneTime. A CommandParameter left at OneTime is captured once,
         // at initial layout, when the bound selection is still null -- so the command always
         // receives null even after the user picks something. Every CommandParameter x:Bind
-        // must say Mode= explicitly (OneWay, in practice) so it tracks the live selection.
+        // must say Mode=OneWay or Mode=TwoWay explicitly so it tracks the live selection.
+        // {Binding} already defaults to OneWay, so it only fails here if it explicitly opts
+        // back into OneTime. The pattern tolerates single quotes, whitespace around '=', and
+        // one level of nested markup-extension braces (e.g. a converter parameter).
         var root = FindRepositoryRoot();
         var appDirectory = Path.Combine(root, "src", "Dudu.App");
         var xamlFiles = Directory.GetFiles(appDirectory, "*.xaml", SearchOption.AllDirectories);
         Assert.NotEmpty(xamlFiles);
 
+        var commandParameterPattern = new Regex(
+            "CommandParameter\\s*=\\s*([\"'])\\{(x:Bind|Binding)(?:[^{}]|\\{[^{}]*\\})*\\}\\1",
+            RegexOptions.Singleline);
+        var modePattern = new Regex(@"Mode\s*=\s*(OneWay|TwoWay|OneTime)\b");
+
         foreach (var file in xamlFiles)
         {
             var xaml = File.ReadAllText(file);
-            foreach (Match binding in Regex.Matches(xaml, "CommandParameter=\"\\{x:Bind[^}]*\\}\""))
+            foreach (Match binding in commandParameterPattern.Matches(xaml))
             {
-                Assert.True(
-                    binding.Value.Contains("Mode=", StringComparison.Ordinal),
-                    $"{Path.GetFileName(file)} has a CommandParameter x:Bind with no explicit Mode: {binding.Value}");
+                var extensionKind = binding.Groups[2].Value;
+                var modeMatch = modePattern.Match(binding.Value);
+                if (extensionKind == "x:Bind")
+                {
+                    Assert.True(
+                        modeMatch.Success && modeMatch.Groups[1].Value is "OneWay" or "TwoWay",
+                        $"{Path.GetFileName(file)} has a CommandParameter x:Bind with no explicit Mode=OneWay/TwoWay: {binding.Value}");
+                }
+                else
+                {
+                    Assert.False(
+                        modeMatch.Success && modeMatch.Groups[1].Value == "OneTime",
+                        $"{Path.GetFileName(file)} has a CommandParameter {{Binding}} pinned to Mode=OneTime, so it never tracks the live selection: {binding.Value}");
+                }
             }
         }
     }

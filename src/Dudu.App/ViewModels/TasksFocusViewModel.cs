@@ -25,7 +25,7 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
         SelectTaskCommand = new RelayCommand<TaskItem>(SelectTask);
         CompleteTaskCommand = new AsyncRelayCommand<TaskItem>((item, ct) => CompleteTaskAsync(item, ct));
         DeleteTaskCommand = new AsyncRelayCommand<TaskItem>((item, ct) => DeleteTaskAsync(item, ct));
-        RequestDeleteTaskCommand = new RelayCommand<TaskItem>(task => PendingDeleteTask = task);
+        RequestDeleteTaskCommand = new RelayCommand<TaskItem>(RequestDeleteTask);
         CancelDeleteTaskCommand = new RelayCommand(() => PendingDeleteTask = null);
         StartFocusCommand = new AsyncRelayCommand((CancellationToken ct) => StartFocusAsync(ct));
         PauseFocusCommand = new AsyncRelayCommand((CancellationToken ct) => PauseFocusAsync(ct));
@@ -52,16 +52,36 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
     public ObservableCollection<FocusSession> FocusHistory { get; } = [];
     public IReadOnlyList<int> FocusPresets { get; } = [15, 25, 45, 60];
 
-    public TaskItem? SelectedTask { get => _selectedTask; set => SetProperty(ref _selectedTask, value); }
+    public TaskItem? SelectedTask
+    {
+        get => _selectedTask;
+        set
+        {
+            if (!SetProperty(ref _selectedTask, value)) return;
+            // The pending confirmation names a specific task; once the user looks at
+            // something else, confirming should not delete the task they left behind.
+            if (PendingDeleteTask is not null && PendingDeleteTask.Id != value?.Id)
+            {
+                PendingDeleteTask = null;
+            }
+        }
+    }
     public TaskItem? PendingDeleteTask
     {
         get => _pendingDeleteTask;
         private set
         {
-            if (SetProperty(ref _pendingDeleteTask, value)) OnPropertyChanged(nameof(IsConfirmingDeleteTask));
+            if (SetProperty(ref _pendingDeleteTask, value))
+            {
+                OnPropertyChanged(nameof(IsConfirmingDeleteTask));
+                OnPropertyChanged(nameof(DeleteTaskPrompt));
+            }
         }
     }
     public bool IsConfirmingDeleteTask => PendingDeleteTask is not null;
+    public string? DeleteTaskPrompt => PendingDeleteTask is null
+        ? null
+        : $"delete \"{PendingDeleteTask.Title}\" for good? cannot undo";
     public FocusSnapshot? ActiveFocus
     {
         get => _activeFocus;
@@ -114,6 +134,9 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
                 FocusHistory.Clear();
                 foreach (var session in history) FocusHistory.Add(session);
                 OnPropertyChanged(nameof(IsFocusActive));
+                // The shell caches pages/view models across visits: a stale pending
+                // confirmation from a previous visit must not resurface on this one.
+                PendingDeleteTask = null;
             }, ct);
         }, cancellationToken);
     }
@@ -141,6 +164,18 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
         DueUtc = task?.DueUtc;
     }
 
+    private void RequestDeleteTask(TaskItem? task)
+    {
+        if (task is null)
+        {
+            ErrorMessage = SelectOneFirstMessage;
+            return;
+        }
+
+        ErrorMessage = null;
+        PendingDeleteTask = task;
+    }
+
     public Task CompleteTaskAsync(TaskItem? task, CancellationToken cancellationToken = default) =>
         RunAsync(async () =>
         {
@@ -152,6 +187,7 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
                 if (active is not null) ActiveTasks.Remove(active);
                 CompletedTasks.Insert(0, completed);
                 if (SelectedTask?.Id == task.Id) SelectedTask = null;
+                if (PendingDeleteTask?.Id == task.Id) PendingDeleteTask = null;
             }, cancellationToken);
         }, "okkk task done");
 
