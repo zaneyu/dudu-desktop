@@ -935,15 +935,26 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                     }
                 }
             });
-            if (forceVisible)
+            await StartupVisibilityGate.ApplyAsync(
+                token => _events.StartAsync(_overlay.Handle, this, token),
+                _lifecycle.SetUserVisibleAsync,
+                _initialUserVisible || forceVisible,
+                cancellationToken);
+            if (forceVisible && !_overlay.IsVisible)
             {
-                // The forced overlay show below still goes through
-                // SetUserVisibleAsync's normal TryCanShow gate (quiet
-                // hours/pause), so it alone can leave a hidden launch with
-                // neither a tray icon nor a visible overlay — no exit
-                // surface at all. Open Settings directly here instead, the
-                // same "open home" action the tray would have offered, so
-                // there is always a way to reach and quit the app.
+                // The forced show above still goes through SetUserVisibleAsync's
+                // normal TryCanShow gate (quiet hours/pause/lock/suspend/
+                // fullscreen), so it alone can leave a hidden launch with
+                // neither a tray icon nor a visible overlay — no exit surface
+                // at all. _overlay.IsVisible reflects whether Show() actually
+                // ran (i.e. TryCanShow passed), not merely that it was
+                // requested, so this branch only fires when the forced show
+                // was vetoed. Open Settings directly in that case, the same
+                // "open home" action the tray would have offered, so there is
+                // always a way to reach and quit the app. When the forced
+                // show succeeded, do nothing: opening Settings on every tray
+                // blip (e.g. Explorer restarting — the icon self-heals on
+                // TaskbarCreated) would defeat a silent --background launch.
                 try
                 {
                     await _openHome(cancellationToken);
@@ -957,11 +968,6 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                     ReportFailure("tray-attach-fallback-open-home", exception);
                 }
             }
-            await StartupVisibilityGate.ApplyAsync(
-                token => _events.StartAsync(_overlay.Handle, this, token),
-                _lifecycle.SetUserVisibleAsync,
-                _initialUserVisible || forceVisible,
-                cancellationToken);
             return true;
         }
         catch

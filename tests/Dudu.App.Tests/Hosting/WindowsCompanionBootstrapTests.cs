@@ -175,32 +175,40 @@ public sealed class WindowsCompanionBootstrapTests
     }
 
     [Fact]
-    public void Tray_attach_failure_on_a_hidden_launch_also_opens_home_before_the_forced_show()
+    public void Tray_attach_failure_on_a_hidden_launch_opens_home_only_when_the_forced_show_was_vetoed()
     {
         // Regression: forceVisible alone does not guarantee an exit surface
         // for a hidden (--background) launch whose tray attach also failed.
         // The forced overlay show still goes through SetUserVisibleAsync's
-        // normal TryCanShow gate (quiet hours/pause), which can veto it,
-        // leaving neither a tray icon nor a visible overlay. Opening
-        // Settings directly (not through OnHotkeyAsync, which is itself
-        // gated by TryCanShow) guarantees a way to reach and quit the app
-        // regardless of quiet hours or a pause. This can't run on Mac
+        // normal TryCanShow gate (quiet hours/pause/lock/suspend/fullscreen),
+        // which can veto it, leaving neither a tray icon nor a visible
+        // overlay. Opening Settings directly (not through OnHotkeyAsync,
+        // which is itself gated by TryCanShow) guarantees a way to reach and
+        // quit the app in that case. But it must NOT fire on every forced
+        // show -- only when the show was actually vetoed (_overlay.IsVisible
+        // stays false) -- otherwise a silent --background launch would pop
+        // Settings on a harmless tray blip (e.g. Explorer restarting, where
+        // the icon self-heals on TaskbarCreated). This can't run on Mac
         // (StartCoreAsync needs real Win32 window/tray/hotkey handles), so
-        // the ordering is asserted from source the same way
+        // the ordering and the guard are asserted from source the same way
         // ProductionStartupContractTests does for other native-only paths.
         var root = FindRepositoryRoot();
         var runtime = File.ReadAllText(Path.Combine(
             root, "src", "Dudu.App", "Hosting", "WindowsCompanionBootstrap.cs"));
 
         var forceVisibleSet = runtime.IndexOf("forceVisible = true;", StringComparison.Ordinal);
-        var openHomeFallback = runtime.IndexOf("await _openHome(cancellationToken);", StringComparison.Ordinal);
         var visibilityGate = runtime.IndexOf(
             "await StartupVisibilityGate.ApplyAsync(",
             StringComparison.Ordinal);
+        var guard = runtime.IndexOf(
+            "if (forceVisible && !_overlay.IsVisible)",
+            StringComparison.Ordinal);
+        var openHomeFallback = runtime.IndexOf("await _openHome(cancellationToken);", StringComparison.Ordinal);
 
         Assert.True(forceVisibleSet >= 0);
-        Assert.True(openHomeFallback > forceVisibleSet);
-        Assert.True(visibilityGate > openHomeFallback);
+        Assert.True(visibilityGate > forceVisibleSet);
+        Assert.True(guard > visibilityGate);
+        Assert.True(openHomeFallback > guard);
     }
 
     private static string FindRepositoryRoot()
