@@ -449,7 +449,13 @@ public sealed class RemoteSyncService : IAsyncDisposable
         // a transient failure unrelated to this envelope's content -- SQLite busy, IO, a secret
         // store hiccup -- is not "undecryptable" and must not be acked away, since ack is
         // irreversible. Only the three permanent, content-is-the-problem failures below take the
-        // ack-and-discard path (CryptographicException covers AuthenticationTagMismatchException;
+        // ack-and-discard path. Review H1: a bare CryptographicException is not one of them --
+        // EnvelopeCrypto's own local private-key import, DeriveRawSecretAgreement, and the AesGcm
+        // constructor can all throw it for reasons that have nothing to do with this envelope
+        // (e.g. a locally corrupt key), and treating that as "this envelope is bad" would ack a
+        // note away that could still be delivered once the local problem is fixed. Only
+        // AuthenticationTagMismatchException -- the specific subtype AesGcm.Decrypt raises for a
+        // genuinely tampered ciphertext -- means the envelope itself is the problem.
         // EnvelopeValidationException already wraps FormatException for the wire fields it decodes
         // itself, but BuildStoredEnvelope below decodes the same fields again with the raw
         // Base64Url API, so FormatException is listed explicitly too). Everything else -- and
@@ -464,7 +470,7 @@ public sealed class RemoteSyncService : IAsyncDisposable
             stored = BuildStoredEnvelope(wire, _clock.UtcNow);
             deferred = IsDeliveryDeferred(wire.DeliverAfterUtc, _clock.UtcNow);
         }
-        catch (Exception exception) when (exception is CryptographicException
+        catch (Exception exception) when (exception is AuthenticationTagMismatchException
             or EnvelopeValidationException
             or FormatException)
         {
