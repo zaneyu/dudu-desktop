@@ -302,6 +302,19 @@ public sealed class RemoteSyncService : IAsyncDisposable
                 PrivacySafeLog.SyncLoopTerminal(_logger, "needs-repair");
                 return;
             }
+            catch (SecretStoreException exception)
+            {
+                // H2: a permanently unreadable secret (EnsureRegisteredAsync's own read, or the
+                // desktop key DesktopKeyService.GetOrCreateAsync just failed to parse) is a dead
+                // end on retry, exactly like a dead bearer token -- the same secret will never
+                // become readable on its own. State is already NeedsRepair (set by whichever call
+                // threw); exit the loop the same way the 401 path does instead of backing off and
+                // retrying forever against the same unreadable secret.
+                _state = PairingAvailability.NeedsRepair;
+                _reportError?.Invoke("remote-sync-secret-store", exception);
+                PrivacySafeLog.SyncLoopTerminal(_logger, "needs-repair-secret-store");
+                return;
+            }
             catch (RelayProtocolException exception)
             {
                 // Review C1: the relay answered with something this build cannot read -- most
@@ -747,6 +760,16 @@ public sealed class RemoteSyncService : IAsyncDisposable
             // credential is dead, so converge on NeedsRepair like every other authenticated call.
             _state = PairingAvailability.NeedsRepair;
             throw;
+        }
+        catch (SecretStoreException exception)
+        {
+            // H2: GetDeviceAsync authenticates with the bearer token, which it reads through the
+            // secret store too -- the same dead end as the device-id read above, just reached one
+            // call later. Same convergence and same "return 0 instead of throwing" contract as the
+            // catch above, for the same ConnectionViewModel.RefreshAsync reason.
+            _state = PairingAvailability.NeedsRepair;
+            PrivacySafeLog.SyncStateProbeFailed(_logger, 0, exception.GetType().Name);
+            return 0;
         }
     }
 
