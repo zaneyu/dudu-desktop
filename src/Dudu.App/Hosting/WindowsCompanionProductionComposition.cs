@@ -229,33 +229,6 @@ public static class WindowsCompanionProductionComposition
             // Saved placements are selected only after that identity is known.
             var initialPlacement = new PetPlacement("MISSING", 0.8, 0.8, 1);
             var pet = services.GetRequiredService<PetStateMachine>();
-            // The 30-second reminder tick (ReminderEngine.TickAsync, via
-            // AppHost) completes an expired focus session on the user's
-            // behalf, but nothing else ever raises FocusEnded for that path
-            // (only TasksFocusViewModel.EndFocusAsync does, for a manual
-            // end) — without this, the pet stays latched in Focus, which
-            // suppresses every reminder and note presentation until restart.
-            // Route it through the same one-shot path a manual end uses.
-            services.GetRequiredService<Dudu.Core.Focus.FocusService>().SessionExpired += focusId =>
-            {
-                var focusEnded = new PetEvent.FocusEnded(focusId.ToString("D"));
-                Task callback;
-                if (presentationCoordinator is null)
-                {
-                    // Composed inside initializeOverlay below; a session
-                    // expiring before that (implausible this early in
-                    // startup, but not worth crashing over) still updates
-                    // the pet state so the suppression clears.
-                    pet.Handle(focusEnded);
-                    callback = Task.CompletedTask;
-                }
-                else
-                {
-                    callback = presentationCoordinator.PresentOneShotAsync(focusEnded, "focus-end", CancellationToken.None);
-                }
-
-                _ = ObserveNativeCallbackAsync(callback, "focus-expiry", host.ErrorReporter);
-            };
             startup = new StartupRegistrationService();
             WindowsCompanionRuntime? activeRuntime = null;
             var activePlacement = initialPlacement;
@@ -302,6 +275,59 @@ public static class WindowsCompanionProductionComposition
                     initialPlacement,
                     pet);
             }
+
+            // L2 / merge note: subscribed only past the safe-mode return
+            // above, so a safe-mode run (overlay and remote sync disabled)
+            // never wires it — there is no presentationCoordinator for it to
+            // ever resolve to in that mode, and the raw pet.Handle fallback
+            // below would be the only thing running for the rest of the
+            // process's life. FocusService itself lives for the process
+            // lifetime, so this subscription is never explicitly removed;
+            // it is fine to leak for that duration, same as every other
+            // handler this composition method wires up.
+            //
+            // The 30-second reminder tick (ReminderEngine.TickAsync, via
+            // AppHost) completes an expired focus session on the user's
+            // behalf, but nothing else ever raises FocusEnded for that path
+            // (only TasksFocusViewModel.EndFocusAsync does, for a manual
+            // end) — without this, the pet stays latched in Focus, which
+            // suppresses every reminder and note presentation until restart.
+            // Route it through the same one-shot path a manual end uses.
+            services.GetRequiredService<Dudu.Core.Focus.FocusService>().SessionExpired += focusId =>
+            {
+                var focusEnded = new PetEvent.FocusEnded(focusId.ToString("D"));
+                // M3: apply synchronously and first, so a reminder or note
+                // becoming due on the very same 30-second tick sees the
+                // post-FocusEnded state deterministically. Previously this
+                // ordering only held via PetPresentationCoordinator's
+                // internal petGate SemaphoreSlim happening to still be
+                // uncontended — fragile, not a real guarantee. FocusEnded is
+                // idempotent (confirmed in PetStateMachine.Handle: a second
+                // call with the same FocusId is a no-op once _focusId is
+                // already null), so PresentOneShotAsync's own internal
+                // pet.Handle(focusEnded) below is a safe replay, not a
+                // double transition.
+                pet.Handle(focusEnded);
+
+                Task callback;
+                if (presentationCoordinator is null)
+                {
+                    // Composed inside initializeOverlay below; a session
+                    // expiring before that (implausible this early in
+                    // startup, but not worth crashing over) still needs to
+                    // self-clear the FocusTransition latch the same way the
+                    // real one-shot path would (M2) — nothing else will
+                    // ever raise Dismissed("focus-end") for it otherwise.
+                    pet.Handle(PetEvent.CompletionForOneShot(focusEnded, "focus-end"));
+                    callback = Task.CompletedTask;
+                }
+                else
+                {
+                    callback = presentationCoordinator.PresentOneShotAsync(focusEnded, "focus-end", CancellationToken.None);
+                }
+
+                _ = ObserveNativeCallbackAsync(callback, "focus-expiry", host.ErrorReporter);
+            };
 
             var placementRepository = services.GetRequiredService<IPetPlacementRepository>();
             var savedPlacements = await placementRepository.ListAsync(cancellationToken);
