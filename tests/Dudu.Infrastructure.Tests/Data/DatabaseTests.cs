@@ -1030,9 +1030,16 @@ public sealed class DatabaseTests
 
         await fixture.Database.InitializeAsync(TestContext.Current.CancellationToken);
 
-        // The unreadable file is preserved for forensics, and the fresh
-        // database is usable (seeded defaults, no stale profile).
-        Assert.Single(Directory.GetFiles(fixture.Options.BackupDirectory, "dudu-corrupt-*.db"));
+        // The unreadable file is preserved for forensics -- both as the
+        // durable pre-restore-attempt copy (H1) and as the moved-aside
+        // original from QuarantineCorruptDatabase (no backup was available to
+        // restore instead) -- and the fresh database is usable (seeded
+        // defaults, no stale profile). Quarantine files live in their own
+        // subdirectory so they never pollute the "*.db" glob RotateAsync and
+        // RestoreLatestValidAsync use over BackupDirectory itself (M1).
+        var quarantineDirectory = Path.Combine(fixture.Options.BackupDirectory, "quarantine");
+        Assert.Empty(Directory.GetFiles(fixture.Options.BackupDirectory, "dudu-corrupt-*.db"));
+        Assert.Equal(2, Directory.GetFiles(quarantineDirectory, "dudu-corrupt-*.db").Length);
         Assert.Null(await profiles.GetAsync(TestContext.Current.CancellationToken));
         Assert.Equal(12, (await new LocalNoteRepository(fixture.Database)
             .ListEnabledAsync(TestContext.Current.CancellationToken)).Count);
@@ -1064,6 +1071,21 @@ public sealed class DatabaseTests
         Assert.Equal(DatabaseRecoveryOutcome.RestoredFromBackup, fixture.Database.LastRecoveryOutcome);
         Assert.Empty(Directory.GetFiles(fixture.Options.BackupDirectory, "dudu-corrupt-*.db"));
         Assert.Equal("Before", (await profiles.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
+
+        // The corrupt original was still preserved as a durable copy before the
+        // restore was attempted (H1) -- restoring over it must not lose the
+        // only recent copy of whatever was in it. It lives in its own
+        // subdirectory so RotateAsync/RestoreLatestValidAsync's "*.db" glob
+        // over BackupDirectory itself never sees it (M1).
+        var quarantineDirectory = Path.Combine(fixture.Options.BackupDirectory, "quarantine");
+        Assert.Single(Directory.GetFiles(quarantineDirectory, "dudu-corrupt-*.db"));
+
+        // And it survives a subsequent init: reconciliation's cleanup of the
+        // transient dudu.db.corrupt-recovery recovery set (a different, legitimate
+        // mechanism) must not reach into the durable quarantine copy.
+        fixture.Database.InvalidateInitialization();
+        await fixture.Database.InitializeAsync(TestContext.Current.CancellationToken);
+        Assert.Single(Directory.GetFiles(quarantineDirectory, "dudu-corrupt-*.db"));
     }
 
     [Fact]
@@ -1086,6 +1108,11 @@ public sealed class DatabaseTests
 
         Assert.Equal(DatabaseRecoveryOutcome.RestoredFromBackup, fixture.Database.LastRecoveryOutcome);
         Assert.Equal("Before", (await profiles.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
+
+        // Same durable-copy-before-restore preservation (H1) applies on the
+        // zero-byte branch too.
+        var quarantineDirectory = Path.Combine(fixture.Options.BackupDirectory, "quarantine");
+        Assert.Single(Directory.GetFiles(quarantineDirectory, "dudu-corrupt-*.db"));
     }
 
     [Fact]
@@ -1102,7 +1129,12 @@ public sealed class DatabaseTests
             await database.InitializeAsync(TestContext.Current.CancellationToken);
 
             Assert.Equal(DatabaseRecoveryOutcome.StartedFresh, database.LastRecoveryOutcome);
-            Assert.Single(Directory.GetFiles(options.BackupDirectory, "dudu-corrupt-*.db"));
+            // Durable copy (H1) plus QuarantineCorruptDatabase's own moved-aside
+            // original, both under backups/quarantine (M1) -- not the top-level
+            // backups directory the "*.db" restore/rotation glob scans.
+            var quarantineDirectory = Path.Combine(options.BackupDirectory, "quarantine");
+            Assert.Empty(Directory.GetFiles(options.BackupDirectory, "dudu-corrupt-*.db"));
+            Assert.Equal(2, Directory.GetFiles(quarantineDirectory, "dudu-corrupt-*.db").Length);
             Assert.Equal(12, (await new LocalNoteRepository(database)
                 .ListEnabledAsync(TestContext.Current.CancellationToken)).Count);
         }

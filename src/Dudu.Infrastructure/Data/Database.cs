@@ -185,6 +185,11 @@ public sealed class Database : IAsyncDisposable, IDisposable
         }
     }
 
+    // Bounds TryRestoreFromBackupAsync's wait for RestoreLatestValidAsync's own
+    // internal drain of in-flight connections. Startup must not hang forever on
+    // a connection that never closes -- fall through to quarantine+fresh instead.
+    private static readonly TimeSpan RestoreTimeout = TimeSpan.FromSeconds(30);
+
     private async Task InitializeCoreAsync()
     {
         if (!IsZeroByteDatabaseFile())
@@ -203,6 +208,15 @@ public sealed class Database : IAsyncDisposable, IDisposable
                 // recovery below instead of crash-looping forever.
             }
         }
+
+        // The file at this point (corrupt, or zero-byte) may be the only copy of
+        // anything the user did since the newest backup -- which could be months
+        // old. RestoreAsync's own recovery-set staging (dudu.db.corrupt-recovery)
+        // is transient: the very next reconciliation pass deletes it once the
+        // canonical database is healthy again, milliseconds later. Preserve a
+        // durable copy before attempting restore or replacing anything, so a
+        // `.recover` still has something recent to salvage from (H1).
+        CreateDurableQuarantineCopy();
 
         // Existing backups sitting right next to the corrupt file were
         // previously never tried: prefer restoring the newest valid one over
@@ -229,16 +243,21 @@ public sealed class Database : IAsyncDisposable, IDisposable
         {
             return false;
         }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 
     private async Task<bool> TryRestoreFromBackupAsync()
     {
         try
         {
-            var result = await new DatabaseBackupService(_options).RestoreLatestValidAsync(CancellationToken.None);
+            using var timeoutCts = new CancellationTokenSource(RestoreTimeout);
+            var result = await new DatabaseBackupService(_options).RestoreLatestValidAsync(timeoutCts.Token);
             return result.Restored;
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SqliteException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SqliteException or OperationCanceledException)
         {
             return false;
         }
@@ -247,17 +266,50 @@ public sealed class Database : IAsyncDisposable, IDisposable
     private static bool IsCorruption(SqliteException exception) =>
         exception.SqliteErrorCode is 11 or 26;
 
+    // Backups and quarantine files must not share a directory: RotateAsync and
+    // RestoreLatestValidAsync both glob BackupDirectory for "*.db" and would
+    // otherwise treat a quarantined corrupt file as a legitimate backup
+    // candidate -- and its timestamp-prefixed name can sort ahead of real
+    // backups (M1).
+    private string QuarantineDirectory => Path.Combine(_options.BackupDirectory, "quarantine");
+
+    // Best-effort forensic copy of the corrupt/unreadable file, made before any
+    // attempt to restore or replace it. Failures here must never block recovery.
+    private void CreateDurableQuarantineCopy()
+    {
+        try
+        {
+            if (!File.Exists(_options.DatabasePath))
+            {
+                return;
+            }
+
+            Directory.CreateDirectory(QuarantineDirectory);
+            var timestamp = DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss");
+            var destination = Path.Combine(
+                QuarantineDirectory,
+                $"dudu-corrupt-{timestamp}-{Guid.NewGuid():N}.db");
+            File.Copy(_options.DatabasePath, destination, overwrite: false);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
+
     private void QuarantineCorruptDatabase()
     {
         try
         {
             SqliteConnection.ClearAllPools();
-            Directory.CreateDirectory(_options.BackupDirectory);
+            Directory.CreateDirectory(QuarantineDirectory);
             if (File.Exists(_options.DatabasePath))
             {
                 var timestamp = DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss");
                 var quarantine = Path.Combine(
-                    _options.BackupDirectory,
+                    QuarantineDirectory,
                     $"dudu-corrupt-{timestamp}-{Guid.NewGuid():N}.db");
                 File.Move(_options.DatabasePath, quarantine);
             }
