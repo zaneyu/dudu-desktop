@@ -44,9 +44,11 @@ public sealed class DesktopKeyService
             if (existingPrivateKey is not null)
             {
                 using var existing = ECDiffieHellman.Create();
+                var imported = false;
                 try
                 {
                     existing.ImportPkcs8PrivateKey(existingPrivateKey, out _);
+                    imported = true;
                 }
                 catch (CryptographicException exception)
                 {
@@ -56,6 +58,16 @@ public sealed class DesktopKeyService
                     // NeedsRepair instead of an unhandled CryptographicException.
                     throw new SecretStoreException(
                         "The stored desktop private key could not be parsed.", exception);
+                }
+                finally
+                {
+                    // On the throw path existingPrivateKey is never returned to a caller who would
+                    // zero it later (see RemoteSyncService's ZeroMemory on DesktopKeyMaterial), so
+                    // it must be zeroed here instead of leaking key bytes for GC's timeline.
+                    if (!imported)
+                    {
+                        CryptographicOperations.ZeroMemory(existingPrivateKey);
+                    }
                 }
 
                 return new DesktopKeyMaterial(
