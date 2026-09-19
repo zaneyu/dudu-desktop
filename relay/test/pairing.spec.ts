@@ -1,5 +1,5 @@
 import { env, exports } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { hmacSha256Hex } from "../src/security/tokens.js";
 import {
   createPairingCode,
@@ -15,6 +15,12 @@ import {
 const testEnv = env as unknown as { DB: D1Database; PAIRING_CODE_PEPPER: string };
 
 const ORIGIN = "https://example.test";
+
+// Registration and pairing tests exercise several D1 writes per case. The
+// Windows CI runner can exceed Vitest's five-second default under load even
+// when the operation is healthy; keep the test timeout above that platform
+// variance without changing production request timeouts.
+vi.setConfig({ testTimeout: 30_000 });
 
 describe("device registration and pairing", () => {
   it("redeems a pairing code once and sets a protected sender cookie", async () => {
