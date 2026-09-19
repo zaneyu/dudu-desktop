@@ -42,6 +42,7 @@ $publish = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "scripts/publish-w
 $verify = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "scripts/verify.ps1")
 $e2e = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "tests/e2e/private-note-flow.ps1")
 $workflow = Get-Content -Raw -LiteralPath (Join-Path $repoRoot ".github/workflows/windows-installer.yml")
+$productionWorkflow = Get-Content -Raw -LiteralPath (Join-Path $repoRoot ".github/workflows/windows-store-production.yml")
 $smoke = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "tests/installer/installer-smoke.ps1")
 $innoScript = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "scripts/install-inno-setup.ps1")
 $appProject = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "src/Dudu.App/Dudu.App.csproj")
@@ -171,6 +172,7 @@ if (Test-Path -LiteralPath $storeScriptPath) {
     }
     Assert-Contains "Store package stages the requested manifest version before publishing" $storeScript 'Set-StoreManifestVersion\s+-Manifest\s+\$sourceManifest\s+-Version\s+\$expectedPackageVersion'
     Assert-Contains "Store package restores the source manifest after packaging" $storeScript 'WriteAllText\(\$manifestPath\s*,\s*\$originalManifestText'
+    Assert-Contains "Store package script records the release commit SHA" $storeScript "'commit\.txt'"
     $acceptanceIdentityFunction = @($storeScriptAst.FindAll({
         param($node)
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
@@ -354,7 +356,7 @@ Assert-Contains "Inno output filename includes the compiler version" $iss 'Outpu
 Assert-Contains "publish forwards Version to Inno" $publish '"/DAppVersion=\$Version"'
 Assert-Contains "publish preflights the private asset pack" $publish 'Assert-PrivateReleaseAssetPack'
 Assert-Contains "publish preflights the private audio pack" $publish 'Assert-PrivateAudioReleaseAssetPack'
-Assert-Contains "publish allowlist permits only the private audio manifest" $publish 'Assets/Audio/private-dudu/manifest\.json'
+Assert-Contains "publish allowlist permits only the private audio manifest" $publish 'Assets/Audio/private-dudu/manifest\\\.json'
 Assert-Contains "publish allowlist permits only private WAV files" $publish 'Assets/Audio/private-dudu/.*\.wav'
 Assert-Contains "audio manifest requires private use" $publish 'private audio release pack manifest must declare privateUseOnly: true'
 Assert-Contains "audio manifest requires exact five-pack contract" $publish 'exactly the five required pack ids'
@@ -379,6 +381,29 @@ Assert-Contains "workflow uploads release metadata" $workflow 'artifacts/release
 Assert-Contains "workflow invokes the Store package wrapper" $workflow "scripts/package-store\.ps1"
 Assert-Contains "workflow invokes the Store wrapper in explicit acceptance-only mode" $workflow 'scripts/package-store\.ps1\s+-Version \$env:STORE_VERSION\s+-AcceptanceOnly'
 Assert-Contains "workflow uploads a Store package artifact" $workflow 'DuduDesktop-\$\{\{ env\.STORE_VERSION \}\}-win-x64-store'
+function Assert-StoreUploadStepsExcludeIntermediatesAndKeepPdbs {
+    <#
+        Every upload-artifact step whose path includes store-package-metadata/ must
+        recursively exclude the bulky publish/ and unpacked/ intermediate trees, and
+        must then re-include the shipped MSIX's PDBs from publish/. upload-artifact
+        evaluates path patterns in order, so the PDB include line must appear AFTER
+        the publish/ and unpacked/ exclusions it overrides, not before. Rather than
+        pin an exact count of upload steps (brittle if one is added or removed),
+        this requires every publish/ exclusion to be immediately paired with an
+        unpacked/ exclusion and a publish/ PDB re-include, in that order.
+    #>
+    param([Parameter(Mandatory)][string]$Label, [Parameter(Mandatory)][string]$WorkflowText)
+
+    $publishExclusionCount = @([regex]::Matches($WorkflowText, [regex]::Escape('!artifacts/store-package-metadata/publish/**'))).Count
+    Assert-True "$Label has at least one Store upload step excluding the publish/ intermediate tree" ($publishExclusionCount -gt 0)
+    $pairedTripletCount = @([regex]::Matches($WorkflowText,
+        '!artifacts/store-package-metadata/publish/\*\*\r?\n\s*!artifacts/store-package-metadata/unpacked/\*\*\r?\n\s*artifacts/store-package-metadata/publish/\*\*/\*\.pdb'
+    )).Count
+    Assert-True "$Label every publish/ exclusion is paired with an unpacked/ exclusion and a publish/ PDB re-include, in that order" ($pairedTripletCount -eq $publishExclusionCount)
+}
+
+Assert-StoreUploadStepsExcludeIntermediatesAndKeepPdbs "installer workflow" $workflow
+Assert-StoreUploadStepsExcludeIntermediatesAndKeepPdbs "production workflow" $productionWorkflow
 Assert-Contains "workflow supports an explicit Store package version" $workflow "store_version"
 Assert-Contains "workflow requires a Store version for manual dispatch" $workflow "store_version:(?s).*required:\s*true"
 Assert-Contains "workflow keeps 1.0.0 as the push Store acceptance version" $workflow "github\.event_name\s*==\s*'push'.*1\.0\.0"
@@ -399,11 +424,19 @@ Assert-Contains "verify explicitly selects the non-public acceptance-only Store 
 Assert-Contains "workflow runs Store package source contracts" $workflow 'pwsh tests/scripts/store-package\.tests\.ps1'
 Assert-Contains "workflow keeps the Inno artifact" $workflow "DuduDesktop-1\.0\.0-win-x64-private"
 Assert-True "Store package job does not expose secrets in logs" ($workflow -notmatch "echo.*\bSTORE\b|Write-Host.*\bSTORE\b.*\bSECRET\b")
+Assert-True "production workflow pins every action to a full 40-char SHA" (@([regex]::Matches($productionWorkflow, '(?m)^\s*-?\s*uses:\s*(\S+)') | Where-Object { $_.Groups[1].Value -notmatch '@[0-9a-f]{40}$' }).Count -eq 0)
+Assert-Contains "production workflow requires the test job before packaging" $productionWorkflow '(?s)production-store-package:.*?needs:\s*tests'
+Assert-Contains "installer job runs the FlaUI UI test suite against the published exe" $workflow 'DUDU_UI_TEST_EXE.*\r?\n.*dotnet test --project tests/Dudu\.UiTests/Dudu\.UiTests\.csproj'
+Assert-Contains "UI automation step is gated behind an explicit repository variable, off by default" $workflow 'UI automation tests \(FlaUI\)\s*\r?\n\s*if:\s*vars\.DUDU_ENABLE_UI_AUTOMATION == ''true'''
+Assert-True "UI automation step is a real gate, not continue-on-error" ($workflow -notmatch '(?s)UI automation tests \(FlaUI\)(?:(?!\n\s*- name:).)*continue-on-error')
+Assert-True "Dudu.App.Tests step has an id so find-hung-tests can key off its own outcome" (@([regex]::Matches($workflow, '(?s)- name:\s*Dudu\.App\.Tests\s*\r?\n\s*id:\s*dudu_app_tests')).Count -eq 1)
+Assert-True "find-hung-tests only runs after the Dudu.App.Tests step itself failed or was cancelled, not on every run or on an earlier step's failure" (@([regex]::Matches($workflow, "(?s)find hung tests\).*?if:\s*steps\.dudu_app_tests\.outcome == 'failure' \|\| steps\.dudu_app_tests\.outcome == 'cancelled'")).Count -eq 1)
 $globalJson = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "global.json") | ConvertFrom-Json
 Assert-True "global.json pins the SDK exactly (rollForward disable)" ($globalJson.sdk.rollForward -eq "disable")
 $packagesProps = [xml](Get-Content -Raw -LiteralPath (Join-Path $repoRoot "Directory.Packages.props"))
 Assert-True "Directory.Packages.props has no floating/range versions" (@($packagesProps.Project.ItemGroup.PackageVersion | Where-Object { $_.Version -notmatch '^\d+(\.\d+){1,3}$' }).Count -eq 0)
 Assert-Contains "publish records lock files and dotnet --info" $publish 'Write-ReleaseMetadata'
+Assert-Contains "publish records the release commit SHA" $publish 'commit\.txt'
 Assert-Contains "smoke test uses the app data-root override" $smoke 'DUDU_DATA_ROOT'
 Assert-Contains "smoke test uses an isolated installer directory" $smoke '"dudu-installer-smoke-\$runId"'
 Assert-Contains "smoke test creates an outside sentinel" $smoke 'dudu-installer-smoke-sentinel-\$runId'
@@ -418,9 +451,10 @@ Assert-Contains "app copies the private audio pack" $appProject '<Content Includ
 Assert-True "app does not copy audio source downloads" ($appProject -notmatch 'assets[/\\]sources|work[/\\]audio-source')
 Assert-Contains "verify inspects the private audio manifest" $verify 'Assets/Audio/private-dudu/manifest\.json'
 Assert-Contains "smoke test checks the installed audio manifest" $smoke 'Assets\\Audio\\private-dudu\\manifest\.json'
-Assert-Contains "smoke test checks every referenced audio WAV" $smoke 'privateAudioManifest\.packs.*cues'
+Assert-Contains "smoke test iterates every pack in the private audio manifest" $smoke '\@\(\$privateAudioManifest\.packs\)'
+Assert-Contains "smoke test iterates every cue within each audio pack" $smoke 'foreach\s*\(\$audioPack in \@\(\$privateAudioManifest\.packs\)\)\s*\{\r?\n\s*foreach\s*\(\$audioCue in \@\(\$audioPack\.cues\)\)'
 Assert-Contains "release docs keep audio private" $releaseDoc '(?is)audio.*private-use-only'
-Assert-Contains "release docs prohibit runtime audio downloads" $releaseDoc '(?is)audio.*not runtime-downloaded'
+Assert-Contains "release docs prohibit runtime audio downloads" $releaseDoc '(?is)audio.*not\s+runtime-downloaded'
 Assert-Contains "release docs require separate audio redistribution rights" $releaseDoc '(?is)audio.*separate redistribution rights'
 
 $manifest = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "src/Dudu.App/Assets/Packs/private-dudu/manifest.json") | ConvertFrom-Json

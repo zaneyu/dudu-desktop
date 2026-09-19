@@ -91,11 +91,17 @@ under `.wrangler/` and is already git-ignored.
 
    Paste a long random value when prompted; wrangler does not echo it back.
 
-4. Deploy:
+4. Build the sender bundle and deploy:
 
    ```powershell
-   npm exec wrangler deploy
+   npm run deploy   # runs `npm run build` (compiles sender-src/ into
+                     # public/dist/, not tracked in git) before `wrangler deploy`
    ```
+
+   Do not run `npm exec wrangler deploy` directly: `public/dist/` is
+   git-ignored and only produced by `npm run build`, so a bare `wrangler
+   deploy` from a clean clone uploads stale or missing sender JavaScript and
+   the sender page 404s.
 
    **Warning: do not try to "dry-run" or probe this with `-- --help`.**
    Unlike `d1 create`, `d1 migrations apply`, and `secret put` — which all
@@ -263,7 +269,7 @@ been obtained and retained privately, stop before production submission; the
 local and CI package flows remain acceptance-only.
 
 The production Store workflow is the normal way to produce the submission
-package. The local identity-gated command remains available for investigation
+package. The identity-gated local command remains available for investigation
 or an explicitly requested local package:
 
 ```powershell
@@ -274,10 +280,11 @@ pwsh scripts/package-store.ps1 -Version <Major.Minor.Patch> `
 ```
 
 The command fails unless the manifest matches both exact values and is not the
-local identity. Do not commit the private identity values. Store artifacts
-become Microsoft-signed only after Microsoft Store publication. The current
-Inno installer remains unsigned and may trigger SmartScreen or Smart App
-Control behavior.
+local identity. Upload only that locally produced, identity-gated `.msix`
+when using this local path — never the CI artifact. Do not commit the
+private identity values. Store artifacts become Microsoft-signed only after
+Microsoft Store publication. The current Inno installer remains unsigned and
+may trigger SmartScreen or Smart App Control behavior.
 
 ### Production packaging through GitHub Actions
 
@@ -332,8 +339,9 @@ For each normal Store release or update:
 
 1. Wait for a green Windows workflow, including its package and verification
    jobs. The production workflow is
-   `.github/workflows/windows-store-production.yml`; the ordinary CI Store
-   artifact is acceptance-only and must never be uploaded to Partner Center.
+   `.github/workflows/windows-store-production.yml`; the ordinary CI artifact
+   (`DuduDesktop-<version>-win-x64-store`) is acceptance-only — never upload
+   the CI artifact to Partner Center.
 2. Download the workflow artifact named
    `DuduDesktop-<version>-win-x64-production-store` to a newly created
    temporary directory. It contains the production `.msix` under
@@ -341,8 +349,9 @@ For each normal Store release or update:
    `store-package-metadata/`.
 3. Verify `validation-summary.txt` contains the Store-ready marker, confirm
    `package-version.txt` is the intended strictly increasing `<version>.0`,
-   and compare `store-package-metadata/SHA256SUMS.txt` with a fresh local hash.
-   Do not substitute the ordinary CI package or a diagnostics artifact.
+   and compare its SHA-256 hash in `store-package-metadata/SHA256SUMS.txt`
+   with a fresh local hash. Do not substitute the ordinary CI package or a
+   diagnostics artifact.
 4. In the existing Partner Center product, select **Start update**, upload
    only the verified production `.msix`, review identity and x64 architecture,
    update **What's new**, and preserve the existing private audience. When
@@ -473,6 +482,12 @@ private channel.
   FlaUI UI tests, the performance gates against a real executable, the
   harness scenarios and the private-note end-to-end flow have **still not
   been executed**: they need an interactive Windows desktop session, which
-  a hosted runner does not provide. `docs/testing/windows-acceptance.md`
-  tracks every row that still needs a real Windows 11 24H2 x64 run before
-  this release can be considered fully verified.
+  a hosted runner does not provide. The installer job's "UI automation
+  tests (FlaUI)" step is therefore gated behind the repository variable
+  `DUDU_ENABLE_UI_AUTOMATION` and is **off by default**, the same way
+  "Performance gates" is gated behind `DUDU_ENABLE_INTERACTIVE_PERFORMANCE`;
+  set it to `true` only when this job runs on a Windows runner with an
+  interactive desktop, and it then blocks the job on failure like any other
+  test step. `docs/testing/windows-acceptance.md` tracks every row that
+  still needs a real Windows 11 24H2 x64 run before this release can be
+  considered fully verified.

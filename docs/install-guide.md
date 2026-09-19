@@ -9,8 +9,9 @@ You only need to do this once. It takes about two minutes.
 3. Windows will show a blue **"Windows protected your PC"** box. This is
    normal for a small private app that is not signed by a company.
    Click **More info**, then **Run anyway**.
-4. Click **Next** until it finishes. Dudu opens on its own and starts with
-   Windows from now on.
+4. Click **Next** until it finishes. Dudu opens on its own. Once you finish
+   the short setup below, it also starts with Windows from then on (this is
+   on by default; you can turn it off in Dudu's settings).
 
 Nothing is installed for other users of the PC, and no administrator
 password is needed.
@@ -36,7 +37,18 @@ password is needed.
 
 ## Requirements
 
-Windows 11 (64-bit, Intel/AMD). Not for Windows on ARM, macOS, or Windows 10.
+Windows 11, version 24H2 (build 26100) or newer, 64-bit (Intel/AMD). Not for
+Windows on ARM, macOS, or Windows 10 — the app refuses to start on anything
+older. To check your build: press **Win+R**, type `winver`, press Enter, and
+read the build number on the About Windows page.
 
-The release installer is unsigned. Verify the SHA-256 line in
-`SHA256SUMS.txt` before choosing **Run anyway** in SmartScreen.
+**The Microsoft Store version of Dudu is the default and recommended way to
+install.** It is Microsoft-signed, updates itself, and is not blocked by
+Smart App Control. Use the EXE installer in this guide only when the person
+who sent it told you to use it instead of the Store.
+
+The EXE installer is unsigned. Verify the SHA-256 line in `SHA256SUMS.txt`
+before choosing **Run anyway** in SmartScreen. If your PC has **Smart App
+Control** turned on (Settings → Privacy & security → Windows Security →
+App & browser control), it blocks the unsigned EXE outright — there is no
+"Run anyway" option, and only the Store version will install.

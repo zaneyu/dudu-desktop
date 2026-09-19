@@ -78,6 +78,22 @@ jobs:
         shell: pwsh
         run: pwsh tests/installer/installer-smoke.ps1 -Installer artifacts/DuduDesktop-1.0.0-win-x64-private.exe
 
+      # tests/Dudu.UiTests (FlaUI/UI Automation) has never run in CI: every test
+      # in it self-skips unless DUDU_UI_TEST_EXE is set, so it silently ran zero
+      # assertions. Standard GitHub-hosted Windows runners have no interactive
+      # desktop session (see "Performance gates" below), which FlaUI's UI
+      # Automation driver also needs, so this is off by default. Enable it only
+      # by setting the repository variable DUDU_ENABLE_UI_AUTOMATION=true on a
+      # runner that has an interactive desktop; once enabled it is a real gate
+      # (no continue-on-error) and its failure fails the job.
+      - name: UI automation tests (FlaUI)
+        if: vars.DUDU_ENABLE_UI_AUTOMATION == 'true'
+        timeout-minutes: 15
+        shell: pwsh
+        env:
+          DUDU_UI_TEST_EXE: ${{ github.workspace }}\artifacts\publish\win-x64\Dudu.App.exe
+        run: dotnet test --project tests/Dudu.UiTests/Dudu.UiTests.csproj -c Release --no-restore
+
       - name: Performance gates (interactive Windows only)
         # Standard GitHub-hosted Windows runners have no interactive desktop session, so WinUI's
         # overlay cannot be created there. Enable this only when this job is deliberately moved to
@@ -207,9 +223,18 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: DuduDesktop-${{ env.STORE_VERSION }}-win-x64-store
+          # publish/ and unpacked/ are package-store.ps1's intermediate build/validation
+          # trees under store-package-metadata/, not release evidence; uploading them
+          # exhausted this repository's Actions storage quota. publish/ is also the only
+          # place the PDBs matching the shipped Store MSIX live, so re-include just those
+          # after the broader exclusion (upload-artifact evaluates path patterns in order,
+          # so this include must come after the exclusion it overrides).
           path: |
             artifacts/store-package/
             artifacts/store-package-metadata/
+            !artifacts/store-package-metadata/publish/**
+            !artifacts/store-package-metadata/unpacked/**
+            artifacts/store-package-metadata/publish/**/*.pdb
           if-no-files-found: error
           retention-days: 30
 
@@ -264,11 +289,15 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.21.0
-      - name: Release and Store package source contracts
+      # Two separate steps: a pwsh `run:` block only surfaces the LAST
+      # command's exit code, so a failure in the first script here would
+      # never fail the step if they stayed combined.
+      - name: Release source contract
         shell: pwsh
-        run: |
-          pwsh tests/scripts/release-contract.tests.ps1
-          pwsh tests/scripts/store-package.tests.ps1
+        run: pwsh tests/scripts/release-contract.tests.ps1
+      - name: Store package source contract
+        shell: pwsh
+        run: pwsh tests/scripts/store-package.tests.ps1
       - run: dotnet restore DuduDesktop.slnx -p:RestorePackagesWithLockFile=false
       - run: dotnet build DuduDesktop.slnx -c Release --no-restore
       # One step per project with its own timeout so a hang names its project
@@ -285,26 +314,38 @@ jobs:
         run: dotnet test --project tests/Dudu.Infrastructure.Tests/Dudu.Infrastructure.Tests.csproj -c Release --no-build -- --long-running 60 --xunit-info
         timeout-minutes: 10
       - name: Dudu.App.Tests
+        id: dudu_app_tests
         if: always()
         run: dotnet test --project tests/Dudu.App.Tests/Dudu.App.Tests.csproj -c Release --no-build -- --long-running 60 --xunit-info
         timeout-minutes: 4
-      # Runs only when the suite above did not finish: one dotnet test per
-      # class, then per method inside any class that hangs, so the hung test
-      # is named in the log (xunit's --long-running never printed anything).
+      # Runs only when the Dudu.App.Tests step above (not an earlier, unrelated
+      # step) did not finish: one dotnet test per class, then per method inside
+      # any class that hangs, so the hung test is named in the log (xunit's
+      # --long-running never printed anything).
       - name: Dudu.App.Tests (find hung tests)
-        if: always()
+        if: steps.dudu_app_tests.outcome == 'failure' || steps.dudu_app_tests.outcome == 'cancelled'
         run: pwsh scripts/find-hung-tests.ps1 -Project tests/Dudu.App.Tests/Dudu.App.Tests.csproj -TimeoutSeconds 90
         timeout-minutes: 25
-      - name: Relay dependencies and unit tests
+      # Split the same way as the dotnet suites above and for the same
+      # reason: a pwsh `run:` block only surfaces the LAST command's exit
+      # code, so a failed earlier command here would never fail the step.
+      - name: Relay dependencies
         if: always()
         working-directory: relay
-        run: |
-          npm ci
-          npm run typecheck
-          npm test -- --run
+        run: npm ci
+      - name: Relay typecheck
+        if: always()
+        working-directory: relay
+        run: npm run typecheck
+      - name: Relay unit tests
+        if: always()
+        working-directory: relay
+        run: npm test -- --run
+      - name: Relay Playwright browsers
+        if: always()
+        working-directory: relay
+        run: npx playwright install chromium firefox webkit
       - name: Relay browser E2E
         if: always()
         working-directory: relay
-        run: |
-          npx playwright install chromium firefox webkit
-          npm run test:e2e
+        run: npm run test:e2e

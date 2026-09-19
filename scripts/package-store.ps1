@@ -49,6 +49,26 @@ function Write-MetadataText {
     Set-Content -LiteralPath (Join-Path $metadataDirectory $Name) -Value $Text -NoNewline -Encoding utf8
 }
 
+function Get-ReleaseCommitSha {
+    <#
+        The uploaded package metadata otherwise carries no record of which
+        commit produced it. $env:GITHUB_SHA is the full commit SHA CI checked
+        out; fall back to `git rev-parse HEAD` for a local run, and to
+        "unknown" only if neither is available (e.g. no .git directory, or git
+        missing from PATH). Under $ErrorActionPreference = 'Stop', a failing
+        native command throws rather than just setting $LASTEXITCODE, so the
+        call must be wrapped in try/catch rather than relying on 2>$null.
+    #>
+    if ($env:GITHUB_SHA) { return $env:GITHUB_SHA }
+    try {
+        $sha = (& git -C $repoRoot rev-parse HEAD 2>$null)
+        if ($LASTEXITCODE -eq 0 -and $sha) { return $sha.Trim() }
+    } catch {
+        # No .git directory, git missing from PATH, or any other failure: fall through to 'unknown'.
+    }
+    return 'unknown'
+}
+
 function Write-PreflightFailureEvidence {
     param([Parameter(Mandatory)][string]$Message)
 
@@ -530,6 +550,7 @@ try {
     Write-MetadataText -Name 'SHA256SUMS.txt' -Text "$hash  $([IO.Path]::GetFileName($artifactPath))"
     Write-MetadataText -Name 'package-version.txt' -Text $packagedIdentity.Version
     Write-MetadataText -Name 'package-identity.txt' -Text ("Name=$($packagedIdentity.Name)`nPublisher=$($packagedIdentity.Publisher)`nProcessorArchitecture=$($packagedIdentity.ProcessorArchitecture)")
+    Write-MetadataText -Name 'commit.txt' -Text (Get-ReleaseCommitSha)
     Get-ChildItem -LiteralPath $packageDirectory -File -Recurse | ForEach-Object {
         $_.FullName.Substring($packageDirectory.Length).TrimStart([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
     } | Sort-Object | Set-Content -LiteralPath (Join-Path $metadataDirectory 'package-files.txt') -Encoding utf8
