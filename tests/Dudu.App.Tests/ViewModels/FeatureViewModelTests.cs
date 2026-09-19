@@ -588,7 +588,7 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
-    public async Task Cancelling_a_pending_connection_confirmation_never_calls_the_pairing_service()
+    public void Cancelling_a_pending_connection_confirmation_never_calls_the_pairing_service()
     {
         var pairing = new FakePairing { State = PairingAvailability.Available };
         var fixture = FeatureFixture.Create(pairing: pairing);
