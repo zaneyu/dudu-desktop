@@ -78,6 +78,21 @@ jobs:
         shell: pwsh
         run: pwsh tests/installer/installer-smoke.ps1 -Installer artifacts/DuduDesktop-1.0.0-win-x64-private.exe
 
+      # tests/Dudu.UiTests (FlaUI/UI Automation) has never run in CI: every test
+      # in it self-skips unless DUDU_UI_TEST_EXE is set, so it silently ran zero
+      # assertions. continue-on-error keeps this from blocking the release build
+      # while it is unproven here — standard GitHub-hosted Windows runners have
+      # no interactive desktop session (see "Performance gates" below), which
+      # FlaUI's UI Automation driver may also require. Remove continue-on-error
+      # once this step is green on this runner.
+      - name: UI automation tests (FlaUI)
+        continue-on-error: true
+        timeout-minutes: 15
+        shell: pwsh
+        env:
+          DUDU_UI_TEST_EXE: ${{ github.workspace }}\artifacts\publish\win-x64\Dudu.App.exe
+        run: dotnet test tests/Dudu.UiTests/Dudu.UiTests.csproj -c Release --no-restore
+
       - name: Performance gates (interactive Windows only)
         # Standard GitHub-hosted Windows runners have no interactive desktop session, so WinUI's
         # overlay cannot be created there. Enable this only when this job is deliberately moved to
@@ -301,7 +316,7 @@ jobs:
       # class, then per method inside any class that hangs, so the hung test
       # is named in the log (xunit's --long-running never printed anything).
       - name: Dudu.App.Tests (find hung tests)
-        if: always()
+        if: failure() || cancelled()
         run: pwsh scripts/find-hung-tests.ps1 -Project tests/Dudu.App.Tests/Dudu.App.Tests.csproj -TimeoutSeconds 90
         timeout-minutes: 25
       # Split the same way as the dotnet suites above and for the same
