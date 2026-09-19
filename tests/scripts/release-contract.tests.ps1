@@ -172,6 +172,7 @@ if (Test-Path -LiteralPath $storeScriptPath) {
     }
     Assert-Contains "Store package stages the requested manifest version before publishing" $storeScript 'Set-StoreManifestVersion\s+-Manifest\s+\$sourceManifest\s+-Version\s+\$expectedPackageVersion'
     Assert-Contains "Store package restores the source manifest after packaging" $storeScript 'WriteAllText\(\$manifestPath\s*,\s*\$originalManifestText'
+    Assert-Contains "Store package script records the release commit SHA" $storeScript "'commit\.txt'"
     $acceptanceIdentityFunction = @($storeScriptAst.FindAll({
         param($node)
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
@@ -407,6 +408,7 @@ Assert-True "global.json pins the SDK exactly (rollForward disable)" ($globalJso
 $packagesProps = [xml](Get-Content -Raw -LiteralPath (Join-Path $repoRoot "Directory.Packages.props"))
 Assert-True "Directory.Packages.props has no floating/range versions" (@($packagesProps.Project.ItemGroup.PackageVersion | Where-Object { $_.Version -notmatch '^\d+(\.\d+){1,3}$' }).Count -eq 0)
 Assert-Contains "publish records lock files and dotnet --info" $publish 'Write-ReleaseMetadata'
+Assert-Contains "publish records the release commit SHA" $publish 'commit\.txt'
 Assert-Contains "smoke test uses the app data-root override" $smoke 'DUDU_DATA_ROOT'
 Assert-Contains "smoke test uses an isolated installer directory" $smoke '"dudu-installer-smoke-\$runId"'
 Assert-Contains "smoke test creates an outside sentinel" $smoke 'dudu-installer-smoke-sentinel-\$runId'

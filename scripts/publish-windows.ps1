@@ -220,10 +220,27 @@ function Invoke-DotnetCapture {
     $output
 }
 
+function Get-ReleaseCommitSha {
+    <#
+        The uploaded release metadata otherwise carries no record of which
+        commit produced it. $env:GITHUB_SHA is the full commit SHA CI checked
+        out; fall back to `git rev-parse HEAD` for a local run, and to
+        "unknown" only if neither is available (e.g. no .git directory).
+    #>
+    param([Parameter(Mandatory = $true)][string]$RepoRoot)
+
+    if ($env:GITHUB_SHA) { return $env:GITHUB_SHA }
+    $sha = (& git -C $RepoRoot rev-parse HEAD 2>$null)
+    if ($LASTEXITCODE -eq 0 -and $sha) { return $sha.Trim() }
+    return 'unknown'
+}
+
 function Write-ReleaseMetadata {
     <#
         Records what this installer was actually built from, into $MetadataDir (uploaded by CI
         as a separate release-metadata artifact):
+          commit.txt           full commit SHA this build was produced from ($env:GITHUB_SHA,
+                                or `git rev-parse HEAD` locally)
           dotnet-info.txt      `dotnet --info` (exact SDK, runtimes, MSBuild, OS/RID)
           dotnet-packages.txt  `dotnet list package --include-transitive` for the solution
           lockfiles/**         every packages.lock.json the restore just generated
@@ -236,6 +253,8 @@ function Write-ReleaseMetadata {
         [Parameter(Mandatory = $true)][string]$RepoRoot,
         [Parameter(Mandatory = $true)][string]$MetadataDir
     )
+
+    Set-Content -Path (Join-Path $MetadataDir "commit.txt") -Value (Get-ReleaseCommitSha -RepoRoot $RepoRoot) -NoNewline
 
     Push-Location $RepoRoot
     try {
