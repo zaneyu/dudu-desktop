@@ -554,6 +554,22 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Appearance_save_commits_the_pet_scale_the_user_picked()
+    {
+        // Regression: "save appearance" used to only persist Theme/ReducedMotion/etc and
+        // silently drop whatever the user had just set on the pet-size slider -- only the
+        // separate "save pet placement" button (SavePlacementCommand) committed PetScale.
+        var fixture = FeatureFixture.Create();
+        var viewModel = new AppearanceViewModel(fixture.Context) { PetScale = 1.5 };
+
+        await viewModel.SaveAsync(TestContext.Current.CancellationToken);
+
+        var saved = Assert.Single(fixture.Placements.SaveHistory);
+        Assert.Equal(1.5, saved.Scale);
+        Assert.Equal("current monitor", saved.MonitorDeviceName);
+    }
+
+    [Fact]
     public async Task Appearance_saves_sound_preferences_through_the_mutation_coordinator()
     {
         var fixture = FeatureFixture.Create();
@@ -1577,6 +1593,7 @@ public sealed class FeatureViewModelTests
             FakeLocalNoteRepository localNotes,
             FakeRemoteEnvelopeRepository remoteNotes,
             FakePreferencesRepository preferences,
+            FakePlacementRepository placements,
             FakeTaskRepository tasks,
             FakeFocusRepository focusSessions,
             FakeCountdownRepository countdowns,
@@ -1591,6 +1608,7 @@ public sealed class FeatureViewModelTests
             LocalNotes = localNotes;
             RemoteNotes = remoteNotes;
             Preferences = preferences;
+            Placements = placements;
             Tasks = tasks;
             FocusSessions = focusSessions;
             Countdowns = countdowns;
@@ -1606,6 +1624,7 @@ public sealed class FeatureViewModelTests
         public FakeLocalNoteRepository LocalNotes { get; }
         public FakeRemoteEnvelopeRepository RemoteNotes { get; }
         public FakePreferencesRepository Preferences { get; }
+        public FakePlacementRepository Placements { get; }
         public FakeTaskRepository Tasks { get; }
         public FakeFocusRepository FocusSessions { get; }
         public FakeCountdownRepository Countdowns { get; }
@@ -1722,6 +1741,7 @@ public sealed class FeatureViewModelTests
                 localNotes,
                 remoteNotes,
                 preferenceRepository,
+                placementRepository,
                 tasks,
                 focusSessions,
                 countdowns,
@@ -1831,10 +1851,17 @@ public sealed class FeatureViewModelTests
 
     private sealed class FakePlacementRepository : IPetPlacementRepository
     {
-        public Task<PetPlacement?> GetAsync(string monitorDeviceName, CancellationToken cancellationToken) => Task.FromResult<PetPlacement?>(null);
-        public Task<IReadOnlyList<PetPlacement>> ListAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<PetPlacement>>([]);
-        public Task SaveAsync(PetPlacement placement, CancellationToken cancellationToken) => Task.CompletedTask;
-        public Task DeleteAsync(string monitorDeviceName, CancellationToken cancellationToken) => Task.CompletedTask;
+        private readonly Dictionary<string, PetPlacement> _items = [];
+        public List<PetPlacement> SaveHistory { get; } = [];
+        public Task<PetPlacement?> GetAsync(string monitorDeviceName, CancellationToken cancellationToken) => Task.FromResult(_items.GetValueOrDefault(monitorDeviceName));
+        public Task<IReadOnlyList<PetPlacement>> ListAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<PetPlacement>>(_items.Values.ToArray());
+        public Task SaveAsync(PetPlacement placement, CancellationToken cancellationToken)
+        {
+            _items[placement.MonitorDeviceName] = placement;
+            SaveHistory.Add(placement);
+            return Task.CompletedTask;
+        }
+        public Task DeleteAsync(string monitorDeviceName, CancellationToken cancellationToken) { _items.Remove(monitorDeviceName); return Task.CompletedTask; }
     }
 
     private sealed class FakeTaskRepository : ITaskRepository

@@ -210,17 +210,24 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
                 Birthday = ToMonthDay(BirthdayDate),
             }, cancellationToken);
             _applyShellTheme(Theme);
+            // "save appearance" shares the same pet-size slider as "save pet
+            // placement" (Scroll-to-resize on the pet itself commits through
+            // the same PetPlacements path). Committing it here too means the
+            // size the user just picked is never silently dropped.
+            await SavePlacementCoreAsync(cancellationToken);
         }, "oki appearance saved");
 
     public Task SavePlacementAsync(CancellationToken cancellationToken = default) =>
-        RunAsync(async () =>
-        {
-            var existing = (await _context.PetPlacements.ListAsync(cancellationToken))
-                .FirstOrDefault(item => string.Equals(item.MonitorDeviceName, MonitorDeviceName, StringComparison.Ordinal));
-            var current = (existing ?? new PetPlacement(MonitorDeviceName, 0.8, 0.8, PetScale)) with { Scale = PetScale };
-            await _context.PetPlacements.SaveAsync(current, cancellationToken);
-            await _context.ApplyPlacementAsync(current, cancellationToken);
-        }, "okkk pet placement saved");
+        RunAsync(() => SavePlacementCoreAsync(cancellationToken), "okkk pet placement saved");
+
+    private async Task SavePlacementCoreAsync(CancellationToken cancellationToken)
+    {
+        var existing = (await _context.PetPlacements.ListAsync(cancellationToken))
+            .FirstOrDefault(item => string.Equals(item.MonitorDeviceName, MonitorDeviceName, StringComparison.Ordinal));
+        var current = (existing ?? new PetPlacement(MonitorDeviceName, 0.8, 0.8, PetScale)) with { Scale = PetScale };
+        await _context.PetPlacements.SaveAsync(current, cancellationToken);
+        await _context.ApplyPlacementAsync(current, cancellationToken);
+    }
 
     public Task ApplyOutfitAsync(CancellationToken cancellationToken = default) =>
         RunAsync(async () =>
