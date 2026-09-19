@@ -75,16 +75,19 @@ public sealed class WindowsCompanionBootstrapTests
     public async Task Startup_runner_observes_factory_failure_and_exits_once()
     {
         var reported = 0;
+        var boxShown = 0;
         var exits = 0;
         var runner = new CompanionStartupRunner(
             (_, _) => Task.FromException<WindowsCompanionBootstrap>(
                 new InvalidOperationException("factory failed")),
             _ => reported++,
+            () => boxShown++,
             () => exits++);
 
         await runner.RunAsync("--background", TestContext.Current.CancellationToken);
 
         Assert.Equal(1, reported);
+        Assert.Equal(1, boxShown);
         Assert.Equal(1, exits);
         Assert.Null(runner.Bootstrap);
     }
@@ -95,19 +98,44 @@ public sealed class WindowsCompanionBootstrapTests
         var shared = new SharedTransportState();
         var runtime = new FakeRuntime { StartFailure = new InvalidOperationException("start failed") };
         var reported = 0;
+        var boxShown = 0;
         var exits = 0;
         var runner = new CompanionStartupRunner(
             (_, _) => Task.FromResult(new WindowsCompanionBootstrap(
                 _ => Task.FromResult<IPrimaryAppRuntime>(runtime),
                 new FakeTransport(shared))),
             _ => reported++,
+            () => boxShown++,
             () => exits++);
 
         await runner.RunAsync(string.Empty, TestContext.Current.CancellationToken);
 
         Assert.Equal(1, reported);
+        Assert.Equal(1, boxShown);
         Assert.Equal(1, exits);
         Assert.Equal(1, runtime.Disposals);
+    }
+
+    [Fact]
+    public async Task Startup_runner_disposes_the_bootstrap_before_showing_the_failure_box()
+    {
+        // The dispose releases the single-instance mutex/pipe; showing the
+        // box first used to leave them held while the modal was up, turning
+        // her next manual launch into a secondary that silently no-ops.
+        var shared = new SharedTransportState();
+        var runtime = new FakeRuntime { StartFailure = new InvalidOperationException("start failed") };
+        var order = new List<string>();
+        var runner = new CompanionStartupRunner(
+            (_, _) => Task.FromResult(new WindowsCompanionBootstrap(
+                _ => Task.FromResult<IPrimaryAppRuntime>(runtime),
+                new FakeTransport(shared, order))),
+            _ => { },
+            () => order.Add("box"),
+            () => { });
+
+        await runner.RunAsync(string.Empty, TestContext.Current.CancellationToken);
+
+        Assert.Equal(["transport-disposed", "box"], order);
     }
 
     [Fact]
@@ -183,7 +211,7 @@ public sealed class WindowsCompanionBootstrapTests
         public Channel<byte[]> Payloads { get; } = Channel.CreateUnbounded<byte[]>();
     }
 
-    private sealed class FakeTransport(SharedTransportState state) : IActivationTransport
+    private sealed class FakeTransport(SharedTransportState state, List<string>? disposeOrder = null) : IActivationTransport
     {
         private bool _ownsPrimary;
 
@@ -217,6 +245,7 @@ public sealed class WindowsCompanionBootstrapTests
                 Interlocked.Exchange(ref state.Primary, 0);
             }
 
+            disposeOrder?.Add("transport-disposed");
             return ValueTask.CompletedTask;
         }
     }

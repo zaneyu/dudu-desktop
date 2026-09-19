@@ -85,7 +85,8 @@ public sealed partial class App : Application
         EnsureDefaultBootstrapFactory();
         _startupRunner = new CompanionStartupRunner(
             _bootstrapFactory!,
-            ReportStartupFailure,
+            LogStartupFailure,
+            ShowStartupFailureBox,
             ExitApplicationCore);
         _startupTask = _startupRunner.RunAsync(_launchArguments, CancellationToken.None);
         _ = ObserveStartupAsync(_startupTask);
@@ -155,8 +156,12 @@ public sealed partial class App : Application
         }
         catch (Exception exception)
         {
-            ReportStartupFailure(exception);
+            LogStartupFailure(exception);
+            // Dispose the bootstrap (releasing the single-instance mutex/pipe)
+            // before showing the box, same ordering as the startup-catch path:
+            // otherwise a dead-but-still-owning primary blocks her next launch.
             await ExitApplicationAsync(CancellationToken.None);
+            ShowStartupFailureBox();
         }
     }
 
@@ -304,7 +309,7 @@ public sealed partial class App : Application
         }
     }
 
-    private static void ReportStartupFailure(Exception exception)
+    private static void LogStartupFailure(Exception exception)
     {
         var phase = exception is StartupPhaseException phaseException
             ? phaseException.Phase
@@ -320,7 +325,19 @@ public sealed partial class App : Application
         }
 
         Trace.TraceError("Dudu startup failed: {0}", exception);
-        ShowStartupFailureMessageBox(paths);
+    }
+
+    private static void ShowStartupFailureBox()
+    {
+        try
+        {
+            ShowStartupFailureMessageBox(AppPaths.ForCurrentUser());
+        }
+        catch
+        {
+            // The message box is best-effort; it must never prevent the
+            // controlled exit path below.
+        }
     }
 
     /// <summary>

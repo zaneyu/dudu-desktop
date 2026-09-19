@@ -36,7 +36,7 @@ public sealed class FieldDiagnosticsContractTests
         Assert.Contains("e.SetObserved()", app, StringComparison.Ordinal);
 
         // Existing behavior stays untouched.
-        Assert.Contains("ReportStartupFailure", app, StringComparison.Ordinal);
+        Assert.Contains("LogStartupFailure", app, StringComparison.Ordinal);
         Assert.Contains("ObserveStartupAsync", app, StringComparison.Ordinal);
     }
 

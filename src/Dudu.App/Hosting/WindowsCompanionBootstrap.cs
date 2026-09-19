@@ -258,17 +258,20 @@ public sealed class WindowsCompanionBootstrap : IAsyncDisposable
 public sealed class CompanionStartupRunner
 {
     private readonly Func<string, CancellationToken, Task<WindowsCompanionBootstrap>> _factory;
-    private readonly Action<Exception> _report;
+    private readonly Action<Exception> _logFailure;
+    private readonly Action _showFailureBox;
     private readonly Action _exit;
     private int _exitRequested;
 
     public CompanionStartupRunner(
         Func<string, CancellationToken, Task<WindowsCompanionBootstrap>> factory,
-        Action<Exception> report,
+        Action<Exception> logFailure,
+        Action showFailureBox,
         Action exit)
     {
         _factory = factory ?? throw new ArgumentNullException(nameof(factory));
-        _report = report ?? throw new ArgumentNullException(nameof(report));
+        _logFailure = logFailure ?? throw new ArgumentNullException(nameof(logFailure));
+        _showFailureBox = showFailureBox ?? throw new ArgumentNullException(nameof(showFailureBox));
         _exit = exit ?? throw new ArgumentNullException(nameof(exit));
     }
 
@@ -298,20 +301,32 @@ public sealed class CompanionStartupRunner
         }
         catch (Exception exception)
         {
-            Report(exception);
+            LogFailure(exception);
             if (bootstrap is not null)
             {
                 try { await bootstrap.DisposeAsync(); }
-                catch (Exception disposeException) { Report(disposeException); }
+                catch (Exception disposeException) { LogFailure(disposeException); }
             }
 
+            // The single-instance mutex/pipe are released by the dispose
+            // above before the modal box appears. Showing the box first
+            // used to leave them held while it was up, so her next manual
+            // launch became a secondary that forwarded to a dead primary
+            // and did nothing.
+            ShowFailureBox();
             RequestExit();
         }
     }
 
-    private void Report(Exception exception)
+    private void LogFailure(Exception exception)
     {
-        try { _report(exception); }
+        try { _logFailure(exception); }
+        catch { }
+    }
+
+    private void ShowFailureBox()
+    {
+        try { _showFailureBox(); }
         catch { }
     }
 
@@ -319,7 +334,11 @@ public sealed class CompanionStartupRunner
     {
         if (Interlocked.Exchange(ref _exitRequested, 1) != 0) return;
         try { _exit(); }
-        catch (Exception exception) { Report(exception); }
+        catch (Exception exception)
+        {
+            LogFailure(exception);
+            ShowFailureBox();
+        }
     }
 }
 
