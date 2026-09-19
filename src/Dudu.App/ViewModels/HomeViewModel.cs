@@ -13,6 +13,7 @@ public sealed class HomeViewModel : FeatureViewModelBase
     private Reminder? _nextReminder;
     private FocusSnapshot? _activeFocus;
     private Countdown? _selectedCountdown;
+    private Countdown? _pendingDeleteCountdown;
     private CheckInSummary? _checkInSummary;
     private string _countdownTitle = string.Empty;
     private DateTimeOffset? _countdownTargetUtc;
@@ -32,6 +33,8 @@ public sealed class HomeViewModel : FeatureViewModelBase
             SaveCountdownAsync(ct));
         SelectCountdownCommand = new RelayCommand<Countdown>(SelectCountdown);
         DeleteCountdownCommand = new AsyncRelayCommand<Countdown>((item, ct) => DeleteCountdownAsync(item, ct));
+        RequestDeleteCountdownCommand = new RelayCommand<Countdown>(countdown => PendingDeleteCountdown = countdown);
+        CancelDeleteCountdownCommand = new RelayCommand(() => PendingDeleteCountdown = null);
         RecordCheckInCommand = new AsyncRelayCommand((CancellationToken ct) =>
             RecordCheckInAsync(ct));
     }
@@ -43,6 +46,8 @@ public sealed class HomeViewModel : FeatureViewModelBase
     public IAsyncRelayCommand CreateCountdownCommand { get; }
     public IRelayCommand<Countdown> SelectCountdownCommand { get; }
     public IAsyncRelayCommand<Countdown> DeleteCountdownCommand { get; }
+    public IRelayCommand<Countdown> RequestDeleteCountdownCommand { get; }
+    public IRelayCommand CancelDeleteCountdownCommand { get; }
     public IAsyncRelayCommand RecordCheckInCommand { get; }
 
     public ObservableCollection<Countdown> Countdowns { get; } = [];
@@ -85,6 +90,17 @@ public sealed class HomeViewModel : FeatureViewModelBase
         get => _selectedCountdown;
         set => SetProperty(ref _selectedCountdown, value);
     }
+
+    public Countdown? PendingDeleteCountdown
+    {
+        get => _pendingDeleteCountdown;
+        private set
+        {
+            if (SetProperty(ref _pendingDeleteCountdown, value)) OnPropertyChanged(nameof(IsConfirmingDeleteCountdown));
+        }
+    }
+
+    public bool IsConfirmingDeleteCountdown => PendingDeleteCountdown is not null;
 
     public CheckInSummary? CheckInSummary
     {
@@ -273,20 +289,19 @@ public sealed class HomeViewModel : FeatureViewModelBase
 
     public Task DeleteCountdownAsync(
         Countdown? countdown,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(countdown);
-        return RunAsync(async () =>
+        CancellationToken cancellationToken = default) =>
+        RunAsync(async () =>
         {
+            ArgumentNullException.ThrowIfNull(countdown);
             await _context.Countdowns.DeleteAsync(countdown.Id, cancellationToken);
             await MutateAsync(() =>
             {
                 var existing = Countdowns.FirstOrDefault(item => item.Id == countdown.Id);
                 if (existing is not null) Countdowns.Remove(existing);
                 if (SelectedCountdown?.Id == countdown.Id) SelectCountdown(null);
+                if (PendingDeleteCountdown?.Id == countdown.Id) PendingDeleteCountdown = null;
             }, cancellationToken);
         }, "okkk countdown deleted le");
-    }
 
     public Task RecordCheckInAsync(CancellationToken cancellationToken = default) =>
         RunAsync(async () =>

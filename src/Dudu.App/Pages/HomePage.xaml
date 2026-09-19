@@ -66,7 +66,16 @@
                         <DataTemplate x:DataType="models:Countdown"><TextBlock Text="{x:Bind Title}" Margin="4" TextWrapping="Wrap" /></DataTemplate>
                     </ListView.ItemTemplate>
                 </ListView>
-                <Button Content="delete selected countdown" Command="{x:Bind ViewModel.DeleteCountdownCommand}" CommandParameter="{x:Bind ViewModel.SelectedCountdown}" AutomationProperties.AutomationId="HomeDeleteCountdown" AutomationProperties.Name="delete selected countdown" />
+                <Button Content="delete selected countdown" Command="{x:Bind ViewModel.RequestDeleteCountdownCommand}" CommandParameter="{x:Bind ViewModel.SelectedCountdown, Mode=OneWay}" AutomationProperties.AutomationId="HomeDeleteCountdown" AutomationProperties.Name="delete selected countdown" />
+                <Border Padding="16" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource WarningBrush}" Visibility="{x:Bind ViewModel.IsConfirmingDeleteCountdown, Mode=OneWay}" AutomationProperties.AutomationId="HomeDeleteCountdownConfirmationPanel" AutomationProperties.Name="delete countdown confirmation panel">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="delete this countdown for good? cannot undo" TextWrapping="Wrap" AutomationProperties.LiveSetting="Assertive" AutomationProperties.AutomationId="HomeDeleteCountdownConfirmationMessage" AutomationProperties.Name="delete countdown confirmation message" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Content="confirm delete" Command="{x:Bind ViewModel.DeleteCountdownCommand}" CommandParameter="{x:Bind ViewModel.PendingDeleteCountdown, Mode=OneWay}" AutomationProperties.AutomationId="HomeDeleteCountdownConfirm" AutomationProperties.Name="confirm delete countdown" />
+                            <Button Content="cancel" Command="{x:Bind ViewModel.CancelDeleteCountdownCommand}" AutomationProperties.AutomationId="HomeDeleteCountdownCancel" AutomationProperties.Name="cancel delete countdown" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
             </StackPanel>
 
             <StackPanel Spacing="12">

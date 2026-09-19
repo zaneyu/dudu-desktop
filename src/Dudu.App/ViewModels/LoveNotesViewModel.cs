@@ -9,6 +9,7 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
 {
     private readonly CompanionFeatureContext _context;
     private LocalLoveNote? _selectedNote;
+    private LocalLoveNote? _pendingDeleteNote;
     private RemoteEnvelope? _selectedRemoteEnvelope;
     private RemoteEnvelope? _openedRemoteEnvelope;
     private string? _openedRemoteNoteText;
@@ -22,6 +23,8 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
         SaveLocalNoteCommand = new AsyncRelayCommand((CancellationToken ct) => SaveLocalNoteAsync(ct));
         NewNoteCommand = new RelayCommand(NewNote);
         DeleteLocalNoteCommand = new AsyncRelayCommand<LocalLoveNote?>((item, ct) => DeleteLocalNoteAsync(item, ct));
+        RequestDeleteLocalNoteCommand = new RelayCommand<LocalLoveNote>(note => PendingDeleteNote = note);
+        CancelDeleteLocalNoteCommand = new RelayCommand(() => PendingDeleteNote = null);
         RevealRemoteNoteCommand = new AsyncRelayCommand<RemoteEnvelope>((item, ct) => RevealRemoteNoteAsync(item, ct));
         SaveOpenedNoteCommand = new AsyncRelayCommand<object?>((item, ct) => SaveOpenedNoteAsync(item, ct));
         ShowLocalNoteCommand = new AsyncRelayCommand((CancellationToken ct) => ShowLocalNoteAsync(ct));
@@ -31,6 +34,8 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
     public IAsyncRelayCommand SaveLocalNoteCommand { get; }
     public IRelayCommand NewNoteCommand { get; }
     public IAsyncRelayCommand<LocalLoveNote?> DeleteLocalNoteCommand { get; }
+    public IRelayCommand<LocalLoveNote> RequestDeleteLocalNoteCommand { get; }
+    public IRelayCommand CancelDeleteLocalNoteCommand { get; }
     public IAsyncRelayCommand<RemoteEnvelope> RevealRemoteNoteCommand { get; }
     public IAsyncRelayCommand<object?> SaveOpenedNoteCommand { get; }
     public IAsyncRelayCommand ShowLocalNoteCommand { get; }
@@ -39,6 +44,15 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
     public ObservableCollection<RemoteEnvelope> PendingRemoteNotes { get; } = [];
 
     public LocalLoveNote? SelectedNote { get => _selectedNote; set => SetProperty(ref _selectedNote, value); }
+    public LocalLoveNote? PendingDeleteNote
+    {
+        get => _pendingDeleteNote;
+        private set
+        {
+            if (SetProperty(ref _pendingDeleteNote, value)) OnPropertyChanged(nameof(IsConfirmingDeleteNote));
+        }
+    }
+    public bool IsConfirmingDeleteNote => PendingDeleteNote is not null;
     public RemoteEnvelope? SelectedRemoteEnvelope
     {
         get => _selectedRemoteEnvelope;
@@ -121,15 +135,16 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
             {
                 LocalNotes.Remove(note);
                 if (SelectedNote?.Id == note.Id) SelectedNote = null;
+                if (PendingDeleteNote?.Id == note.Id) PendingDeleteNote = null;
             }, cancellationToken);
         }, "okkk note deleted le");
     }
 
     public Task RevealRemoteNoteAsync(RemoteEnvelope? envelope, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(envelope);
         return RunAsync(async () =>
         {
+            ArgumentNullException.ThrowIfNull(envelope);
             var revealed = await _context.RevealRemoteNoteAsync(envelope, cancellationToken);
             OpenedRemoteEnvelope = envelope;
             OpenedRemoteNoteText = revealed.Text;

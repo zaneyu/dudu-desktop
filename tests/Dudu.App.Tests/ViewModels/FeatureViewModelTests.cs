@@ -109,10 +109,100 @@ public sealed class FeatureViewModelTests
         var reminders = new RemindersViewModel(fixture.Context);
         await reminders.CompleteCommand.ExecuteAsync(null);
         Assert.Equal("select one first", reminders.ErrorMessage);
+        await reminders.SnoozeCommand.ExecuteAsync(null);
+        Assert.Equal("select one first", reminders.ErrorMessage);
 
         var notes = new LoveNotesViewModel(fixture.Context);
         await notes.DeleteLocalNoteCommand.ExecuteAsync(null);
         Assert.Equal("select one first", notes.ErrorMessage);
+        await notes.RevealRemoteNoteCommand.ExecuteAsync(null);
+        Assert.Equal("select one first", notes.ErrorMessage);
+
+        var home = new HomeViewModel(fixture.Context);
+        await home.DeleteCountdownCommand.ExecuteAsync(null);
+        Assert.Equal("select one first", home.ErrorMessage);
+
+        var tasks = new TasksFocusViewModel(fixture.Context);
+        await tasks.CompleteTaskCommand.ExecuteAsync(null);
+        Assert.Equal("select one first", tasks.ErrorMessage);
+        await tasks.DeleteTaskCommand.ExecuteAsync(null);
+        Assert.Equal("select one first", tasks.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task Countdown_deletion_requires_a_separate_confirmation()
+    {
+        var fixture = FeatureFixture.Create();
+        var viewModel = new HomeViewModel(fixture.Context)
+        {
+            CountdownTitle = "Anniversary",
+            CountdownTargetUtc = DateTimeOffset.Parse("2026-12-01T12:00:00Z"),
+        };
+        await viewModel.SaveCountdownAsync(TestContext.Current.CancellationToken);
+        var countdown = Assert.Single(fixture.Countdowns.Items);
+
+        viewModel.RequestDeleteCountdownCommand.Execute(countdown);
+        Assert.True(viewModel.IsConfirmingDeleteCountdown);
+        Assert.Equal(countdown, viewModel.PendingDeleteCountdown);
+        Assert.Single(fixture.Countdowns.Items);
+
+        viewModel.CancelDeleteCountdownCommand.Execute(null);
+        Assert.False(viewModel.IsConfirmingDeleteCountdown);
+        Assert.Single(fixture.Countdowns.Items);
+
+        viewModel.RequestDeleteCountdownCommand.Execute(countdown);
+        await viewModel.DeleteCountdownCommand.ExecuteAsync(viewModel.PendingDeleteCountdown);
+
+        Assert.Empty(fixture.Countdowns.Items);
+        Assert.False(viewModel.IsConfirmingDeleteCountdown);
+    }
+
+    [Fact]
+    public async Task Task_deletion_requires_a_separate_confirmation()
+    {
+        var fixture = FeatureFixture.Create();
+        var viewModel = new TasksFocusViewModel(fixture.Context) { Title = "Book dinner" };
+        await viewModel.SaveTaskAsync(TestContext.Current.CancellationToken);
+        var task = Assert.Single(fixture.Tasks.Items);
+
+        viewModel.RequestDeleteTaskCommand.Execute(task);
+        Assert.True(viewModel.IsConfirmingDeleteTask);
+        Assert.Equal(task, viewModel.PendingDeleteTask);
+        Assert.Single(fixture.Tasks.Items);
+
+        viewModel.CancelDeleteTaskCommand.Execute(null);
+        Assert.False(viewModel.IsConfirmingDeleteTask);
+        Assert.Single(fixture.Tasks.Items);
+
+        viewModel.RequestDeleteTaskCommand.Execute(task);
+        await viewModel.DeleteTaskCommand.ExecuteAsync(viewModel.PendingDeleteTask);
+
+        Assert.Empty(fixture.Tasks.Items);
+        Assert.False(viewModel.IsConfirmingDeleteTask);
+    }
+
+    [Fact]
+    public async Task Local_note_deletion_requires_a_separate_confirmation()
+    {
+        var fixture = FeatureFixture.Create();
+        var viewModel = new LoveNotesViewModel(fixture.Context) { DraftText = "first" };
+        await viewModel.SaveLocalNoteCommand.ExecuteAsync(null);
+        var note = Assert.Single(fixture.LocalNotes.Notes);
+
+        viewModel.RequestDeleteLocalNoteCommand.Execute(note);
+        Assert.True(viewModel.IsConfirmingDeleteNote);
+        Assert.Equal(note, viewModel.PendingDeleteNote);
+        Assert.Single(fixture.LocalNotes.Notes);
+
+        viewModel.CancelDeleteLocalNoteCommand.Execute(null);
+        Assert.False(viewModel.IsConfirmingDeleteNote);
+        Assert.Single(fixture.LocalNotes.Notes);
+
+        viewModel.RequestDeleteLocalNoteCommand.Execute(note);
+        await viewModel.DeleteLocalNoteCommand.ExecuteAsync(viewModel.PendingDeleteNote);
+
+        Assert.Empty(fixture.LocalNotes.Notes);
+        Assert.False(viewModel.IsConfirmingDeleteNote);
     }
 
     [Fact]

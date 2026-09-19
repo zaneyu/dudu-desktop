@@ -266,6 +266,30 @@ public sealed class XamlContractTests
         }
     }
 
+    [Fact]
+    public void Every_command_parameter_x_bind_declares_an_explicit_mode()
+    {
+        // x:Bind defaults to OneTime. A CommandParameter left at OneTime is captured once,
+        // at initial layout, when the bound selection is still null -- so the command always
+        // receives null even after the user picks something. Every CommandParameter x:Bind
+        // must say Mode= explicitly (OneWay, in practice) so it tracks the live selection.
+        var root = FindRepositoryRoot();
+        var appDirectory = Path.Combine(root, "src", "Dudu.App");
+        var xamlFiles = Directory.GetFiles(appDirectory, "*.xaml", SearchOption.AllDirectories);
+        Assert.NotEmpty(xamlFiles);
+
+        foreach (var file in xamlFiles)
+        {
+            var xaml = File.ReadAllText(file);
+            foreach (Match binding in Regex.Matches(xaml, "CommandParameter=\"\\{x:Bind[^}]*\\}\""))
+            {
+                Assert.True(
+                    binding.Value.Contains("Mode=", StringComparison.Ordinal),
+                    $"{Path.GetFileName(file)} has a CommandParameter x:Bind with no explicit Mode: {binding.Value}");
+            }
+        }
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
