@@ -65,6 +65,28 @@ public sealed class FieldDiagnosticsContractTests
     }
 
     [Fact]
+    public void Startup_failure_box_is_guarded_to_show_at_most_once()
+    {
+        var app = ReadSource("App.xaml.cs");
+
+        var guardDeclaration = app.IndexOf("_startupFailureBoxShown", StringComparison.Ordinal);
+        var methodStart = app.IndexOf(
+            "private static void ShowStartupFailureBox()",
+            StringComparison.Ordinal);
+        var exchangeGuard = app.IndexOf(
+            "Interlocked.Exchange(ref _startupFailureBoxShown, 1)",
+            StringComparison.Ordinal);
+        var messageBoxCall = app.IndexOf(
+            "ShowStartupFailureMessageBox(AppPaths.ForCurrentUser())",
+            StringComparison.Ordinal);
+
+        Assert.True(guardDeclaration >= 0);
+        Assert.True(methodStart >= 0);
+        Assert.True(exchangeGuard > methodStart);
+        Assert.True(messageBoxCall > exchangeGuard);
+    }
+
+    [Fact]
     public void CrashGuard_correlation_uses_the_file_sink_not_the_failure_log()
     {
         var guard = ReadSource(Path.Combine("Hosting", "StartupCrashGuard.cs"));

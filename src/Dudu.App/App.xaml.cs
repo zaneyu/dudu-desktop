@@ -327,8 +327,19 @@ public sealed partial class App : Application
         Trace.TraceError("Dudu startup failed: {0}", exception);
     }
 
+    // Startup failure can route through this box from up to three places
+    // (the startup catch, a dispose failure during that catch, and a
+    // RequestExit failure), and ObserveStartupAsync's post-startup catch
+    // makes a fourth. Guard so she only ever sees it once per process.
+    private static int _startupFailureBoxShown;
+
     private static void ShowStartupFailureBox()
     {
+        if (Interlocked.Exchange(ref _startupFailureBoxShown, 1) != 0)
+        {
+            return;
+        }
+
         try
         {
             ShowStartupFailureMessageBox(AppPaths.ForCurrentUser());
