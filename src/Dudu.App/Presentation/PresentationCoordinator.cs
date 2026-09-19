@@ -74,6 +74,7 @@ public sealed class PresentationCoordinator :
     private readonly Func<bool> _isFullscreenNow;
     private readonly Func<DateTimeOffset> _utcNow;
     private readonly IAppHostErrorReporter? _errorReporter;
+    private readonly IHeldPresentationRepository? _heldPresentations;
     private bool _sessionLocked;
     private bool _fullscreen;
     private bool _userHidden;
@@ -99,7 +100,8 @@ public sealed class PresentationCoordinator :
         Func<DateTimeOffset>? utcNow = null,
         IAppHostErrorReporter? errorReporter = null,
         Func<AudioCueEvent, CancellationToken, Task>? playAudioAsync = null,
-        IReadOnlyList<string>? availableStickerKeys = null)
+        IReadOnlyList<string>? availableStickerKeys = null,
+        IHeldPresentationRepository? heldPresentations = null)
     {
         _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
         _policy = policy ?? throw new ArgumentNullException(nameof(policy));
@@ -116,6 +118,7 @@ public sealed class PresentationCoordinator :
         _availableStickerKeys = availableStickerKeys;
         _isFullscreenNow = isFullscreenNow ?? (() => { lock (_gate) return _fullscreen; });
         _errorReporter = errorReporter;
+        _heldPresentations = heldPresentations;
         if ((_ambientScheduler is null) != (_localNoteSelector is null))
         {
             throw new ArgumentException(
@@ -165,6 +168,8 @@ public sealed class PresentationCoordinator :
     /// </summary>
     public async Task StartAsync(CancellationToken cancellationToken = default)
     {
+        await LoadHeldItemsAsync(cancellationToken);
+
         if (_notifications is not IRegistrableNotificationService registrable)
         {
             return;
@@ -181,6 +186,63 @@ public sealed class PresentationCoordinator :
         catch (Exception exception)
         {
             ReportFailure("presentation-tick", exception);
+        }
+    }
+
+    /// <summary>
+    /// Repopulates PresentationPolicy's in-memory queue from
+    /// <see cref="IHeldPresentationRepository"/> so an item held back by
+    /// quiet hours/fullscreen/lock/pause at the moment the app last quit or
+    /// crashed is not lost. No-op when no repository was supplied. A row that
+    /// has already expired is dropped (deleted, not enqueued) rather than
+    /// surfaced on this launch; a row this build no longer recognizes (kind,
+    /// or a required field missing) is reported and dropped the same way
+    /// rather than wedging startup.
+    /// </summary>
+    private async Task LoadHeldItemsAsync(CancellationToken cancellationToken)
+    {
+        if (_heldPresentations is null)
+        {
+            return;
+        }
+
+        IReadOnlyList<HeldPresentation> held;
+        try
+        {
+            held = await _heldPresentations.ListAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            ReportFailure("presentation-tick", exception);
+            return;
+        }
+
+        var now = _utcNow();
+        foreach (var record in held)
+        {
+            try
+            {
+                if (record.ExpiresUtc is { } expiry && now >= expiry)
+                {
+                    await _heldPresentations.DeleteAsync(record.Key, cancellationToken);
+                    continue;
+                }
+
+                _policy.Enqueue(ToDurableNotification(record));
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                ReportFailure("presentation-tick", exception);
+                await RemoveHeldAsync(record.Key, cancellationToken);
+            }
         }
     }
 
@@ -211,6 +273,7 @@ public sealed class PresentationCoordinator :
         bypassSuppression &= !item.IsRoutine;
         bool shouldPresentNow;
         var toastNow = false;
+        var queuedForHold = false;
         lock (_gate)
         {
             if (_presentingIds.Contains(item.Key) || _policy.IsQueued(item))
@@ -222,7 +285,7 @@ public sealed class PresentationCoordinator :
             shouldPresentNow = bypassSuppression || !IsSuppressed(environment);
             if (!shouldPresentNow)
             {
-                var queued = _policy.Enqueue(item);
+                queuedForHold = _policy.Enqueue(item);
                 // A Windows toast is independent of whether the overlay is
                 // on screen, unlike the pet animation this item's queueing
                 // already holds back — so when the *only* reason it is held
@@ -231,7 +294,7 @@ public sealed class PresentationCoordinator :
                 // with the animation. Marked so the eventual real
                 // PresentAsync (once released) does not show the same
                 // toast a second time.
-                toastNow = queued && environment.UserHidden && !IsSuppressedExcludingUserHidden(environment);
+                toastNow = queuedForHold && environment.UserHidden && !IsSuppressedExcludingUserHidden(environment);
                 if (toastNow)
                 {
                     _toastedWhileHeldIds.Add(item.Key);
@@ -241,6 +304,14 @@ public sealed class PresentationCoordinator :
             {
                 _presentingIds.Add(item.Key);
             }
+        }
+
+        if (queuedForHold)
+        {
+            // Held back by quiet hours/fullscreen/lock/pause: persist it so
+            // it survives a quit or crash while still queued. No-op when no
+            // IHeldPresentationRepository was supplied.
+            await PersistHeldAsync(item, now, cancellationToken);
         }
 
         if (!shouldPresentNow)
@@ -259,12 +330,12 @@ public sealed class PresentationCoordinator :
         {
             if (!await PresentAsync(item, cancellationToken))
             {
-                _policy.Requeue(item);
+                await RequeueHeldAsync(item, now, cancellationToken);
             }
         }
         catch
         {
-            _policy.Requeue(item);
+            await RequeueHeldAsync(item, now, cancellationToken);
             throw;
         }
         finally
@@ -285,6 +356,8 @@ public sealed class PresentationCoordinator :
         var now = _utcNow();
         DurableNotification? toPresent;
         SuppressionSnapshot environment;
+        IReadOnlyList<string> purgedKeys;
+        IReadOnlyList<DurableNotification> released;
         lock (_gate)
         {
             environment = CaptureEnvironment(now);
@@ -297,6 +370,8 @@ public sealed class PresentationCoordinator :
                 now,
                 recordRelease: false,
                 userHidden: environment.UserHidden);
+            purgedKeys = decision.PurgedKeys;
+            released = decision.ToPresent;
 
             // An item purged here was queued while held (and already toasted
             // for that hold) but expired before ever reaching PresentAsync,
@@ -317,18 +392,33 @@ public sealed class PresentationCoordinator :
             }
         }
 
+        // Both a purge (expired while held) and a release (handed off below)
+        // take the item out of PresentationPolicy's in-memory queue, so its
+        // persisted row, if any, must go with it — otherwise it would
+        // reappear on the next restart's load. RequeueHeldAsync below
+        // re-persists a release that fails.
+        foreach (var purgedKey in purgedKeys)
+        {
+            await RemoveHeldAsync(purgedKey, cancellationToken);
+        }
+
+        foreach (var item in released)
+        {
+            await RemoveHeldAsync(item.Key, cancellationToken);
+        }
+
         if (toPresent is not null)
         {
             try
             {
                 if (!await PresentAsync(toPresent, cancellationToken))
                 {
-                    _policy.Requeue(toPresent);
+                    await RequeueHeldAsync(toPresent, now, cancellationToken);
                 }
             }
             catch
             {
-                _policy.Requeue(toPresent);
+                await RequeueHeldAsync(toPresent, now, cancellationToken);
                 throw;
             }
             finally
@@ -650,6 +740,70 @@ public sealed class PresentationCoordinator :
             exception.GetType().FullName,
             exception.HResult);
     }
+
+    /// <summary>No-op when no repository was supplied. A save failure is
+    /// reported and swallowed, matching every other secondary concern in this
+    /// class (a toast, audio): it must never fail the presentation it is
+    /// tracking.</summary>
+    private Task PersistHeldAsync(DurableNotification item, DateTimeOffset queuedUtc, CancellationToken cancellationToken)
+    {
+        if (_heldPresentations is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        var record = new HeldPresentation(
+            item.Key,
+            item.Kind.ToString(),
+            item.Id,
+            item.Title,
+            item.Body,
+            item.AnimationKey,
+            item.ExpiresUtc,
+            queuedUtc);
+        return ObserveAsync(() => _heldPresentations.SaveAsync(record, cancellationToken), "presentation-tick");
+    }
+
+    /// <summary>Deletes the persisted row for a key that just left
+    /// PresentationPolicy's in-memory queue (released for presentation or
+    /// purged as expired). No-op when no repository was supplied.</summary>
+    private Task RemoveHeldAsync(string key, CancellationToken cancellationToken)
+    {
+        if (_heldPresentations is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        return ObserveAsync(() => _heldPresentations.DeleteAsync(key, cancellationToken), "presentation-tick");
+    }
+
+    /// <summary>Returns a failed/cancelled presentation attempt to
+    /// PresentationPolicy's durable queue and, only when it actually
+    /// re-entered the queue, persists it again.</summary>
+    private Task RequeueHeldAsync(DurableNotification item, DateTimeOffset now, CancellationToken cancellationToken) =>
+        _policy.Requeue(item) ? PersistHeldAsync(item, now, cancellationToken) : Task.CompletedTask;
+
+    /// <summary>Rebuilds the <see cref="DurableNotification"/> a
+    /// <see cref="HeldPresentation"/> row was saved from. Throws for a row
+    /// this build cannot make sense of (unrecognized kind, or a field its
+    /// kind requires is missing) — the caller in <see cref="LoadHeldItemsAsync"/>
+    /// treats that as corrupt and drops the row.</summary>
+    private static DurableNotification ToDurableNotification(HeldPresentation record) => record.Kind switch
+    {
+        nameof(PresentationItemKind.RemoteNote) => DurableNotification.RemoteNote(record.Id),
+        nameof(PresentationItemKind.Reminder) => DurableNotification.Reminder(
+            record.Id,
+            record.Title ?? throw new InvalidOperationException("A held reminder has no title."),
+            record.Body,
+            record.AnimationKey,
+            record.ExpiresUtc),
+        nameof(PresentationItemKind.LocalNote) => DurableNotification.LocalNote(
+            new LocalLoveNote(
+                record.Id,
+                record.Body ?? throw new InvalidOperationException("A held local note has no text.")),
+            record.AnimationKey ?? throw new InvalidOperationException("A held local note has no animation key.")),
+        _ => throw new InvalidOperationException($"Unrecognized held presentation kind '{record.Kind}'."),
+    };
 
     private readonly record struct SuppressionSnapshot(
         bool NowQuiet,

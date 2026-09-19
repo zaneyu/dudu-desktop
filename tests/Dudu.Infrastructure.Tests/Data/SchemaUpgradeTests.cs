@@ -203,7 +203,7 @@ public sealed class SchemaUpgradeTests
         var cancellationToken = TestContext.Current.CancellationToken;
         await using var fixture = await SchemaThreeFixture.CreateAsync(cancellationToken);
 
-        // Six pending migrations (4-10 minus whichever are no-ops) apply in this
+        // Seven pending migrations (4-11 minus whichever are no-ops) apply in this
         // single upgrade run -- more than the default backup retention count of 5.
         // The old per-migration backup would create one snapshot per migration and
         // evict the earliest (the only genuine pre-upgrade snapshot) before the run

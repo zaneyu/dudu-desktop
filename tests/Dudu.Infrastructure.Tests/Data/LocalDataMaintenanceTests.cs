@@ -30,6 +30,8 @@ public sealed class LocalDataMaintenanceTests
                     VALUES ('message-1', '2026-09-12T10:00:00Z');
                     INSERT INTO asset_packs (pack_id, version, manifest_path, private_use_only, selected)
                     VALUES ('custom', '1', 'C:\\pack\\manifest.json', 1, 1);
+                    INSERT INTO held_presentations (presentation_key, kind, item_id, title, body, animation_key, expires_utc, queued_utc)
+                    VALUES ('Reminder:mine', 'Reminder', 'mine', 'Stretch', NULL, NULL, NULL, '2026-09-12T10:00:00Z');
                     """;
                 await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
             }
@@ -55,6 +57,7 @@ public sealed class LocalDataMaintenanceTests
             Assert.Equal(0L, await ScalarAsync(verify, "SELECT COUNT(*) FROM local_note_history;"));
             Assert.Equal(0L, await ScalarAsync(verify, "SELECT COUNT(*) FROM processed_remote_messages;"));
             Assert.Equal(0L, await ScalarAsync(verify, "SELECT COUNT(*) FROM asset_packs;"));
+            Assert.Equal(0L, await ScalarAsync(verify, "SELECT COUNT(*) FROM held_presentations;"));
             Assert.Equal(12L, await ScalarAsync(verify, "SELECT COUNT(*) FROM local_notes WHERE is_default = 1;"));
             Assert.Equal(0L, await ScalarAsync(verify, "SELECT COUNT(*) FROM local_notes WHERE is_default = 0;"));
             Assert.False(File.Exists(backupPath));

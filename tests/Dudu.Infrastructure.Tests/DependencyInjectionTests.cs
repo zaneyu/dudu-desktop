@@ -22,6 +22,7 @@ public sealed class DependencyInjectionTests
         Assert.IsType<CheckInRepository>(provider.GetRequiredService<ICheckInRepository>());
         Assert.IsType<CountdownRepository>(provider.GetRequiredService<ICountdownRepository>());
         Assert.IsType<FocusSessionRepository>(provider.GetRequiredService<IFocusSessionRepository>());
+        Assert.IsType<HeldPresentationRepository>(provider.GetRequiredService<IHeldPresentationRepository>());
         Assert.IsType<LocalNoteRepository>(provider.GetRequiredService<ILocalNoteRepository>());
         Assert.IsType<PetPlacementRepository>(provider.GetRequiredService<IPetPlacementRepository>());
         Assert.IsType<PreferencesRepository>(provider.GetRequiredService<IPreferencesRepository>());
