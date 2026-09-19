@@ -344,6 +344,25 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public void Delete_prompt_truncation_does_not_split_an_emoji_straddling_the_cut()
+    {
+        // Regression: text[..40] cuts by UTF-16 code unit, so a note whose
+        // emoji spans indices 39/40 used to split the surrogate pair and
+        // show a garbage glyph in the delete prompt. The cut must back up
+        // one char instead of landing inside the pair.
+        var fixture = FeatureFixture.Create();
+        var viewModel = new LoveNotesViewModel(fixture.Context);
+        var text = new string('a', 39) + "😀" + " more text after the emoji";
+        var note = new LocalLoveNote("note-1", text);
+
+        viewModel.RequestDeleteLocalNoteCommand.Execute(note);
+
+        Assert.Equal(
+            $"delete \"{new string('a', 39)}…\" for good? cannot undo",
+            viewModel.DeleteNotePrompt);
+    }
+
+    [Fact]
     public async Task Completing_a_task_clears_a_pending_delete_confirmation_for_the_same_task()
     {
         // M-4: CompleteTaskAsync changes the task's state outside the delete flow, so a
