@@ -73,6 +73,13 @@ public sealed record CompanionSettingsContext(
     public OverlayActionSurfaceController? ActionSurface { get; init; }
     public OverlayCommandRouter? OverlayCommands { get; init; }
     public IReadOnlyList<string> AvailableOutfitKeys { get; init; } = ["base"];
+
+    /// <summary>
+    /// True when this context was configured by <c>CreateSafeModeRuntimeAsync</c>:
+    /// no tray and no overlay are composed, so the settings window is the only
+    /// UI surface. App.xaml.cs uses this to exit when that window closes.
+    /// </summary>
+    public bool IsSafeMode { get; init; }
 }
 
 public sealed record CompanionLaunchOptions(bool Background, bool SelfTest = false)
@@ -942,6 +949,7 @@ public static class WindowsCompanionProductionComposition
         {
             Features = featureContext,
             AvailableOutfitKeys = ["base"],
+            IsSafeMode = true,
         });
 
         // No overlay is composed in safe mode, so the notification service that

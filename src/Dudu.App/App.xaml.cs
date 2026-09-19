@@ -198,7 +198,19 @@ public sealed partial class App : Application
 
             _settingsWindow.ExtendsContentIntoTitleBar = true;
             _settingsWindow.SetTitleBar(view.TitleBarElement);
-            _settingsWindow.Closed += (_, _) => _settingsWindow = null;
+            _settingsWindow.Closed += (_, _) =>
+            {
+                var wasSafeMode = _settingsContext?.IsSafeMode == true;
+                _settingsWindow = null;
+                if (wasSafeMode)
+                {
+                    // Safe mode composes no tray and no overlay, so this window is
+                    // the only UI surface. DispatcherShutdownMode.OnExplicitShutdown
+                    // means last-window-close no longer exits the app, so closing it
+                    // must call the explicit exit path itself, same as tray "quit".
+                    _ = ExitApplicationAsync(CancellationToken.None);
+                }
+            };
         }
 
         _settingsWindow.Activate();

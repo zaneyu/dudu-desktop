@@ -868,6 +868,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         {
             await _host.StartAsync(cancellationToken);
             _hotkey.Triggered += OnHotkeyTriggered;
+            var forceVisible = false;
             await _overlay.InvokeOnOwnerAsync(() =>
             {
                 try
@@ -897,12 +898,21 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                     // TaskbarCreated.
                     ReportFailure("tray-attach", exception);
                     Trace.TraceWarning("Dudu tray icon unavailable: {0}", exception.Message);
+                    if (!_initialUserVisible)
+                    {
+                        // A --background/launch-at-sign-in start composes the
+                        // overlay hidden and relies on the tray to give her a
+                        // surface. With the tray gone too there would be no
+                        // UI and no way to exit, so force the overlay visible
+                        // instead of leaving an invisible, unkillable process.
+                        forceVisible = true;
+                    }
                 }
             });
             await StartupVisibilityGate.ApplyAsync(
                 token => _events.StartAsync(_overlay.Handle, this, token),
                 _lifecycle.SetUserVisibleAsync,
-                _initialUserVisible,
+                _initialUserVisible || forceVisible,
                 cancellationToken);
             return true;
         }
