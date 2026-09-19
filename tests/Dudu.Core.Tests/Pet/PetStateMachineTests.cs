@@ -223,6 +223,68 @@ public sealed class PetStateMachineTests
         Assert.Equal(PetState.Idle, result.State);
     }
 
+    /// <summary>
+    /// Every presentation the state machine can latch into must have some
+    /// event that returns it to Idle — this enumerates all of them so a
+    /// future latch added without a matching clearing event fails loudly
+    /// here instead of pinning the pet forever. "Non-manual" means the event
+    /// itself does not require a human to have opened Settings first — the
+    /// caller may fire it automatically once a presentation finishes (as
+    /// PresentationCoordinator, PetPresentationCoordinator, and FocusService
+    /// now all do); a Settings dismiss/complete is only ever an additional,
+    /// idempotent way to reach the same event.
+    /// </summary>
+    [Fact]
+    public void Every_latched_presentation_has_a_clearing_event_reachable_without_a_settings_visit()
+    {
+        // Comfort: cleared by PresentationAcknowledged (fired once the hug
+        // finishes playing) or ComfortDismissed/Dismissed("comfort").
+        var comfort = PetStateMachine.CreateIdle();
+        comfort.Handle(new PetEvent.ComfortRequested());
+        Assert.Equal(PetState.Idle, comfort.Handle(new PetEvent.PresentationAcknowledged()).State);
+
+        // RemoteNote: cleared by Dismissed(messageId), now fired by
+        // PresentationCoordinator once the note has been shown.
+        var remoteNote = PetStateMachine.CreateIdle();
+        remoteNote.Handle(new PetEvent.RemoteNoteArrived("m-1"));
+        Assert.Equal(PetState.Idle, remoteNote.Handle(new PetEvent.Dismissed("m-1")).State);
+
+        // Reminder: cleared by Dismissed(reminderId), now fired by
+        // PresentationCoordinator once the reminder has been shown.
+        var reminder = PetStateMachine.CreateIdle();
+        reminder.Handle(new PetEvent.ReminderDue("medicine"));
+        Assert.Equal(PetState.Idle, reminder.Handle(new PetEvent.Dismissed("medicine")).State);
+
+        // FocusTransition: cleared by PresentationAcknowledged (fired once
+        // the celebrate clip finishes) or Dismissed("focus-end").
+        var focusTransition = PetStateMachine.CreateIdle();
+        focusTransition.Handle(new PetEvent.FocusStarted("f-1"));
+        focusTransition.Handle(new PetEvent.FocusEnded("f-1"));
+        Assert.Equal(PetState.Idle, focusTransition.Handle(new PetEvent.PresentationAcknowledged()).State);
+
+        // WelcomeBack: cleared by WelcomeBackDismissed, now fired by routing
+        // AppLifecycleCoordinator's request through the one-shot
+        // presentation path instead of a raw Handle call.
+        var welcomeBack = PetStateMachine.CreateIdle();
+        welcomeBack.Handle(new PetEvent.WelcomeBackRequested());
+        Assert.Equal(PetState.Idle, welcomeBack.Handle(new PetEvent.WelcomeBackDismissed()).State);
+
+        // Ambient: cleared by AmbientDismissed(key), fired once its one-shot
+        // playback finishes.
+        var ambient = PetStateMachine.CreateIdle();
+        ambient.Handle(new PetEvent.AmbientRequested("sticker-030"));
+        Assert.Equal(PetState.Idle, ambient.Handle(new PetEvent.AmbientDismissed("sticker-030")).State);
+
+        // Focus: cleared by FocusEnded (which itself transitions to the
+        // celebrate pose, FocusTransition, by design — see that latch
+        // above), now also fired automatically when
+        // FocusService.SessionExpired signals the timer ran out (previously
+        // only a manual "end focus" ever raised it).
+        var focus = PetStateMachine.CreateIdle();
+        focus.Handle(new PetEvent.FocusStarted("f-2"));
+        Assert.NotEqual(PetState.Focus, focus.Handle(new PetEvent.FocusEnded("f-2")).State);
+    }
+
     [Fact]
     public async Task Concurrent_reads_and_events_are_serialized_without_corrupting_state()
     {
