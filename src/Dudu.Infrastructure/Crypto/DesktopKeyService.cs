@@ -44,11 +44,17 @@ public sealed class DesktopKeyService
             if (existingPrivateKey is not null)
             {
                 using var existing = ECDiffieHellman.Create();
-                var imported = false;
+                DesktopKeyMaterial? material = null;
                 try
                 {
                     existing.ImportPkcs8PrivateKey(existingPrivateKey, out _);
-                    imported = true;
+                    // L2: only mark existingPrivateKey as owned by the returned material once
+                    // that material is actually constructed -- if ExportSubjectPublicKeyInfo()
+                    // below were to throw, the private key buffer must still be zeroed rather than
+                    // left neither zeroed nor handed to a caller.
+                    material = new DesktopKeyMaterial(
+                        Base64Url.EncodeToString(existing.ExportSubjectPublicKeyInfo()),
+                        existingPrivateKey);
                 }
                 catch (CryptographicException exception)
                 {
@@ -64,15 +70,13 @@ public sealed class DesktopKeyService
                     // On the throw path existingPrivateKey is never returned to a caller who would
                     // zero it later (see RemoteSyncService's ZeroMemory on DesktopKeyMaterial), so
                     // it must be zeroed here instead of leaking key bytes for GC's timeline.
-                    if (!imported)
+                    if (material is null)
                     {
                         CryptographicOperations.ZeroMemory(existingPrivateKey);
                     }
                 }
 
-                return new DesktopKeyMaterial(
-                    Base64Url.EncodeToString(existing.ExportSubjectPublicKeyInfo()),
-                    existingPrivateKey);
+                return material;
             }
 
             using var created = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
