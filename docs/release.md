@@ -281,11 +281,10 @@ pwsh scripts/package-store.ps1 -Version <Major.Minor.Patch> `
 
 The command fails unless the manifest matches both exact values and is not the
 local identity. Upload only that locally produced, identity-gated `.msix`
-(the Partner Center upload container, if the portal requests one, is not the
-raw `.msix`) when using this local path — never the CI artifact. Do not
-commit the private identity values. Store artifacts become Microsoft-signed
-only after Microsoft Store publication. The current Inno installer remains
-unsigned and may trigger SmartScreen or Smart App Control behavior.
+when using this local path — never the CI artifact. Do not commit the
+private identity values. Store artifacts become Microsoft-signed only after
+Microsoft Store publication. The current Inno installer remains unsigned and
+may trigger SmartScreen or Smart App Control behavior.
 
 ### Production packaging through GitHub Actions
 
