@@ -54,11 +54,18 @@ function Get-ReleaseCommitSha {
         The uploaded package metadata otherwise carries no record of which
         commit produced it. $env:GITHUB_SHA is the full commit SHA CI checked
         out; fall back to `git rev-parse HEAD` for a local run, and to
-        "unknown" only if neither is available (e.g. no .git directory).
+        "unknown" only if neither is available (e.g. no .git directory, or git
+        missing from PATH). Under $ErrorActionPreference = 'Stop', a failing
+        native command throws rather than just setting $LASTEXITCODE, so the
+        call must be wrapped in try/catch rather than relying on 2>$null.
     #>
     if ($env:GITHUB_SHA) { return $env:GITHUB_SHA }
-    $sha = (& git -C $repoRoot rev-parse HEAD 2>$null)
-    if ($LASTEXITCODE -eq 0 -and $sha) { return $sha.Trim() }
+    try {
+        $sha = (& git -C $repoRoot rev-parse HEAD 2>$null)
+        if ($LASTEXITCODE -eq 0 -and $sha) { return $sha.Trim() }
+    } catch {
+        # No .git directory, git missing from PATH, or any other failure: fall through to 'unknown'.
+    }
     return 'unknown'
 }
 
