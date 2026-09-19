@@ -868,7 +868,11 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             _dragOriginScreenY = _windowBounds.Y + point.Y;
         }
         _dragStartBounds = _windowBounds;
-        _placementDirty = false;
+        // A scroll-resize just before this drag can leave a pending placement
+        // save (_placementDirty from ChangeScale); commit it instead of
+        // unconditionally discarding it, or the resize is lost forever once
+        // the drag starts.
+        CommitPlacementIfDirty();
         return true;
     }
 
