@@ -429,7 +429,8 @@ Assert-Contains "production workflow requires the test job before packaging" $pr
 Assert-Contains "installer job runs the FlaUI UI test suite against the published exe" $workflow 'DUDU_UI_TEST_EXE.*\r?\n.*dotnet test --project tests/Dudu\.UiTests/Dudu\.UiTests\.csproj'
 Assert-Contains "UI automation step is gated behind an explicit repository variable, off by default" $workflow 'UI automation tests \(FlaUI\)\s*\r?\n\s*if:\s*vars\.DUDU_ENABLE_UI_AUTOMATION == ''true'''
 Assert-True "UI automation step is a real gate, not continue-on-error" ($workflow -notmatch '(?s)UI automation tests \(FlaUI\)(?:(?!\n\s*- name:).)*continue-on-error')
-Assert-True "find-hung-tests only runs after a failure or cancellation, not on every run" (@([regex]::Matches($workflow, '(?s)find hung tests\).*?if:\s*failure\(\) \|\| cancelled\(\)')).Count -eq 1)
+Assert-True "Dudu.App.Tests step has an id so find-hung-tests can key off its own outcome" (@([regex]::Matches($workflow, '(?s)- name:\s*Dudu\.App\.Tests\s*\r?\n\s*id:\s*dudu_app_tests')).Count -eq 1)
+Assert-True "find-hung-tests only runs after the Dudu.App.Tests step itself failed or was cancelled, not on every run or on an earlier step's failure" (@([regex]::Matches($workflow, "(?s)find hung tests\).*?if:\s*steps\.dudu_app_tests\.outcome == 'failure' \|\| steps\.dudu_app_tests\.outcome == 'cancelled'")).Count -eq 1)
 $globalJson = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "global.json") | ConvertFrom-Json
 Assert-True "global.json pins the SDK exactly (rollForward disable)" ($globalJson.sdk.rollForward -eq "disable")
 $packagesProps = [xml](Get-Content -Raw -LiteralPath (Join-Path $repoRoot "Directory.Packages.props"))
