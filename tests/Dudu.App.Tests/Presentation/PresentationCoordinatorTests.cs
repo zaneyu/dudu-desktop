@@ -223,6 +223,78 @@ public sealed class PresentationCoordinatorTests
     }
 
     [Fact]
+    public async Task Failed_presentation_does_not_dismiss_the_item_from_the_pet_state()
+    {
+        // Regression for H1(a): PresentAsync's finally block used to call
+        // Dismissed(item.Id) unconditionally, even when playback failed —
+        // so a reminder that failed to play vanished from the pet's pending
+        // set (and thus from Select()'s ranking) even though the policy
+        // still requeues it for a later tick. The reminder must stay latched
+        // in the state machine until a presentation actually succeeds.
+        var pet = PetStateMachine.CreateIdle();
+        var policy = new PresentationPolicy(TimeSpan.Zero);
+        var coordinator = new PresentationCoordinator(
+            policy,
+            new RecordingNotificationService(),
+            pet,
+            (_, _, _) => Task.FromException(new InvalidOperationException("playback failed")),
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1));
+
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-1", "Stretch"),
+            bypassSuppression: false,
+            CancellationToken.None);
+
+        Assert.Equal(1, policy.QueuedCount);
+        Assert.Equal(PetState.Reminder, pet.Current.State);
+        Assert.Equal(1, pet.PendingCount);
+    }
+
+    [Fact]
+    public async Task Presentation_held_while_user_hidden_still_fires_its_toast()
+    {
+        // Regression for H1(b): the pet overlay is suppressed while the user
+        // has hidden Dudu from the tray, exactly like fullscreen/pause, but a
+        // Windows toast has nothing to do with the on-screen overlay and must
+        // still fire immediately instead of waiting for un-hide.
+        var pet = PetStateMachine.CreateIdle();
+        var policy = new PresentationPolicy(TimeSpan.Zero);
+        var notifications = new RecordingNotificationService();
+        var played = 0;
+        var coordinator = new PresentationCoordinator(
+            policy,
+            notifications,
+            pet,
+            (_, _, _) => { played++; return Task.CompletedTask; },
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1));
+        coordinator.SetUserVisible(false);
+
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-1", "Stretch"),
+            bypassSuppression: false,
+            CancellationToken.None);
+
+        Assert.Equal(0, played);
+        Assert.Equal(PetState.Idle, pet.Current.State);
+        Assert.Equal(1, policy.QueuedCount);
+        Assert.Equal(1, notifications.ReminderCalls);
+
+        // Un-hiding releases the queued item through the normal tick path —
+        // the toast must not fire a second time for the same item.
+        coordinator.SetUserVisible(true);
+        await coordinator.TickAsync(CancellationToken.None);
+
+        Assert.Equal(1, played);
+        Assert.Equal(1, notifications.ReminderCalls);
+    }
+
+    [Fact]
     public async Task Reminder_presentation_is_acknowledged_so_the_pet_returns_to_idle()
     {
         // Regression for B5: before this fix, only LocalNote presentations

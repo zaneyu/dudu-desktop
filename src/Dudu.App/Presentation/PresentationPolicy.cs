@@ -246,8 +246,8 @@ public sealed class PresentationPolicy
     /// <summary>
     /// Releases at most one queued durable item, and only when the
     /// environment is fully clear (not quiet, not fullscreen, not paused,
-    /// session not locked, focus not active) and the minimum silent interval
-    /// has elapsed since the last release.
+    /// session not locked, focus not active, pet not hidden by the user) and
+    /// the minimum silent interval has elapsed since the last release.
     /// </summary>
     public PresentationDecision Decide(
         bool nowQuiet,
@@ -256,10 +256,11 @@ public sealed class PresentationPolicy
         bool sessionLocked = false,
         bool focusActive = false,
         DateTimeOffset? nowUtc = null,
-        bool recordRelease = true)
+        bool recordRelease = true,
+        bool userHidden = false)
     {
         var now = nowUtc ?? DateTimeOffset.UtcNow;
-        var suppressed = nowQuiet || fullscreen || paused || sessionLocked || focusActive;
+        var suppressed = nowQuiet || fullscreen || paused || sessionLocked || focusActive || userHidden;
         lock (_sync)
         {
             var queuedCount = _queue.Count;

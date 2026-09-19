@@ -513,7 +513,8 @@ public static class WindowsCompanionProductionComposition
                         {
                             animationEngine?.Resume();
                         }
-                    }),
+                    },
+                    visible => presentationGateway?.SetUserVisible(visible)),
                 cancellationToken: cancellationToken,
                 errorReporter: host.ErrorReporter,
                 presentOneShotAsync: (petEvent, dismissalId, token) =>
@@ -1214,7 +1215,8 @@ public static class WindowsCompanionProductionComposition
     private sealed class DelegatingPresentationEnvironmentSink(
         Action<bool> setSessionLocked,
         Action<bool> setFullscreen,
-        Action<bool> setAnimationSuppressed) : IPresentationEnvironmentSink
+        Action<bool> setAnimationSuppressed,
+        Action<bool> setUserVisible) : IPresentationEnvironmentSink
     {
         private bool _locked;
         private bool _fullscreen;
@@ -1232,6 +1234,12 @@ public static class WindowsCompanionProductionComposition
             _fullscreen = fullscreen;
             setAnimationSuppressed(_locked || _fullscreen);
         }
+
+        // H1(b): forwarded straight through to presentationGateway, unlike
+        // locked/fullscreen this does not also pause the animation engine —
+        // the overlay window's own Show/Hide already governs whether it
+        // renders anything while the user has hidden Dudu from the tray.
+        public void SetUserVisible(bool visible) => setUserVisible(visible);
     }
 
     /// <summary>

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Dudu.App.Overlay;
+using Dudu.App.Presentation;
 using Dudu.App.System;
 using Dudu.App.Tray;
 using Dudu.Core.Models;
@@ -35,6 +36,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
     private readonly Action<Exception>? _diagnostic;
     private readonly IAppHostErrorReporter? _errorReporter;
     private readonly Func<PetEvent, string, CancellationToken, Task>? _presentOneShotAsync;
+    private readonly IPresentationEnvironmentSink? _presentationEnvironment;
     private readonly TrayIconService? _tray;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly SemaphoreSlim _visibilityGate = new(1, 1);
@@ -60,7 +62,8 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         Action<Exception>? diagnostic = null,
         bool? initialUserVisible = null,
         IAppHostErrorReporter? errorReporter = null,
-        Func<PetEvent, string, CancellationToken, Task>? presentOneShotAsync = null)
+        Func<PetEvent, string, CancellationToken, Task>? presentOneShotAsync = null,
+        IPresentationEnvironmentSink? presentationEnvironment = null)
     {
         _host = host ?? throw new ArgumentNullException(nameof(host));
         _overlay = overlay ?? throw new ArgumentNullException(nameof(overlay));
@@ -76,6 +79,13 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         _errorReporter = errorReporter;
         _userVisible = initialUserVisible ?? overlay.IsVisible;
         _presentOneShotAsync = presentOneShotAsync;
+        _presentationEnvironment = presentationEnvironment;
+        // Sync the sink with whatever visibility this instance started at,
+        // the same way SetSessionLocked/SetFullscreen are seeded elsewhere —
+        // otherwise a coordinator constructed already-hidden would leave
+        // PresentationCoordinator believing the pet is visible until the
+        // next explicit show/hide call.
+        _presentationEnvironment?.SetUserVisible(_userVisible);
     }
 
     public Preferences CurrentPreferences => Volatile.Read(ref _preferences);
@@ -147,6 +157,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
             }
 
             _userVisible = true;
+            _presentationEnvironment?.SetUserVisible(true);
         }
         finally { _gate.Release(); }
 
@@ -190,6 +201,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
                 // Keeping it true lets fullscreen/pause/session transitions
                 // restore the pet after suppression ends.
                 _userVisible = true;
+                _presentationEnvironment?.SetUserVisible(true);
 
                 var fullscreen = TryReadFullscreen("show-fullscreen");
                 if (snapshot.FullscreenHidden
@@ -219,6 +231,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         {
             ThrowIfDisposed();
             _userVisible = false;
+            _presentationEnvironment?.SetUserVisible(false);
         }
         finally { _gate.Release(); }
 

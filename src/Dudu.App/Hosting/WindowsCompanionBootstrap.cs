@@ -748,7 +748,8 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                 openHome,
                 initialUserVisible: initialUserVisible,
                 errorReporter: errorReporter,
-                presentOneShotAsync: presentOneShotAsync);
+                presentOneShotAsync: presentOneShotAsync,
+                presentationEnvironment: presentationEnvironment);
             if (initializeOverlay is not null)
             {
                 await initializeOverlay(overlay);
