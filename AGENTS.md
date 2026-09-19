@@ -336,7 +336,9 @@ PowerShell installation:
 ```zsh
 export DUDU_REPO="$(git rev-parse --show-toplevel)"
 cd "$DUDU_REPO"
-export DUDU_DOTNET="$DUDU_REPO/work/dotnet-sdk/dotnet"
+export DOTNET_ROOT="$DUDU_REPO/work/dotnet-sdk"
+export PATH="$DOTNET_ROOT:$PATH"
+export DUDU_DOTNET="$DOTNET_ROOT/dotnet"
 export DUDU_PWSH="$DUDU_REPO/work/tools/pwsh/pwsh"
 
 test -x "$DUDU_DOTNET" || { echo "missing vendored dotnet: $DUDU_DOTNET" >&2; exit 1; }
@@ -345,11 +347,13 @@ node --version
 npm --version
 ```
 
-The expected .NET version is `10.0.112`. If `work/dotnet-sdk/dotnet` is
-missing, stop and install/restore the repository's documented toolchain; do
-not silently substitute another SDK for a release investigation. The vendored
-PowerShell path is optional for the checks below and is not a Windows EXE
-builder.
+`DOTNET_ROOT` and `PATH` must both be exported, not just `DUDU_DOTNET`: any
+`pwsh` script invoked below (directly, or via `$DUDU_PWSH`) resolves `dotnet`
+bare off `PATH` and relies on `DOTNET_ROOT` to find the SDK/runtime, so a
+process that only sees `DUDU_DOTNET` fails or silently picks up a different
+`dotnet`. The expected .NET version is `10.0.112`. If `work/dotnet-sdk/dotnet`
+is missing, stop and install/restore the repository's documented toolchain;
+do not silently substitute another SDK for a release investigation.
 
 #### 2. Run the Mac-safe relay checks
 
@@ -378,9 +382,47 @@ cd "$DUDU_REPO"
 "$DUDU_DOTNET" restore DuduDesktop.slnx
 ```
 
-Then use these exact flags for Windows-targeted projects. The final four
-flags disable the Windows-only XAML/page discovery steps that cannot execute
-on macOS; omitting them causes misleading XAML compiler failures.
+**Build and run the host-runnable Core/Infrastructure tests first, before any
+stub build below — never after.** The stub build's `-p:PlatformTarget=x64`
+flag poisons the Core/Infrastructure DLLs it touches for host (arm64) test
+runs, so running these suites after a stub compile can fail or misbehave even
+though nothing is actually wrong with the code. If you must re-run these
+tests after a stub compile, rebuild `tests/Dudu.Core.Tests` and
+`tests/Dudu.Infrastructure.Tests` with `--no-incremental` first.
+
+```zsh
+"$DUDU_DOTNET" build tests/Dudu.Infrastructure.Tests/Dudu.Infrastructure.Tests.csproj -c Release
+"$DUDU_DOTNET" build tests/Dudu.Core.Tests/Dudu.Core.Tests.csproj -c Release
+
+"$DUDU_REPO/tests/Dudu.Infrastructure.Tests/bin/Release/net10.0-windows10.0.26100.0/Dudu.Infrastructure.Tests" \
+  -noLogo -noColor -longRunning 60
+"$DUDU_REPO/tests/Dudu.Core.Tests/bin/Release/net10.0/Dudu.Core.Tests" \
+  -noLogo -noColor -longRunning 60
+```
+
+The generated xUnit executables are the reliable Mac fallback when
+`dotnet test` reports zero tests for a Windows-targeted project under
+Microsoft Testing Platform. A zero-test result is not a passing test result.
+The Infrastructure run normally has a small expected skip count for DPAPI and
+the optional live relay test; it must have zero failures.
+
+`tests/Dudu.App.Tests` targets `win-x64` and needs its own RID-specific
+restore before it can build in stub mode below — without it, the stub build
+fails with `NETSDK1047`:
+
+```zsh
+"$DUDU_DOTNET" restore tests/Dudu.App.Tests/Dudu.App.Tests.csproj -r win-x64
+find "$DUDU_REPO" -name packages.lock.json -print
+```
+
+Move any generated `packages.lock.json` into the ignored
+`work/generated-package-locks/` scratch area before continuing. Never commit
+one.
+
+Only now, last, compile the stub-mode Windows-targeted projects, using these
+exact flags. The final four flags disable the Windows-only XAML/page
+discovery steps that cannot execute on macOS; omitting them causes misleading
+XAML compiler failures.
 
 ```zsh
 export DUDU_MAC_STUB_FLAGS=(
@@ -409,39 +451,12 @@ export DUDU_MAC_STUB_FLAGS=(
   "${DUDU_MAC_STUB_FLAGS[@]}"
 ```
 
-Also run the host-runnable Core tests and the Infrastructure xUnit executable:
-
-```zsh
-"$DUDU_DOTNET" build tests/Dudu.Infrastructure.Tests/Dudu.Infrastructure.Tests.csproj -c Release
-"$DUDU_DOTNET" build tests/Dudu.Core.Tests/Dudu.Core.Tests.csproj -c Release
-
-"$DUDU_REPO/tests/Dudu.Infrastructure.Tests/bin/Release/net10.0-windows10.0.26100.0/Dudu.Infrastructure.Tests" \
-  -noLogo -noColor -longRunning 60
-"$DUDU_REPO/tests/Dudu.Core.Tests/bin/Release/net10.0/Dudu.Core.Tests" \
-  -noLogo -noColor -longRunning 60
-```
-
-The generated xUnit executables are the reliable Mac fallback when
-`dotnet test` reports zero tests for a Windows-targeted project under
-Microsoft Testing Platform. A zero-test result is not a passing test result.
-The Infrastructure run normally has a small expected skip count for DPAPI and
-the optional live relay test; it must have zero failures.
-
-If a RID-specific restore fails with `NETSDK1047`, restore that exact project
-for `win-x64`, then keep the generated lock file out of the source tree:
-
-```zsh
-"$DUDU_DOTNET" restore tests/Dudu.App.Tests/Dudu.App.Tests.csproj -r win-x64
-find "$DUDU_REPO" -name packages.lock.json -print
-```
-
-Move any generated `packages.lock.json` into the ignored
-`work/generated-package-locks/` scratch area before continuing. Never commit
-one. If Core/Infrastructure tests then fail with stale assembly or file-load
-errors after the RID builds, remove only the exact `bin/` and `obj/` directories
-for `src/Dudu.Core`, `src/Dudu.Infrastructure`, `tests/Dudu.Core.Tests`, and
-`tests/Dudu.Infrastructure.Tests`, rebuild those projects, and rerun the direct
-test executables.
+If Core/Infrastructure tests then need to run again and fail with stale
+assembly or file-load errors after the stub builds above, remove only the
+exact `bin/` and `obj/` directories for `src/Dudu.Core`,
+`src/Dudu.Infrastructure`, `tests/Dudu.Core.Tests`, and
+`tests/Dudu.Infrastructure.Tests`, rebuild those projects `--no-incremental`,
+and rerun the direct test executables.
 
 #### 4. Trigger the real Windows rebuild from Mac
 

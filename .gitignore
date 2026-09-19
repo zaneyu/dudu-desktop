@@ -31,3 +31,6 @@ outputs/
 # Operating-system files
 .DS_Store
 Thumbs.db
+
+# Serena MCP server's local project index/cache
+.serena/
