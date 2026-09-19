@@ -316,12 +316,18 @@ public sealed class AppLifecycleCoordinatorTests
     [Fact]
     public async Task Turning_off_hide_during_fullscreen_while_hidden_restores_visibility()
     {
-        // Regression: the early "if (!HidePetDuringFullscreen) return;" ran
-        // before the fullscreen-exit branch could clear _fullscreenHidden.
-        // A user who disabled the setting while the pet was hidden (still in
-        // fullscreen, or after leaving it) would never see her again until
-        // restart, since the very next OnFullscreenChangedAsync(false) call
-        // bailed out at that same top check.
+        // Regression for H2: the prior fix only reconciled on a fullscreen
+        // EDGE, i.e. an actual OnFullscreenChangedAsync call. Production
+        // wires that to the OS fullscreen-transition event
+        // (WindowsCompanionBootstrap), which is edge-triggered and may never
+        // fire again just because a setting changed — a user who disables
+        // "hide during fullscreen" while still in the same fullscreen
+        // session would stay hidden until an unrelated fullscreen exit
+        // happens to occur, possibly never. UpdatePreferencesAsync itself
+        // must now re-run the reconciliation on a true->false edge, so this
+        // test drives the restore through UpdatePreferencesAsync alone —
+        // unlike the earlier draft of this fix, it must NOT call
+        // OnFullscreenChangedAsync a second time to make the assertion pass.
         var overlay = new FakeOverlay();
         var preferences = new Preferences(
             AppTheme.System,
@@ -338,14 +344,12 @@ public sealed class AppLifecycleCoordinatorTests
         Assert.Equal(1, overlay.HideCount);
         Assert.False(overlay.IsVisible);
 
+        // Still fullscreen per the app's own detector throughout — the
+        // setting change alone, with no further fullscreen transition, must
+        // bring her back.
         await lifecycle.UpdatePreferencesAsync(
             preferences with { HidePetDuringFullscreen = false },
             TestContext.Current.CancellationToken);
-
-        // Still fullscreen per the app's own detector, but the setting no
-        // longer cares — she must come back now, not wait for a fullscreen
-        // exit notification.
-        await lifecycle.OnFullscreenChangedAsync(true, TestContext.Current.CancellationToken);
 
         Assert.Equal(1, overlay.RestoreCount);
         Assert.Equal(1, overlay.ShowCount);

@@ -95,13 +95,32 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(preferences);
+        bool reconcileFullscreen;
         await _gate.WaitAsync(cancellationToken);
         try
         {
             ThrowIfDisposed();
+            // H2: OnFullscreenChangedAsync only fires on a fullscreen EDGE —
+            // production wires it to the OS fullscreen-transition event, which
+            // never fires again just because a setting changed. So if this
+            // preference update turns "hide during fullscreen" off while she
+            // is still hidden from an earlier fullscreen session, nothing
+            // else will ever ask the overlay to come back. Detect that
+            // specific true->false edge here and re-run the same
+            // reconciliation OnFullscreenChangedAsync already knows how to do
+            // (it already treats "setting off but still hidden" as a restore
+            // case), once the gate is released below.
+            reconcileFullscreen = _preferences.HidePetDuringFullscreen && !preferences.HidePetDuringFullscreen;
             Volatile.Write(ref _preferences, preferences);
         }
         finally { _gate.Release(); }
+
+        if (reconcileFullscreen)
+        {
+            await OnFullscreenChangedAsync(
+                TryReadFullscreen("preferences-fullscreen-reconcile"),
+                cancellationToken);
+        }
     }
 
     public async Task OnSessionLockedAsync(CancellationToken cancellationToken = default)
