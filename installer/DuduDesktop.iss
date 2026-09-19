@@ -77,6 +77,12 @@ Name: "{userdesktop}\Dudu Desktop"; Filename: "{app}\Dudu.App.exe"; Tasks: deskt
 ; handled in [Code] (CurUninstallStepChanged), not here, because it must run
 ; whatever the user chose about keeping their data.
 
+[Run]
+; docs/install-guide.md tells the recipient Dudu opens on its own once setup
+; finishes. skipifsilent keeps that from firing during the installer smoke
+; test's silent runs; nowait so the wizard closes without waiting on the app.
+Filename: "{app}\Dudu.App.exe"; Description: "Launch Dudu Desktop"; Flags: postinstall nowait skipifsilent
+
 [Code]
 const
   // The exact, and only, directory this installer is ever allowed to
