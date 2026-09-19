@@ -12,7 +12,7 @@ using Dudu.Core.Pet;
 namespace Dudu.App.Presentation;
 
 /// <summary>
-/// Pushes session-lock and fullscreen transitions into a
+/// Pushes session-lock, fullscreen, and user-visibility transitions into a
 /// <see cref="PresentationCoordinator"/> without exposing
 /// <c>AppLifecycleCoordinator</c>'s private state. Pause is read directly
 /// from the pause store on each decision instead of being pushed.
@@ -22,6 +22,14 @@ public interface IPresentationEnvironmentSink
     void SetSessionLocked(bool locked);
 
     void SetFullscreen(bool fullscreen);
+
+    /// <summary>
+    /// Pushed whenever <c>AppLifecycleCoordinator</c>'s own tracked
+    /// visibility (tray toggle, hotkey show, or explicit hide) changes, so
+    /// pet presentations can be held while she has hidden Dudu and released
+    /// on un-hide, the same way they already are for fullscreen/pause.
+    /// </summary>
+    void SetUserVisible(bool visible);
 }
 
 /// <summary>The publish surface used by durable unsolicited-event sinks.</summary>
@@ -61,11 +69,13 @@ public sealed class PresentationCoordinator :
     private readonly LocalNoteSelector? _localNoteSelector;
     private readonly object _gate = new();
     private readonly HashSet<string> _presentingIds = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _toastedWhileHeldIds = new(StringComparer.Ordinal);
     private readonly Func<bool> _isFullscreenNow;
     private readonly Func<DateTimeOffset> _utcNow;
     private readonly IAppHostErrorReporter? _errorReporter;
     private bool _sessionLocked;
     private bool _fullscreen;
+    private bool _userHidden;
 
     /// <param name="petGate">
     /// The same <see cref="SemaphoreSlim"/> instance given to
@@ -137,6 +147,14 @@ public sealed class PresentationCoordinator :
         }
     }
 
+    public void SetUserVisible(bool visible)
+    {
+        lock (_gate)
+        {
+            _userHidden = !visible;
+        }
+    }
+
     /// <summary>
     /// Registers Windows app notifications. A registration failure is
     /// swallowed here: it must never throw out of startup, and durable
@@ -189,6 +207,7 @@ public sealed class PresentationCoordinator :
 
         bypassSuppression &= !item.IsRoutine;
         bool shouldPresentNow;
+        var toastNow = false;
         lock (_gate)
         {
             if (_presentingIds.Contains(item.Key) || _policy.IsQueued(item))
@@ -196,14 +215,41 @@ public sealed class PresentationCoordinator :
                 return;
             }
 
-            shouldPresentNow = bypassSuppression || !IsSuppressed(CaptureEnvironment(now));
+            var environment = CaptureEnvironment(now);
+            shouldPresentNow = bypassSuppression || !IsSuppressed(environment);
             if (!shouldPresentNow)
             {
-                _policy.Enqueue(item);
-                return;
+                var queued = _policy.Enqueue(item);
+                // A Windows toast is independent of whether the overlay is
+                // on screen, unlike the pet animation this item's queueing
+                // already holds back — so when the *only* reason it is held
+                // is that she has hidden Dudu from the tray, the toast
+                // still fires now instead of waiting for un-hide together
+                // with the animation. Marked so the eventual real
+                // PresentAsync (once released) does not show the same
+                // toast a second time.
+                toastNow = queued && environment.UserHidden && !IsSuppressedExcludingUserHidden(environment);
+                if (toastNow)
+                {
+                    _toastedWhileHeldIds.Add(item.Key);
+                }
+            }
+            else
+            {
+                _presentingIds.Add(item.Key);
+            }
+        }
+
+        if (!shouldPresentNow)
+        {
+            if (toastNow)
+            {
+                await ObserveAsync(
+                    () => ShowNotificationAsync(item, cancellationToken),
+                    "presentation-notification");
             }
 
-            _presentingIds.Add(item.Key);
+            return;
         }
 
         try
@@ -246,7 +292,8 @@ public sealed class PresentationCoordinator :
                 environment.SessionLocked,
                 environment.FocusActive,
                 now,
-                recordRelease: false);
+                recordRelease: false,
+                userHidden: environment.UserHidden);
 
             toPresent = decision.ToPresent.FirstOrDefault(item => !_presentingIds.Contains(item.Key));
             if (toPresent is not null)
@@ -286,7 +333,8 @@ public sealed class PresentationCoordinator :
             || environment.Fullscreen
             || environment.Paused
             || environment.SessionLocked
-            || environment.FocusActive)
+            || environment.FocusActive
+            || environment.UserHidden)
         {
             return;
         }
@@ -332,6 +380,14 @@ public sealed class PresentationCoordinator :
         await _petGate.WaitAsync(cancellationToken);
         PetPresentation presentation;
         var succeeded = true;
+        // Only true once the item's event has actually been handed to the
+        // state machine below — the two early returns above (expired /
+        // suppressed-routine) leave nothing latched, so the finally block
+        // must not issue a Dismissed(id) for either: the id was never added
+        // to the pending set, and dismissing it regardless can wipe out an
+        // unrelated pending item that happens to share the id from an
+        // earlier cycle.
+        var latched = false;
         try
         {
             var now = _utcNow();
@@ -348,6 +404,7 @@ public sealed class PresentationCoordinator :
             _policy.RecordImmediateRelease(now);
             var petEvent = ToPetEvent(item);
             presentation = _pet.Handle(petEvent);
+            latched = true;
             if (item.Kind == PresentationItemKind.Reminder
                 && presentation.State == PetState.Reminder
                 && (item.Body is not null || item.AnimationKey is not null))
@@ -380,6 +437,23 @@ public sealed class PresentationCoordinator :
                     item.AnimationKey ?? throw new InvalidOperationException(
                         "A local note presentation has no animation key.")));
             }
+            else if (latched && succeeded && item.Kind is PresentationItemKind.Reminder or PresentationItemKind.RemoteNote)
+            {
+                // A reminder/note id otherwise sits in the state machine's
+                // pending set forever (cleared only by an explicit Settings
+                // dismiss/complete): Select() would keep ranking it above
+                // ambient, welcome-back, and even a completed focus session
+                // for the rest of the session. Acknowledging it here, the
+                // same way a LocalNote is acknowledged above, lets the pet
+                // return to its normal presentation once this specific item
+                // has actually been shown; the coalesced card just shows one
+                // fewer pending item if others remain. Gated on latched so
+                // the two early-return paths above (item was never handed
+                // to the state machine) never dismiss an id that was never
+                // added, and on succeeded so a failed playback requeues
+                // instead of vanishing.
+                _pet.Handle(new PetEvent.Dismissed(item.Id));
+            }
             _petGate.Release();
         }
 
@@ -389,9 +463,19 @@ public sealed class PresentationCoordinator :
             await ObserveAudioAsync(() => _playAudioAsync(audioCue, cancellationToken));
         }
 
-        succeeded &= await ObserveAsync(
-            () => ShowNotificationAsync(item, cancellationToken),
-            "presentation-notification");
+        bool alreadyToasted;
+        lock (_gate)
+        {
+            alreadyToasted = _toastedWhileHeldIds.Remove(item.Key);
+        }
+
+        if (!alreadyToasted)
+        {
+            succeeded &= await ObserveAsync(
+                () => ShowNotificationAsync(item, cancellationToken),
+                "presentation-notification");
+        }
+
         return succeeded;
     }
 
@@ -442,9 +526,11 @@ public sealed class PresentationCoordinator :
             // act on a stale poll. Any read failure is fail-closed (hidden).
             var liveFullscreen = ReadFullscreenFailClosed();
             bool sessionLocked;
+            bool userHidden;
             lock (_gate)
             {
                 sessionLocked = _sessionLocked;
+                userHidden = _userHidden;
                 if (liveFullscreen != _fullscreen)
                 {
                     _fullscreen = liveFullscreen;
@@ -453,13 +539,13 @@ public sealed class PresentationCoordinator :
 
             var paused = PausePolicy.IsSuppressed(_pauseState(), now, liveFullscreen);
             var focusActive = _pet.Current.State == PetState.Focus;
-            return new SuppressionSnapshot(_isQuietHours(), liveFullscreen, paused, sessionLocked, focusActive);
+            return new SuppressionSnapshot(_isQuietHours(), liveFullscreen, paused, sessionLocked, focusActive, userHidden);
         }
         catch (Exception exception)
         {
             // Single fail-closed policy: any environment fault suppresses.
             ReportFailure("presentation-tick", exception);
-            return new SuppressionSnapshot(NowQuiet: true, Fullscreen: true, Paused: true, SessionLocked: true, FocusActive: true);
+            return new SuppressionSnapshot(NowQuiet: true, Fullscreen: true, Paused: true, SessionLocked: true, FocusActive: true, UserHidden: true);
         }
     }
 
@@ -477,6 +563,17 @@ public sealed class PresentationCoordinator :
     }
 
     private static bool IsSuppressed(SuppressionSnapshot snapshot) =>
+        snapshot.NowQuiet || snapshot.Fullscreen || snapshot.Paused
+        || snapshot.SessionLocked || snapshot.FocusActive || snapshot.UserHidden;
+
+    /// <summary>
+    /// Same suppression check as <see cref="IsSuppressed"/> but leaving out
+    /// <see cref="SuppressionSnapshot.UserHidden"/> — used to detect the case
+    /// where the pet-hidden-from-tray state is the *only* thing holding an
+    /// item back, so its toast (which has nothing to do with the on-screen
+    /// overlay) can still fire immediately instead of waiting on un-hide.
+    /// </summary>
+    private static bool IsSuppressedExcludingUserHidden(SuppressionSnapshot snapshot) =>
         snapshot.NowQuiet || snapshot.Fullscreen || snapshot.Paused
         || snapshot.SessionLocked || snapshot.FocusActive;
 
@@ -522,5 +619,6 @@ public sealed class PresentationCoordinator :
         bool Fullscreen,
         bool Paused,
         bool SessionLocked,
-        bool FocusActive);
+        bool FocusActive,
+        bool UserHidden = false);
 }

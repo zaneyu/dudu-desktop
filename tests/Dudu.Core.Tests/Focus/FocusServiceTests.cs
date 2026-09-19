@@ -131,6 +131,66 @@ public sealed class FocusServiceTests
     }
 
     [Fact]
+    public async Task Expiring_via_the_no_id_overload_raises_SessionExpired_for_the_completed_session()
+    {
+        // ReminderEngine.TickAsync calls only the no-id overload (it does not
+        // know which session, if any, is active); the event is how it — and
+        // the periodic tick that runs it — learns a session was just auto-
+        // completed, so it can publish PetEvent.FocusEnded the same way a
+        // manual "end focus" does. Without this, nothing ever tells the pet
+        // that an expired session ended, and it stays latched in Focus,
+        // suppressing every reminder and note until the app restarts.
+        var fixture = FocusFixture.Started(TimeSpan.FromMinutes(25));
+        fixture.Clock.Advance(TimeSpan.FromMinutes(25));
+        Guid? expiredId = null;
+        var raiseCount = 0;
+        fixture.Service.SessionExpired += id =>
+        {
+            expiredId = id;
+            raiseCount++;
+        };
+
+        Assert.True(await fixture.Service.CompleteExpiredAsync(fixture.CancellationToken));
+
+        Assert.Equal(1, raiseCount);
+        Assert.Equal(fixture.SessionId, expiredId);
+    }
+
+    [Fact]
+    public async Task SessionExpired_does_not_fire_when_there_is_nothing_to_expire()
+    {
+        var fixture = FocusFixture.Started(TimeSpan.FromMinutes(25));
+        var raiseCount = 0;
+        fixture.Service.SessionExpired += _ => raiseCount++;
+
+        Assert.False(await fixture.Service.CompleteExpiredAsync(fixture.CancellationToken));
+
+        Assert.Equal(0, raiseCount);
+    }
+
+    [Fact]
+    public async Task Forwarding_SessionExpired_to_FocusEnded_unsuppresses_a_reminder_due_afterward()
+    {
+        // End-to-end (within Core): the tick caller's job is to forward
+        // SessionExpired into PetEvent.FocusEnded on the shared PetStateMachine.
+        // This proves that once it does, a reminder that becomes due after the
+        // timer ran out is presented instead of staying hidden behind a pet
+        // still latched in PetState.Focus.
+        var fixture = FocusFixture.Started(TimeSpan.FromMinutes(25));
+        var pet = Dudu.Core.Pet.PetStateMachine.CreateIdle();
+        pet.Handle(new Dudu.Core.Pet.PetEvent.FocusStarted(fixture.SessionId.ToString("D")));
+        fixture.Service.SessionExpired += id =>
+            pet.Handle(new Dudu.Core.Pet.PetEvent.FocusEnded(id.ToString("D")));
+        fixture.Clock.Advance(TimeSpan.FromMinutes(25));
+
+        Assert.True(await fixture.Service.CompleteExpiredAsync(fixture.CancellationToken));
+
+        Assert.NotEqual(Dudu.Core.Models.PetState.Focus, pet.Current.State);
+        var result = pet.Handle(new Dudu.Core.Pet.PetEvent.ReminderDue("medicine"));
+        Assert.Equal(Dudu.Core.Models.PetState.Reminder, result.State);
+    }
+
+    [Fact]
     public async Task Concurrent_expiry_completions_return_true_exactly_once()
     {
         var fixture = FocusFixture.Started(TimeSpan.FromMinutes(25));

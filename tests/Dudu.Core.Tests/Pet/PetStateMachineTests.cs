@@ -193,6 +193,137 @@ public sealed class PetStateMachineTests
     }
 
     [Fact]
+    public void Acknowledging_a_presented_reminder_clears_it_so_select_returns_to_idle()
+    {
+        // PresentationCoordinator now dismisses a Reminder/RemoteNote item by
+        // id once it has finished presenting it, the same way it already did
+        // for a LocalNote — this is that acknowledgement's effect on the
+        // state machine itself. Before that fix, nothing but a manual
+        // Settings "complete" ever called Dismissed for these ids, so the
+        // pet stayed on the note-arrival pose forever after the first due
+        // reminder.
+        var machine = PetStateMachine.CreateIdle();
+        machine.Handle(new PetEvent.ReminderDue("medicine"));
+        Assert.Equal(PetState.Reminder, machine.Current.State);
+
+        var result = machine.Handle(new PetEvent.Dismissed("medicine"));
+
+        Assert.Equal(PetState.Idle, result.State);
+    }
+
+    [Fact]
+    public void Acknowledging_a_presented_remote_note_clears_it_so_select_returns_to_idle()
+    {
+        var machine = PetStateMachine.CreateIdle();
+        machine.Handle(new PetEvent.RemoteNoteArrived("m-1"));
+        Assert.Equal(PetState.RemoteNote, machine.Current.State);
+
+        var result = machine.Handle(new PetEvent.Dismissed("m-1"));
+
+        Assert.Equal(PetState.Idle, result.State);
+    }
+
+    /// <summary>
+    /// Every presentation the state machine can latch into must have some
+    /// event that returns it to Idle — this enumerates all of them so a
+    /// future latch added without a matching clearing event fails loudly
+    /// here instead of pinning the pet forever. "Non-manual" means the event
+    /// itself does not require a human to have opened Settings first — the
+    /// caller may fire it automatically once a presentation finishes (as
+    /// PresentationCoordinator, PetPresentationCoordinator, and FocusService
+    /// now all do); a Settings dismiss/complete is only ever an additional,
+    /// idempotent way to reach the same event.
+    /// </summary>
+    [Fact]
+    public void Every_latched_presentation_has_a_clearing_event_reachable_without_a_settings_visit()
+    {
+        // M1: driven from PetState itself rather than a hand-written list, so
+        // a new latched state added to the enum without a matching case here
+        // fails this test automatically instead of silently joining the
+        // "only manual clearing path" bug class this file guards against.
+        var cases = new Dictionary<PetState, Action>
+        {
+            // Comfort: cleared by PresentationAcknowledged (fired once the
+            // hug finishes playing) or ComfortDismissed/Dismissed("comfort").
+            [PetState.Comfort] = () =>
+            {
+                var machine = PetStateMachine.CreateIdle();
+                machine.Handle(new PetEvent.ComfortRequested());
+                Assert.Equal(PetState.Idle, machine.Handle(new PetEvent.PresentationAcknowledged()).State);
+            },
+
+            // RemoteNote: cleared by Dismissed(messageId), now fired by
+            // PresentationCoordinator once the note has been shown.
+            [PetState.RemoteNote] = () =>
+            {
+                var machine = PetStateMachine.CreateIdle();
+                machine.Handle(new PetEvent.RemoteNoteArrived("m-1"));
+                Assert.Equal(PetState.Idle, machine.Handle(new PetEvent.Dismissed("m-1")).State);
+            },
+
+            // Reminder: cleared by Dismissed(reminderId), now fired by
+            // PresentationCoordinator once the reminder has been shown.
+            [PetState.Reminder] = () =>
+            {
+                var machine = PetStateMachine.CreateIdle();
+                machine.Handle(new PetEvent.ReminderDue("medicine"));
+                Assert.Equal(PetState.Idle, machine.Handle(new PetEvent.Dismissed("medicine")).State);
+            },
+
+            // FocusTransition: cleared by PresentationAcknowledged (fired
+            // once the celebrate clip finishes) or Dismissed("focus-end").
+            [PetState.FocusTransition] = () =>
+            {
+                var machine = PetStateMachine.CreateIdle();
+                machine.Handle(new PetEvent.FocusStarted("f-1"));
+                machine.Handle(new PetEvent.FocusEnded("f-1"));
+                Assert.Equal(PetState.Idle, machine.Handle(new PetEvent.PresentationAcknowledged()).State);
+            },
+
+            // WelcomeBack: cleared by WelcomeBackDismissed, now fired by
+            // routing AppLifecycleCoordinator's request through the one-shot
+            // presentation path instead of a raw Handle call.
+            [PetState.WelcomeBack] = () =>
+            {
+                var machine = PetStateMachine.CreateIdle();
+                machine.Handle(new PetEvent.WelcomeBackRequested());
+                Assert.Equal(PetState.Idle, machine.Handle(new PetEvent.WelcomeBackDismissed()).State);
+            },
+
+            // Ambient: cleared by AmbientDismissed(key), fired once its
+            // one-shot playback finishes.
+            [PetState.Ambient] = () =>
+            {
+                var machine = PetStateMachine.CreateIdle();
+                machine.Handle(new PetEvent.AmbientRequested("sticker-030"));
+                Assert.Equal(PetState.Idle, machine.Handle(new PetEvent.AmbientDismissed("sticker-030")).State);
+            },
+
+            // Focus: cleared by FocusEnded (which itself transitions to the
+            // celebrate pose, FocusTransition, by design — see that latch
+            // above), now also fired automatically when
+            // FocusService.SessionExpired signals the timer ran out
+            // (previously only a manual "end focus" ever raised it).
+            [PetState.Focus] = () =>
+            {
+                var machine = PetStateMachine.CreateIdle();
+                machine.Handle(new PetEvent.FocusStarted("f-2"));
+                Assert.NotEqual(PetState.Focus, machine.Handle(new PetEvent.FocusEnded("f-2")).State);
+            },
+        };
+
+        foreach (var state in Enum.GetValues<PetState>().Where(state => state != PetState.Idle))
+        {
+            Assert.True(
+                cases.ContainsKey(state),
+                $"PetState.{state} has no registered clearing case in this test — a new " +
+                "latched state must prove it can be cleared without a Settings visit " +
+                "before this test can pass.");
+            cases[state]();
+        }
+    }
+
+    [Fact]
     public async Task Concurrent_reads_and_events_are_serialized_without_corrupting_state()
     {
         var machine = PetStateMachine.CreateIdle();

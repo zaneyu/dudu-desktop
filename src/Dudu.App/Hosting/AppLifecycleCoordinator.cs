@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Dudu.App.Overlay;
+using Dudu.App.Presentation;
 using Dudu.App.System;
 using Dudu.App.Tray;
 using Dudu.Core.Models;
@@ -34,6 +35,8 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
     private readonly Func<CancellationToken, Task>? _openHome;
     private readonly Action<Exception>? _diagnostic;
     private readonly IAppHostErrorReporter? _errorReporter;
+    private readonly Func<PetEvent, string, CancellationToken, Task>? _presentOneShotAsync;
+    private readonly IPresentationEnvironmentSink? _presentationEnvironment;
     private readonly TrayIconService? _tray;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly SemaphoreSlim _visibilityGate = new(1, 1);
@@ -58,7 +61,9 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         Func<CancellationToken, Task>? openHome = null,
         Action<Exception>? diagnostic = null,
         bool? initialUserVisible = null,
-        IAppHostErrorReporter? errorReporter = null)
+        IAppHostErrorReporter? errorReporter = null,
+        Func<PetEvent, string, CancellationToken, Task>? presentOneShotAsync = null,
+        IPresentationEnvironmentSink? presentationEnvironment = null)
     {
         _host = host ?? throw new ArgumentNullException(nameof(host));
         _overlay = overlay ?? throw new ArgumentNullException(nameof(overlay));
@@ -73,6 +78,14 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         _diagnostic = diagnostic;
         _errorReporter = errorReporter;
         _userVisible = initialUserVisible ?? overlay.IsVisible;
+        _presentOneShotAsync = presentOneShotAsync;
+        _presentationEnvironment = presentationEnvironment;
+        // Sync the sink with whatever visibility this instance started at,
+        // the same way SetSessionLocked/SetFullscreen are seeded elsewhere —
+        // otherwise a coordinator constructed already-hidden would leave
+        // PresentationCoordinator believing the pet is visible until the
+        // next explicit show/hide call.
+        _presentationEnvironment?.SetUserVisible(_userVisible);
     }
 
     public Preferences CurrentPreferences => Volatile.Read(ref _preferences);
@@ -82,13 +95,32 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(preferences);
+        bool reconcileFullscreen;
         await _gate.WaitAsync(cancellationToken);
         try
         {
             ThrowIfDisposed();
+            // H2: OnFullscreenChangedAsync only fires on a fullscreen EDGE —
+            // production wires it to the OS fullscreen-transition event, which
+            // never fires again just because a setting changed. So if this
+            // preference update turns "hide during fullscreen" off while she
+            // is still hidden from an earlier fullscreen session, nothing
+            // else will ever ask the overlay to come back. Detect that
+            // specific true->false edge here and re-run the same
+            // reconciliation OnFullscreenChangedAsync already knows how to do
+            // (it already treats "setting off but still hidden" as a restore
+            // case), once the gate is released below.
+            reconcileFullscreen = _preferences.HidePetDuringFullscreen && !preferences.HidePetDuringFullscreen;
             Volatile.Write(ref _preferences, preferences);
         }
         finally { _gate.Release(); }
+
+        if (reconcileFullscreen)
+        {
+            await OnFullscreenChangedAsync(
+                TryReadFullscreen("preferences-fullscreen-reconcile"),
+                cancellationToken);
+        }
     }
 
     public async Task OnSessionLockedAsync(CancellationToken cancellationToken = default)
@@ -144,6 +176,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
             }
 
             _userVisible = true;
+            _presentationEnvironment?.SetUserVisible(true);
         }
         finally { _gate.Release(); }
 
@@ -187,6 +220,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
                 // Keeping it true lets fullscreen/pause/session transitions
                 // restore the pet after suppression ends.
                 _userVisible = true;
+                _presentationEnvironment?.SetUserVisible(true);
 
                 var fullscreen = TryReadFullscreen("show-fullscreen");
                 if (snapshot.FullscreenHidden
@@ -216,6 +250,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         {
             ThrowIfDisposed();
             _userVisible = false;
+            _presentationEnvironment?.SetUserVisible(false);
         }
         finally { _gate.Release(); }
 
@@ -240,8 +275,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         try
         {
             ThrowIfDisposed();
-            if (!CurrentPreferences.HidePetDuringFullscreen) return;
-            if (fullscreen)
+            if (CurrentPreferences.HidePetDuringFullscreen && fullscreen)
             {
                 if (_fullscreenHidden) return;
                 _fullscreenHidden = true;
@@ -252,6 +286,12 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
             }
             else
             {
+                // Either she isn't in fullscreen anymore, or "hide during
+                // fullscreen" was turned off while she was still hidden from
+                // an earlier fullscreen session. Either way she must not
+                // stay hidden forever waiting for a fullscreen-exit
+                // notification that the now-disabled setting no longer cares
+                // about.
                 if (!_fullscreenHidden) return;
                 restoreVisible = _userVisible;
                 _fullscreenHidden = false;
@@ -448,10 +488,54 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         }
         finally { _gate.Release(); }
 
-        if (welcome) _pet.Handle(new PetEvent.WelcomeBackRequested());
+        // Show before presenting the welcome-back greeting so the one-shot
+        // animation (when routed through PresentOneShotAsync) is not played
+        // and dismissed against a still-hidden overlay.
         if (show)
         {
             await InvokeVisualSafelyAsync(_overlay.Show, "resume-show", cancellationToken);
+        }
+
+        if (welcome)
+        {
+            await PresentWelcomeBackAsync(cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Requests the welcome-back pose through the same one-shot presentation
+    /// path an explicit user action uses (e.g. <c>TasksFocusViewModel.EndFocusAsync</c>),
+    /// so the request is acknowledged and dismissed once shown instead of
+    /// latching <see cref="PetState.WelcomeBack"/> forever — nothing else
+    /// ever raises <see cref="PetEvent.WelcomeBackDismissed"/>. Falls back to
+    /// a raw <see cref="PetStateMachine.Handle"/> call when no one-shot
+    /// delegate is composed (e.g. in tests that only assert the pending pose).
+    /// </summary>
+    private async Task PresentWelcomeBackAsync(CancellationToken cancellationToken)
+    {
+        if (_presentOneShotAsync is null)
+        {
+            // M2: no one-shot delegate composed (e.g. a test exercising only
+            // the raw state machine). Immediately complete the request the
+            // same way the real one-shot path would, instead of leaving
+            // WelcomeBack latched with nothing left to ever dismiss it.
+            var requested = new PetEvent.WelcomeBackRequested();
+            _pet.Handle(requested);
+            _pet.Handle(PetEvent.CompletionForOneShot(requested, "welcome-back"));
+            return;
+        }
+
+        try
+        {
+            await _presentOneShotAsync(new PetEvent.WelcomeBackRequested(), "welcome-back", cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            ReportFailure("resume-welcome-back", exception);
         }
     }
 

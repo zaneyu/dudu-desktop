@@ -11,6 +11,13 @@ public sealed class AppLifecycleCoordinatorTests
     [Fact]
     public async Task Unlock_welcomes_back_only_when_all_gates_are_clear()
     {
+        // A presentOneShotAsync spy stands in for the composed
+        // PetPresentationCoordinator.PresentOneShotAsync (see M2): the fix
+        // that closed the null-fallback latch (this test used to assert the
+        // pet stayed pinned on WelcomeBack — the very bug this work package
+        // exists to remove) now makes even the no-delegate case self-clear
+        // immediately, so a raised-events spy is what actually distinguishes
+        // "welcome-back fired" from "gated by quiet hours" going forward.
         var host = new FakeHost();
         var overlay = new FakeOverlay();
         var pet = PetStateMachine.CreateIdle();
@@ -26,6 +33,7 @@ public sealed class AppLifecycleCoordinatorTests
         var quiet = false;
         var fullscreen = false;
         var pause = PauseState.None;
+        var requested = new List<PetEvent>();
         var cancellationToken = TestContext.Current.CancellationToken;
         await using var lifecycle = new AppLifecycleCoordinator(
             host,
@@ -35,16 +43,26 @@ public sealed class AppLifecycleCoordinatorTests
             () => pause,
             () => quiet,
             () => fullscreen,
-            () => new DateTimeOffset(2026, 9, 11, 10, 0, 0, TimeSpan.Zero));
+            () => new DateTimeOffset(2026, 9, 11, 10, 0, 0, TimeSpan.Zero),
+            presentOneShotAsync: (petEvent, dismissalId, _) =>
+            {
+                requested.Add(petEvent);
+                pet.Handle(petEvent);
+                pet.Handle(PetEvent.CompletionForOneShot(petEvent, dismissalId));
+                return Task.CompletedTask;
+            });
 
         await lifecycle.OnSessionLockedAsync(cancellationToken);
         await lifecycle.OnSessionUnlockedAsync(cancellationToken);
-        Assert.Equal(PetState.WelcomeBack, pet.Current.State);
+        Assert.Single(requested);
+        Assert.IsType<PetEvent.WelcomeBackRequested>(requested[0]);
+        Assert.Equal(PetState.Idle, pet.Current.State);
 
-        pet.Handle(new PetEvent.Dismissed("welcome-back"));
+        requested.Clear();
         quiet = true;
         await lifecycle.OnSessionLockedAsync(cancellationToken);
         await lifecycle.OnSessionUnlockedAsync(cancellationToken);
+        Assert.Empty(requested);
         Assert.Equal(PetState.Idle, pet.Current.State);
     }
 
@@ -268,6 +286,90 @@ public sealed class AppLifecycleCoordinatorTests
         fullscreen = false;
         await lifecycle.OnFullscreenChangedAsync(false, TestContext.Current.CancellationToken);
 
+        Assert.Equal(1, overlay.ShowCount);
+        Assert.True(overlay.IsVisible);
+    }
+
+    [Fact]
+    public async Task Unlock_routes_the_welcome_back_greeting_through_the_one_shot_path_when_composed()
+    {
+        // Regression: AppLifecycleCoordinator used to call pet.Handle(new
+        // WelcomeBackRequested()) directly, and nothing ever raised
+        // WelcomeBackDismissed for it — the pet stayed on the greeting pose
+        // forever after the first unlock. Production now composes
+        // presentOneShotAsync from PetPresentationCoordinator.PresentOneShotAsync,
+        // which requests, plays, and dismisses in one call; this fake
+        // reproduces just the "requests and dismisses" half so the test can
+        // run without an animation engine.
+        var host = new FakeHost();
+        var overlay = new FakeOverlay();
+        var pet = PetStateMachine.CreateIdle();
+        var preferences = new Preferences(
+            AppTheme.System,
+            new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+            false, 3, true, false, true, TimeSpan.FromMinutes(15));
+        var requested = new List<PetEvent>();
+        await using var lifecycle = new AppLifecycleCoordinator(
+            host,
+            overlay,
+            pet,
+            preferences,
+            presentOneShotAsync: (petEvent, dismissalId, _) =>
+            {
+                requested.Add(petEvent);
+                pet.Handle(petEvent);
+                pet.Handle(PetEvent.CompletionForOneShot(petEvent, dismissalId));
+                return Task.CompletedTask;
+            });
+
+        await lifecycle.OnSessionLockedAsync(TestContext.Current.CancellationToken);
+        await lifecycle.OnSessionUnlockedAsync(TestContext.Current.CancellationToken);
+
+        Assert.Single(requested);
+        Assert.IsType<PetEvent.WelcomeBackRequested>(requested[0]);
+        // Already self-cleared: no lingering Dismissed("welcome-back") needed.
+        Assert.Equal(PetState.Idle, pet.Current.State);
+    }
+
+    [Fact]
+    public async Task Turning_off_hide_during_fullscreen_while_hidden_restores_visibility()
+    {
+        // Regression for H2: the prior fix only reconciled on a fullscreen
+        // EDGE, i.e. an actual OnFullscreenChangedAsync call. Production
+        // wires that to the OS fullscreen-transition event
+        // (WindowsCompanionBootstrap), which is edge-triggered and may never
+        // fire again just because a setting changed — a user who disables
+        // "hide during fullscreen" while still in the same fullscreen
+        // session would stay hidden until an unrelated fullscreen exit
+        // happens to occur, possibly never. UpdatePreferencesAsync itself
+        // must now re-run the reconciliation on a true->false edge, so this
+        // test drives the restore through UpdatePreferencesAsync alone —
+        // unlike the earlier draft of this fix, it must NOT call
+        // OnFullscreenChangedAsync a second time to make the assertion pass.
+        var overlay = new FakeOverlay();
+        var preferences = new Preferences(
+            AppTheme.System,
+            new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+            false, 3, true, false, true, TimeSpan.FromMinutes(15));
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            preferences,
+            isFullscreen: () => true);
+
+        await lifecycle.OnFullscreenChangedAsync(true, TestContext.Current.CancellationToken);
+        Assert.Equal(1, overlay.HideCount);
+        Assert.False(overlay.IsVisible);
+
+        // Still fullscreen per the app's own detector throughout — the
+        // setting change alone, with no further fullscreen transition, must
+        // bring her back.
+        await lifecycle.UpdatePreferencesAsync(
+            preferences with { HidePetDuringFullscreen = false },
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, overlay.RestoreCount);
         Assert.Equal(1, overlay.ShowCount);
         Assert.True(overlay.IsVisible);
     }
