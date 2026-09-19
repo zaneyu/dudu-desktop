@@ -130,6 +130,20 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task ArgumentException_error_text_strips_the_framework_parameter_suffix()
+    {
+        // Regression: ArgumentException.Message appends " (Parameter 'GlobalShortcut')" from
+        // ParamName. That framework wording leaked straight into the user-visible error text.
+        var fixture = FeatureFixture.Create();
+        var viewModel = new AppearanceViewModel(fixture.Context) { GlobalShortcut = "   " };
+
+        await viewModel.SaveShortcutAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal("wait type a shortcut first", viewModel.ErrorMessage);
+        Assert.DoesNotContain("Parameter", viewModel.ErrorMessage);
+    }
+
+    [Fact]
     public void Request_delete_commands_report_select_one_first_on_a_null_selection_and_do_not_open_the_panel()
     {
         // H-2: the three RequestDelete...Commands used to be silent no-ops with a null

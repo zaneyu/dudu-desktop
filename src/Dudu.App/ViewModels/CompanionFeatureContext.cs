@@ -343,9 +343,23 @@ public abstract class FeatureViewModelBase : CommunityToolkit.Mvvm.ComponentMode
             // "Value cannot be null" text is meaningless to the recipient.
             ArgumentNullException => SelectOneFirstMessage,
             NotSupportedException => exception.Message,
-            ArgumentException => exception.Message,
+            ArgumentException argumentException => StripParamNameSuffix(argumentException),
             KeyNotFoundException => exception.Message,
             InvalidOperationException => exception.Message,
             _ => "cannot finish that try again",
         };
+
+    /// <summary>ArgumentException.Message appends " (Parameter 'name')" from
+    /// ParamName when one was supplied at the throw site. That framework
+    /// wording is not something a non-technical user should see, so strip it
+    /// back off using the known ParamName rather than parsing arbitrary text.</summary>
+    private static string StripParamNameSuffix(ArgumentException exception)
+    {
+        var message = exception.Message;
+        if (string.IsNullOrEmpty(exception.ParamName)) return message;
+        var suffix = $" (Parameter '{exception.ParamName}')";
+        return message.EndsWith(suffix, StringComparison.Ordinal)
+            ? message[..^suffix.Length]
+            : message;
+    }
 }
