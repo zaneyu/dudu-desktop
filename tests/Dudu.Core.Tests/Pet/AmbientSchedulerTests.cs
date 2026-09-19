@@ -1,4 +1,5 @@
 using Dudu.Core.Abstractions;
+using Dudu.Core.Assets;
 using Dudu.Core.Models;
 using Dudu.Core.Pet;
 using Dudu.Core.Time;
@@ -60,6 +61,38 @@ public sealed class AmbientSchedulerTests
             paused: false, focusActive: false, fullscreen: false, sessionLocked: false));
 
         Assert.Equal("sticker-030", result.AnimationKey);
+    }
+
+    [Fact]
+    public void A_pack_missing_some_sticker_numbers_never_yields_a_missing_key()
+    {
+        // Regression: the scheduler used to roll uniformly over the full
+        // 1..StickerAnimationCount range regardless of which sticker keys
+        // the active pack actually ships. A number the pack has no art for
+        // (e.g. the shipped pack currently omits sticker-018/027) resolves
+        // silently to the base idle loop instead of a sticker. Restricting
+        // the roll to the pack's real keys must never select a missing one.
+        var clock = new FakeClock(DateTimeOffset.Parse("2026-09-11T10:00:00Z"));
+        var availableStickerKeys = Enumerable.Range(1, AssetManifestContract.StickerAnimationCount)
+            .Select(AssetManifestContract.StickerAnimationKey)
+            .Where(key => key is not ("sticker-018" or "sticker-027"))
+            .ToArray();
+        // Selects the sticker sentinel (index 6), then the last index into
+        // the restricted list — without the fix this would still be
+        // interpreted as a 1..30 roll and could land on a missing key — and
+        // finally a value for the trailing next-eligible delay roll.
+        var random = new SequenceRandomSource(6, availableStickerKeys.Length - 1, 0);
+        var scheduler = new AmbientScheduler(clock, random, TimeSpan.Zero);
+
+        var result = Assert.IsType<PetEvent.AmbientRequested>(scheduler.TryGetNextEvent(
+            paused: false,
+            focusActive: false,
+            fullscreen: false,
+            sessionLocked: false,
+            availableStickerKeys: availableStickerKeys));
+
+        Assert.Contains(result.AnimationKey, availableStickerKeys);
+        Assert.DoesNotContain(result.AnimationKey, new[] { "sticker-018", "sticker-027" });
     }
 
     [Fact]
