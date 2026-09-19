@@ -43,7 +43,6 @@ public sealed class RemoteSyncService : IAsyncDisposable
     private readonly DesktopKeyService _keyService;
     private readonly IClock _clock;
     private readonly PollBackoff _backoff;
-    private readonly Action<string, Exception>? _reportError;
     private readonly ILogger<RemoteSyncService> _logger;
 
     private readonly object _lifecycleGate = new();
@@ -78,9 +77,20 @@ public sealed class RemoteSyncService : IAsyncDisposable
         _keyService = keyService ?? throw new ArgumentNullException(nameof(keyService));
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
         _backoff = backoff ?? throw new ArgumentNullException(nameof(backoff));
-        _reportError = reportError;
+        FailureReporter = reportError;
         _logger = logger ?? NullLogger<RemoteSyncService>.Instance;
     }
+
+    /// <summary>
+    /// Optional failure hook invoked with (tag, exception) when a poll-loop,
+    /// secret-store, protocol, or envelope failure occurs. Logging only:
+    /// failures still propagate/back off exactly as before. Never receives
+    /// secret material — only the tag and the exception. Defaults to the
+    /// value passed to the constructor (for tests); the App layer's
+    /// composition wires this property directly, since the constructor
+    /// parameter resolves to null through dependency injection.
+    /// </summary>
+    public Action<string, Exception>? FailureReporter { get; set; }
 
     public PairingAvailability State => _state;
 
@@ -311,7 +321,7 @@ public sealed class RemoteSyncService : IAsyncDisposable
                 // threw); exit the loop the same way the 401 path does instead of backing off and
                 // retrying forever against the same unreadable secret.
                 _state = PairingAvailability.NeedsRepair;
-                _reportError?.Invoke("remote-sync-secret-store", exception);
+                FailureReporter?.Invoke("remote-sync-secret-store", exception);
                 PrivacySafeLog.SyncLoopTerminal(_logger, "needs-repair-secret-store");
                 return;
             }
@@ -325,7 +335,7 @@ public sealed class RemoteSyncService : IAsyncDisposable
                 // wait the full capped backoff -- long enough not to hammer a broken relay, but
                 // still a retry, so a relay that is fixed later recovers without a restart.
                 _statusReason = PairingStatusReason.RelayProtocolError;
-                _reportError?.Invoke("remote-sync-protocol", exception);
+                FailureReporter?.Invoke("remote-sync-protocol", exception);
                 // P1: log both the terminal backoff entry and the retry, in addition to the
                 // reportError callback above. Fixed tags only — never wire content.
                 PrivacySafeLog.SyncLoopTerminal(_logger, "protocol-backoff");
@@ -338,7 +348,7 @@ public sealed class RemoteSyncService : IAsyncDisposable
             }
             catch (RemoteSyncException exception)
             {
-                _reportError?.Invoke("remote-sync-poll", exception);
+                FailureReporter?.Invoke("remote-sync-poll", exception);
                 if (!await TryDelayAsync(_backoff.NextDelay(), cancellationToken))
                 {
                     return;
@@ -354,7 +364,7 @@ public sealed class RemoteSyncService : IAsyncDisposable
                 // deserializer surprise -- used to fault the whole loop task, which then sat
                 // "started" and dead until the app restarted. Treat it like any other failed
                 // iteration instead.
-                _reportError?.Invoke("remote-sync-loop", exception);
+                FailureReporter?.Invoke("remote-sync-loop", exception);
                 if (!await TryDelayAsync(_backoff.NextDelay(), cancellationToken))
                 {
                     return;
@@ -456,7 +466,7 @@ public sealed class RemoteSyncService : IAsyncDisposable
                     {
                         if (!ReferenceEquals(failure, significantFailure))
                         {
-                            _reportError?.Invoke("remote-sync-envelope", failure);
+                            FailureReporter?.Invoke("remote-sync-envelope", failure);
                         }
                     }
 
@@ -482,7 +492,7 @@ public sealed class RemoteSyncService : IAsyncDisposable
             // Poison envelope: far larger than any well-formed page member. It can never decrypt
             // into a valid note (EnvelopeCrypto caps ciphertext at 6 KiB), so ack-and-advance past
             // it instead of letting one bloated row stall the whole queue behind it.
-            _reportError?.Invoke(
+            FailureReporter?.Invoke(
                 "remote-sync-oversize",
                 new InvalidOperationException(
                     $"Envelope {wire.MessageId} exceeds the per-envelope size bound."));
@@ -559,7 +569,7 @@ public sealed class RemoteSyncService : IAsyncDisposable
             var withinQuota = TryConsumeInvalidEnvelopeQuota(_clock.UtcNow, out var firstOverQuota);
             if (withinQuota)
             {
-                _reportError?.Invoke(
+                FailureReporter?.Invoke(
                     "remote-sync-decrypt",
                     new InvalidOperationException(
                         $"Envelope {wire.MessageId} failed to decrypt or validate ({exception.GetType().Name})."));
@@ -569,7 +579,7 @@ public sealed class RemoteSyncService : IAsyncDisposable
             {
                 if (firstOverQuota)
                 {
-                    _reportError?.Invoke(
+                    FailureReporter?.Invoke(
                         "remote-sync-invalid-quota",
                         new InvalidOperationException(
                             $"More than {InvalidEnvelopeDailyQuota} invalid envelopes today; further ones are dropped."));

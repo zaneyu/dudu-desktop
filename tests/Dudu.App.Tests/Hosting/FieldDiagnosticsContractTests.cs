@@ -87,6 +87,26 @@ public sealed class FieldDiagnosticsContractTests
     }
 
     [Fact]
+    public void Production_composition_wires_RemoteSyncService_failure_reporter()
+    {
+        var composition = ReadSource(Path.Combine("Hosting", "WindowsCompanionProductionComposition.cs"));
+
+        var wireMethod = composition.IndexOf(
+            "private static void WireDataFailureDiagnostics",
+            StringComparison.Ordinal);
+        var resolvesOptionally = composition.IndexOf(
+            "GetService<RemoteSyncService>()",
+            StringComparison.Ordinal);
+        var wiresReporter = composition.IndexOf(
+            "remoteSync.FailureReporter",
+            StringComparison.Ordinal);
+
+        Assert.True(wireMethod >= 0);
+        Assert.True(resolvesOptionally > wireMethod);
+        Assert.True(wiresReporter > resolvesOptionally);
+    }
+
+    [Fact]
     public void CrashGuard_correlation_uses_the_file_sink_not_the_failure_log()
     {
         var guard = ReadSource(Path.Combine("Hosting", "StartupCrashGuard.cs"));

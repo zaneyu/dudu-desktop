@@ -905,11 +905,11 @@ public static class WindowsCompanionProductionComposition
     /// Connects the data layer's failure hooks to the redacting
     /// <see cref="StartupFailureLogger"/> so database initialization
     /// ("db-init"), DPAPI secret read/write ("secret-read"/"secret-write"),
-    /// and backup-prune/maintenance ("backup-prune") failures leave a
-    /// persisted phase-named diagnostic. Hook-only: every failure still
-    /// propagates to its caller exactly as before, so a failing secret write
-    /// during registration still leaves the device-id-last
-    /// completion-marker ordering intact.
+    /// backup-prune/maintenance ("backup-prune"), and remote sync
+    /// ("remote-sync-*") failures leave a persisted phase-named diagnostic.
+    /// Hook-only: every failure still propagates to its caller exactly as
+    /// before, so a failing secret write during registration still leaves
+    /// the device-id-last completion-marker ordering intact.
     /// </summary>
     private static void WireDataFailureDiagnostics(ServiceProvider services, AppPaths paths)
     {
@@ -924,6 +924,14 @@ public static class WindowsCompanionProductionComposition
             (phase, exception) => StartupFailureLogger.Record(paths, phase, exception);
         services.GetRequiredService<LocalDataMaintenanceService>().FailureReporter =
             (phase, exception) => StartupFailureLogger.Record(paths, phase, exception);
+        // RemoteSyncService is only registered when a relay base URL is configured (see
+        // DependencyInjection.AddDuduInfrastructure), so a release build without one must not
+        // fail resolution here.
+        if (services.GetService<RemoteSyncService>() is { } remoteSync)
+        {
+            remoteSync.FailureReporter =
+                (phase, exception) => StartupFailureLogger.Record(paths, phase, exception);
+        }
     }
 
     private static async Task RunStartupPhaseAsync(

@@ -786,6 +786,37 @@ public sealed class RemoteSyncServiceTests
         }
     }
 
+    // Pre-handoff audit: FailureReporter must be a settable property, not just a value the
+    // constructor captured -- production composition sets it AFTER construction (DI resolves
+    // the constructor's reportError parameter to null), so a poll-loop failure raised only
+    // through the property, never through the constructor argument, must still reach it.
+    [Fact]
+    public async Task FailureReporter_property_set_after_construction_receives_loop_failures()
+    {
+        var fixture = await RemoteSyncFixture.CreateAsync();
+        await using (fixture)
+        {
+            var propertyReports = new List<(string Tag, Exception Exception)>();
+            fixture.Service.FailureReporter = (tag, exception) => propertyReports.Add((tag, exception));
+
+            fixture.Relay.PollException = () => new RelayUnavailableException("simulated outage");
+
+            await fixture.Service.StartAsync(fixture.CancellationToken);
+            try
+            {
+                await WaitUntilAsync(
+                    () => propertyReports.Any(error => error.Tag == "remote-sync-poll"),
+                    fixture.CancellationToken);
+
+                Assert.Contains(propertyReports, error => error.Tag == "remote-sync-poll");
+            }
+            finally
+            {
+                await fixture.Service.StopAsync(fixture.CancellationToken);
+            }
+        }
+    }
+
     // P1: the NeedsRepair exit logs SyncLoopTerminal so the stop is auditable in logs too.
     [Fact]
     public async Task RunLoop_logs_terminal_state_on_needs_repair_exit()
