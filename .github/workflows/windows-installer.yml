@@ -264,11 +264,15 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24.21.0
-      - name: Release and Store package source contracts
+      # Two separate steps: a pwsh `run:` block only surfaces the LAST
+      # command's exit code, so a failure in the first script here would
+      # never fail the step if they stayed combined.
+      - name: Release source contract
         shell: pwsh
-        run: |
-          pwsh tests/scripts/release-contract.tests.ps1
-          pwsh tests/scripts/store-package.tests.ps1
+        run: pwsh tests/scripts/release-contract.tests.ps1
+      - name: Store package source contract
+        shell: pwsh
+        run: pwsh tests/scripts/store-package.tests.ps1
       - run: dotnet restore DuduDesktop.slnx -p:RestorePackagesWithLockFile=false
       - run: dotnet build DuduDesktop.slnx -c Release --no-restore
       # One step per project with its own timeout so a hang names its project
@@ -295,16 +299,26 @@ jobs:
         if: always()
         run: pwsh scripts/find-hung-tests.ps1 -Project tests/Dudu.App.Tests/Dudu.App.Tests.csproj -TimeoutSeconds 90
         timeout-minutes: 25
-      - name: Relay dependencies and unit tests
+      # Split the same way as the dotnet suites above and for the same
+      # reason: a pwsh `run:` block only surfaces the LAST command's exit
+      # code, so a failed earlier command here would never fail the step.
+      - name: Relay dependencies
         if: always()
         working-directory: relay
-        run: |
-          npm ci
-          npm run typecheck
-          npm test -- --run
+        run: npm ci
+      - name: Relay typecheck
+        if: always()
+        working-directory: relay
+        run: npm run typecheck
+      - name: Relay unit tests
+        if: always()
+        working-directory: relay
+        run: npm test -- --run
+      - name: Relay Playwright browsers
+        if: always()
+        working-directory: relay
+        run: npx playwright install chromium firefox webkit
       - name: Relay browser E2E
         if: always()
         working-directory: relay
-        run: |
-          npx playwright install chromium firefox webkit
-          npm run test:e2e
+        run: npm run test:e2e
