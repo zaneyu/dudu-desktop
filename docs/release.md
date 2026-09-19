@@ -483,6 +483,12 @@ private channel.
   FlaUI UI tests, the performance gates against a real executable, the
   harness scenarios and the private-note end-to-end flow have **still not
   been executed**: they need an interactive Windows desktop session, which
-  a hosted runner does not provide. `docs/testing/windows-acceptance.md`
-  tracks every row that still needs a real Windows 11 24H2 x64 run before
-  this release can be considered fully verified.
+  a hosted runner does not provide. The installer job's "UI automation
+  tests (FlaUI)" step is therefore gated behind the repository variable
+  `DUDU_ENABLE_UI_AUTOMATION` and is **off by default**, the same way
+  "Performance gates" is gated behind `DUDU_ENABLE_INTERACTIVE_PERFORMANCE`;
+  set it to `true` only when this job runs on a Windows runner with an
+  interactive desktop, and it then blocks the job on failure like any other
+  test step. `docs/testing/windows-acceptance.md` tracks every row that
+  still needs a real Windows 11 24H2 x64 run before this release can be
+  considered fully verified.

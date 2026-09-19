@@ -80,18 +80,19 @@ jobs:
 
       # tests/Dudu.UiTests (FlaUI/UI Automation) has never run in CI: every test
       # in it self-skips unless DUDU_UI_TEST_EXE is set, so it silently ran zero
-      # assertions. continue-on-error keeps this from blocking the release build
-      # while it is unproven here — standard GitHub-hosted Windows runners have
-      # no interactive desktop session (see "Performance gates" below), which
-      # FlaUI's UI Automation driver may also require. Remove continue-on-error
-      # once this step is green on this runner.
+      # assertions. Standard GitHub-hosted Windows runners have no interactive
+      # desktop session (see "Performance gates" below), which FlaUI's UI
+      # Automation driver also needs, so this is off by default. Enable it only
+      # by setting the repository variable DUDU_ENABLE_UI_AUTOMATION=true on a
+      # runner that has an interactive desktop; once enabled it is a real gate
+      # (no continue-on-error) and its failure fails the job.
       - name: UI automation tests (FlaUI)
-        continue-on-error: true
+        if: vars.DUDU_ENABLE_UI_AUTOMATION == 'true'
         timeout-minutes: 15
         shell: pwsh
         env:
           DUDU_UI_TEST_EXE: ${{ github.workspace }}\artifacts\publish\win-x64\Dudu.App.exe
-        run: dotnet test tests/Dudu.UiTests/Dudu.UiTests.csproj -c Release --no-restore
+        run: dotnet test --project tests/Dudu.UiTests/Dudu.UiTests.csproj -c Release --no-restore
 
       - name: Performance gates (interactive Windows only)
         # Standard GitHub-hosted Windows runners have no interactive desktop session, so WinUI's
