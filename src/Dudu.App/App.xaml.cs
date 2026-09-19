@@ -441,6 +441,14 @@ public sealed partial class App : Application
     /// A hung <see cref="WindowsCompanionBootstrap.DisposeAsync"/> must never
     /// block the explicit exit paths (tray "quit", single-instance shutdown,
     /// startup failure), so this waits for it but only up to 5 seconds.
+    /// This method runs on the UI dispatcher thread, and nothing in the
+    /// dispose chain (overlay teardown reaches its own dedicated thread via
+    /// InvokeOnOwnerAsync; the rest is plain service/DI disposal) needs that
+    /// thread, so the chain is started with Task.Run rather than awaited
+    /// inline. Awaiting inline would let its unmarked awaits try to resume
+    /// back on this same thread while it sits blocked in .Wait(), deadlocking
+    /// every quit; Task.Run gives the chain a thread-pool context instead, so
+    /// its continuations run without waiting on this one.
     /// </summary>
     private static void DisposeBootstrapBounded(App? app)
     {
@@ -453,7 +461,7 @@ public sealed partial class App : Application
         app!._bootstrap = null;
         try
         {
-            bootstrap.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5));
+            Task.Run(() => bootstrap.DisposeAsync().AsTask()).Wait(TimeSpan.FromSeconds(5));
         }
         catch (Exception exception)
         {
