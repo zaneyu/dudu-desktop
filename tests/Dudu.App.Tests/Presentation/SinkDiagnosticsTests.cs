@@ -74,6 +74,26 @@ public sealed class SinkDiagnosticsTests
     }
 
     [Fact]
+    public async Task Remote_note_sink_propagates_when_the_gateway_is_not_ready()
+    {
+        // Unlike a genuine presentation failure (above), a gateway that is not
+        // resolvable yet (safe mode, or a startup race) must propagate so
+        // RemoteSyncService's poll loop does not acknowledge the envelope off
+        // the relay before ever attempting to show it.
+        var failure = new InvalidOperationException("The presentation gateway is not ready.");
+        var reporter = new RecordingErrorReporter();
+        var sink = new RemoteNoteArrivalSink(
+            () => throw failure,
+            reporter);
+
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => sink.NotifyAsync(Guid.NewGuid(), TestContext.Current.CancellationToken));
+
+        Assert.Same(failure, thrown);
+        Assert.Empty(reporter.Reports);
+    }
+
+    [Fact]
     public async Task Presentation_playback_failure_reports_presentation_tick_and_requeues()
     {
         var failure = new InvalidOperationException("playback down");
