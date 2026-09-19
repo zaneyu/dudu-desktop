@@ -1203,6 +1203,7 @@ public static class WindowsCompanionProductionComposition
                 crashGuard.MarkCleanRun();
             }
 
+            notifications?.Dispose();
             await host.DisposeAsync();
             await startup.DisposeAsync();
             await services.DisposeAsync();

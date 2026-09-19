@@ -26,7 +26,7 @@ public interface IRegistrableNotificationService
 /// working through the pet bubble fallback instead of retrying a broken
 /// notification surface.
 /// </summary>
-public sealed class AppNotificationService : INotificationService, IRegistrableNotificationService
+public sealed class AppNotificationService : INotificationService, IRegistrableNotificationService, IDisposable
 {
     public const string ReminderGroup = "reminders";
 
@@ -216,4 +216,6 @@ public sealed class AppNotificationService : INotificationService, IRegistrableN
             exception.GetType().FullName,
             exception.HResult);
     }
+
+    public void Dispose() => _registrationGate.Dispose();
 }

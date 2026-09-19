@@ -314,9 +314,9 @@ public sealed partial class App : Application
         var phase = exception is StartupPhaseException phaseException
             ? phaseException.Phase
             : "bootstrap";
-        var paths = AppPaths.ForCurrentUser();
         try
         {
+            var paths = AppPaths.ForCurrentUser();
             StartupFailureLogger.Record(paths, phase, exception);
         }
         catch
