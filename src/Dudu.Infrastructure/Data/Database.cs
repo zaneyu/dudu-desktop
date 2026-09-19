@@ -393,23 +393,60 @@ public sealed class Database : IAsyncDisposable, IDisposable
 
 internal sealed class DatabaseAccessCoordinator
 {
+    // H1: a PERMANENT SQLITE_BUSY/LOCKED (OneDrive syncing dudu.db, a second instance, AV) must
+    // not make every repository call re-run the whole (expensive) initializer forever. Cap
+    // consecutive transient retries and require a cooldown between attempts; within the cooldown
+    // or past the cap, callers get the latched faulted task fast, exactly like a deterministic
+    // failure.
+    private const int MaxTransientRetries = 3;
+    private static readonly TimeSpan TransientRetryCooldown = TimeSpan.FromSeconds(10);
+
     private readonly object _sync = new();
     private readonly HashSet<SqliteConnection> _connections = [];
+    private readonly Func<DateTimeOffset> _utcNow;
     private TaskCompletionSource<bool> _connectionsDrained = CompletedSource();
     private TaskCompletionSource<bool>? _initializationSource;
     private int _initializationRunCount;
+    private int _transientFailureCount;
+    private DateTimeOffset? _lastTransientFailureUtc;
     public SemaphoreSlim Gate { get; } = new(1, 1);
 
+    public DatabaseAccessCoordinator()
+        : this(static () => DateTimeOffset.UtcNow)
+    {
+    }
+
+    // Test seam: lets tests advance the cooldown clock deterministically instead of sleeping.
+    internal DatabaseAccessCoordinator(Func<DateTimeOffset> utcNow)
+    {
+        _utcNow = utcNow ?? throw new ArgumentNullException(nameof(utcNow));
+    }
+
     public int InitializationRunCount => Volatile.Read(ref _initializationRunCount);
+
+    // Test seam: a successful initialization latches permanently (InitializeAsync never re-runs
+    // it), so "the transient-failure counter resets on success" has no other externally
+    // observable effect to assert on.
+    internal int TransientFailureCount => Volatile.Read(ref _transientFailureCount);
 
     public Task InitializeAsync(Func<Task> initializer)
     {
         ArgumentNullException.ThrowIfNull(initializer);
         lock (_sync)
         {
-            if (_initializationSource is not null)
+            if (_initializationSource is { } existing)
             {
-                return _initializationSource.Task;
+                // A latched transient failure is only retried once it is allowed to be (past its
+                // cooldown and under the retry cap); otherwise it behaves exactly like a
+                // deterministic failure and is handed back as-is.
+                var isRetryableTransientFailure = existing.Task.IsFaulted
+                    && existing.Task.Exception is { } existingFailure
+                    && IsTransientBusyOrLocked(existingFailure)
+                    && CanRetryTransientFailureNow();
+                if (!isRetryableTransientFailure)
+                {
+                    return existing.Task;
+                }
             }
 
             var source = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -425,7 +462,21 @@ internal sealed class DatabaseAccessCoordinator
         lock (_sync)
         {
             _initializationSource = null;
+            _transientFailureCount = 0;
+            _lastTransientFailureUtc = null;
         }
+    }
+
+    // Must be called while holding _sync.
+    private bool CanRetryTransientFailureNow()
+    {
+        if (_transientFailureCount >= MaxTransientRetries)
+        {
+            return false;
+        }
+
+        var now = _utcNow();
+        return _lastTransientFailureUtc is not { } last || now - last >= TransientRetryCooldown;
     }
 
     public void Track(SqliteConnection connection)
@@ -488,6 +539,12 @@ internal sealed class DatabaseAccessCoordinator
         try
         {
             await initializer();
+            lock (_sync)
+            {
+                _transientFailureCount = 0;
+                _lastTransientFailureUtc = null;
+            }
+
             source.TrySetResult(true);
         }
         catch (Exception exception)
@@ -505,18 +562,19 @@ internal sealed class DatabaseAccessCoordinator
             //
             // The one exception: SQLITE_BUSY/SQLITE_LOCKED at first touch (e.g. an AV
             // scanner holding the file past busy_timeout) is transient, not a genuine
-            // failure -- every repository call goes through here, so latching it would
-            // brick all data access until relaunch. Clear the source so the next
-            // InitializeAsync call gets a fresh attempt instead of replaying this fault
-            // forever; this attempt's own callers still see it fail.
+            // failure -- every repository call goes through here, so latching it forever
+            // would brick all data access until relaunch. InitializeAsync retries a
+            // latched transient failure on its own (bounded by the cooldown and retry
+            // cap below); this attempt's own callers still see it fail. Record the
+            // failure so that bound can be enforced -- an unbounded retry is just as
+            // dangerous the other way (H1): a PERMANENT lock would otherwise re-run this
+            // whole (expensive) initializer on every repository call forever.
             if (IsTransientBusyOrLocked(exception))
             {
                 lock (_sync)
                 {
-                    if (ReferenceEquals(_initializationSource, source))
-                    {
-                        _initializationSource = null;
-                    }
+                    _transientFailureCount++;
+                    _lastTransientFailureUtc = _utcNow();
                 }
             }
 
@@ -529,9 +587,26 @@ internal sealed class DatabaseAccessCoordinator
 
     private static bool IsTransientBusyOrLocked(Exception exception)
     {
-        var sqliteException = exception as SqliteException ?? exception.InnerException as SqliteException;
-        return sqliteException is not null
-            && sqliteException.SqliteErrorCode is SqliteErrorBusy or SqliteErrorLocked;
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is SqliteException { SqliteErrorCode: SqliteErrorBusy or SqliteErrorLocked })
+            {
+                return true;
+            }
+
+            if (current is AggregateException aggregate)
+            {
+                foreach (var inner in aggregate.InnerExceptions)
+                {
+                    if (IsTransientBusyOrLocked(inner))
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
     }
 
     private static TaskCompletionSource<bool> CompletedSource()
