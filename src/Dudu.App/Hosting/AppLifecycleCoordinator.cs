@@ -515,7 +515,13 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
     {
         if (_presentOneShotAsync is null)
         {
-            _pet.Handle(new PetEvent.WelcomeBackRequested());
+            // M2: no one-shot delegate composed (e.g. a test exercising only
+            // the raw state machine). Immediately complete the request the
+            // same way the real one-shot path would, instead of leaving
+            // WelcomeBack latched with nothing left to ever dismiss it.
+            var requested = new PetEvent.WelcomeBackRequested();
+            _pet.Handle(requested);
+            _pet.Handle(PetEvent.CompletionForOneShot(requested, "welcome-back"));
             return;
         }
 

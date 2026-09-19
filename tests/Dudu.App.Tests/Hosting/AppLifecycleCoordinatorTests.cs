@@ -11,6 +11,13 @@ public sealed class AppLifecycleCoordinatorTests
     [Fact]
     public async Task Unlock_welcomes_back_only_when_all_gates_are_clear()
     {
+        // A presentOneShotAsync spy stands in for the composed
+        // PetPresentationCoordinator.PresentOneShotAsync (see M2): the fix
+        // that closed the null-fallback latch (this test used to assert the
+        // pet stayed pinned on WelcomeBack — the very bug this work package
+        // exists to remove) now makes even the no-delegate case self-clear
+        // immediately, so a raised-events spy is what actually distinguishes
+        // "welcome-back fired" from "gated by quiet hours" going forward.
         var host = new FakeHost();
         var overlay = new FakeOverlay();
         var pet = PetStateMachine.CreateIdle();
@@ -26,6 +33,7 @@ public sealed class AppLifecycleCoordinatorTests
         var quiet = false;
         var fullscreen = false;
         var pause = PauseState.None;
+        var requested = new List<PetEvent>();
         var cancellationToken = TestContext.Current.CancellationToken;
         await using var lifecycle = new AppLifecycleCoordinator(
             host,
@@ -35,16 +43,26 @@ public sealed class AppLifecycleCoordinatorTests
             () => pause,
             () => quiet,
             () => fullscreen,
-            () => new DateTimeOffset(2026, 9, 11, 10, 0, 0, TimeSpan.Zero));
+            () => new DateTimeOffset(2026, 9, 11, 10, 0, 0, TimeSpan.Zero),
+            presentOneShotAsync: (petEvent, dismissalId, _) =>
+            {
+                requested.Add(petEvent);
+                pet.Handle(petEvent);
+                pet.Handle(PetEvent.CompletionForOneShot(petEvent, dismissalId));
+                return Task.CompletedTask;
+            });
 
         await lifecycle.OnSessionLockedAsync(cancellationToken);
         await lifecycle.OnSessionUnlockedAsync(cancellationToken);
-        Assert.Equal(PetState.WelcomeBack, pet.Current.State);
+        Assert.Single(requested);
+        Assert.IsType<PetEvent.WelcomeBackRequested>(requested[0]);
+        Assert.Equal(PetState.Idle, pet.Current.State);
 
-        pet.Handle(new PetEvent.Dismissed("welcome-back"));
+        requested.Clear();
         quiet = true;
         await lifecycle.OnSessionLockedAsync(cancellationToken);
         await lifecycle.OnSessionUnlockedAsync(cancellationToken);
+        Assert.Empty(requested);
         Assert.Equal(PetState.Idle, pet.Current.State);
     }
 

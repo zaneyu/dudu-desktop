@@ -522,10 +522,13 @@ public static class WindowsCompanionProductionComposition
                     // presentationCoordinator is composed inside initializeOverlay
                     // above; a lifecycle event racing ahead of that (implausible,
                     // but not worth crashing over) falls back to a raw pet update
-                    // instead of throwing.
+                    // instead of throwing. M2: also self-complete it (as the real
+                    // one-shot path would) so the fallback never leaves the event
+                    // latched with nothing left to ever dismiss it.
                     if (presentationCoordinator is null)
                     {
                         pet.Handle(petEvent);
+                        pet.Handle(PetEvent.CompletionForOneShot(petEvent, dismissalId));
                         return Task.CompletedTask;
                     }
 
