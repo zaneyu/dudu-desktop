@@ -45,6 +45,13 @@ public sealed class MigrationRunner
         Database.ConfigureConnection(connection);
 
         var currentVersion = await ReadVersionAsync(connection, cancellationToken);
+        // One backup per upgrade run, taken before the first migration that
+        // actually applies. Backing up before every migration in the run let
+        // a multi-step upgrade (more migrations pending than the retention
+        // count) evict its own pre-upgrade backup -- the only copy of the
+        // database as it existed before this run touched it -- before the
+        // run even finished.
+        var backedUpThisRun = false;
         foreach (var migration in _migrations.OrderBy(migration => migration.Version))
         {
             if (migration.Version <= currentVersion)
@@ -52,9 +59,10 @@ public sealed class MigrationRunner
                 continue;
             }
 
-            if (createBackups && File.Exists(_options.DatabasePath))
+            if (createBackups && !backedUpThisRun && File.Exists(_options.DatabasePath))
             {
                 await _backups.CreatePreMigrationBackupAsync(connection, cancellationToken);
+                backedUpThisRun = true;
             }
 
             await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
