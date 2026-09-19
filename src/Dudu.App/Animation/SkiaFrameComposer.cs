@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Dudu.App.Overlay;
@@ -17,6 +18,11 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
     private readonly object _gate = new();
     private static readonly SKSamplingOptions SamplingOptions = new(SKFilterMode.Nearest);
     private readonly Dictionary<string, SKImage> _imageCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, long> _imageCacheBytes = new(StringComparer.OrdinalIgnoreCase);
+    // Least-recently-used order for _imageCache: front (First) is the next
+    // eviction candidate, back (Last) is the most recently touched entry.
+    private readonly LinkedList<string> _imageCacheLru = new();
+    private readonly Dictionary<string, LinkedListNode<string>> _imageCacheLruNodes = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _fullPathCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _sourceCache = new(StringComparer.Ordinal);
     private SKBitmap? _surface;
@@ -328,6 +334,7 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
         var cacheKey = fullPath;
         if (_imageCache.TryGetValue(cacheKey, out var cached))
         {
+            TouchLru(cacheKey);
             return cached;
         }
 
@@ -339,20 +346,57 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
         }
 
         var decodedBytes = checked((long)decoded.RowBytes * decoded.Height);
-        if (_imageCache.Count >= MaxDecodedBitmapCount
-            || decodedBytes > MaxDecodedBitmapBytes - _decodedBitmapBytes)
+        if (decodedBytes > MaxDecodedBitmapBytes)
         {
             throw new AssetManifestException(
                 $"Asset pack exceeds decoded animation cache limits ({MaxDecodedBitmapCount} frames or {MaxDecodedBitmapBytes} bytes).");
         }
+
+        // The frame decoded above isn't in the cache yet, so it can never be
+        // picked as an eviction candidate here: only already-cached frames
+        // (the least recently used first) make room for it.
+        EvictUntilWithinLimits(decodedBytes);
 
         // The image owns its own copy (or ref) of the pixels, so the decoding
         // bitmap is released as soon as this returns.
         var image = SKImage.FromBitmap(decoded)
             ?? throw new AssetManifestException($"Animation frame could not be decoded: {relativePath}");
         _imageCache.Add(cacheKey, image);
+        _imageCacheBytes.Add(cacheKey, decodedBytes);
+        _imageCacheLruNodes.Add(cacheKey, _imageCacheLru.AddLast(cacheKey));
         _decodedBitmapBytes += decodedBytes;
         return image;
+    }
+
+    private void TouchLru(string cacheKey)
+    {
+        var node = _imageCacheLruNodes[cacheKey];
+        if (!ReferenceEquals(node, _imageCacheLru.Last))
+        {
+            _imageCacheLru.Remove(node);
+            _imageCacheLru.AddLast(node);
+        }
+    }
+
+    private void EvictUntilWithinLimits(long incomingBytes)
+    {
+        while (_imageCacheLru.First is { } oldest
+            && (_imageCache.Count >= MaxDecodedBitmapCount
+                || incomingBytes > MaxDecodedBitmapBytes - _decodedBitmapBytes))
+        {
+            var key = oldest.Value;
+            _imageCacheLru.RemoveFirst();
+            _imageCacheLruNodes.Remove(key);
+            if (_imageCache.Remove(key, out var evictedImage))
+            {
+                evictedImage.Dispose();
+            }
+
+            if (_imageCacheBytes.Remove(key, out var evictedBytes))
+            {
+                _decodedBitmapBytes -= evictedBytes;
+            }
+        }
     }
 
     private void EnsureSurface(int width, int height)
@@ -390,6 +434,9 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
         }
 
         _imageCache.Clear();
+        _imageCacheBytes.Clear();
+        _imageCacheLru.Clear();
+        _imageCacheLruNodes.Clear();
         _fullPathCache.Clear();
         _sourceCache.Clear();
         _decodedBitmapBytes = 0;
@@ -484,21 +531,55 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
     private static void ValidatePackLimits(AssetPack pack)
     {
         var uniquePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var outfit in pack.Manifest.Outfits.Values)
+        long largestAnimationBytes = 0;
+        string? largestAnimationLabel = null;
+
+        foreach (var (outfitKey, outfit) in pack.Manifest.Outfits)
         {
-            foreach (var animation in outfit.Animations.Values)
+            foreach (var (animationKey, animation) in outfit.Animations)
             {
+                // Only this animation's own frames need to be resident together;
+                // the composer never plays two animations at once, so the real
+                // memory pressure is bounded by the biggest single animation, not
+                // the sum of every animation in the pack (see below).
+                var animationPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var frame in animation.Frames)
                 {
                     if (frame is not null)
                     {
                         uniquePaths.Add(frame.File);
+                        animationPaths.Add(frame.File);
                     }
                 }
 
                 if (animation.ReducedMotion is not null)
                 {
                     uniquePaths.Add(animation.ReducedMotion);
+                    animationPaths.Add(animation.ReducedMotion);
+                }
+
+                long animationBytes = 0;
+                foreach (var relativePath in animationPaths)
+                {
+                    if (!AssetManifestContract.IsSafeRelativePath(relativePath))
+                    {
+                        continue;
+                    }
+
+                    var fullPath = Path.GetFullPath(Path.Combine(pack.RootDirectory, relativePath));
+                    if (!File.Exists(fullPath))
+                    {
+                        continue;
+                    }
+
+                    var (width, height) = ReadPngDimensions(fullPath);
+                    animationBytes = checked(animationBytes + (long)width * height * BytesPerPixel);
+                }
+
+                if (animationBytes > largestAnimationBytes)
+                {
+                    largestAnimationBytes = animationBytes;
+                    largestAnimationLabel = $"{outfitKey}/{animationKey}";
                 }
             }
         }
@@ -509,25 +590,41 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
                 $"Asset pack declares {uniquePaths.Count} decoded frames; the limit is {MaxDecodedBitmapCount}.");
         }
 
-        long encodedBytes = 0;
-        foreach (var relativePath in uniquePaths)
+        if (largestAnimationBytes > MaxDecodedBitmapBytes)
         {
-            if (!AssetManifestContract.IsSafeRelativePath(relativePath))
-            {
-                continue;
-            }
-
-            var fullPath = Path.GetFullPath(Path.Combine(pack.RootDirectory, relativePath));
-            if (File.Exists(fullPath))
-            {
-                encodedBytes = checked(encodedBytes + new FileInfo(fullPath).Length);
-                if (encodedBytes > MaxDecodedBitmapBytes)
-                {
-                    throw new AssetManifestException(
-                        $"Asset pack encoded animation data exceeds {MaxDecodedBitmapBytes} bytes.");
-                }
-            }
+            throw new AssetManifestException(
+                $"Asset pack animation '{largestAnimationLabel}' has a decoded working set of {largestAnimationBytes} bytes, "
+                    + $"exceeding the {MaxDecodedBitmapBytes} byte limit.");
         }
+    }
+
+    /// <summary>
+    /// Reads a PNG file's pixel dimensions straight out of its IHDR chunk
+    /// (signature + length + "IHDR" + width + height, all fixed offsets)
+    /// without decoding any pixel data. Used only to estimate decoded
+    /// working-set size at admission time; actual composition still decodes
+    /// through <see cref="SKBitmap.Decode(string)"/> and validates the real
+    /// result.
+    /// </summary>
+    private static (int Width, int Height) ReadPngDimensions(string path)
+    {
+        Span<byte> header = stackalloc byte[24];
+        using var stream = File.OpenRead(path);
+        var bytesRead = stream.ReadAtLeast(header, header.Length, throwOnEndOfStream: false);
+        if (bytesRead < header.Length
+            || header[0] != 0x89 || header[1] != 0x50 || header[2] != 0x4E || header[3] != 0x47)
+        {
+            throw new AssetManifestException($"File is not a valid PNG: {path}");
+        }
+
+        var width = BinaryPrimitives.ReadInt32BigEndian(header[16..20]);
+        var height = BinaryPrimitives.ReadInt32BigEndian(header[20..24]);
+        if (width <= 0 || height <= 0)
+        {
+            throw new AssetManifestException($"PNG has invalid IHDR dimensions: {path}");
+        }
+
+        return (width, height);
     }
 
     private string GetSource(AssetPack pack, string relativePath)

@@ -38,6 +38,25 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private const nint HTCLIENT = 1;
     private const nint HTTRANSPARENT = -1;
     private const int ErrorAccessDenied = 5;
+
+    /// <summary>
+    /// Extended style for the pet window. Deliberately omits WS_EX_TRANSPARENT:
+    /// that flag makes a window click-through for *all* input, which would
+    /// defeat the per-pixel hit testing this host implements itself in
+    /// WM_NCHITTEST (see <see cref="IsInteractive(int, int)"/>). Per-pixel
+    /// click-through already comes from returning HTTRANSPARENT for
+    /// fully-transparent pixels there.
+    /// </summary>
+    internal const WINDOW_EX_STYLE PetWindowExStyle =
+        WINDOW_EX_STYLE.WS_EX_LAYERED
+        | WINDOW_EX_STYLE.WS_EX_TOOLWINDOW
+        | WINDOW_EX_STYLE.WS_EX_NOACTIVATE;
+
+    /// <summary>
+    /// Window class style for the pet window. CS_DBLCLKS is required for
+    /// WM_LBUTTONDBLCLK (double-click to open Home) to ever be delivered.
+    /// </summary>
+    internal const WNDCLASS_STYLES PetWindowClassStyle = WNDCLASS_STYLES.CS_DBLCLKS;
     private static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(5);
     private static readonly object ClassGate = new();
     public const string WindowClassName = "Dudu.DesktopCompanion.PetOverlay.v1";
@@ -77,6 +96,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private bool _actionSurfacePointerArmed;
     private OverlaySurfaceAction? _armedOverlayAction;
     private bool _petBodyPointerArmed;
+    private bool _suppressPetBodyToggleOnNextUp;
     private bool _placementDirty;
     private int _dragOriginX;
     private int _dragOriginY;
@@ -417,10 +437,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             {
                 using var module = PInvoke.GetModuleHandle(null);
                 _window = PInvoke.CreateWindowEx(
-                    WINDOW_EX_STYLE.WS_EX_LAYERED
-                    | WINDOW_EX_STYLE.WS_EX_TOOLWINDOW
-                    | WINDOW_EX_STYLE.WS_EX_NOACTIVATE
-                    | WINDOW_EX_STYLE.WS_EX_TRANSPARENT,
+                    PetWindowExStyle,
                     ClassName,
                     "Dudu",
                     WINDOW_STYLE.WS_POPUP,
@@ -519,8 +536,10 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             var windowClass = new WNDCLASSEXW
             {
                 cbSize = (uint)Marshal.SizeOf<WNDCLASSEXW>(),
+                style = PetWindowClassStyle,
                 lpfnWndProc = WindowProcedure,
                 hInstance = new HINSTANCE(instance.DangerousGetHandle()),
+                hCursor = PInvoke.LoadCursor(HINSTANCE.Null, PInvoke.IDC_ARROW),
             };
 
             using (instance)
@@ -753,8 +772,10 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             case WmLButtonUp:
                 var releasedPoint = GetClientPoint(lParam);
                 var toggleActionSurface = _petBodyPointerArmed
+                    && !_suppressPetBodyToggleOnNextUp
                     && Math.Abs(releasedPoint.X - _dragOriginX) <= 4
                     && Math.Abs(releasedPoint.Y - _dragOriginY) <= 4;
+                _suppressPetBodyToggleOnNextUp = false;
                 _petBodyPointerArmed = false;
                 CommitPlacementIfDirty();
                 ReleasePointerCapture();
@@ -771,8 +792,28 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                 }
                 break;
             case WmLButtonDoubleClick:
+                if (TryArmActionSurfacePointer(lParam))
+                {
+                    // A double-click landing on an open bubble's action behaves
+                    // exactly like an ordinary down-click on it: the paired
+                    // WM_LBUTTONUP above still dispatches it through
+                    // TryHandleActionSurfacePointer. Handling this any other
+                    // way here used to dispatch the action AND open Home, and
+                    // dropped every other rapid click on the same button.
+                    break;
+                }
+
+                // The pet body's first click of this double-click already ran
+                // its own WM_LBUTTONUP and toggled the action bubble open;
+                // close it before opening Home so the two don't end up
+                // stacked, and suppress the paired WM_LBUTTONUP's bubble
+                // toggle so it doesn't immediately reopen what was just
+                // closed. Arm drag from this second press exactly like a
+                // normal WM_LBUTTONDOWN would.
+                _actionSurface?.Close();
                 ReleasePointerCapture();
-                _petBodyPointerArmed = false;
+                _petBodyPointerArmed = BeginDrag(lParam);
+                _suppressPetBodyToggleOnNextUp = true;
                 _ = OverlayNativeCallbackObserver.ObserveAsync(
                     _openHome(CancellationToken.None),
                     _diagnostic);
@@ -796,6 +837,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                 _actionSurfacePointerArmed = false;
                 _armedOverlayAction = null;
                 _petBodyPointerArmed = false;
+                _suppressPetBodyToggleOnNextUp = false;
                 break;
             case WmDestroy:
                 CommitPlacementIfDirty();
@@ -850,7 +892,11 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             _dragOriginScreenY = _windowBounds.Y + point.Y;
         }
         _dragStartBounds = _windowBounds;
-        _placementDirty = false;
+        // A scroll-resize just before this drag can leave a pending placement
+        // save (_placementDirty from ChangeScale); commit it instead of
+        // unconditionally discarding it, or the resize is lost forever once
+        // the drag starts.
+        CommitPlacementIfDirty();
         return true;
     }
 
@@ -935,6 +981,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             Scale = MonitorPlacementService.ClampScale(_placement.Scale * factor),
         };
         ResolveAndMove();
+        _placementDirty = true;
     }
 
     private void ReleasePointerCapture()
