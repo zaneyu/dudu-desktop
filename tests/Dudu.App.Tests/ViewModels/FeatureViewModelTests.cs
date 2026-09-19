@@ -866,6 +866,69 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Connection_destructive_actions_require_a_separate_confirmation()
+    {
+        // F3: mirrors Privacy_destructive_actions_require_a_separate_confirmation. Available is
+        // required here because IPairingService.RevokeSessionsWithResultAsync refuses while
+        // Offline, and the point of this test is to prove the confirmation gate -- not that
+        // refusal -- withholds the call.
+        var pairing = new FakePairing { State = PairingAvailability.Available };
+        var fixture = FeatureFixture.Create(pairing: pairing);
+        var viewModel = new ConnectionViewModel(fixture.Context);
+
+        viewModel.RequestRevokeSessionsCommand.Execute(null);
+        Assert.Equal(0, pairing.DisconnectSenderSessionsCallCount);
+        Assert.Equal(ConnectionConfirmationAction.RevokeSessions, viewModel.PendingConfirmation);
+        Assert.True(viewModel.ConfirmCommand.CanExecute(null));
+
+        await viewModel.ConfirmAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, pairing.DisconnectSenderSessionsCallCount);
+        Assert.Equal(ConnectionConfirmationAction.None, viewModel.PendingConfirmation);
+        Assert.False(viewModel.ConfirmCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public void Cancelling_a_pending_connection_confirmation_never_calls_the_pairing_service()
+    {
+        var pairing = new FakePairing { State = PairingAvailability.Available };
+        var fixture = FeatureFixture.Create(pairing: pairing);
+        var viewModel = new ConnectionViewModel(fixture.Context);
+
+        viewModel.RequestDeleteRemoteDeviceCommand.Execute(null);
+        Assert.Equal(ConnectionConfirmationAction.DeleteRemoteDevice, viewModel.PendingConfirmation);
+
+        viewModel.CancelConfirmationCommand.Execute(null);
+
+        Assert.Equal(ConnectionConfirmationAction.None, viewModel.PendingConfirmation);
+        Assert.Equal(0, pairing.DeleteRemoteDeviceCallCount);
+    }
+
+    [Fact]
+    public async Task Forget_pairing_works_locally_even_while_pairing_needs_repair()
+    {
+        // F2's escape hatch: unlike revoke/delete above, forgetting the pairing never calls
+        // GetStateAsync and must succeed with the relay unreachable (or, in production, with a
+        // secret store DPAPI cannot read) -- that combination is exactly why it exists. Starting
+        // from NeedsRepair (not the default Offline) makes the final Availability assertion below
+        // meaningful: ForgetPairingAsync always forces Availability to Offline regardless of
+        // where it started, and NeedsRepair is the actual scenario this escape hatch exists for.
+        var pairing = new FakePairing { State = PairingAvailability.NeedsRepair };
+        var fixture = FeatureFixture.Create(pairing: pairing);
+        var viewModel = new ConnectionViewModel(fixture.Context);
+
+        viewModel.RequestForgetPairingCommand.Execute(null);
+        Assert.Equal(0, pairing.ForgetPairingCallCount);
+        Assert.Equal(ConnectionConfirmationAction.ForgetPairing, viewModel.PendingConfirmation);
+
+        await viewModel.ConfirmAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, pairing.ForgetPairingCallCount);
+        Assert.Equal(ConnectionConfirmationAction.None, viewModel.PendingConfirmation);
+        Assert.Equal(PairingAvailability.Offline, viewModel.Availability);
+    }
+
+    [Fact]
     public async Task Preference_updates_merge_against_the_shared_current_snapshot()
     {
         var fixture = FeatureFixture.Create();
@@ -1513,7 +1576,8 @@ public sealed class FeatureViewModelTests
             Func<CancellationToken, Task>? restoreAsync = null,
             Func<CancellationToken, Task>? deleteLocalDataAsync = null,
             Func<CancellationToken, Task>? deleteRemoteDataAsync = null,
-            Func<RemoteEnvelope, CancellationToken, Task<RevealedRemoteNote>>? revealRemoteNoteAsync = null)
+            Func<RemoteEnvelope, CancellationToken, Task<RevealedRemoteNote>>? revealRemoteNoteAsync = null,
+            IPairingService? pairing = null)
         {
             var clock = new FakeClock("2026-09-12T10:00:00Z");
             var events = new List<string>();
@@ -1566,7 +1630,7 @@ public sealed class FeatureViewModelTests
                 taskService,
                 focusService,
                 noteSelector,
-                new FakePairing(),
+                pairing ?? new FakePairing(),
                 transactions,
                 pet,
                 getPauseState: () => pause,
@@ -1684,6 +1748,7 @@ public sealed class FeatureViewModelTests
         public Task<bool> TryInsertAndMarkProcessedAsync(RemoteEnvelope envelope, DateTimeOffset processedUtc, CancellationToken cancellationToken) => Task.FromResult(true);
         public Task DeleteAsync(string messageId, CancellationToken cancellationToken) { Pending.RemoveAll(item => item.MessageId == messageId); return Task.CompletedTask; }
         public Task<int> PruneExpiredAsync(DateTimeOffset utcNow, TimeSpan retention, CancellationToken cancellationToken) => Task.FromResult(0);
+        public Task<int> DeleteAllAsync(CancellationToken cancellationToken) { var count = Pending.Count; Pending.Clear(); return Task.FromResult(count); }
     }
 
     private sealed class FakePreferencesRepository : IPreferencesRepository
@@ -1781,10 +1846,36 @@ public sealed class FeatureViewModelTests
 
     private sealed class FakePairing : IPairingService
     {
-        public Task<PairingAvailability> GetStateAsync(CancellationToken cancellationToken = default) => Task.FromResult(PairingAvailability.Offline);
+        // Defaults preserve every pre-existing test's behavior (Offline, no per-call tracking).
+        // F3 tests set State to Available where DisconnectSenderSessionsAsync/DeleteRemoteDeviceAsync
+        // need to actually run (IPairingService's RevokeSessionsWithResultAsync/
+        // DeleteRemoteDeviceWithResultAsync both refuse while Offline), and read the call counts to
+        // prove the confirmation gate withholds the relay call until ConfirmAsync runs.
+        public PairingAvailability State { get; set; } = PairingAvailability.Offline;
+        public int DisconnectSenderSessionsCallCount { get; private set; }
+        public int DeleteRemoteDeviceCallCount { get; private set; }
+        public int ForgetPairingCallCount { get; private set; }
+
+        public Task<PairingAvailability> GetStateAsync(CancellationToken cancellationToken = default) => Task.FromResult(State);
         public Task<PairingCodeResult> CreateCodeAsync(CancellationToken cancellationToken = default) => Task.FromResult(PairingCodeResult.Offline);
-        public Task DisconnectSenderSessionsAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
-        public Task DeleteRemoteDeviceAsync(string? deviceId = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task DisconnectSenderSessionsAsync(CancellationToken cancellationToken = default)
+        {
+            DisconnectSenderSessionsCallCount++;
+            return Task.CompletedTask;
+        }
+        public Task DeleteRemoteDeviceAsync(string? deviceId = null, CancellationToken cancellationToken = default)
+        {
+            DeleteRemoteDeviceCallCount++;
+            return Task.CompletedTask;
+        }
+
+        // F2: the local-only escape hatch. Never routes through GetStateAsync, so it must work
+        // regardless of State -- unlike DisconnectSenderSessionsAsync/DeleteRemoteDeviceAsync above.
+        public Task ForgetPairingAsync(CancellationToken cancellationToken = default)
+        {
+            ForgetPairingCallCount++;
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class FakeStartupWriter : IStartupLinkWriter

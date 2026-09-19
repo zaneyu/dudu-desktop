@@ -1,6 +1,7 @@
 using System.Buffers.Text;
 using System.Security.Cryptography;
 using Dudu.Core.Abstractions;
+using Dudu.Infrastructure.Security;
 
 namespace Dudu.Infrastructure.Crypto;
 
@@ -43,7 +44,20 @@ public sealed class DesktopKeyService
             if (existingPrivateKey is not null)
             {
                 using var existing = ECDiffieHellman.Create();
-                existing.ImportPkcs8PrivateKey(existingPrivateKey, out _);
+                try
+                {
+                    existing.ImportPkcs8PrivateKey(existingPrivateKey, out _);
+                }
+                catch (CryptographicException exception)
+                {
+                    // H2/M5: a stored key that decrypts (DPAPI succeeded) but does not parse as
+                    // PKCS#8 is just as dead an end as an unreadable secret -- it will never parse
+                    // differently on retry. Wrap it the same way so every caller converges on
+                    // NeedsRepair instead of an unhandled CryptographicException.
+                    throw new SecretStoreException(
+                        "The stored desktop private key could not be parsed.", exception);
+                }
+
                 return new DesktopKeyMaterial(
                     Base64Url.EncodeToString(existing.ExportSubjectPublicKeyInfo()),
                     existingPrivateKey);

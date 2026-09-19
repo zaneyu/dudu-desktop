@@ -6,6 +6,7 @@ using Dudu.Core.Models;
 using Dudu.Core.Time;
 using Dudu.Infrastructure.Crypto;
 using Dudu.Infrastructure.Logging;
+using Dudu.Infrastructure.Security;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -51,6 +52,11 @@ public sealed class RemoteSyncService : IAsyncDisposable
     private Task? _loopTask;
     private Task? _stopTask;
     private bool _disposed;
+    // B1: the cancellation token StartAsync was last invoked with (the app's own lifetime token
+    // in production, not a short-lived per-click token). ForgetPairingLocallyAsync needs to stop
+    // and later restart the loop around its local cleanup, and restarting it with anything other
+    // than the token it originally ran under would tie the resumed loop to the wrong lifetime.
+    private CancellationToken _hostCancellationToken;
     private volatile PairingAvailability _state = PairingAvailability.Offline;
     private volatile PairingStatusReason _statusReason = PairingStatusReason.None;
 
@@ -120,6 +126,18 @@ public sealed class RemoteSyncService : IAsyncDisposable
             _state = PairingAvailability.NeedsRepair;
             _statusReason = PairingStatusReason.None;
         }
+        catch (SecretStoreException exception)
+        {
+            // Audit finding F2: an unreadable secret (e.g. the DPAPI blob after a Windows
+            // password reset or a profile move) will never succeed on retry with the same
+            // secret, exactly like a dead bearer token. EnsureRegisteredAsync already set
+            // NeedsRepair before rethrowing; restate it here so a probe racing a concurrent
+            // repair still lands on the right state, and return normally instead of leaving the
+            // caller with an unhandled exception and a stale Availability.
+            _state = PairingAvailability.NeedsRepair;
+            _statusReason = PairingStatusReason.None;
+            PrivacySafeLog.SyncStateProbeFailed(_logger, 0, exception.GetType().Name);
+        }
         catch (RelayProtocolException exception)
         {
             // Review C1: an unreadable relay answer is a distinct, reportable condition, not
@@ -175,6 +193,7 @@ public sealed class RemoteSyncService : IAsyncDisposable
                 _loopCts = null;
             }
 
+            _hostCancellationToken = cancellationToken;
             _loopCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             var token = _loopCts.Token;
             _loopTask = Task.Run(() => RunLoopAsync(token), CancellationToken.None);
@@ -283,6 +302,19 @@ public sealed class RemoteSyncService : IAsyncDisposable
                 PrivacySafeLog.SyncLoopTerminal(_logger, "needs-repair");
                 return;
             }
+            catch (SecretStoreException exception)
+            {
+                // H2: a permanently unreadable secret (EnsureRegisteredAsync's own read, or the
+                // desktop key DesktopKeyService.GetOrCreateAsync just failed to parse) is a dead
+                // end on retry, exactly like a dead bearer token -- the same secret will never
+                // become readable on its own. State is already NeedsRepair (set by whichever call
+                // threw); exit the loop the same way the 401 path does instead of backing off and
+                // retrying forever against the same unreadable secret.
+                _state = PairingAvailability.NeedsRepair;
+                _reportError?.Invoke("remote-sync-secret-store", exception);
+                PrivacySafeLog.SyncLoopTerminal(_logger, "needs-repair-secret-store");
+                return;
+            }
             catch (RelayProtocolException exception)
             {
                 // Review C1: the relay answered with something this build cannot read -- most
@@ -371,9 +403,47 @@ public sealed class RemoteSyncService : IAsyncDisposable
         var keyMaterial = await _keyService.GetOrCreateAsync(cancellationToken);
         try
         {
+            // M2: one throwing envelope used to abort the whole batch, and -- because it is never
+            // acked when that happens -- come back first on every subsequent poll, permanently
+            // starving every envelope behind it (head-of-line blocking). Process every envelope in
+            // the batch regardless of earlier failures, then report the failure(s) once the batch
+            // ends so RunLoopAsync's existing backoff still applies. No attempt counter or
+            // quarantine: a still-broken envelope simply fails again next poll.
+            List<Exception>? failures = null;
             foreach (var envelope in envelopes)
             {
-                await ProcessEnvelopeAsync(envelope, keyMaterial.PrivateKeyPkcs8, cancellationToken);
+                try
+                {
+                    await ProcessEnvelopeAsync(envelope, keyMaterial.PrivateKeyPkcs8, cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    (failures ??= new List<Exception>()).Add(exception);
+                    if (Guid.TryParse(envelope.MessageId, out var failedId))
+                    {
+                        // Exception type only -- never the message, matching the decrypt-failure
+                        // logging convention elsewhere in this method.
+                        PrivacySafeLog.EnvelopeRejected(_logger, failedId, "batch:" + exception.GetType().Name);
+                    }
+                }
+            }
+
+            if (failures is { Count: > 0 })
+            {
+                // A dead credential ends the whole poll rather than being aggregated away, so
+                // RunLoopAsync's existing 401 handling (stop polling, converge on NeedsRepair)
+                // still applies even when it surfaced partway through a batch.
+                var authFailure = failures.OfType<RelayUnauthorizedException>().FirstOrDefault();
+                if (authFailure is not null)
+                {
+                    throw authFailure;
+                }
+
+                throw failures.Count == 1 ? failures[0] : new AggregateException(failures);
             }
         }
         finally
@@ -425,10 +495,23 @@ public sealed class RemoteSyncService : IAsyncDisposable
         // Base64Url decode of the wire fields, so a malformed field used to throw here -- before
         // the catch below, outside any handler -- and take the whole poll loop down; and the old
         // catch filter (CryptographicException/EnvelopeValidationException only) let a null
-        // payload field escape as a NullReferenceException. Any non-cancellation failure now
-        // means the same thing to this method: undecryptable. Store the ciphertext without
-        // plaintext, do not notify, and acknowledge, so a poison message drains instead of being
-        // redelivered forever.
+        // payload field escape as a NullReferenceException. Widening the filter to "any
+        // non-cancellation failure" fixed that, but went too far the other way (audit finding F1):
+        // a transient failure unrelated to this envelope's content -- SQLite busy, IO, a secret
+        // store hiccup -- is not "undecryptable" and must not be acked away, since ack is
+        // irreversible. Only the three permanent, content-is-the-problem failures below take the
+        // ack-and-discard path. Review H1: a bare CryptographicException is not one of them --
+        // EnvelopeCrypto's own local private-key import, DeriveRawSecretAgreement, and the AesGcm
+        // constructor can all throw it for reasons that have nothing to do with this envelope
+        // (e.g. a locally corrupt key), and treating that as "this envelope is bad" would ack a
+        // note away that could still be delivered once the local problem is fixed. Only
+        // AuthenticationTagMismatchException -- the specific subtype AesGcm.Decrypt raises for a
+        // genuinely tampered ciphertext -- means the envelope itself is the problem.
+        // EnvelopeValidationException already wraps FormatException for the wire fields it decodes
+        // itself, but BuildStoredEnvelope below decodes the same fields again with the raw
+        // Base64Url API, so FormatException is listed explicitly too). Everything else -- and
+        // OperationCanceledException, which was never caught here -- propagates so the note stays
+        // on the relay and is retried next sync.
         var decrypted = true;
         var deferred = false;
         RemoteEnvelope? stored = null;
@@ -438,7 +521,9 @@ public sealed class RemoteSyncService : IAsyncDisposable
             stored = BuildStoredEnvelope(wire, _clock.UtcNow);
             deferred = IsDeliveryDeferred(wire.DeliverAfterUtc, _clock.UtcNow);
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+        catch (Exception exception) when (exception is AuthenticationTagMismatchException
+            or EnvelopeValidationException
+            or FormatException)
         {
             decrypted = false;
             if (Guid.TryParse(wire.MessageId, out var messageId))
@@ -681,7 +766,23 @@ public sealed class RemoteSyncService : IAsyncDisposable
 
     public async Task<int> GetActiveSenderSessionCountAsync(CancellationToken cancellationToken)
     {
-        if (await GetDeviceIdAsync(cancellationToken) is null)
+        byte[]? deviceId;
+        try
+        {
+            deviceId = await GetDeviceIdAsync(cancellationToken);
+        }
+        catch (SecretStoreException)
+        {
+            // Audit finding F2: same NeedsRepair convergence as EnsureRegisteredAsync. This read
+            // does not go through EnsureRegisteredAsync, so an unreadable secret must be handled
+            // here too -- otherwise ConnectionViewModel.RefreshAsync (which calls this after
+            // GetStateAsync already returned NeedsRepair) would throw before ever applying that
+            // state to the bound properties, and the page would show a generic error instead.
+            _state = PairingAvailability.NeedsRepair;
+            return 0;
+        }
+
+        if (deviceId is null)
         {
             return 0;
         }
@@ -697,6 +798,16 @@ public sealed class RemoteSyncService : IAsyncDisposable
             // credential is dead, so converge on NeedsRepair like every other authenticated call.
             _state = PairingAvailability.NeedsRepair;
             throw;
+        }
+        catch (SecretStoreException exception)
+        {
+            // H2: GetDeviceAsync authenticates with the bearer token, which it reads through the
+            // secret store too -- the same dead end as the device-id read above, just reached one
+            // call later. Same convergence and same "return 0 instead of throwing" contract as the
+            // catch above, for the same ConnectionViewModel.RefreshAsync reason.
+            _state = PairingAvailability.NeedsRepair;
+            PrivacySafeLog.SyncStateProbeFailed(_logger, 0, exception.GetType().Name);
+            return 0;
         }
     }
 
@@ -791,30 +902,187 @@ public sealed class RemoteSyncService : IAsyncDisposable
         _statusReason = PairingStatusReason.None;
     }
 
+    /// <summary>
+    /// Audit finding F2's escape hatch: forgets this desktop's pairing entirely on the local
+    /// machine, tolerating a relay and/or secret store that are already broken.
+    /// <para>
+    /// <see cref="RevokeDeviceAsync"/> is the normal unpair path, but it needs a working bearer
+    /// token to authenticate the relay delete call -- so it cannot get a user out of an unreadable
+    /// secret store (e.g. after a Windows password reset invalidates the DPAPI master key), which
+    /// is exactly the state that makes that same token unreadable. <see cref="ISecretStore.DeleteAsync"/>
+    /// never decrypts anything (it only removes the stored ciphertext file), so the local half of
+    /// this works even when every secret it touches is permanently unreadable.
+    /// </para>
+    /// <para>
+    /// Review B1: this used to race the background poll loop -- an interleaved re-registration
+    /// mid-delete could leave a device registered on the relay with its matching private key
+    /// already gone, silently bricking every future note. The loop is stopped for the duration and
+    /// every delete happens under <see cref="_registrationGate"/> (the same gate
+    /// <see cref="EnsureRegisteredAsync"/> takes), so no concurrent caller can observe or create a
+    /// half-forgotten state; the loop restarts afterward under the same host lifetime token it was
+    /// originally started with.
+    /// </para>
+    /// <para>
+    /// Review H3: the desktop's ECDH private key is destroyed only when it is already permanently
+    /// unreadable (a dead DPAPI blob or an unparsable PKCS#8 blob) -- in that case every
+    /// stored-but-unopened envelope is already undecryptable ciphertext, so those rows are purged
+    /// too, leaving Love Notes clean instead of full of permanent "cannot finish that" errors.
+    /// When the key is still readable it is kept: re-registration below reuses it, and every
+    /// already-stored, unrevealed remote note stays revealable after re-pairing. Already-saved
+    /// notes (<c>local_notes</c>) and relay-delivery dedup state (<c>processed_remote_messages</c>)
+    /// are never touched either way.
+    /// </para>
+    /// <para>
+    /// Review H4: a relay-side device delete is attempted first, best-effort, so the partner's
+    /// device stops queueing notes to what is about to become a dead device. It never blocks or
+    /// fails the local forget -- the whole reason this method exists is to recover when the relay
+    /// and/or the credential needed to talk to it are already broken.
+    /// </para>
+    /// <para>
+    /// Only a caller with the user's explicit confirmation may call this.
+    /// </para>
+    /// </summary>
+    public async Task ForgetPairingLocallyAsync(CancellationToken cancellationToken)
+    {
+        var wasRunning = IsRunning;
+        if (wasRunning)
+        {
+            await StopAsync(cancellationToken);
+        }
+
+        try
+        {
+            await _registrationGate.WaitAsync(cancellationToken);
+            try
+            {
+                // H4 first: still has a chance at a live token, and must never block the local
+                // forget that follows.
+                await TryDeleteDeviceOnRelayBestEffortAsync(cancellationToken);
+
+                // H3: decide the key's fate before mutating anything, so every local secret-store
+                // delete below is unconditional once it starts.
+                var keyIsReadable = await TryKeepDesktopKeyIfReadableAsync(cancellationToken);
+
+                // B1: device id first, matching RevokeDeviceAsync's own convention -- it is the
+                // registration completion marker, so any failure partway through the rest of this
+                // sequence (including the key delete below) leaves a state EnsureRegisteredAsync
+                // already treats as unregistered, never "registered but key-less".
+                await _secretStore.DeleteAsync(RelaySecretKeys.DeviceId, cancellationToken);
+                await _secretStore.DeleteAsync(RelaySecretKeys.DesktopToken, cancellationToken);
+                await _secretStore.DeleteAsync(RelaySecretKeys.DesktopTokenStaging, cancellationToken);
+
+                if (!keyIsReadable)
+                {
+                    await _secretStore.DeleteAsync(DesktopKeyService.SecretStoreKey, cancellationToken);
+                    await _envelopes.DeleteAllAsync(cancellationToken);
+                }
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                // P1: same diagnostic convention as every other local-cleanup failure. Type name only.
+                PrivacySafeLog.SyncStateProbeFailed(_logger, 0, exception.GetType().Name);
+                throw;
+            }
+            finally
+            {
+                _registrationGate.Release();
+            }
+
+            _state = PairingAvailability.Offline;
+            _statusReason = PairingStatusReason.None;
+        }
+        finally
+        {
+            if (wasRunning)
+            {
+                await StartAsync(_hostCancellationToken);
+            }
+        }
+    }
+
+    /// <summary>H4: stops the partner's device from queueing notes to what is about to become a
+    /// dead device, but never blocks or fails the local forget path this is called from -- that
+    /// path exists specifically for when the relay, or the credential needed to talk to it, is
+    /// already broken.</summary>
+    private async Task TryDeleteDeviceOnRelayBestEffortAsync(CancellationToken cancellationToken)
+    {
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+        try
+        {
+            await _relay.DeleteDeviceAsync(linkedCts.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // The bounded timeout fired, not the caller's own cancellation -- ignore, best-effort.
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Offline relay, already-gone device, dead token, anything else -- all ignored.
+            // Type name only, matching every other local-cleanup diagnostic in this class.
+            PrivacySafeLog.SyncStateProbeFailed(_logger, 0, exception.GetType().Name);
+        }
+    }
+
+    /// <summary>H3: true if the desktop's ECDH private key parses and is therefore still usable
+    /// (re-registration will reuse it and every already-stored envelope stays revealable) -- in
+    /// which case it must not be destroyed. False only when reading or parsing it threw
+    /// <see cref="SecretStoreException"/>, meaning it is permanently unreadable and every envelope
+    /// encrypted to it is already permanently undecryptable.</summary>
+    private async Task<bool> TryKeepDesktopKeyIfReadableAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var keyMaterial = await _keyService.GetOrCreateAsync(cancellationToken);
+            // Same M3 rule as PollOnceAsync/EnsureRegisteredAsync: the PKCS#8 copy this call
+            // owns never outlives the call.
+            CryptographicOperations.ZeroMemory(keyMaterial.PrivateKeyPkcs8);
+            return true;
+        }
+        catch (SecretStoreException)
+        {
+            return false;
+        }
+    }
+
     private async Task EnsureRegisteredAsync(CancellationToken cancellationToken)
     {
         await _registrationGate.WaitAsync(cancellationToken);
         try
         {
-            // Registration writes the token before the id, and the id is the completion marker.
-            // Check both anyway so an installation left by an older/partial build self-heals on the
-            // next startup instead of treating a device id without its bearer token as registered.
-            if (await HasSecretAsync(RelaySecretKeys.DeviceId, cancellationToken)
-                && await HasSecretAsync(RelaySecretKeys.DesktopToken, cancellationToken))
-            {
-                return;
-            }
-
-            var keyMaterial = await _keyService.GetOrCreateAsync(cancellationToken);
             try
             {
-                await _relay.RegisterAsync(keyMaterial.PublicKeySpkiBase64Url, cancellationToken);
+                // Registration writes the token before the id, and the id is the completion marker.
+                // Check both anyway so an installation left by an older/partial build self-heals on the
+                // next startup instead of treating a device id without its bearer token as registered.
+                if (await HasSecretAsync(RelaySecretKeys.DeviceId, cancellationToken)
+                    && await HasSecretAsync(RelaySecretKeys.DesktopToken, cancellationToken))
+                {
+                    return;
+                }
+
+                var keyMaterial = await _keyService.GetOrCreateAsync(cancellationToken);
+                try
+                {
+                    await _relay.RegisterAsync(keyMaterial.PublicKeySpkiBase64Url, cancellationToken);
+                }
+                finally
+                {
+                    // Same M3 rule as PollOnceAsync/RevealAsync/DisconnectSendersAsync: the PKCS#8 copy
+                    // this call owns never outlives the call.
+                    CryptographicOperations.ZeroMemory(keyMaterial.PrivateKeyPkcs8);
+                }
             }
-            finally
+            catch (SecretStoreException)
             {
-                // Same M3 rule as PollOnceAsync/RevealAsync/DisconnectSendersAsync: the PKCS#8 copy
-                // this call owns never outlives the call.
-                CryptographicOperations.ZeroMemory(keyMaterial.PrivateKeyPkcs8);
+                // Audit finding F2: an unreadable secret (DPAPI blob invalidated by a Windows
+                // password reset or a profile move) is a dead end on retry, not a transient
+                // hiccup -- the same secret will never become readable. Every caller of this
+                // method (GetStateAsync, PollOnceAsync, CreatePairingCodeAsync) must land on
+                // NeedsRepair instead of retrying forever or surfacing a generic error, so the
+                // Connection page can offer the local-only "forget pairing" recovery.
+                _state = PairingAvailability.NeedsRepair;
+                throw;
             }
         }
         finally

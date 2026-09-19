@@ -8,6 +8,7 @@ using Dudu.Core.Time;
 using Dudu.Infrastructure.Data;
 using Dudu.Infrastructure.Data.Repositories;
 using Dudu.Infrastructure.Remote;
+using Dudu.Infrastructure.Security;
 using Dudu.Infrastructure.Tests.Crypto;
 using Microsoft.Extensions.Logging;
 using Xunit;
@@ -81,6 +82,22 @@ public sealed class RemoteSyncServiceTests
             () => fixture.Service.PollOnceAsync(fixture.CancellationToken));
 
         Assert.Empty(fixture.AcknowledgedIds);
+    }
+
+    [Fact]
+    public async Task One_failing_envelope_does_not_block_the_rest_of_the_batch()
+    {
+        // M2: a throwing envelope used to abort the whole foreach and -- since it was never acked
+        // -- come back first on every subsequent poll, permanently starving every envelope behind
+        // it. The good envelope listed after the failing one must still be stored, notified, and
+        // acked in the same poll.
+        await using var fixture = await RemoteSyncFixture.WithOneFailingEnvelopeAmongGoodOnesAsync();
+
+        await Assert.ThrowsAsync<RemoteSyncException>(
+            () => fixture.Service.PollOnceAsync(fixture.CancellationToken));
+
+        Assert.Equal(new[] { fixture.MessageId }, fixture.AcknowledgedIds);
+        Assert.Equal([Guid.ParseExact(fixture.MessageId, "D")], fixture.Presentations);
     }
 
     [Fact]
@@ -211,6 +228,205 @@ public sealed class RemoteSyncServiceTests
     }
 
     [Fact]
+    public async Task GetState_maps_an_unreadable_secret_to_needs_repair_instead_of_throwing()
+    {
+        // F2: an unreadable DPAPI blob (e.g. after a Windows password reset invalidates the
+        // master key) is a dead end on retry, exactly like a dead bearer token -- it must not
+        // surface as an unhandled exception (which would leave ConnectionViewModel.Availability
+        // stale) or as a generic probe failure indistinguishable from a healthy offline state.
+        await using var fixture = await RemoteSyncFixture.WithRegistrationAsync();
+        fixture.SecretStore.PoisonedKeys.Add(RelaySecretKeys.DeviceId);
+
+        var availability = await fixture.Service.GetStateAsync(fixture.CancellationToken);
+
+        Assert.Equal(PairingAvailability.NeedsRepair, availability);
+        Assert.True(fixture.Service.NeedsRepair);
+    }
+
+    [Fact]
+    public async Task GetActiveSenderSessionCount_degrades_gracefully_when_the_secret_is_unreadable()
+    {
+        // F2: ConnectionViewModel.RefreshAsync calls GetSessionCountAsync unconditionally right
+        // after GetStateAsync, in the same try. If this threw, the whole refresh would throw
+        // before ever applying the NeedsRepair availability GetStateAsync already determined, and
+        // the Connection page would show a generic error instead.
+        await using var fixture = await RemoteSyncFixture.WithRegistrationAsync();
+        fixture.SecretStore.PoisonedKeys.Add(RelaySecretKeys.DeviceId);
+
+        var count = await fixture.Service.GetActiveSenderSessionCountAsync(fixture.CancellationToken);
+
+        Assert.Equal(0, count);
+        Assert.Equal(PairingAvailability.NeedsRepair, fixture.Service.State);
+    }
+
+    [Fact]
+    public async Task GetActiveSenderSessionCount_degrades_gracefully_when_only_the_token_is_unreadable()
+    {
+        // H2: the device-id read (poisoned in the test above) is not the only secret-store read on
+        // this path -- GetDeviceAsync authenticates with the bearer token, which the real
+        // RelayClient reads through the secret store too. The fake relay client does not model
+        // that internal read, so simulate the same failure the real one would surface (a
+        // SecretStoreException out of GetDeviceAsync) directly through its exception hook, leaving
+        // the device id itself readable, to exercise that second read specifically.
+        await using var fixture = await RemoteSyncFixture.WithRegistrationAsync();
+        fixture.Relay.GetDeviceException = () => new SecretStoreException(
+            "The protected secret could not be decrypted.",
+            new InvalidOperationException("simulated unreadable DPAPI blob"));
+
+        var count = await fixture.Service.GetActiveSenderSessionCountAsync(fixture.CancellationToken);
+
+        Assert.Equal(0, count);
+        Assert.Equal(PairingAvailability.NeedsRepair, fixture.Service.State);
+    }
+
+    [Fact]
+    public async Task Poll_loop_exits_to_needs_repair_instead_of_retrying_a_permanently_unreadable_secret()
+    {
+        // H2: an unreadable secret never becomes readable on retry, exactly like a dead bearer
+        // token -- the loop must stop the same way it does for a 401 instead of backing off and
+        // retrying forever against the same unreadable secret.
+        await using var fixture = await RemoteSyncFixture.WithRegistrationAsync();
+        fixture.SecretStore.PoisonedKeys.Add(RelaySecretKeys.DeviceId);
+
+        await fixture.Service.StartAsync(fixture.CancellationToken);
+        try
+        {
+            await WaitUntilAsync(
+                () => fixture.Service.State == PairingAvailability.NeedsRepair,
+                fixture.CancellationToken);
+            await WaitUntilAsync(() => !fixture.Service.IsRunning, fixture.CancellationToken);
+
+            Assert.Equal(PairingAvailability.NeedsRepair, fixture.Service.State);
+            Assert.False(
+                fixture.Service.IsRunning,
+                "the loop must stop polling once it converges on NeedsRepair, not retry forever");
+        }
+        finally
+        {
+            await fixture.Service.StopAsync(fixture.CancellationToken);
+        }
+    }
+
+    [Fact]
+    public async Task ForgetPairingLocally_clears_every_local_secret_even_when_none_of_them_can_be_decrypted()
+    {
+        // F2: the escape hatch out of an unreadable secret store. RevokeDeviceAsync cannot help
+        // here -- it needs a working bearer token to authenticate the relay delete call, and that
+        // token is exactly what is unreadable. Poison every secret this touches (matching a fully
+        // corrupted DPAPI master key) to prove the local forget still succeeds without ever
+        // needing to decrypt any of them: ISecretStore.DeleteAsync only removes the stored file,
+        // and the unreadable key is treated as H3's "destroy" case, same as if it had parsed and
+        // failed. H4's best-effort relay delete still fires once (the fake relay client, unlike
+        // the real one, does not need to decrypt the token to "send" the request) and its failure
+        // (irrelevant here, since it does not throw) must never block the rest.
+        await using var fixture = await RemoteSyncFixture.WithRegistrationAsync();
+        fixture.SecretStore.PoisonedKeys.Add(RelaySecretKeys.DeviceId);
+        fixture.SecretStore.PoisonedKeys.Add(RelaySecretKeys.DesktopToken);
+        fixture.SecretStore.PoisonedKeys.Add(RelaySecretKeys.DesktopTokenStaging);
+        fixture.SecretStore.PoisonedKeys.Add(RemoteSyncFixture.DesktopPrivateKeySecretKey);
+
+        await fixture.Service.ForgetPairingLocallyAsync(fixture.CancellationToken);
+
+        Assert.Equal(1, fixture.Relay.RequestCount);
+        Assert.False(fixture.SecretStore.Values.ContainsKey(RelaySecretKeys.DeviceId));
+        Assert.False(fixture.SecretStore.Values.ContainsKey(RelaySecretKeys.DesktopToken));
+        Assert.False(fixture.SecretStore.Values.ContainsKey(RelaySecretKeys.DesktopTokenStaging));
+        Assert.False(fixture.SecretStore.Values.ContainsKey(RemoteSyncFixture.DesktopPrivateKeySecretKey));
+        Assert.Equal(PairingAvailability.Offline, fixture.Service.State);
+    }
+
+    [Fact]
+    public async Task Forget_pairing_keeps_a_readable_key_so_stored_notes_stay_revealable_after_repairing()
+    {
+        // H3: a readable key means every stored-but-unopened remote note is still decryptable --
+        // destroying it for no reason, as the old logic always did, would silently and needlessly
+        // turn every one of them into a permanent "cannot finish that" error. Only an actually
+        // unreadable key should be destroyed (the poisoned-key test above, and the isolated one
+        // below).
+        await using var fixture = await RemoteSyncFixture.WithStoredEncryptedEnvelopeAsync("still here");
+        fixture.SecretStore.Values[RelaySecretKeys.DeviceId] = Encoding.UTF8.GetBytes("device-1");
+        fixture.SecretStore.Values[RelaySecretKeys.DesktopToken] = Encoding.UTF8.GetBytes("token-1");
+
+        await fixture.Service.ForgetPairingLocallyAsync(fixture.CancellationToken);
+
+        Assert.True(fixture.SecretStore.Values.ContainsKey(RemoteSyncFixture.DesktopPrivateKeySecretKey));
+        Assert.Equal(
+            "still here",
+            (await fixture.Service.RevealAsync(fixture.MessageId, fixture.CancellationToken)).Text);
+    }
+
+    [Fact]
+    public async Task Forget_pairing_destroys_an_unreadable_key_and_purges_the_now_undecryptable_stored_envelope()
+    {
+        // H3: isolates the key-unreadable path from the registration-marker deletes -- only the
+        // key is poisoned, DeviceId/Token stay readable -- to prove specifically that an
+        // unreadable key both gets deleted and takes its now-permanently-undecryptable stored,
+        // unopened envelope with it, instead of leaving a row Love Notes can never finish opening.
+        await using var fixture = await RemoteSyncFixture.WithStoredEncryptedEnvelopeAsync("gone forever");
+        fixture.SecretStore.Values[RelaySecretKeys.DeviceId] = Encoding.UTF8.GetBytes("device-1");
+        fixture.SecretStore.Values[RelaySecretKeys.DesktopToken] = Encoding.UTF8.GetBytes("token-1");
+        fixture.SecretStore.PoisonedKeys.Add(RemoteSyncFixture.DesktopPrivateKeySecretKey);
+
+        await fixture.Service.ForgetPairingLocallyAsync(fixture.CancellationToken);
+
+        Assert.False(fixture.SecretStore.Values.ContainsKey(RemoteSyncFixture.DesktopPrivateKeySecretKey));
+        Assert.Empty(await fixture.RealRepository.ListPendingAsync(fixture.CancellationToken));
+    }
+
+    [Fact]
+    public async Task Forget_pairing_ignores_a_failed_relay_side_device_delete()
+    {
+        // H4: the relay-side delete is best-effort so the partner's device eventually stops
+        // queueing notes to a dead device, but it must never block the local-only forget path
+        // that exists specifically for when the relay itself is unreachable or broken.
+        await using var fixture = await RemoteSyncFixture.WithRegistrationAsync();
+        fixture.Relay.DeleteDeviceException = () => new RelayUnavailableException("simulated outage");
+
+        await fixture.Service.ForgetPairingLocallyAsync(fixture.CancellationToken);
+
+        Assert.False(fixture.SecretStore.Values.ContainsKey(RelaySecretKeys.DeviceId));
+        Assert.False(fixture.SecretStore.Values.ContainsKey(RelaySecretKeys.DesktopToken));
+        Assert.False(fixture.SecretStore.Values.ContainsKey(RelaySecretKeys.DesktopTokenStaging));
+        // The default fixture key is readable, so H3 keeps it -- unaffected by the relay failure.
+        Assert.True(fixture.SecretStore.Values.ContainsKey(RemoteSyncFixture.DesktopPrivateKeySecretKey));
+        Assert.Equal(PairingAvailability.Offline, fixture.Service.State);
+    }
+
+    [Fact]
+    public async Task Forget_pairing_blocks_behind_an_in_flight_registration_instead_of_racing_it()
+    {
+        // B1 (blocker): before the fix, ForgetPairingLocallyAsync neither stopped the loop nor
+        // took _registrationGate, so a re-registration racing an interleaved forget could leave a
+        // device registered on the relay (a fresh DeviceId/Token written mid-forget) with its
+        // matching private key deleted moments later by forget's own delete -- silently bricking
+        // every future note behind a permanent decrypt failure. Block RegisterAsync mid-call so a
+        // registration attempt is provably in flight and holding the gate, then start forget
+        // concurrently: it must not proceed until the registration either finishes or is released.
+        await using var fixture = await RemoteSyncFixture.WithPartialRegistrationAsync();
+        fixture.Relay.BlockRegister = true;
+
+        var pollTask = fixture.Service.PollOnceAsync(fixture.CancellationToken);
+        await fixture.Relay.RegisterEntered.Task.WaitAsync(fixture.CancellationToken);
+
+        var forgetTask = fixture.Service.ForgetPairingLocallyAsync(fixture.CancellationToken);
+        await Task.Delay(TimeSpan.FromMilliseconds(50), fixture.CancellationToken);
+        Assert.False(
+            forgetTask.IsCompleted,
+            "forget must block behind the in-flight registration's _registrationGate, not race it");
+
+        fixture.Relay.ReleaseRegister.TrySetResult(true);
+        await pollTask;
+        await forgetTask;
+
+        Assert.False(fixture.SecretStore.Values.ContainsKey(RelaySecretKeys.DeviceId));
+        Assert.False(fixture.SecretStore.Values.ContainsKey(RelaySecretKeys.DesktopToken));
+        // The registration that won the race used the still-present, readable key, so H3 keeps
+        // it -- there is no "registered but key-less" state reachable through this interleaving.
+        Assert.True(fixture.SecretStore.Values.ContainsKey(RemoteSyncFixture.DesktopPrivateKeySecretKey));
+        Assert.Equal(PairingAvailability.Offline, fixture.Service.State);
+    }
+
+    [Fact]
     public async Task Rejected_ack_flips_to_needs_repair()
     {
         // An ack rejected with 401 means the stored bearer token is dead, exactly like a 401 on
@@ -277,6 +493,46 @@ public sealed class RemoteSyncServiceTests
         Assert.Empty(fixture.Presentations);
         Assert.Equal(new[] { fixture.MessageId }, fixture.AcknowledgedIds);
         Assert.Contains(fixture.ReportedErrors, error => error.Tag == "remote-sync-decrypt");
+    }
+
+    [Fact]
+    public async Task Tampered_ciphertext_is_still_acked_after_narrowing_the_decrypt_catch()
+    {
+        // F1 regression guard: narrowing ProcessEnvelopeAsync's decrypt catch to specific
+        // exception types must not change behavior for a genuinely permanent failure. A
+        // bit-flipped (but validly encoded) ciphertext fails AES-GCM authentication with a raw
+        // CryptographicException, which the narrowed filter still catches.
+        await using var fixture = await RemoteSyncFixture.WithTamperedCiphertextAsync();
+
+        await fixture.Service.PollOnceAsync(fixture.CancellationToken);
+
+        Assert.Empty(fixture.Presentations);
+        Assert.Equal(new[] { fixture.MessageId }, fixture.AcknowledgedIds);
+        Assert.Contains(fixture.ReportedErrors, error => error.Tag == "remote-sync-decrypt");
+    }
+
+    [Fact]
+    public async Task Transient_failure_during_decrypt_leaves_the_note_on_the_relay_for_the_next_sync()
+    {
+        // F1: the audit's core finding. A failure unrelated to this envelope's content (here
+        // injected via a clock hiccup after decrypt itself already succeeded) must NOT be treated
+        // as "undecryptable" -- that would ack it away and destroy the note forever. It must
+        // propagate instead, leaving the envelope un-acked so the next sync retries and delivers
+        // it once the transient condition clears.
+        await using var fixture = await RemoteSyncFixture.WithFlakyDecryptAsync();
+
+        await Assert.ThrowsAsync<TimeoutException>(
+            () => fixture.Service.PollOnceAsync(fixture.CancellationToken));
+
+        Assert.Empty(fixture.AcknowledgedIds);
+        Assert.Empty(fixture.Presentations);
+
+        // The hiccup was a one-off: the retry on the next sync succeeds and delivers the note.
+        await fixture.Service.PollOnceAsync(fixture.CancellationToken);
+
+        Assert.Equal(new[] { fixture.MessageId }, fixture.AcknowledgedIds);
+        Assert.Equal([Guid.ParseExact(fixture.MessageId, "D")], fixture.Presentations);
+        Assert.Single(fixture.Envelopes);
     }
 
     [Fact]
@@ -624,6 +880,21 @@ public sealed class RemoteSyncServiceTests
             return fixture;
         }
 
+        // M2: the first envelope in the batch always fails to store; the second is perfectly
+        // good. Listed first so a regression to whole-batch-aborts-on-first-failure would starve
+        // it forever instead of just failing this one poll.
+        public static async Task<RemoteSyncFixture> WithOneFailingEnvelopeAmongGoodOnesAsync()
+        {
+            var failingId = Guid.NewGuid().ToString();
+            var fixture = await CreateAsync(
+                useThrowingRepository: true,
+                throwingRepositoryShouldFail: messageId => messageId == failingId);
+            var failing = CryptoFixture.EncryptFor(fixture.RecipientPublicKeySpki, "bad one", failingId);
+            var good = CryptoFixture.EncryptFor(fixture.RecipientPublicKeySpki, "good one", fixture.MessageId);
+            fixture.Relay.PollResult = [ToRelayEnvelope(failing), ToRelayEnvelope(good)];
+            return fixture;
+        }
+
         public static async Task<RemoteSyncFixture> WithPartialRegistrationAsync()
         {
             var fixture = await CreateAsync();
@@ -691,6 +962,43 @@ public sealed class RemoteSyncServiceTests
             var envelope = CryptoFixture.EncryptFor(fixture.RecipientPublicKeySpki, "hi there", fixture.MessageId);
             var wire = ToRelayEnvelope(envelope);
             fixture.Relay.PollResult = [wire with { Ciphertext = "not-base64url!!!" }];
+            return fixture;
+        }
+
+        // F1: a genuinely tampered (bit-flipped, still valid Base64URL) ciphertext fails AES-GCM
+        // authentication -- CryptographicException, raised natively by AesGcm and never wrapped by
+        // EnvelopeCrypto -- unlike WithMalformedCiphertextAsync above, which fails the earlier
+        // Base64Url decode (EnvelopeValidationException). Both are genuinely permanent failures
+        // and must still be acked after narrowing the decrypt catch to specific exception types.
+        public static async Task<RemoteSyncFixture> WithTamperedCiphertextAsync()
+        {
+            var fixture = await CreateAsync();
+            var envelope = CryptoFixture.EncryptFor(fixture.RecipientPublicKeySpki, "hi there", fixture.MessageId);
+            var ciphertextAndTag = Base64Url.DecodeFromChars(envelope.Ciphertext);
+            ciphertextAndTag[0] ^= 0xFF;
+            var wire = ToRelayEnvelope(envelope) with
+            {
+                Ciphertext = Base64Url.EncodeToString(ciphertextAndTag),
+            };
+            fixture.Relay.PollResult = [wire];
+            return fixture;
+        }
+
+        // F1: simulates a transient, non-cryptographic failure (e.g. the class of "SQLite busy,
+        // IO, secret store hiccup" the audit named) landing inside ProcessEnvelopeAsync's
+        // decrypt/build try, after EnvelopeCrypto.Decrypt itself has already succeeded. The old
+        // catch-all treated this identically to a tampered envelope: ack and discard, permanently
+        // losing a note that was never actually undecryptable.
+        public static async Task<RemoteSyncFixture> WithFlakyDecryptAsync()
+        {
+            var flakyClock = new FlakyClock(DateTimeOffset.UtcNow);
+            var fixture = await CreateAsync(clock: flakyClock);
+            var envelope = CryptoFixture.EncryptFor(fixture.RecipientPublicKeySpki, "hi there", fixture.MessageId);
+            fixture.Relay.PollResult = [ToRelayEnvelope(envelope)];
+            // The first _clock.UtcNow read (EnvelopeCrypto.Decrypt's nowUtc argument) must succeed
+            // so decrypt genuinely runs to completion; the second (BuildStoredEnvelope's argument)
+            // throws once, simulating a hiccup that has nothing to do with this envelope's content.
+            flakyClock.ThrowOnAccessNumber = 2;
             return fixture;
         }
 
@@ -799,7 +1107,9 @@ public sealed class RemoteSyncServiceTests
         internal static async Task<RemoteSyncFixture> CreateAsync(
             bool useThrowingRepository = false,
             DateTimeOffset? clockNow = null,
-            Microsoft.Extensions.Logging.ILogger<RemoteSyncService>? logger = null)
+            Microsoft.Extensions.Logging.ILogger<RemoteSyncService>? logger = null,
+            IClock? clock = null,
+            Func<string, bool>? throwingRepositoryShouldFail = null)
         {
             var root = Path.Combine(Path.GetTempPath(), "dudu-remote-sync-tests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
@@ -808,7 +1118,7 @@ public sealed class RemoteSyncServiceTests
             var realRepository = new RemoteEnvelopeRepository(database);
             var recording = new RecordingRemoteEnvelopeRepository(realRepository);
             IRemoteEnvelopeRepository serviceRepository = useThrowingRepository
-                ? new ThrowingRemoteEnvelopeRepository(recording)
+                ? new ThrowingRemoteEnvelopeRepository(recording, throwingRepositoryShouldFail)
                 : recording;
 
             using var desktopKey = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
@@ -825,7 +1135,7 @@ public sealed class RemoteSyncServiceTests
             // Must track real UtcNow (not an arbitrary fixed date): EnvelopeCrypto.Decrypt rejects
             // an envelope whose wire createdUtc is more than 5 minutes ahead of the clock it is
             // given, and CryptoFixture.EncryptFor always stamps createdUtc with the real clock.
-            var clock = new FixedClock(clockNow ?? DateTimeOffset.UtcNow);
+            clock ??= new FixedClock(clockNow ?? DateTimeOffset.UtcNow);
             var backoff = new PollBackoff(new FixedFractionRandomSource(0));
             var messageId = Guid.NewGuid().ToString();
             var reportedErrors = new List<(string Tag, Exception Exception)>();
@@ -902,6 +1212,33 @@ public sealed class RemoteSyncServiceTests
     private sealed class FixedFractionRandomSource(double fraction) : IRandomSource
     {
         public int Next(int exclusiveMax) => (int)(fraction * exclusiveMax);
+    }
+
+    // F1: an IClock whose UtcNow getter throws once, on a chosen 1-based access number, then
+    // behaves like FixedClock forever after. Stands in for a transient failure (e.g. "SQLite
+    // busy, IO, secret store hiccup") landing partway through ProcessEnvelopeAsync's decrypt/build
+    // step, which is otherwise pure in-memory work with no seam a test can fault-inject into.
+    private sealed class FlakyClock(DateTimeOffset now) : IClock
+    {
+        private int _accessCount;
+
+        public int? ThrowOnAccessNumber { get; set; }
+
+        public DateTimeOffset UtcNow
+        {
+            get
+            {
+                _accessCount++;
+                if (_accessCount == ThrowOnAccessNumber)
+                {
+                    throw new TimeoutException("simulated transient failure unrelated to envelope content");
+                }
+
+                return now;
+            }
+        }
+
+        public TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
     }
 
     // P1: captures every string the service hands to a logger, mirroring the sink in
@@ -1019,6 +1356,9 @@ public sealed class RemoteSyncServiceTests
 
         public Task<int> PruneExpiredAsync(DateTimeOffset utcNow, TimeSpan retention, CancellationToken cancellationToken) =>
             _inner.PruneExpiredAsync(utcNow, retention, cancellationToken);
+
+        public Task<int> DeleteAllAsync(CancellationToken cancellationToken) =>
+            _inner.DeleteAllAsync(cancellationToken);
     }
 
     /// <summary>Always throws from the one member <see cref="RemoteSyncService"/> relies on to
@@ -1026,8 +1366,16 @@ public sealed class RemoteSyncServiceTests
     private sealed class ThrowingRemoteEnvelopeRepository : IRemoteEnvelopeRepository
     {
         private readonly IRemoteEnvelopeRepository _inner;
+        private readonly Func<string, bool> _shouldFail;
 
-        public ThrowingRemoteEnvelopeRepository(IRemoteEnvelopeRepository inner) => _inner = inner;
+        /// <param name="shouldFail">Decides, per message id, whether
+        /// <see cref="TryInsertAndMarkProcessedAsync"/> fails. Defaults to failing every call,
+        /// matching every pre-existing use of this fake.</param>
+        public ThrowingRemoteEnvelopeRepository(IRemoteEnvelopeRepository inner, Func<string, bool>? shouldFail = null)
+        {
+            _inner = inner;
+            _shouldFail = shouldFail ?? (_ => true);
+        }
 
         public Task<RemoteEnvelope?> GetAsync(string messageId, CancellationToken cancellationToken) =>
             _inner.GetAsync(messageId, cancellationToken);
@@ -1046,13 +1394,18 @@ public sealed class RemoteSyncServiceTests
 
         public Task<bool> TryInsertAndMarkProcessedAsync(
             RemoteEnvelope envelope, DateTimeOffset processedUtc, CancellationToken cancellationToken) =>
-            throw new InvalidOperationException("simulated repository failure");
+            _shouldFail(envelope.MessageId)
+                ? throw new InvalidOperationException("simulated repository failure")
+                : _inner.TryInsertAndMarkProcessedAsync(envelope, processedUtc, cancellationToken);
 
         public Task DeleteAsync(string messageId, CancellationToken cancellationToken) =>
             _inner.DeleteAsync(messageId, cancellationToken);
 
         public Task<int> PruneExpiredAsync(DateTimeOffset utcNow, TimeSpan retention, CancellationToken cancellationToken) =>
             _inner.PruneExpiredAsync(utcNow, retention, cancellationToken);
+
+        public Task<int> DeleteAllAsync(CancellationToken cancellationToken) =>
+            _inner.DeleteAllAsync(cancellationToken);
     }
 
     /// <summary>An <see cref="IRemoteNoteArrivalSink"/> test double recording each notification.
@@ -1093,15 +1446,29 @@ public sealed class RemoteSyncServiceTests
         public TaskCompletionSource<bool> ReleasePoll { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public bool BlockPoll { get; set; }
+        // B1 regression seam: lets a test hold EnsureRegisteredAsync mid-registration (and thus
+        // mid-_registrationGate) so it can prove a concurrent ForgetPairingLocallyAsync blocks
+        // behind the gate instead of racing it.
+        public TaskCompletionSource<bool> RegisterEntered { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<bool> ReleaseRegister { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool BlockRegister { get; set; }
 
         public void FailNextPolls(int count) => _failuresRemaining = count;
 
-        public Task<RelayRegistrationResult> RegisterAsync(string publicKeySpki, CancellationToken cancellationToken)
+        public async Task<RelayRegistrationResult> RegisterAsync(string publicKeySpki, CancellationToken cancellationToken)
         {
             RequestCount++;
             RegisterCallCount++;
-            return Task.FromResult(new RelayRegistrationResult(
-                "device-1", "token-1", "ABC123", DateTimeOffset.UtcNow.AddMinutes(10)));
+            if (BlockRegister)
+            {
+                RegisterEntered.TrySetResult(true);
+                await ReleaseRegister.Task;
+            }
+
+            return new RelayRegistrationResult(
+                "device-1", "token-1", "ABC123", DateTimeOffset.UtcNow.AddMinutes(10));
         }
 
         public Task<RelayDeviceInfo> GetDeviceAsync(CancellationToken cancellationToken)

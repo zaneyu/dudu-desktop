@@ -23,6 +23,25 @@ public sealed class EnvelopeCryptoTests
     }
 
     [Fact]
+    public void Decrypt_throws_a_plain_cryptographic_exception_not_a_tag_mismatch_for_a_corrupt_local_key()
+    {
+        // Review H1: RemoteSyncService.ProcessEnvelopeAsync's ack-and-discard catch filter narrows
+        // to AuthenticationTagMismatchException specifically so a local key problem -- unrelated
+        // to whether THIS envelope's content was tampered with -- is never mistaken for one and
+        // acked away. This proves the two really are distinguishable exception types: importing a
+        // corrupt local private key fails with a bare CryptographicException, not the
+        // AuthenticationTagMismatchException subtype AesGcm.Decrypt raises for a tampered envelope.
+        using var recipient = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
+        var envelope = CryptoFixture.EncryptFor(recipient.ExportSubjectPublicKeyInfo(), "private hello");
+        var corruptPrivateKey = new byte[] { 0x00, 0x01, 0x02, 0x03 };
+
+        var exception = Assert.ThrowsAny<CryptographicException>(() =>
+            EnvelopeCrypto.Decrypt(envelope, corruptPrivateKey));
+
+        Assert.IsNotType<AuthenticationTagMismatchException>(exception);
+    }
+
+    [Fact]
     public void Decrypt_rejects_a_modified_message_id_because_it_changes_the_authenticated_data()
     {
         using var recipient = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);

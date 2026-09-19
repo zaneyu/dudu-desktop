@@ -58,4 +58,7 @@ public sealed class RelayPairingService : IPairingService
         string? deviceId = null,
         CancellationToken cancellationToken = default) =>
         _sync.RevokeDeviceAsync(cancellationToken);
+
+    public Task ForgetPairingAsync(CancellationToken cancellationToken = default) =>
+        _sync.ForgetPairingLocallyAsync(cancellationToken);
 }

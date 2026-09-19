@@ -160,7 +160,7 @@ public sealed class SettingsNavigationTests
         new("NavTasksFocus", "TasksPageTitle", ["TasksCompletedList", "FocusHistoryList", "FocusStart", "FocusEnd"]),
         new("NavLoveNotes", "LoveNotesPageTitle", ["LoveNotesLocalList", "LoveNotesRemoteList", "LoveNotesRevealSelected", "LoveNotesSave"]),
         new("NavAppearance", "AppearancePageTitle", ["AppearanceSave", "AppearanceOutfit", "AppearanceSeasonalMode"]),
-        new("NavConnection", "ConnectionPageTitle", ["ConnectionCreateCode", "ConnectionSessionsList"]),
+        new("NavConnection", "ConnectionPageTitle", ["ConnectionCreateCode", "ConnectionSessionsList", "ConnectionForgetPairing", "ConnectionConfirm", "ConnectionCancel"]),
         new("NavPrivacy", "PrivacyPageTitle", ["PrivacyStoredFields", "PrivacyBackup", "PrivacyRestore", "PrivacyDeleteLocal", "PrivacyDeleteRemote", "PrivacyConfirm"]),
     ];
 

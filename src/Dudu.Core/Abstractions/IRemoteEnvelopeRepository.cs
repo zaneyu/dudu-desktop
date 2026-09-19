@@ -34,4 +34,14 @@ public interface IRemoteEnvelopeRepository
     /// opens a note. Returns the number of envelopes removed. Processed-message deduplication rows
     /// are intentionally kept, so a pruned id can never resurrect as a "new" message.</summary>
     Task<int> PruneExpiredAsync(DateTimeOffset utcNow, TimeSpan retention, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Review H3: deletes every stored-but-unopened envelope, for when the desktop's ECDH private
+    /// key is gone (forget-pairing recovery) and every one of these rows is now permanently
+    /// undecryptable ciphertext rather than a note the user could still reveal. Never touches
+    /// processed-message deduplication rows or any other table -- in particular never
+    /// <c>local_notes</c>, which are a completely different, already-saved kind of note. Returns
+    /// the number of envelopes removed.
+    /// </summary>
+    Task<int> DeleteAllAsync(CancellationToken cancellationToken);
 }
