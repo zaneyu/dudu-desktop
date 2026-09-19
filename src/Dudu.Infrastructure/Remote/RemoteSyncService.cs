@@ -6,6 +6,7 @@ using Dudu.Core.Models;
 using Dudu.Core.Time;
 using Dudu.Infrastructure.Crypto;
 using Dudu.Infrastructure.Logging;
+using Dudu.Infrastructure.Security;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -119,6 +120,18 @@ public sealed class RemoteSyncService : IAsyncDisposable
         {
             _state = PairingAvailability.NeedsRepair;
             _statusReason = PairingStatusReason.None;
+        }
+        catch (SecretStoreException exception)
+        {
+            // Audit finding F2: an unreadable secret (e.g. the DPAPI blob after a Windows
+            // password reset or a profile move) will never succeed on retry with the same
+            // secret, exactly like a dead bearer token. EnsureRegisteredAsync already set
+            // NeedsRepair before rethrowing; restate it here so a probe racing a concurrent
+            // repair still lands on the right state, and return normally instead of leaving the
+            // caller with an unhandled exception and a stale Availability.
+            _state = PairingAvailability.NeedsRepair;
+            _statusReason = PairingStatusReason.None;
+            PrivacySafeLog.SyncStateProbeFailed(_logger, 0, exception.GetType().Name);
         }
         catch (RelayProtocolException exception)
         {
@@ -690,7 +703,23 @@ public sealed class RemoteSyncService : IAsyncDisposable
 
     public async Task<int> GetActiveSenderSessionCountAsync(CancellationToken cancellationToken)
     {
-        if (await GetDeviceIdAsync(cancellationToken) is null)
+        byte[]? deviceId;
+        try
+        {
+            deviceId = await GetDeviceIdAsync(cancellationToken);
+        }
+        catch (SecretStoreException)
+        {
+            // Audit finding F2: same NeedsRepair convergence as EnsureRegisteredAsync. This read
+            // does not go through EnsureRegisteredAsync, so an unreadable secret must be handled
+            // here too -- otherwise ConnectionViewModel.RefreshAsync (which calls this after
+            // GetStateAsync already returned NeedsRepair) would throw before ever applying that
+            // state to the bound properties, and the page would show a generic error instead.
+            _state = PairingAvailability.NeedsRepair;
+            return 0;
+        }
+
+        if (deviceId is null)
         {
             return 0;
         }
@@ -800,30 +829,83 @@ public sealed class RemoteSyncService : IAsyncDisposable
         _statusReason = PairingStatusReason.None;
     }
 
+    /// <summary>
+    /// Audit finding F2's escape hatch: forgets this desktop's pairing entirely on the local
+    /// machine only, without reading any existing secret and without contacting the relay.
+    /// <para>
+    /// <see cref="RevokeDeviceAsync"/> is the normal unpair path, but it needs a working bearer
+    /// token to authenticate the relay delete call -- so it cannot get a user out of an unreadable
+    /// secret store (e.g. after a Windows password reset invalidates the DPAPI master key), which
+    /// is exactly the state that makes that same token unreadable. <see cref="ISecretStore.DeleteAsync"/>
+    /// never decrypts anything (it only removes the stored ciphertext file), so this works even
+    /// when every secret it touches is permanently unreadable.
+    /// </para>
+    /// <para>
+    /// The old device row is orphaned on the relay -- there is no credential left to delete it
+    /// with -- but the next registration creates a fresh device and key pair, so pairing again
+    /// works. Every already-stored, unrevealed remote note becomes permanently unreadable, same as
+    /// <see cref="RevokeDeviceAsync"/> with <c>destroyEncryptionKey: true</c>, so only a caller with
+    /// the user's explicit confirmation may call this.
+    /// </para>
+    /// </summary>
+    public async Task ForgetPairingLocallyAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _secretStore.DeleteAsync(RelaySecretKeys.DeviceId, cancellationToken);
+            await _secretStore.DeleteAsync(RelaySecretKeys.DesktopToken, cancellationToken);
+            await _secretStore.DeleteAsync(RelaySecretKeys.DesktopTokenStaging, cancellationToken);
+            await _secretStore.DeleteAsync(DesktopKeyService.SecretStoreKey, cancellationToken);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // P1: same diagnostic convention as every other local-cleanup failure. Type name only.
+            PrivacySafeLog.SyncStateProbeFailed(_logger, 0, exception.GetType().Name);
+            throw;
+        }
+
+        _state = PairingAvailability.Offline;
+        _statusReason = PairingStatusReason.None;
+    }
+
     private async Task EnsureRegisteredAsync(CancellationToken cancellationToken)
     {
         await _registrationGate.WaitAsync(cancellationToken);
         try
         {
-            // Registration writes the token before the id, and the id is the completion marker.
-            // Check both anyway so an installation left by an older/partial build self-heals on the
-            // next startup instead of treating a device id without its bearer token as registered.
-            if (await HasSecretAsync(RelaySecretKeys.DeviceId, cancellationToken)
-                && await HasSecretAsync(RelaySecretKeys.DesktopToken, cancellationToken))
-            {
-                return;
-            }
-
-            var keyMaterial = await _keyService.GetOrCreateAsync(cancellationToken);
             try
             {
-                await _relay.RegisterAsync(keyMaterial.PublicKeySpkiBase64Url, cancellationToken);
+                // Registration writes the token before the id, and the id is the completion marker.
+                // Check both anyway so an installation left by an older/partial build self-heals on the
+                // next startup instead of treating a device id without its bearer token as registered.
+                if (await HasSecretAsync(RelaySecretKeys.DeviceId, cancellationToken)
+                    && await HasSecretAsync(RelaySecretKeys.DesktopToken, cancellationToken))
+                {
+                    return;
+                }
+
+                var keyMaterial = await _keyService.GetOrCreateAsync(cancellationToken);
+                try
+                {
+                    await _relay.RegisterAsync(keyMaterial.PublicKeySpkiBase64Url, cancellationToken);
+                }
+                finally
+                {
+                    // Same M3 rule as PollOnceAsync/RevealAsync/DisconnectSendersAsync: the PKCS#8 copy
+                    // this call owns never outlives the call.
+                    CryptographicOperations.ZeroMemory(keyMaterial.PrivateKeyPkcs8);
+                }
             }
-            finally
+            catch (SecretStoreException)
             {
-                // Same M3 rule as PollOnceAsync/RevealAsync/DisconnectSendersAsync: the PKCS#8 copy
-                // this call owns never outlives the call.
-                CryptographicOperations.ZeroMemory(keyMaterial.PrivateKeyPkcs8);
+                // Audit finding F2: an unreadable secret (DPAPI blob invalidated by a Windows
+                // password reset or a profile move) is a dead end on retry, not a transient
+                // hiccup -- the same secret will never become readable. Every caller of this
+                // method (GetStateAsync, PollOnceAsync, CreatePairingCodeAsync) must land on
+                // NeedsRepair instead of retrying forever or surfacing a generic error, so the
+                // Connection page can offer the local-only "forget pairing" recovery.
+                _state = PairingAvailability.NeedsRepair;
+                throw;
             }
         }
         finally

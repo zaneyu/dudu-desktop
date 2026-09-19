@@ -8,6 +8,7 @@ using Dudu.Core.Time;
 using Dudu.Infrastructure.Data;
 using Dudu.Infrastructure.Data.Repositories;
 using Dudu.Infrastructure.Remote;
+using Dudu.Infrastructure.Security;
 using Dudu.Infrastructure.Tests.Crypto;
 using Microsoft.Extensions.Logging;
 using Xunit;
@@ -208,6 +209,62 @@ public sealed class RemoteSyncServiceTests
 
         Assert.True(fixture.SecretStore.Values.ContainsKey(RelaySecretKeys.DeviceId));
         Assert.True(fixture.SecretStore.Values.ContainsKey(RelaySecretKeys.DesktopToken));
+    }
+
+    [Fact]
+    public async Task GetState_maps_an_unreadable_secret_to_needs_repair_instead_of_throwing()
+    {
+        // F2: an unreadable DPAPI blob (e.g. after a Windows password reset invalidates the
+        // master key) is a dead end on retry, exactly like a dead bearer token -- it must not
+        // surface as an unhandled exception (which would leave ConnectionViewModel.Availability
+        // stale) or as a generic probe failure indistinguishable from a healthy offline state.
+        await using var fixture = await RemoteSyncFixture.WithRegistrationAsync();
+        fixture.SecretStore.PoisonedKeys.Add(RelaySecretKeys.DeviceId);
+
+        var availability = await fixture.Service.GetStateAsync(fixture.CancellationToken);
+
+        Assert.Equal(PairingAvailability.NeedsRepair, availability);
+        Assert.True(fixture.Service.NeedsRepair);
+    }
+
+    [Fact]
+    public async Task GetActiveSenderSessionCount_degrades_gracefully_when_the_secret_is_unreadable()
+    {
+        // F2: ConnectionViewModel.RefreshAsync calls GetSessionCountAsync unconditionally right
+        // after GetStateAsync, in the same try. If this threw, the whole refresh would throw
+        // before ever applying the NeedsRepair availability GetStateAsync already determined, and
+        // the Connection page would show a generic error instead.
+        await using var fixture = await RemoteSyncFixture.WithRegistrationAsync();
+        fixture.SecretStore.PoisonedKeys.Add(RelaySecretKeys.DeviceId);
+
+        var count = await fixture.Service.GetActiveSenderSessionCountAsync(fixture.CancellationToken);
+
+        Assert.Equal(0, count);
+        Assert.Equal(PairingAvailability.NeedsRepair, fixture.Service.State);
+    }
+
+    [Fact]
+    public async Task ForgetPairingLocally_clears_every_local_secret_without_reading_them_or_contacting_the_relay()
+    {
+        // F2: the escape hatch out of an unreadable secret store. RevokeDeviceAsync cannot help
+        // here -- it needs a working bearer token to authenticate the relay delete call, and that
+        // token is exactly what is unreadable. Poison every secret this touches (matching a fully
+        // corrupted DPAPI master key) to prove the local-only forget never needs to decrypt any of
+        // them: ISecretStore.DeleteAsync only removes the stored file.
+        await using var fixture = await RemoteSyncFixture.WithRegistrationAsync();
+        fixture.SecretStore.PoisonedKeys.Add(RelaySecretKeys.DeviceId);
+        fixture.SecretStore.PoisonedKeys.Add(RelaySecretKeys.DesktopToken);
+        fixture.SecretStore.PoisonedKeys.Add(RelaySecretKeys.DesktopTokenStaging);
+        fixture.SecretStore.PoisonedKeys.Add(RemoteSyncFixture.DesktopPrivateKeySecretKey);
+
+        await fixture.Service.ForgetPairingLocallyAsync(fixture.CancellationToken);
+
+        Assert.Equal(0, fixture.Relay.RequestCount);
+        Assert.False(fixture.SecretStore.Values.ContainsKey(RelaySecretKeys.DeviceId));
+        Assert.False(fixture.SecretStore.Values.ContainsKey(RelaySecretKeys.DesktopToken));
+        Assert.False(fixture.SecretStore.Values.ContainsKey(RelaySecretKeys.DesktopTokenStaging));
+        Assert.False(fixture.SecretStore.Values.ContainsKey(RemoteSyncFixture.DesktopPrivateKeySecretKey));
+        Assert.Equal(PairingAvailability.Offline, fixture.Service.State);
     }
 
     [Fact]

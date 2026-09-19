@@ -88,6 +88,18 @@ public interface IPairingService
         string? deviceId = null,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Local-only recovery: forgets this desktop's pairing on this machine without reading any
+    /// existing secret and without contacting the relay. The one way out when the secret store
+    /// itself is unreadable (e.g. after a Windows password reset), since the normal unpair
+    /// (<see cref="DeleteRemoteDeviceAsync"/>) needs a working credential to authenticate the
+    /// relay delete call first. Defaults to unsupported so an implementation with no local
+    /// pairing to forget (e.g. no relay configured) need not override it.
+    /// </summary>
+    Task ForgetPairingAsync(CancellationToken cancellationToken = default) =>
+        Task.FromException(new NotSupportedException(
+            "This pairing service does not support a local-only forget."));
+
     async Task<PairingOperationResult> RevokeSessionsWithResultAsync(
         CancellationToken cancellationToken = default)
     {
