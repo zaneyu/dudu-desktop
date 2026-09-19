@@ -126,8 +126,14 @@ public sealed class Database : IAsyncDisposable, IDisposable
 
     // Microsoft.Data.Sqlite pools connections per connection string and keeps the
     // database file open until the pool is cleared; on Windows that blocks deleting
-    // or moving the data root after the owning host has shut down.
-    public void Dispose() => SqliteConnection.ClearAllPools();
+    // or moving the data root after the owning host has shut down. Clearing only
+    // this database's pool (rather than every pool in the process) keeps this from
+    // knocking out other tests' in-flight connections when they share a process.
+    public void Dispose()
+    {
+        using var connection = new SqliteConnection(ConnectionString(_options));
+        SqliteConnection.ClearPool(connection);
+    }
 
     internal static string ConnectionString(DatabaseOptions options) =>
         new SqliteConnectionStringBuilder
