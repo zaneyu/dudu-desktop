@@ -42,6 +42,7 @@ $publish = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "scripts/publish-w
 $verify = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "scripts/verify.ps1")
 $e2e = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "tests/e2e/private-note-flow.ps1")
 $workflow = Get-Content -Raw -LiteralPath (Join-Path $repoRoot ".github/workflows/windows-installer.yml")
+$productionWorkflow = Get-Content -Raw -LiteralPath (Join-Path $repoRoot ".github/workflows/windows-store-production.yml")
 $smoke = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "tests/installer/installer-smoke.ps1")
 $innoScript = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "scripts/install-inno-setup.ps1")
 $appProject = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "src/Dudu.App/Dudu.App.csproj")
@@ -399,6 +400,8 @@ Assert-Contains "verify explicitly selects the non-public acceptance-only Store 
 Assert-Contains "workflow runs Store package source contracts" $workflow 'pwsh tests/scripts/store-package\.tests\.ps1'
 Assert-Contains "workflow keeps the Inno artifact" $workflow "DuduDesktop-1\.0\.0-win-x64-private"
 Assert-True "Store package job does not expose secrets in logs" ($workflow -notmatch "echo.*\bSTORE\b|Write-Host.*\bSTORE\b.*\bSECRET\b")
+Assert-True "production workflow pins every action to a full 40-char SHA" (@([regex]::Matches($productionWorkflow, '(?m)^\s*-?\s*uses:\s*(\S+)') | Where-Object { $_.Groups[1].Value -notmatch '@[0-9a-f]{40}$' }).Count -eq 0)
+Assert-Contains "production workflow requires the test job before packaging" $productionWorkflow '(?s)production-store-package:.*?needs:\s*tests'
 $globalJson = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "global.json") | ConvertFrom-Json
 Assert-True "global.json pins the SDK exactly (rollForward disable)" ($globalJson.sdk.rollForward -eq "disable")
 $packagesProps = [xml](Get-Content -Raw -LiteralPath (Join-Path $repoRoot "Directory.Packages.props"))
