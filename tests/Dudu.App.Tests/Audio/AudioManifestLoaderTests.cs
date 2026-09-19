@@ -41,9 +41,9 @@ public sealed class AudioManifestLoaderTests
             ("hash mismatch", fixture => fixture.SetCueHashAsync(new string('a', 64))),
             ("hash", fixture => fixture.SetCueHashAsync(fixture.Sha256.ToUpperInvariant())),
             ("duplicate packId", fixture => fixture.DuplicatePackAsync()),
-            ("extra pack", fixture => fixture.AddExtraPackAsync()),
+            ("pack set", fixture => fixture.AddExtraPackAsync()),
             ("missing required pack", fixture => fixture.RemovePackAsync("tata-lala")),
-            ("non private", fixture => fixture.SetPrivateUseOnlyAsync(false)),
+            ("privateUseOnly", fixture => fixture.SetPrivateUseOnlyAsync(false)),
         };
 
         foreach (var testCase in cases)
