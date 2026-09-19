@@ -160,9 +160,19 @@ public sealed partial class HomePage : Page
         }
         catch (Exception exception)
         {
-            toggle.IsChecked = Startup.Current.LaunchAtSignIn;
+            // Current.LaunchAtSignIn already records the desired (failed) state, so
+            // reverting to it would be a no-op. Fall back to what the OS actually has
+            // registered, and detach the handler first so setting IsChecked here does
+            // not re-enter this method through the Checked/Unchecked events.
+            toggle.Checked -= StartupToggle_Changed;
+            toggle.Unchecked -= StartupToggle_Changed;
+            toggle.IsChecked = Startup.ActualLaunchAtSignIn;
+            toggle.Checked += StartupToggle_Changed;
+            toggle.Unchecked += StartupToggle_Changed;
             global::System.Diagnostics.Trace.TraceError("Dudu startup setting failed: {0}", exception);
         }
+
+        RefreshStartupRecovery();
     }
 
 }

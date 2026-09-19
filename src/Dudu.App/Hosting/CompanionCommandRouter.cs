@@ -134,6 +134,12 @@ public sealed class StartupSettingsService
 
     public bool DesiredLaunchAtSignIn => _reconciliationDesiredState ?? Current.LaunchAtSignIn;
 
+    /// <summary>What the OS actually has registered right now, as opposed to
+    /// <see cref="Current"/>.LaunchAtSignIn which records what the user asked
+    /// for even while that request is still unreconciled. A toggle that failed
+    /// to apply must revert to this, not to the desired preference.</summary>
+    public bool ActualLaunchAtSignIn => _startup.IsEnabled;
+
     public async Task SetLaunchAtSignInAsync(
         bool enabled,
         CancellationToken cancellationToken = default)

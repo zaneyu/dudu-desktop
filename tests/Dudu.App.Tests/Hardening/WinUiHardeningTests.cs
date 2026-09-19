@@ -146,6 +146,29 @@ public sealed class WinUiHardeningTests
     }
 
     [Fact]
+    public async Task Startup_failure_leaves_the_actual_state_false_even_though_the_preference_flipped()
+    {
+        // Regression: SetLaunchAtSignInAsync persists the desired preference before it tries the
+        // OS write, so Current.LaunchAtSignIn already reports the new (failed) value once the OS
+        // write throws. A toggle reverting to Current.LaunchAtSignIn on failure was therefore a
+        // no-op. ActualLaunchAtSignIn must keep reporting what the OS actually has registered.
+        await using var startup = new StartupRegistrationService(
+            "/opt/Dudu.exe", "/tmp/startup-" + Guid.NewGuid().ToString("N"), new FailingWriter());
+        var repository = new StubPrefsRepository();
+        var preferences = new Preferences(
+            AppTheme.System, new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+            false, 3, false, false, true, TimeSpan.FromMinutes(15));
+        var settings = new StartupSettingsService(
+            startup, new PreferenceMutationCoordinator(preferences, repository));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            settings.SetLaunchAtSignInAsync(true, TestContext.Current.CancellationToken));
+
+        Assert.True(settings.Current.LaunchAtSignIn);
+        Assert.False(settings.ActualLaunchAtSignIn);
+    }
+
+    [Fact]
     public async Task Owner_queue_invocation_times_out_without_drain()
     {
         using var queue = new OwnerActionQueue(() => false, () => null);
