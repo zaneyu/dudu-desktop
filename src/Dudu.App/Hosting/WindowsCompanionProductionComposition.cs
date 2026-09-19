@@ -556,6 +556,21 @@ public static class WindowsCompanionProductionComposition
                         // events still reach the user through the pet bubble.
                         Trace.TraceWarning("Dudu toast activation unavailable: {0}", exception.Message);
                     }
+                    if (database.LastRecoveryOutcome != DatabaseRecoveryOutcome.None)
+                    {
+                        // Best-effort, one-shot: db-init already recorded the recovery via
+                        // Database.FailureReporter above. This is the user-facing half -- a
+                        // silently repaired or silently emptied database is exactly the
+                        // "she never finds out" outcome this notice exists to prevent. Must
+                        // never block or fail startup, so it is fired and observed the same
+                        // way every other native callback here is.
+                        _ = ObserveNativeCallbackAsync(
+                            notificationService.ShowDataRecoveryNoticeAsync(
+                                database.LastRecoveryOutcome,
+                                cancellationToken),
+                            "data-recovery-notice",
+                            host.ErrorReporter);
+                    }
                     presentationGateway = new PresentationCoordinator(
                         new PresentationPolicy(PresentationMinimumSilentInterval),
                         notificationService,

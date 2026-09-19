@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Dudu.App.Hosting;
 using Dudu.Core.Abstractions;
+using Dudu.Infrastructure.Data;
 
 namespace Dudu.App.Notifications;
 
@@ -110,6 +111,37 @@ public sealed class AppNotificationService : INotificationService, IRegistrableN
                     null,
                     Array.Empty<NotificationButton>()),
             cancellationToken);
+
+    /// <summary>
+    /// Tells the user this run's db-init phase recovered a damaged local
+    /// database, when <see cref="DatabaseRecoveryOutcome"/> from
+    /// <c>Database.LastRecoveryOutcome</c> is not
+    /// <see cref="DatabaseRecoveryOutcome.None"/>. Shown at most once, only
+    /// after a successful (non-safe-mode) startup -- a corrupt database that
+    /// instead fell into safe mode is already covered by
+    /// <see cref="ShowSafeModeNoticeAsync"/>.
+    /// </summary>
+    public Task ShowDataRecoveryNoticeAsync(
+        DatabaseRecoveryOutcome outcome,
+        CancellationToken cancellationToken) =>
+        outcome switch
+        {
+            DatabaseRecoveryOutcome.RestoredFromBackup => ShowIfAvailableAsync(
+                new NotificationRequest(
+                    "Dudu restored your data",
+                    "dudu's data file was damaged, so it restored the most recent backup. very recent changes might be missing.",
+                    null,
+                    Array.Empty<NotificationButton>()),
+                cancellationToken),
+            DatabaseRecoveryOutcome.StartedFresh => ShowIfAvailableAsync(
+                new NotificationRequest(
+                    "Dudu started fresh",
+                    "dudu's data file was damaged and no usable backup was found, so it kept a copy of the damaged file in the backups quarantine folder and started fresh.",
+                    null,
+                    Array.Empty<NotificationButton>()),
+                cancellationToken),
+            _ => Task.CompletedTask,
+        };
 
     public Task ShowReminderAsync(
         string reminderId,

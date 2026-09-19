@@ -194,6 +194,39 @@ public sealed class ProductionStartupContractTests
         Assert.True(safeModeFallback > cooldownDelay);
     }
 
+    [Fact]
+    public void Successful_startup_shows_a_data_recovery_notice_when_recovery_happened()
+    {
+        // Pre-handoff audit: Database.LastRecoveryOutcome had zero production consumers, so a
+        // corrupt database that was silently restored from backup, or silently started fresh,
+        // never told the user. This asserts the notice fires once, only on a successful
+        // (non-safe-mode) startup, best-effort through the same ObserveNativeCallbackAsync path
+        // every other native callback here uses -- so a failure to notify can never fail startup.
+        var root = FindRepositoryRoot();
+        var composition = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "Dudu.App",
+            "Hosting",
+            "WindowsCompanionProductionComposition.cs"));
+
+        var safeModeReturn = composition.IndexOf("if (safeMode)", StringComparison.Ordinal);
+        var recoveryCheck = composition.IndexOf(
+            "database.LastRecoveryOutcome != DatabaseRecoveryOutcome.None",
+            StringComparison.Ordinal);
+        var recoveryCallback = composition.IndexOf(
+            "notificationService.ShowDataRecoveryNoticeAsync(",
+            StringComparison.Ordinal);
+        var observed = composition.IndexOf(
+            "\"data-recovery-notice\",",
+            StringComparison.Ordinal);
+
+        Assert.True(safeModeReturn >= 0);
+        Assert.True(recoveryCheck > safeModeReturn);
+        Assert.True(recoveryCallback > recoveryCheck);
+        Assert.True(observed > recoveryCallback);
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
