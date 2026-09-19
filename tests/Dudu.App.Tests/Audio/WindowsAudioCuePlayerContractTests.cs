@@ -31,6 +31,24 @@ public sealed class WindowsAudioCuePlayerContractTests
         Assert.DoesNotContain("https://", source, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void Completion_wait_is_bounded_so_a_stalled_player_cannot_block_the_tick_loop()
+    {
+        // Regression: PlayAsync used to await completion.Task with no
+        // timeout. That await sits on AudioCueService.TryPlayAsync, which
+        // is called directly from the single 30-second reminder tick loop --
+        // a MediaPlayer that never raises MediaEnded/MediaFailed (a hung
+        // native decoder) would stall reminders, note delivery, and ambient
+        // behaviour for the rest of the session.
+        var root = FindRepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.App", "Audio", "WindowsAudioCuePlayer.cs"));
+
+        Assert.Contains("completion.Task.WaitAsync(", source);
+        Assert.DoesNotContain("return await completion.Task.ConfigureAwait(false);", source);
+        Assert.Contains("catch (TimeoutException)", source);
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

@@ -6,6 +6,17 @@ namespace Dudu.App.Audio;
 
 public sealed class WindowsAudioCuePlayer : IAudioCuePlayer, IAudioCuePlayerLifecycle
 {
+    /// <summary>
+    /// Extra time allowed past a cue's own duration before the completion
+    /// wait times out -- covers MediaPlayer's own startup/decode latency.
+    /// </summary>
+    private static readonly TimeSpan CompletionSlack = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// Fallback wait when a cue carries no usable duration.
+    /// </summary>
+    private static readonly TimeSpan DefaultCompletionTimeout = TimeSpan.FromSeconds(5);
+
     private readonly string? _assetRoot;
 
     public WindowsAudioCuePlayer(string? assetRoot = null)
@@ -42,11 +53,23 @@ public sealed class WindowsAudioCuePlayer : IAudioCuePlayer, IAudioCuePlayerLife
             completion.TrySetResult(AudioPlaybackState.Suppressed);
         });
 
+        // A MediaEnded/MediaFailed that never fires (a hung native decoder)
+        // must not await completion.Task forever -- this call sits on the
+        // single 30-second reminder tick loop (via AudioCueService.TryPlayAsync),
+        // so a stalled MediaPlayer would otherwise stop reminders, note
+        // delivery, and ambient behaviour for the rest of the session.
+        var completionTimeout = cue.DurationMs > 0
+            ? TimeSpan.FromMilliseconds(cue.DurationMs) + CompletionSlack
+            : DefaultCompletionTimeout;
         try
         {
             player.Source = MediaSource.CreateFromUri(new Uri(path));
             player.Play();
-            return await completion.Task.ConfigureAwait(false);
+            return await completion.Task.WaitAsync(completionTimeout).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            return AudioPlaybackState.Failed;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
