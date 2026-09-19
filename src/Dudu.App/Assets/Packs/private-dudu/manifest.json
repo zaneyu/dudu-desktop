@@ -784,26 +784,6 @@
           "reducedMotion": "frames/base/stickers/sticker-017-db40a56cfc6d.png",
           "reducedMotionSha256": "db40a56cfc6d0cbdaddae885a0c0956812abbf84d55b783f06f2bb765122c5ea"
         },
-        "sticker-018": {
-          "frames": [
-            {
-              "file": "frames/base/stickers/sticker-018-49ffcbe7a954.png",
-              "durationMs": 2400,
-              "sha256": "49ffcbe7a954307fa002c405891dd2106cc853de9ab9b94676378f47ec7f78a1"
-            }
-          ],
-          "loop": "once",
-          "anchor": {
-            "x": 256,
-            "y": 400
-          },
-          "nominalSize": {
-            "width": 512,
-            "height": 512
-          },
-          "reducedMotion": "frames/base/stickers/sticker-018-49ffcbe7a954.png",
-          "reducedMotionSha256": "49ffcbe7a954307fa002c405891dd2106cc853de9ab9b94676378f47ec7f78a1"
-        },
         "sticker-019": {
           "frames": [
             {
@@ -964,26 +944,6 @@
           "reducedMotion": "frames/base/stickers/sticker-026-b3d73b7283de.png",
           "reducedMotionSha256": "b3d73b7283de5f9835e26f4bdd580a4a352f3cab248eb251693fad54d8678205"
         },
-        "sticker-027": {
-          "frames": [
-            {
-              "file": "frames/base/stickers/sticker-027-3095bf743a1e.png",
-              "durationMs": 2400,
-              "sha256": "3095bf743a1e2ec74b11be26df814e768e4dbeb8715d1fac1be2d953db371e37"
-            }
-          ],
-          "loop": "once",
-          "anchor": {
-            "x": 256,
-            "y": 400
-          },
-          "nominalSize": {
-            "width": 512,
-            "height": 512
-          },
-          "reducedMotion": "frames/base/stickers/sticker-027-3095bf743a1e.png",
-          "reducedMotionSha256": "3095bf743a1e2ec74b11be26df814e768e4dbeb8715d1fac1be2d953db371e37"
-        },
         "sticker-028": {
           "frames": [
             {
@@ -1043,141 +1003,6 @@
           },
           "reducedMotion": "frames/base/stickers/sticker-030-657dfb97730f.png",
           "reducedMotionSha256": "657dfb97730fce703ddff50fac787e19e7834d8564f906f989936827c09fff2d"
-        }
-      }
-    },
-    "anniversary": {
-      "displayName": "Anniversary hugs",
-      "animations": {
-        "idle": {
-          "frames": [
-            {
-              "file": "frames/anniversary/idle/01-dfa1e9ddc747bac972874230968490ca44c15a42e6fddc9b136dbdc143c52c6b.png",
-              "durationMs": 90,
-              "sha256": "dfa1e9ddc747bac972874230968490ca44c15a42e6fddc9b136dbdc143c52c6b"
-            },
-            {
-              "file": "frames/anniversary/idle/02-61bf6054348f32105dc300de4523fe5f899be51dc02a5523fd7654411c7e2f63.png",
-              "durationMs": 90,
-              "sha256": "61bf6054348f32105dc300de4523fe5f899be51dc02a5523fd7654411c7e2f63"
-            },
-            {
-              "file": "frames/anniversary/idle/03-2c74472d4fa66025cd779d0fe1d063c2440ee197f2e4db130e9d00584a5ffe67.png",
-              "durationMs": 90,
-              "sha256": "2c74472d4fa66025cd779d0fe1d063c2440ee197f2e4db130e9d00584a5ffe67"
-            },
-            {
-              "file": "frames/anniversary/idle/04-3a0e07d2c1ac312f9312148b0f53561b7cd82d542696038c174582ba14f20c9f.png",
-              "durationMs": 90,
-              "sha256": "3a0e07d2c1ac312f9312148b0f53561b7cd82d542696038c174582ba14f20c9f"
-            },
-            {
-              "file": "frames/anniversary/idle/05-a9d2bf529722909f7d699eda928d627f81718e1acf2701a75205a34ac75eaee3.png",
-              "durationMs": 90,
-              "sha256": "a9d2bf529722909f7d699eda928d627f81718e1acf2701a75205a34ac75eaee3"
-            },
-            {
-              "file": "frames/anniversary/idle/06-f78da9eee8934176e9a2fca780c2c01f7f7c886f92ca9921784f71fddbbcc675.png",
-              "durationMs": 90,
-              "sha256": "f78da9eee8934176e9a2fca780c2c01f7f7c886f92ca9921784f71fddbbcc675"
-            },
-            {
-              "file": "frames/anniversary/idle/07-3a16f753ee144441e7d774f40c84fae72482edfdf9184f18c04f151510d572aa.png",
-              "durationMs": 90,
-              "sha256": "3a16f753ee144441e7d774f40c84fae72482edfdf9184f18c04f151510d572aa"
-            },
-            {
-              "file": "frames/anniversary/idle/08-00f5f5f7829138eaa6add30744f5fa15cb595d63ea1bebaa87367c1031e42cff.png",
-              "durationMs": 90,
-              "sha256": "00f5f5f7829138eaa6add30744f5fa15cb595d63ea1bebaa87367c1031e42cff"
-            },
-            {
-              "file": "frames/anniversary/idle/09-73d2b98cc1e5e3f1829c49583e7307c2936158613474d13d55b61d0d54f0f23d.png",
-              "durationMs": 90,
-              "sha256": "73d2b98cc1e5e3f1829c49583e7307c2936158613474d13d55b61d0d54f0f23d"
-            },
-            {
-              "file": "frames/anniversary/idle/10-b877a66382f31f7351742d577d3e9ec87bb23d65fb8d6d89fbce20363a91ff05.png",
-              "durationMs": 90,
-              "sha256": "b877a66382f31f7351742d577d3e9ec87bb23d65fb8d6d89fbce20363a91ff05"
-            },
-            {
-              "file": "frames/anniversary/idle/11-c553f78f3fa8d30890532e0521b6d02390e0f68a5835c7d05fb4c377a3be2db5.png",
-              "durationMs": 90,
-              "sha256": "c553f78f3fa8d30890532e0521b6d02390e0f68a5835c7d05fb4c377a3be2db5"
-            },
-            {
-              "file": "frames/anniversary/idle/12-d97dce40fc08e5c45d3c3215fdc3fc0736434616452a9bf6e5f05d8afdac329e.png",
-              "durationMs": 90,
-              "sha256": "d97dce40fc08e5c45d3c3215fdc3fc0736434616452a9bf6e5f05d8afdac329e"
-            },
-            {
-              "file": "frames/anniversary/idle/13-b746cdb955ba044ad93731a40c383ac060ebfaccb95708468175f832dc0b54dc.png",
-              "durationMs": 90,
-              "sha256": "b746cdb955ba044ad93731a40c383ac060ebfaccb95708468175f832dc0b54dc"
-            }
-          ],
-          "loop": "loop",
-          "anchor": {
-            "x": 256,
-            "y": 400
-          },
-          "nominalSize": {
-            "width": 512,
-            "height": 512
-          },
-          "reducedMotion": "frames/anniversary/idle/01-dfa1e9ddc747bac972874230968490ca44c15a42e6fddc9b136dbdc143c52c6b.png",
-          "reducedMotionSha256": "dfa1e9ddc747bac972874230968490ca44c15a42e6fddc9b136dbdc143c52c6b"
-        }
-      }
-    },
-    "birthday": {
-      "displayName": "Birthday cake",
-      "animations": {
-        "idle": {
-          "frames": [
-            {
-              "file": "frames/birthday/idle/0000-61f56ee14a350610c7b8daeb6b33a47f81686fac2d21f1154820b26a8afc14e6.png",
-              "durationMs": 1000,
-              "sha256": "61f56ee14a350610c7b8daeb6b33a47f81686fac2d21f1154820b26a8afc14e6"
-            }
-          ],
-          "loop": "loop",
-          "anchor": {
-            "x": 256,
-            "y": 400
-          },
-          "nominalSize": {
-            "width": 512,
-            "height": 512
-          },
-          "reducedMotion": "frames/birthday/idle/0000-61f56ee14a350610c7b8daeb6b33a47f81686fac2d21f1154820b26a8afc14e6.png",
-          "reducedMotionSha256": "61f56ee14a350610c7b8daeb6b33a47f81686fac2d21f1154820b26a8afc14e6"
-        }
-      }
-    },
-    "winter": {
-      "displayName": "Winter snow globe",
-      "animations": {
-        "idle": {
-          "frames": [
-            {
-              "file": "frames/winter/idle/0000-0c7696588efeb60e30f16026e0d9ba5150de17f2feb43b1d1ab04d4a4b5568f8.png",
-              "durationMs": 1200,
-              "sha256": "0c7696588efeb60e30f16026e0d9ba5150de17f2feb43b1d1ab04d4a4b5568f8"
-            }
-          ],
-          "loop": "loop",
-          "anchor": {
-            "x": 256,
-            "y": 400
-          },
-          "nominalSize": {
-            "width": 512,
-            "height": 512
-          },
-          "reducedMotion": "frames/winter/idle/0000-0c7696588efeb60e30f16026e0d9ba5150de17f2feb43b1d1ab04d4a4b5568f8.png",
-          "reducedMotionSha256": "0c7696588efeb60e30f16026e0d9ba5150de17f2feb43b1d1ab04d4a4b5568f8"
         }
       }
     }
