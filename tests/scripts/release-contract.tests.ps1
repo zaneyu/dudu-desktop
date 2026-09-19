@@ -430,7 +430,33 @@ Assert-Contains "installer job runs the FlaUI UI test suite against the publishe
 Assert-Contains "UI automation step is gated behind an explicit repository variable, off by default" $workflow 'UI automation tests \(FlaUI\)\s*\r?\n\s*if:\s*vars\.DUDU_ENABLE_UI_AUTOMATION == ''true'''
 Assert-True "UI automation step is a real gate, not continue-on-error" ($workflow -notmatch '(?s)UI automation tests \(FlaUI\)(?:(?!\n\s*- name:).)*continue-on-error')
 Assert-True "Dudu.App.Tests step has an id so find-hung-tests can key off its own outcome" (@([regex]::Matches($workflow, '(?s)- name:\s*Dudu\.App\.Tests\s*\r?\n\s*id:\s*dudu_app_tests')).Count -eq 1)
-Assert-True "find-hung-tests only runs after the Dudu.App.Tests step itself failed or was cancelled, not on every run or on an earlier step's failure" (@([regex]::Matches($workflow, "(?s)find hung tests\).*?if:\s*steps\.dudu_app_tests\.outcome == 'failure' \|\| steps\.dudu_app_tests\.outcome == 'cancelled'")).Count -eq 1)
+function Assert-FindHungTestsRunsAfterAppTestsFailure {
+    <#
+        The find-hung-tests step must be wrapped in always(), otherwise GitHub
+        implicitly ANDs its condition with success() and the step can never
+        run after the very failure/cancellation it exists to diagnose.
+    #>
+    param([Parameter(Mandatory)][string]$Label, [Parameter(Mandatory)][string]$WorkflowText)
+
+    Assert-True "$Label find-hung-tests only runs after the Dudu.App.Tests step itself failed or was cancelled, not on every run or on an earlier step's failure, and is wrapped in always() so it still runs after that failure" (@([regex]::Matches($WorkflowText, '(?s)find hung tests\).*?if:\s*\$\{\{\s*always\(\)\s*&&\s*\(steps\.dudu_app_tests\.outcome == ''failure'' \|\| steps\.dudu_app_tests\.outcome == ''cancelled''\)\s*\}\}')).Count -eq 1)
+}
+
+Assert-FindHungTestsRunsAfterAppTestsFailure "installer workflow" $workflow
+Assert-FindHungTestsRunsAfterAppTestsFailure "production workflow" $productionWorkflow
+function Assert-TestsJobTimeoutFitsStepBudgets {
+    <#
+        The tests job's own timeout-minutes must be able to fit the sum of its
+        step timeouts (10 + 10 + 4 + 25 = 49) plus setup, build and the relay
+        suite, or the job can be killed by its own timeout before a step
+        timeout ever gets a chance to report which step hung.
+    #>
+    param([Parameter(Mandatory)][string]$Label, [Parameter(Mandatory)][string]$WorkflowText)
+
+    Assert-Contains "$Label tests job timeout-minutes is large enough to fit its step budgets" $WorkflowText '(?s)name:\s*Windows and relay test suite\s*\r?\n\s*runs-on:\s*windows-latest\s*\r?\n\s*timeout-minutes:\s*75'
+}
+
+Assert-TestsJobTimeoutFitsStepBudgets "installer workflow" $workflow
+Assert-TestsJobTimeoutFitsStepBudgets "production workflow" $productionWorkflow
 $globalJson = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "global.json") | ConvertFrom-Json
 Assert-True "global.json pins the SDK exactly (rollForward disable)" ($globalJson.sdk.rollForward -eq "disable")
 $packagesProps = [xml](Get-Content -Raw -LiteralPath (Join-Path $repoRoot "Directory.Packages.props"))

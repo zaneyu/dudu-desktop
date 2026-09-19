@@ -280,7 +280,7 @@ jobs:
   tests:
     name: Windows and relay test suite
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
@@ -323,7 +323,7 @@ jobs:
       # any class that hangs, so the hung test is named in the log (xunit's
       # --long-running never printed anything).
       - name: Dudu.App.Tests (find hung tests)
-        if: steps.dudu_app_tests.outcome == 'failure' || steps.dudu_app_tests.outcome == 'cancelled'
+        if: ${{ always() && (steps.dudu_app_tests.outcome == 'failure' || steps.dudu_app_tests.outcome == 'cancelled') }}
         run: pwsh scripts/find-hung-tests.ps1 -Project tests/Dudu.App.Tests/Dudu.App.Tests.csproj -TimeoutSeconds 90
         timeout-minutes: 25
       # Split the same way as the dotnet suites above and for the same
