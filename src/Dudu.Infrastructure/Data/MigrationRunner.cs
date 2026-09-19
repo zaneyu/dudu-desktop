@@ -87,9 +87,9 @@ public sealed class MigrationRunner
             // the cascade. We verify no dangling references were introduced with
             // foreign_key_check before committing, and restore enforcement
             // afterward regardless of outcome.
-            await ExecutePragmaAsync(connection, "PRAGMA foreign_keys=OFF;", cancellationToken);
             try
             {
+                await ExecutePragmaAsync(connection, "PRAGMA foreign_keys=OFF;", cancellationToken);
                 await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
                 try
                 {
