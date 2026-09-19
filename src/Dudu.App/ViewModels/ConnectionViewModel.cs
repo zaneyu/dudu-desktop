@@ -191,6 +191,11 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
                 foreach (var session in sessions) Sessions.Add(session);
                 SessionCount = count;
                 OnPropertyChanged(nameof(IsPaired));
+                // M3: the page is cached and Page_Loaded calls RefreshAsync on every visit, not
+                // just the first one. A confirmation left pending from a previous visit (the user
+                // requested an action, then navigated away without confirming or cancelling) must
+                // not still be armed and shown as if freshly requested when they come back.
+                PendingConfirmation = ConnectionConfirmationAction.None;
             }, ct);
         }, cancellationToken);
     }
