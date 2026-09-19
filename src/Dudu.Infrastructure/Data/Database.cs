@@ -3,6 +3,24 @@ using System.Collections.Concurrent;
 
 namespace Dudu.Infrastructure.Data;
 
+/// <summary>
+/// What <see cref="Database.InitializeAsync"/> had to do about a corrupt or
+/// unreadable canonical database file, reported via
+/// <see cref="Database.LastRecoveryOutcome"/> so the App layer can tell the
+/// user instead of the recovery happening silently.
+/// </summary>
+public enum DatabaseRecoveryOutcome
+{
+    /// <summary>No corruption was found; the existing database opened normally.</summary>
+    None,
+
+    /// <summary>The canonical database was unreadable and was replaced from the newest valid backup.</summary>
+    RestoredFromBackup,
+
+    /// <summary>The canonical database was unreadable and no valid backup existed, so it was quarantined and a fresh database was started.</summary>
+    StartedFresh,
+}
+
 public sealed class Database : IAsyncDisposable, IDisposable
 {
     /// <summary>
@@ -41,6 +59,13 @@ public sealed class Database : IAsyncDisposable, IDisposable
     public DatabaseOptions Options => _options;
 
     public int InitializationRunCount => _coordinator.InitializationRunCount;
+
+    /// <summary>
+    /// What the most recent <see cref="InitializeAsync"/> had to do about the
+    /// canonical database file. <see cref="DatabaseRecoveryOutcome.None"/>
+    /// until the first initialization completes.
+    /// </summary>
+    public DatabaseRecoveryOutcome LastRecoveryOutcome { get; private set; }
 
     public static async Task<Database> OpenAsync(
         DatabaseOptions options,
@@ -156,21 +181,61 @@ public sealed class Database : IAsyncDisposable, IDisposable
 
     private async Task InitializeCoreAsync()
     {
-        try
+        if (!IsZeroByteDatabaseFile())
         {
-            await InitializeCoreInnerAsync();
-            return;
+            try
+            {
+                await InitializeCoreInnerAsync();
+                LastRecoveryOutcome = DatabaseRecoveryOutcome.None;
+                return;
+            }
+            catch (SqliteException exception) when (IsCorruption(exception))
+            {
+                // A corrupt canonical database (torn write, AV quarantine remnant,
+                // disk error) otherwise fails every launch — including crash-loop
+                // safe mode, which still needs this same database. Fall through to
+                // recovery below instead of crash-looping forever.
+            }
         }
-        catch (SqliteException exception) when (IsCorruption(exception))
+
+        // Existing backups sitting right next to the corrupt file were
+        // previously never tried: prefer restoring the newest valid one over
+        // silently starting the user over from nothing. Only when no backup
+        // is usable do we quarantine the unreadable file and start fresh.
+        if (await TryRestoreFromBackupAsync())
         {
-            // A corrupt canonical database (torn write, AV quarantine remnant,
-            // disk error) otherwise fails every launch — including crash-loop
-            // safe mode, which still needs this same database. Quarantine the
-            // unreadable file and start fresh instead of crash-looping forever.
+            LastRecoveryOutcome = DatabaseRecoveryOutcome.RestoredFromBackup;
+            return;
         }
 
         QuarantineCorruptDatabase();
         await InitializeCoreInnerAsync();
+        LastRecoveryOutcome = DatabaseRecoveryOutcome.StartedFresh;
+    }
+
+    private bool IsZeroByteDatabaseFile()
+    {
+        try
+        {
+            return File.Exists(_options.DatabasePath) && new FileInfo(_options.DatabasePath).Length == 0;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+    }
+
+    private async Task<bool> TryRestoreFromBackupAsync()
+    {
+        try
+        {
+            var result = await new DatabaseBackupService(_options).RestoreLatestValidAsync(CancellationToken.None);
+            return result.Restored;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SqliteException)
+        {
+            return false;
+        }
     }
 
     private static bool IsCorruption(SqliteException exception) =>

@@ -999,11 +999,17 @@ public sealed class DatabaseTests
 
         Assert.True(result.Restored);
         Assert.Equal(RestoreFailure.None, result.Failure);
-        Assert.Equal("Before", (await profiles.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
+        // Check the recovery set before reading through fixture.Database: that
+        // read re-initializes it (TryRestoreAsync invalidated the cached
+        // initialization), and reconciliation on a now-healthy canonical
+        // database disposes of the recovery set it kept -- see RecoverySuffix's
+        // doc comment ("...until LocalDataMaintenanceService or reconciliation
+        // disposes of it").
         var recoveryFiles = Directory.GetFiles(Path.GetDirectoryName(fixture.Options.DatabasePath)!, "*");
         Assert.True(
             recoveryFiles.Any(path => path.Contains(DatabaseBackupService.RecoverySuffix, StringComparison.Ordinal)),
             string.Join(Environment.NewLine, recoveryFiles));
+        Assert.Equal("Before", (await profiles.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
     }
 
     [Fact]
@@ -1030,6 +1036,120 @@ public sealed class DatabaseTests
         Assert.Null(await profiles.GetAsync(TestContext.Current.CancellationToken));
         Assert.Equal(12, (await new LocalNoteRepository(fixture.Database)
             .ListEnabledAsync(TestContext.Current.CancellationToken)).Count);
+        Assert.Equal(DatabaseRecoveryOutcome.StartedFresh, fixture.Database.LastRecoveryOutcome);
+    }
+
+    [Fact]
+    public async Task Corrupt_database_restores_from_the_latest_valid_backup_instead_of_starting_fresh()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var profiles = new ProfileRepository(fixture.Database);
+        await profiles.SaveAsync(new Profile("Before", true), TestContext.Current.CancellationToken);
+        await fixture.Backups.CreatePreMigrationBackupAsync(TestContext.Current.CancellationToken);
+        await profiles.SaveAsync(new Profile("After the last backup", true), TestContext.Current.CancellationToken);
+
+        // Simulate the next process launch finding a torn write: drop the
+        // shared initialization so this InitializeAsync really re-runs.
+        SqliteConnection.ClearAllPools();
+        await File.WriteAllTextAsync(
+            fixture.Options.DatabasePath,
+            "not a sqlite database",
+            TestContext.Current.CancellationToken);
+        fixture.Database.InvalidateInitialization();
+
+        await fixture.Database.InitializeAsync(TestContext.Current.CancellationToken);
+
+        // A valid backup sat right next to the corrupt file: it is restored
+        // instead of quarantining and starting the user over from nothing.
+        Assert.Equal(DatabaseRecoveryOutcome.RestoredFromBackup, fixture.Database.LastRecoveryOutcome);
+        Assert.Empty(Directory.GetFiles(fixture.Options.BackupDirectory, "dudu-corrupt-*.db"));
+        Assert.Equal("Before", (await profiles.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
+    }
+
+    [Fact]
+    public async Task Zero_byte_database_restores_from_the_latest_valid_backup()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var profiles = new ProfileRepository(fixture.Database);
+        await profiles.SaveAsync(new Profile("Before", true), TestContext.Current.CancellationToken);
+        await fixture.Backups.CreatePreMigrationBackupAsync(TestContext.Current.CancellationToken);
+
+        // A zero-byte file (e.g. a write interrupted before any bytes landed)
+        // opens as an empty-but-valid SQLite database, so it never throws the
+        // SqliteException the corruption catch relies on -- it must be
+        // recognized as corrupt up front instead.
+        SqliteConnection.ClearAllPools();
+        await File.WriteAllBytesAsync(fixture.Options.DatabasePath, [], TestContext.Current.CancellationToken);
+        fixture.Database.InvalidateInitialization();
+
+        await fixture.Database.InitializeAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(DatabaseRecoveryOutcome.RestoredFromBackup, fixture.Database.LastRecoveryOutcome);
+        Assert.Equal("Before", (await profiles.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
+    }
+
+    [Fact]
+    public async Task Zero_byte_database_without_a_backup_quarantines_and_starts_fresh()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "dudu-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var options = new DatabaseOptions(Path.Combine(root, "dudu.db"), Path.Combine(root, "backups"));
+            await File.WriteAllBytesAsync(options.DatabasePath, [], TestContext.Current.CancellationToken);
+
+            await using var database = new Database(options);
+            await database.InitializeAsync(TestContext.Current.CancellationToken);
+
+            Assert.Equal(DatabaseRecoveryOutcome.StartedFresh, database.LastRecoveryOutcome);
+            Assert.Single(Directory.GetFiles(options.BackupDirectory, "dudu-corrupt-*.db"));
+            Assert.Equal(12, (await new LocalNoteRepository(database)
+                .ListEnabledAsync(TestContext.Current.CancellationToken)).Count);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
+    public async Task Reconciliation_recovers_the_corrupt_recovery_set_when_no_canonical_file_exists()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "dudu-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var options = new DatabaseOptions(Path.Combine(root, "dudu.db"), Path.Combine(root, "backups"));
+            var database = await Database.OpenAsync(options, TestContext.Current.CancellationToken);
+            var profiles = new ProfileRepository(database);
+            await profiles.SaveAsync(new Profile("Recovered from recovery set", true), TestContext.Current.CancellationToken);
+            SqliteConnection.ClearAllPools();
+            await database.DisposeAsync();
+
+            // Reproduces exactly what RestoreAsync's finally block names a kept
+            // recovery set: "<canonicalPath>.corrupt-recovery", not
+            // "<canonicalPath>.restore-old-*.corrupt-recovery" -- the previous
+            // (wrong) prefix ReconcileInterruptedRestoreAsync searched for meant
+            // this branch could never fire.
+            File.Move(options.DatabasePath, options.DatabasePath + DatabaseBackupService.RecoverySuffix);
+            Assert.False(File.Exists(options.DatabasePath));
+
+            var service = new DatabaseBackupService(options);
+            var recovered = await service.ReconcileInterruptedRestoreAsync(TestContext.Current.CancellationToken);
+
+            Assert.True(recovered);
+            Assert.True(File.Exists(options.DatabasePath));
+
+            await using var reopened = await Database.OpenAsync(options, TestContext.Current.CancellationToken);
+            var repository = new ProfileRepository(reopened);
+            Assert.Equal("Recovered from recovery set", (await repository.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+        }
     }
 
     [Fact]

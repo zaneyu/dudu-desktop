@@ -382,7 +382,11 @@ public sealed class DatabaseBackupService
         var temporaryPaths = SafeFiles(directory, databasePath + ".restore-", excludeOld: true, excludeFailed: true);
         var stagedOldPaths = SafeFiles(directory, databasePath + ".restore-old-");
         var stagedFailedPaths = SafeFiles(directory, databasePath + ".restore-failed-");
-        var recoveryPaths = SafeFiles(directory, databasePath + ".restore-old-")
+        // Recovery-set files are named "<canonicalPath>{-wal,-shm}.corrupt-recovery"
+        // (see the RestoreAsync finally block below), not
+        // "<databasePath>.restore-old-*.corrupt-recovery" -- the previous prefix
+        // here never matched anything, so this branch was dead code.
+        var recoveryPaths = SafeFiles(directory, databasePath)
             .Where(path => path.EndsWith(RecoverySuffix, StringComparison.Ordinal))
             .ToArray();
 
