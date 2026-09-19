@@ -435,7 +435,8 @@ Assert-Contains "app copies the private audio pack" $appProject '<Content Includ
 Assert-True "app does not copy audio source downloads" ($appProject -notmatch 'assets[/\\]sources|work[/\\]audio-source')
 Assert-Contains "verify inspects the private audio manifest" $verify 'Assets/Audio/private-dudu/manifest\.json'
 Assert-Contains "smoke test checks the installed audio manifest" $smoke 'Assets\\Audio\\private-dudu\\manifest\.json'
-Assert-Contains "smoke test checks every referenced audio WAV" $smoke '(?s)privateAudioManifest\.packs.*cues'
+Assert-Contains "smoke test iterates every pack in the private audio manifest" $smoke '\@\(\$privateAudioManifest\.packs\)'
+Assert-Contains "smoke test iterates every cue within each audio pack" $smoke 'foreach\s*\(\$audioPack in \@\(\$privateAudioManifest\.packs\)\)\s*\{\r?\n\s*foreach\s*\(\$audioCue in \@\(\$audioPack\.cues\)\)'
 Assert-Contains "release docs keep audio private" $releaseDoc '(?is)audio.*private-use-only'
 Assert-Contains "release docs prohibit runtime audio downloads" $releaseDoc '(?is)audio.*not\s+runtime-downloaded'
 Assert-Contains "release docs require separate audio redistribution rights" $releaseDoc '(?is)audio.*separate redistribution rights'
