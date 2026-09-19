@@ -78,18 +78,23 @@ public sealed class SkiaFrameComposerTests
             invalid));
     }
 
-    // Regression for the decoded-frame cache having no eviction: 8 frames at
-    // 16 MiB decoded each (128 MiB) is well past the composer's 64 MiB cap,
-    // so composing every frame in order only succeeds if the cache evicts
-    // older entries instead of throwing once the cap is hit.
+    // Regression for the decoded-frame cache having no eviction: 8 distinct
+    // single-frame animations at 16 MiB decoded each (128 MiB combined) is
+    // well past the composer's 64 MiB cap, so composing every animation in
+    // order only succeeds if the cache evicts older entries instead of
+    // throwing once the cap is hit. Each animation stays comfortably under
+    // the cap on its own (16 MiB), which matters because pack admission
+    // (ValidatePackLimits) now rejects on a single animation's own decoded
+    // working set, not the pack-wide total -- so this has to be modeled as
+    // several small animations rather than one 128 MiB one.
     [Fact]
     public void Frames_still_compose_after_decoded_cache_exceeds_its_byte_cap()
     {
-        using var fixture = ComposerFixture.CreateWithOversizedFrames(frameCount: 8, dimension: 2048);
+        using var fixture = ComposerFixture.CreateWithDistinctSizedAnimations(animationCount: 8, dimension: 2048);
 
-        for (var i = 0; i < fixture.Animation.Frames.Count; i++)
+        for (var i = 0; i < fixture.Animations.Count; i++)
         {
-            using var frame = fixture.Composer.Compose(fixture.Pack, fixture.Animation, i);
+            using var frame = fixture.Composer.Compose(fixture.Pack, fixture.Animations[i], 0);
             var expectedGray = ExpectedGray(i);
             Assert.Equal(expectedGray, frame.Bytes.Span[0]);
             Assert.Equal(expectedGray, frame.Bytes.Span[1]);
@@ -97,10 +102,10 @@ public sealed class SkiaFrameComposerTests
             Assert.Equal(255, frame.Bytes.Span[3]);
         }
 
-        // The first frame is long evicted by now: re-requesting it must
-        // re-decode from disk rather than throw or hand back stale/disposed
-        // bytes from the evicted (and disposed) SKImage.
-        using var revisited = fixture.Composer.Compose(fixture.Pack, fixture.Animation, 0);
+        // The first animation's frame is long evicted by now: re-requesting
+        // it must re-decode from disk rather than throw or hand back
+        // stale/disposed bytes from the evicted (and disposed) SKImage.
+        using var revisited = fixture.Composer.Compose(fixture.Pack, fixture.Animations[0], 0);
         var firstGray = ExpectedGray(0);
         Assert.Equal(firstGray, revisited.Bytes.Span[0]);
         Assert.Equal(firstGray, revisited.Bytes.Span[1]);
@@ -112,12 +117,18 @@ public sealed class SkiaFrameComposerTests
 
     private sealed class ComposerFixture : IDisposable
     {
-        private ComposerFixture(string root, AssetPack pack, AssetAnimation animation, SkiaFrameComposer composer)
+        private ComposerFixture(
+            string root,
+            AssetPack pack,
+            AssetAnimation animation,
+            SkiaFrameComposer composer,
+            IReadOnlyList<AssetAnimation>? animations = null)
         {
             Root = root;
             Pack = pack;
             Animation = animation;
             Composer = composer;
+            Animations = animations ?? [animation];
         }
 
         private string Root { get; }
@@ -125,6 +136,8 @@ public sealed class SkiaFrameComposerTests
         public AssetPack Pack { get; }
 
         public AssetAnimation Animation { get; }
+
+        public IReadOnlyList<AssetAnimation> Animations { get; }
 
         public SkiaFrameComposer Composer { get; }
 
@@ -162,16 +175,20 @@ public sealed class SkiaFrameComposerTests
             return new ComposerFixture(root, pack, animation, new SkiaFrameComposer(pack));
         }
 
-        /// <summary>Builds a pack whose frames each decode far larger than they
-        /// encode (solid-color PNGs), so their combined decoded size blows
-        /// past the composer's byte cap while staying tiny on disk.</summary>
-        public static ComposerFixture CreateWithOversizedFrames(int frameCount, int dimension)
+        /// <summary>Builds a pack of <paramref name="animationCount"/> distinct
+        /// single-frame animations, each a solid-color PNG that decodes far
+        /// larger than it encodes, so each animation's own decoded size stays
+        /// small enough to pass admission while their combined size blows past
+        /// the composer's byte cap once several are composed in sequence.
+        /// </summary>
+        public static ComposerFixture CreateWithDistinctSizedAnimations(int animationCount, int dimension)
         {
             var root = Path.Combine(Path.GetTempPath(), "dudu-composer-tests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
 
-            var frames = new List<AssetFrame>(frameCount);
-            for (var i = 0; i < frameCount; i++)
+            var animations = new List<AssetAnimation>(animationCount);
+            var animationsByKey = new Dictionary<string, AssetAnimation>(StringComparer.Ordinal);
+            for (var i = 0; i < animationCount; i++)
             {
                 var fileName = $"frame-{i}.png";
                 var gray = ExpectedGray(i);
@@ -180,31 +197,33 @@ public sealed class SkiaFrameComposerTests
                 using var image = SKImage.FromBitmap(bitmap);
                 using var encoded = image.Encode(SKEncodedImageFormat.Png, 100);
                 File.WriteAllBytes(Path.Combine(root, fileName), encoded.ToArray());
-                frames.Add(new AssetFrame { File = fileName, DurationMs = 100 });
+
+                var animation = new AssetAnimation
+                {
+                    Frames = [new AssetFrame { File = fileName, DurationMs = 100 }],
+                    Loop = "once",
+                    NominalSize = new PixelSize(4, 4),
+                    Anchor = new PixelPoint(0, 0),
+                    ReducedMotion = fileName,
+                };
+                animations.Add(animation);
+                animationsByKey[$"idle-{i}"] = animation;
             }
 
-            var animation = new AssetAnimation
-            {
-                Frames = frames,
-                Loop = "loop",
-                NominalSize = new PixelSize(4, 4),
-                Anchor = new PixelPoint(0, 0),
-                ReducedMotion = frames[0].File,
-            };
             var manifest = new AssetManifest
             {
                 SchemaVersion = 1,
-                PackId = "fixture-oversized",
+                PackId = "fixture-distinct-sized",
                 Version = "1",
                 PrivateUseOnly = true,
                 Attribution = new AssetAttribution { Creator = "test" },
                 Outfits = new Dictionary<string, AssetOutfit>(StringComparer.Ordinal)
                 {
-                    ["base"] = new AssetOutfit { Animations = new Dictionary<string, AssetAnimation> { ["idle"] = animation } },
+                    ["base"] = new AssetOutfit { Animations = animationsByKey },
                 },
             };
             var pack = new AssetPack(Path.Combine(root, "manifest.json"), manifest);
-            return new ComposerFixture(root, pack, animation, new SkiaFrameComposer(pack));
+            return new ComposerFixture(root, pack, animations[0], new SkiaFrameComposer(pack), animations);
         }
 
         public void Dispose()
