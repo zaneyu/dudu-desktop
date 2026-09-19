@@ -116,6 +116,48 @@ public sealed class RemoteSyncServiceTests
     }
 
     [Fact]
+    public async Task Protocol_and_storage_failures_in_the_same_batch_throw_protocol_and_report_the_storage_failure()
+    {
+        // M1: only the most significant failure in a batch used to be thrown; every other
+        // per-envelope failure (here, the failing envelope's storage exception, wrapped as
+        // RemoteSyncException) vanished from diagnostics entirely once a more significant
+        // RelayProtocolException also failed in the same batch.
+        await using var fixture = await RemoteSyncFixture.WithOneFailingEnvelopeAmongGoodOnesAsync();
+        fixture.Relay.AckException = () => new RelayProtocolException("simulated unreadable ack response");
+
+        await Assert.ThrowsAsync<RelayProtocolException>(
+            () => fixture.Service.PollOnceAsync(fixture.CancellationToken));
+
+        Assert.Contains(
+            fixture.ReportedErrors,
+            error => error.Tag == "remote-sync-envelope" && error.Exception is RemoteSyncException);
+    }
+
+    [Fact]
+    public async Task Unauthorized_and_protocol_failures_in_the_same_batch_throw_unauthorized_and_report_protocol()
+    {
+        // M1 mixed precedence: RelayUnauthorizedException outranks RelayProtocolException, so it
+        // must be the one thrown (driving RunLoopAsync's NeedsRepair handling) -- but the
+        // lower-precedence failure must still reach diagnostics instead of silently vanishing.
+        await using var fixture = await RemoteSyncFixture.WithTwoGoodEnvelopesAsync();
+        var ackCallCount = 0;
+        fixture.Relay.AckException = () =>
+        {
+            ackCallCount++;
+            return ackCallCount == 1
+                ? new RelayUnauthorizedException("simulated dead token on first ack")
+                : new RelayProtocolException("simulated unreadable ack response");
+        };
+
+        await Assert.ThrowsAsync<RelayUnauthorizedException>(
+            () => fixture.Service.PollOnceAsync(fixture.CancellationToken));
+
+        Assert.Contains(
+            fixture.ReportedErrors,
+            error => error.Tag == "remote-sync-envelope" && error.Exception is RelayProtocolException);
+    }
+
+    [Fact]
     public async Task Reveal_does_not_make_a_network_call_or_persist_plaintext()
     {
         await using var fixture = await RemoteSyncFixture.WithStoredEncryptedEnvelopeAsync("private hello");

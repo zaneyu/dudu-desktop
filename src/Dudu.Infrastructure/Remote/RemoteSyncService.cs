@@ -447,6 +447,19 @@ public sealed class RemoteSyncService : IAsyncDisposable
                 significantFailure ??= failures.OfType<RemoteSyncException>().FirstOrDefault();
                 if (significantFailure is not null)
                 {
+                    // M1: only the most significant failure is thrown, so every other
+                    // per-envelope failure in the same batch (e.g. a SqliteException writing a
+                    // note, hidden behind a more significant RelayProtocolException) would
+                    // otherwise vanish from diagnostics entirely. Report them now, before the
+                    // significant one is thrown.
+                    foreach (var failure in failures)
+                    {
+                        if (!ReferenceEquals(failure, significantFailure))
+                        {
+                            _reportError?.Invoke("remote-sync-envelope", failure);
+                        }
+                    }
+
                     throw significantFailure;
                 }
 
