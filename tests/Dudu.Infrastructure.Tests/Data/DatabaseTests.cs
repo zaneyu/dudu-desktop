@@ -43,13 +43,53 @@ public sealed class DatabaseTests
     public async Task Backup_rotation_keeps_five_newest_valid_backups()
     {
         await using var fixture = await DatabaseFixture.CreateAsync();
+        // DatabaseFixture.CreateAsync's own first-run migration already takes one automatic
+        // pre-migration backup (the canonical file exists, empty, before the very first
+        // migration applies) -- it is preserved on top of retention (M3), so the total below is
+        // 5 manual backups plus that 1 preserved one.
         for (var i = 0; i < 7; i++)
         {
             await fixture.Backups.CreatePreMigrationBackupAsync(TestContext.Current.CancellationToken);
             await Task.Delay(2, TestContext.Current.CancellationToken);
         }
 
-        Assert.Equal(5, Directory.GetFiles(fixture.Options.BackupDirectory, "*.db").Length);
+        Assert.Equal(6, Directory.GetFiles(fixture.Options.BackupDirectory, "*.db").Length);
+    }
+
+    [Fact]
+    public async Task Backup_rotation_always_keeps_the_newest_pre_migration_backup()
+    {
+        // M3: RotateAsync used to keep the N newest "*.db" files regardless of kind, so five
+        // manual "Back up now" clicks after a schema upgrade would delete the only pre-upgrade
+        // snapshot of the previous schema. The marked pre-migration backup must survive
+        // regardless of age, on top of (not counted against) the retention count applied to the
+        // rest.
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        await using (var connection = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken))
+        {
+            // Note: the public CreatePreMigrationBackupAsync(CancellationToken) overload used
+            // below is the *manual* "Back up now" path and never carries the marker -- only the
+            // internal SqliteConnection overload (as MigrationRunner calls it) does. The fixture
+            // itself already took one such marked backup during its own first-run migration
+            // (the canonical file exists, empty, before the first migration applies), so this
+            // one -- newer -- is the one everything below tracks as "the" marked backup.
+            await fixture.Backups.CreatePreMigrationBackupAsync(connection, TestContext.Current.CancellationToken);
+        }
+        var markedPath = Directory.GetFiles(fixture.Options.BackupDirectory, "*-premigration.db")
+            .OrderByDescending(Path.GetFileName, StringComparer.Ordinal)
+            .First();
+
+        for (var i = 0; i < 7; i++)
+        {
+            await Task.Delay(2, TestContext.Current.CancellationToken);
+            await fixture.Backups.CreatePreMigrationBackupAsync(TestContext.Current.CancellationToken);
+        }
+
+        Assert.True(File.Exists(markedPath));
+        var unmarked = Directory.GetFiles(fixture.Options.BackupDirectory, "*.db")
+            .Where(path => path != markedPath)
+            .ToArray();
+        Assert.Equal(5, unmarked.Length);
     }
 
     [Fact]

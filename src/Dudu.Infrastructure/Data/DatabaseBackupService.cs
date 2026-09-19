@@ -638,7 +638,17 @@ public sealed class DatabaseBackupService
             }
         }
 
-        foreach (var path in valid.Skip(Math.Max(0, _options.BackupRetentionCount)))
+        // M3: the newest pre-migration backup is the only surviving snapshot of the schema
+        // immediately before an upgrade. Retention count alone can evict it once enough manual
+        // "back up now" backups pile up on top of it -- keep it unconditionally, in addition to
+        // (not counted against) BackupRetentionCount applied to the rest.
+        var newestPreMigration = valid.Find(
+            path => Path.GetFileName(path).Contains(PreMigrationMarker, StringComparison.Ordinal));
+        var others = newestPreMigration is null
+            ? valid
+            : valid.Where(path => path != newestPreMigration).ToList();
+
+        foreach (var path in others.Skip(Math.Max(0, _options.BackupRetentionCount)))
         {
             try
             {
