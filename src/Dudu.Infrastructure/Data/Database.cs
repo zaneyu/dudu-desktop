@@ -109,9 +109,13 @@ public sealed class Database : IAsyncDisposable, IDisposable
             // fresh startup-failure.log entry for the identical exception. Report once per
             // distinct faulted task; ResetInitialization()/InvalidateInitialization() (or the
             // BUSY/LOCKED auto-unlatch) hand back a new Task and are reported again.
-            if (!ReferenceEquals(_lastReportedInitializationFailure, initializationTask))
+            //
+            // M2: Interlocked.Exchange makes the check-and-set atomic -- concurrent callers
+            // racing the same faulted task must not both see the previous (different) value and
+            // both report.
+            var previouslyReported = Interlocked.Exchange(ref _lastReportedInitializationFailure, initializationTask);
+            if (!ReferenceEquals(previouslyReported, initializationTask))
             {
-                _lastReportedInitializationFailure = initializationTask;
                 ReportFailure(InitializationFailurePhase, exception);
             }
 
