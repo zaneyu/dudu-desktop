@@ -570,12 +570,29 @@ public static class WindowsCompanionProductionComposition
                         // "she never finds out" outcome this notice exists to prevent. Must
                         // never block or fail startup, so it is fired and observed the same
                         // way every other native callback here is.
+                        //
+                        // Register before showing, same as SafeModePrimaryRuntime's own
+                        // ShowSafeModeNoticeAsync below: AppNotificationManager only registers
+                        // later, from PresentationCoordinator.StartAsync (via AppHost.StartAsync,
+                        // after this method returns) -- Show() before that first registration
+                        // throws, and ShowIfAvailableAsync's catch would swallow it and flip
+                        // NotificationsAvailable false, losing this exact notice. TryRegisterAsync
+                        // is idempotent (AppNotificationService's _registrationGate/_registered
+                        // latch a successful registration), so PresentationCoordinator.StartAsync's
+                        // later call is a safe no-op.
                         _ = ObserveNativeCallbackAsync(
-                            notificationService.ShowDataRecoveryNoticeAsync(
-                                database.LastRecoveryOutcome,
-                                cancellationToken),
+                            NotifyDataRecoveryAsync(invokedNotifications, database.LastRecoveryOutcome, cancellationToken),
                             "data-recovery-notice",
                             host.ErrorReporter);
+
+                        static async Task NotifyDataRecoveryAsync(
+                            AppNotificationService notifications,
+                            DatabaseRecoveryOutcome outcome,
+                            CancellationToken token)
+                        {
+                            await notifications.TryRegisterAsync(token);
+                            await notifications.ShowDataRecoveryNoticeAsync(outcome, token);
+                        }
                     }
                     presentationGateway = new PresentationCoordinator(
                         new PresentationPolicy(PresentationMinimumSilentInterval),

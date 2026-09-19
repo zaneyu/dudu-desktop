@@ -205,6 +205,13 @@ public sealed class ProductionStartupContractTests
         // never told the user. This asserts the notice fires once, only on a successful
         // (non-safe-mode) startup, best-effort through the same ObserveNativeCallbackAsync path
         // every other native callback here uses -- so a failure to notify can never fail startup.
+        //
+        // Review fix: the first cut called ShowDataRecoveryNoticeAsync directly, before Windows
+        // notifications are registered (registration only happens later, from
+        // PresentationCoordinator.StartAsync) -- Show() before that first registration throws,
+        // and ShowIfAvailableAsync's catch silently swallows it, losing exactly the notice this
+        // exists to deliver. This now asserts the register call precedes the show call, matching
+        // SafeModePrimaryRuntime.ShowSafeModeNoticeAsync's own register-then-show pattern.
         var root = FindRepositoryRoot();
         var composition = File.ReadAllText(Path.Combine(
             root,
@@ -217,8 +224,11 @@ public sealed class ProductionStartupContractTests
         var recoveryCheck = composition.IndexOf(
             "database.LastRecoveryOutcome != DatabaseRecoveryOutcome.None",
             StringComparison.Ordinal);
-        var recoveryCallback = composition.IndexOf(
-            "notificationService.ShowDataRecoveryNoticeAsync(",
+        var registerCall = composition.IndexOf(
+            "await notifications.TryRegisterAsync(token);",
+            StringComparison.Ordinal);
+        var showCall = composition.IndexOf(
+            "await notifications.ShowDataRecoveryNoticeAsync(outcome, token);",
             StringComparison.Ordinal);
         var observed = composition.IndexOf(
             "\"data-recovery-notice\",",
@@ -226,8 +236,9 @@ public sealed class ProductionStartupContractTests
 
         Assert.True(safeModeReturn >= 0);
         Assert.True(recoveryCheck > safeModeReturn);
-        Assert.True(recoveryCallback > recoveryCheck);
-        Assert.True(observed > recoveryCallback);
+        Assert.True(observed > recoveryCheck);
+        Assert.True(registerCall > observed);
+        Assert.True(showCall > registerCall);
     }
 
     private static string FindRepositoryRoot()
