@@ -34,6 +34,31 @@ public sealed class DataFailureDiagnosticsTests
     }
 
     [Fact]
+    public async Task Database_initialization_failure_reports_only_once_when_the_faulted_task_is_replayed()
+    {
+        // Review finding: DatabaseAccessCoordinator latches a genuine initialization failure and
+        // hands the SAME faulted Task back to every subsequent InitializeAsync call (see
+        // RunInitializationAsync's B2 comment), so every settings-page repository touch in safe
+        // mode used to append a fresh startup-failure.log entry for the identical exception.
+        using var root = new TemporaryRoot();
+        var blocker = Path.Combine(root.Path, "blocker");
+        await File.WriteAllTextAsync(blocker, "not a directory", TestContext.Current.CancellationToken);
+        var database = new Database(new DatabaseOptions(Path.Combine(blocker, "dudu.db")));
+        var reports = new List<(string Phase, Exception Exception)>();
+        database.FailureReporter = (phase, exception) => reports.Add((phase, exception));
+
+        await Assert.ThrowsAnyAsync<Exception>(() =>
+            database.InitializeAsync(TestContext.Current.CancellationToken));
+        await Assert.ThrowsAnyAsync<Exception>(() =>
+            database.InitializeAsync(TestContext.Current.CancellationToken));
+        await Assert.ThrowsAnyAsync<Exception>(() =>
+            database.InitializeAsync(TestContext.Current.CancellationToken));
+
+        var report = Assert.Single(reports);
+        Assert.Equal(Database.InitializationFailurePhase, report.Phase);
+    }
+
+    [Fact]
     public async Task Database_initialization_success_reports_nothing()
     {
         using var root = new TemporaryRoot();

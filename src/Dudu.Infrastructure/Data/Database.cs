@@ -36,6 +36,7 @@ public sealed class Database : IAsyncDisposable, IDisposable
     private static readonly ConcurrentDictionary<string, DatabaseAccessCoordinator> Coordinators = new(StringComparer.OrdinalIgnoreCase);
     private readonly DatabaseOptions _options;
     private readonly DatabaseAccessCoordinator _coordinator;
+    private Task? _lastReportedInitializationFailure;
 
     public Database(DatabaseOptions options)
     {
@@ -95,13 +96,25 @@ public sealed class Database : IAsyncDisposable, IDisposable
         // before initialization begins, and connection operations remain
         // independently cancellable after initialization completes.
         cancellationToken.ThrowIfCancellationRequested();
+        var initializationTask = _coordinator.InitializeAsync(InitializeCoreAsync);
         try
         {
-            await _coordinator.InitializeAsync(InitializeCoreAsync);
+            await initializationTask;
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            ReportFailure(InitializationFailurePhase, exception);
+            // The coordinator latches a genuine failure and hands the SAME faulted Task back to
+            // every subsequent InitializeAsync call (see RunInitializationAsync's B2 comment), so
+            // without this guard every settings-page repository touch in safe mode would append a
+            // fresh startup-failure.log entry for the identical exception. Report once per
+            // distinct faulted task; ResetInitialization()/InvalidateInitialization() (or the
+            // BUSY/LOCKED auto-unlatch) hand back a new Task and are reported again.
+            if (!ReferenceEquals(_lastReportedInitializationFailure, initializationTask))
+            {
+                _lastReportedInitializationFailure = initializationTask;
+                ReportFailure(InitializationFailurePhase, exception);
+            }
+
             throw;
         }
     }
