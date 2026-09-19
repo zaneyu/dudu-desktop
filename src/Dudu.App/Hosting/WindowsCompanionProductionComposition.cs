@@ -261,11 +261,17 @@ public static class WindowsCompanionProductionComposition
             // dudu.db) would otherwise drop straight into safe mode for the whole session:
             // Database's own bounded transient retry (DatabaseAccessCoordinator) never gets a
             // chance to run, because that retry only fires on a SUBSEQUENT InitializeAsync call
-            // and db-init is the very first one. Retry it here instead, bounded the same way the
-            // coordinator bounds its own retries -- a capped number of attempts, each separated by
-            // the same cooldown -- before falling into safe mode. A non-transient failure (a
-            // corrupt file, CANTOPEN, FULL) retries zero times, exactly as before.
-            const int maxTransientDbInitRetries = 2;
+            // and db-init is the very first one. Retry it here instead, once, separated by the
+            // same cooldown the coordinator itself waits between retries -- capped at 1 (not the
+            // coordinator's own cap of 3): this runs before any UI is shown and while still
+            // holding the single-instance mutex, so more than one cooldown wait would block
+            // startup for tens of seconds with nothing on screen. A non-transient failure (a
+            // corrupt file, CANTOPEN, FULL) retries zero times, exactly as before. The wait must
+            // be at least Database.TransientBusyRetryCooldown -- any shorter and the coordinator's
+            // own CanRetryTransientFailureNow() cooldown check has not elapsed yet, so it would
+            // hand back the same still-latched faulted task instead of actually re-running
+            // InitializeCoreAsync.
+            const int maxTransientDbInitRetries = 1;
             for (var attempt = 0; ; attempt++)
             {
                 try

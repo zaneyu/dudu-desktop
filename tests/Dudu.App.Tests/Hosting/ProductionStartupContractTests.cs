@@ -162,7 +162,10 @@ public sealed class ProductionStartupContractTests
         // Database's own bounded transient retry can only run on a SUBSEQUENT call. This asserts
         // the retry loop classifies the failure with the same public helper the data layer uses,
         // waits the same cooldown, is capped, and still falls into safe mode exactly as before
-        // once the cap is spent or the failure is not transient.
+        // once the cap is spent or the failure is not transient. Capped at 1 (not the
+        // coordinator's own cap of 3): this runs before any UI is shown and while still holding
+        // the single-instance mutex, so more than one cooldown wait would block startup for tens
+        // of seconds with nothing on screen.
         var root = FindRepositoryRoot();
         var composition = File.ReadAllText(Path.Combine(
             root,
@@ -172,7 +175,7 @@ public sealed class ProductionStartupContractTests
             "WindowsCompanionProductionComposition.cs"));
 
         var loopStart = composition.IndexOf(
-            "const int maxTransientDbInitRetries = 2;",
+            "const int maxTransientDbInitRetries = 1;",
             StringComparison.Ordinal);
         var databaseInit = composition.IndexOf(
             "\"db-init\",",
