@@ -115,6 +115,48 @@ public sealed class DatabaseBackupService
         return path;
     }
 
+    /// <summary>
+    /// Whether a valid backup already on disk was taken at exactly
+    /// <paramref name="schemaVersion"/>. Used by <see cref="MigrationRunner"/>
+    /// to make the pre-upgrade backup idempotent across repeated attempts
+    /// from the same starting version (a fresh process retrying a migration
+    /// that keeps failing, for example) instead of creating a fresh
+    /// redundant snapshot -- and eventually evicting the genuine pre-upgrade
+    /// backup -- on every attempt.
+    /// </summary>
+    public async Task<bool> HasValidBackupAtSchemaVersionAsync(
+        int schemaVersion,
+        CancellationToken cancellationToken = default)
+    {
+        if (!Directory.Exists(_options.BackupDirectory))
+        {
+            return false;
+        }
+
+        foreach (var path in Directory.GetFiles(_options.BackupDirectory, "*.db"))
+        {
+            if (!await IsSqliteBackupAsync(path, cancellationToken))
+            {
+                continue;
+            }
+
+            await using var connection = new SqliteConnection(
+                new SqliteConnectionStringBuilder
+                {
+                    DataSource = path,
+                    Mode = SqliteOpenMode.ReadOnly,
+                    Pooling = false,
+                }.ToString());
+            await connection.OpenAsync(cancellationToken);
+            if (await ReadSchemaVersionAsync(connection, cancellationToken) == schemaVersion)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public Task<RestoreResult> TryRestoreAsync(
         string backupPath,
         CancellationToken cancellationToken = default) =>

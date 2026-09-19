@@ -423,14 +423,16 @@ internal sealed class DatabaseAccessCoordinator
         }
         catch (Exception exception)
         {
-            lock (_sync)
-            {
-                if (ReferenceEquals(_initializationSource, source))
-                {
-                    _initializationSource = null;
-                }
-            }
-
+            // Deliberately do NOT clear _initializationSource here (B2). A
+            // genuine initialization failure (e.g. a migration that keeps
+            // throwing) must stay cached and faulted, so every subsequent
+            // InitializeAsync call returns the same failed task instead of
+            // silently re-running the whole initializer -- which re-runs
+            // migrations and, without this, would re-create the pre-upgrade
+            // backup on every retry, evicting the genuine one after enough
+            // attempts (retention is finite). Restore-from-backup and any
+            // deliberate retry path call ResetInitialization()/
+            // InvalidateInitialization() explicitly to re-arm this.
             source.TrySetException(exception);
         }
     }

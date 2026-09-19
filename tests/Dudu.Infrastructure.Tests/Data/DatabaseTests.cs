@@ -1277,6 +1277,156 @@ public sealed class DatabaseTests
     }
 
     [Fact]
+    public async Task Repeated_calls_after_a_failed_migration_do_not_retry_or_duplicate_the_pre_upgrade_backup()
+    {
+        // B2 fix #1: a genuinely failed initialization (not corruption --
+        // IsCorruption doesn't match this error) must stay cached and faulted,
+        // so every later InitializeAsync call returns the same failure instead
+        // of re-running the whole initializer (migrations included) on every
+        // repository call. Re-running would also re-attempt the pre-upgrade
+        // backup on every call; retention is finite, so enough failed
+        // repository calls would eventually evict the genuine one.
+        await using var fixture = await DatabaseFixture.CreateAsync();
+
+        // Roll back to just before 0010_backfill_seed_watermark.sql and drop
+        // the table it writes to, so that migration keeps throwing "no such
+        // table: seed_state" -- SQLITE_ERROR (1), not one of IsCorruption's
+        // codes (11/26) -- on every attempt.
+        await using (var setup = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken))
+        {
+            await using var rollback = setup.CreateCommand();
+            rollback.CommandText = "UPDATE schema_version SET version = 9 WHERE id = 1;";
+            await rollback.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+
+            await using var dropSeedState = setup.CreateCommand();
+            dropSeedState.CommandText = "DROP TABLE seed_state;";
+            await dropSeedState.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        fixture.Database.InvalidateInitialization();
+        var runsBefore = fixture.Database.InitializationRunCount;
+
+        await Assert.ThrowsAsync<SqliteException>(
+            () => fixture.Database.InitializeAsync(TestContext.Current.CancellationToken));
+
+        var runsAfterFirstFailure = fixture.Database.InitializationRunCount;
+        var backupsAfterFirstFailure = Directory.GetFiles(fixture.Options.BackupDirectory, "*.db").Length;
+        Assert.Equal(runsBefore + 1, runsAfterFirstFailure);
+
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            await Assert.ThrowsAsync<SqliteException>(
+                () => fixture.Database.InitializeAsync(TestContext.Current.CancellationToken));
+        }
+
+        Assert.Equal(runsAfterFirstFailure, fixture.Database.InitializationRunCount);
+        Assert.Equal(
+            backupsAfterFirstFailure,
+            Directory.GetFiles(fixture.Options.BackupDirectory, "*.db").Length);
+    }
+
+    [Fact]
+    public async Task Repeated_migration_runner_instances_at_the_same_failing_version_create_only_one_backup()
+    {
+        // B2 fix #2: HasValidBackupAtSchemaVersionAsync makes the pre-upgrade
+        // backup idempotent across separate MigrationRunner instances at the
+        // same starting version -- e.g. separate process launches each
+        // retrying the same failing migration -- not just within one run
+        // (that's backedUpThisRun, which a fresh MigrationRunner never shares).
+        await using var fixture = await DatabaseFixture.CreateAsync();
+
+        await using (var setup = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken))
+        {
+            await using var rollback = setup.CreateCommand();
+            rollback.CommandText = "UPDATE schema_version SET version = 9 WHERE id = 1;";
+            await rollback.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+
+            await using var dropSeedState = setup.CreateCommand();
+            dropSeedState.CommandText = "DROP TABLE seed_state;";
+            await dropSeedState.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        var backupsBefore = Directory.GetFiles(fixture.Options.BackupDirectory, "*.db").Length;
+
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            await using var connection = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken);
+            var runner = new MigrationRunner(fixture.Options);
+            await Assert.ThrowsAsync<SqliteException>(
+                () => runner.RunAsync(connection, TestContext.Current.CancellationToken));
+        }
+
+        var backupsAfter = Directory.GetFiles(fixture.Options.BackupDirectory, "*.db");
+        Assert.Equal(backupsBefore + 1, backupsAfter.Length);
+
+        var newestBackupPath = backupsAfter.OrderByDescending(path => path).First();
+        await using var backupConnection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = newestBackupPath,
+            Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false,
+        }.ToString());
+        await backupConnection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var version = backupConnection.CreateCommand();
+        version.CommandText = "SELECT version FROM schema_version WHERE id = 1;";
+        Assert.Equal(9L, Convert.ToInt64(await version.ExecuteScalarAsync(TestContext.Current.CancellationToken)));
+    }
+
+    [Fact]
+    public async Task Explicitly_invalidating_after_a_failed_migration_allows_a_real_retry()
+    {
+        // The flip side of B2 fix #1: restore-from-backup and any deliberate
+        // retry path call InvalidateInitialization() explicitly to re-arm a
+        // faulted cached initialization. That must still work once the
+        // underlying problem is actually fixed -- caching a genuine failure
+        // must not become a permanent lockout.
+        await using var fixture = await DatabaseFixture.CreateAsync();
+
+        await using (var setup = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken))
+        {
+            await using var rollback = setup.CreateCommand();
+            rollback.CommandText = "UPDATE schema_version SET version = 9 WHERE id = 1;";
+            await rollback.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+
+            await using var dropSeedState = setup.CreateCommand();
+            dropSeedState.CommandText = "DROP TABLE seed_state;";
+            await dropSeedState.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        fixture.Database.InvalidateInitialization();
+        await Assert.ThrowsAsync<SqliteException>(
+            () => fixture.Database.InitializeAsync(TestContext.Current.CancellationToken));
+
+        // Repair with a raw connection: fixture.Database.CreateConnectionAsync
+        // would just rethrow the still-cached failure at this point.
+        SqliteConnection.ClearAllPools();
+        await using (var repair = new SqliteConnection(Database.ConnectionString(fixture.Options)))
+        {
+            await repair.OpenAsync(TestContext.Current.CancellationToken);
+            await using var recreate = repair.CreateCommand();
+            recreate.CommandText = """
+                CREATE TABLE IF NOT EXISTS seed_state (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    version INTEGER NOT NULL DEFAULT 1
+                );
+                """;
+            await recreate.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        SqliteConnection.ClearAllPools();
+
+        // Still cached and faulted -- fixing the underlying problem alone must
+        // not make a plain retry (without invalidating) magically succeed.
+        await Assert.ThrowsAsync<SqliteException>(
+            () => fixture.Database.InitializeAsync(TestContext.Current.CancellationToken));
+
+        fixture.Database.InvalidateInitialization();
+        await fixture.Database.InitializeAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(10, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
     public async Task Restore_over_a_corrupt_current_database_preserves_the_unreadable_file_as_recovery()
     {
         await using var fixture = await DatabaseFixture.CreateAsync();
