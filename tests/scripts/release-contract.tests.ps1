@@ -381,6 +381,14 @@ Assert-Contains "workflow uploads release metadata" $workflow 'artifacts/release
 Assert-Contains "workflow invokes the Store package wrapper" $workflow "scripts/package-store\.ps1"
 Assert-Contains "workflow invokes the Store wrapper in explicit acceptance-only mode" $workflow 'scripts/package-store\.ps1\s+-Version \$env:STORE_VERSION\s+-AcceptanceOnly'
 Assert-Contains "workflow uploads a Store package artifact" $workflow 'DuduDesktop-\$\{\{ env\.STORE_VERSION \}\}-win-x64-store'
+Assert-True "workflow excludes bulky Store build intermediates from every upload" (
+    (@([regex]::Matches($workflow, '!artifacts/store-package-metadata/publish/')).Count -eq 1) -and
+    (@([regex]::Matches($workflow, '!artifacts/store-package-metadata/unpacked/')).Count -eq 1)
+)
+Assert-True "production workflow excludes bulky Store build intermediates from every upload" (
+    (@([regex]::Matches($productionWorkflow, '!artifacts/store-package-metadata/publish/')).Count -eq 2) -and
+    (@([regex]::Matches($productionWorkflow, '!artifacts/store-package-metadata/unpacked/')).Count -eq 2)
+)
 Assert-Contains "workflow supports an explicit Store package version" $workflow "store_version"
 Assert-Contains "workflow requires a Store version for manual dispatch" $workflow "store_version:(?s).*required:\s*true"
 Assert-Contains "workflow keeps 1.0.0 as the push Store acceptance version" $workflow "github\.event_name\s*==\s*'push'.*1\.0\.0"

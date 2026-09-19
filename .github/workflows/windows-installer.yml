@@ -207,9 +207,14 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: DuduDesktop-${{ env.STORE_VERSION }}-win-x64-store
+          # publish/ and unpacked/ are package-store.ps1's intermediate build/validation
+          # trees under store-package-metadata/, not release evidence; uploading them
+          # exhausted this repository's Actions storage quota.
           path: |
             artifacts/store-package/
             artifacts/store-package-metadata/
+            !artifacts/store-package-metadata/publish/
+            !artifacts/store-package-metadata/unpacked/
           if-no-files-found: error
           retention-days: 30
 
