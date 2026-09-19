@@ -244,13 +244,65 @@ public sealed class RemoteSyncServiceTests
     }
 
     [Fact]
-    public async Task ForgetPairingLocally_clears_every_local_secret_without_reading_them_or_contacting_the_relay()
+    public async Task GetActiveSenderSessionCount_degrades_gracefully_when_only_the_token_is_unreadable()
+    {
+        // H2: the device-id read (poisoned in the test above) is not the only secret-store read on
+        // this path -- GetDeviceAsync authenticates with the bearer token, which the real
+        // RelayClient reads through the secret store too. The fake relay client does not model
+        // that internal read, so simulate the same failure the real one would surface (a
+        // SecretStoreException out of GetDeviceAsync) directly through its exception hook, leaving
+        // the device id itself readable, to exercise that second read specifically.
+        await using var fixture = await RemoteSyncFixture.WithRegistrationAsync();
+        fixture.Relay.GetDeviceException = () => new SecretStoreException(
+            "The protected secret could not be decrypted.",
+            new InvalidOperationException("simulated unreadable DPAPI blob"));
+
+        var count = await fixture.Service.GetActiveSenderSessionCountAsync(fixture.CancellationToken);
+
+        Assert.Equal(0, count);
+        Assert.Equal(PairingAvailability.NeedsRepair, fixture.Service.State);
+    }
+
+    [Fact]
+    public async Task Poll_loop_exits_to_needs_repair_instead_of_retrying_a_permanently_unreadable_secret()
+    {
+        // H2: an unreadable secret never becomes readable on retry, exactly like a dead bearer
+        // token -- the loop must stop the same way it does for a 401 instead of backing off and
+        // retrying forever against the same unreadable secret.
+        await using var fixture = await RemoteSyncFixture.WithRegistrationAsync();
+        fixture.SecretStore.PoisonedKeys.Add(RelaySecretKeys.DeviceId);
+
+        await fixture.Service.StartAsync(fixture.CancellationToken);
+        try
+        {
+            await WaitUntilAsync(
+                () => fixture.Service.State == PairingAvailability.NeedsRepair,
+                fixture.CancellationToken);
+            await WaitUntilAsync(() => !fixture.Service.IsRunning, fixture.CancellationToken);
+
+            Assert.Equal(PairingAvailability.NeedsRepair, fixture.Service.State);
+            Assert.False(
+                fixture.Service.IsRunning,
+                "the loop must stop polling once it converges on NeedsRepair, not retry forever");
+        }
+        finally
+        {
+            await fixture.Service.StopAsync(fixture.CancellationToken);
+        }
+    }
+
+    [Fact]
+    public async Task ForgetPairingLocally_clears_every_local_secret_even_when_none_of_them_can_be_decrypted()
     {
         // F2: the escape hatch out of an unreadable secret store. RevokeDeviceAsync cannot help
         // here -- it needs a working bearer token to authenticate the relay delete call, and that
         // token is exactly what is unreadable. Poison every secret this touches (matching a fully
-        // corrupted DPAPI master key) to prove the local-only forget never needs to decrypt any of
-        // them: ISecretStore.DeleteAsync only removes the stored file.
+        // corrupted DPAPI master key) to prove the local forget still succeeds without ever
+        // needing to decrypt any of them: ISecretStore.DeleteAsync only removes the stored file,
+        // and the unreadable key is treated as H3's "destroy" case, same as if it had parsed and
+        // failed. H4's best-effort relay delete still fires once (the fake relay client, unlike
+        // the real one, does not need to decrypt the token to "send" the request) and its failure
+        // (irrelevant here, since it does not throw) must never block the rest.
         await using var fixture = await RemoteSyncFixture.WithRegistrationAsync();
         fixture.SecretStore.PoisonedKeys.Add(RelaySecretKeys.DeviceId);
         fixture.SecretStore.PoisonedKeys.Add(RelaySecretKeys.DesktopToken);
@@ -259,11 +311,102 @@ public sealed class RemoteSyncServiceTests
 
         await fixture.Service.ForgetPairingLocallyAsync(fixture.CancellationToken);
 
-        Assert.Equal(0, fixture.Relay.RequestCount);
+        Assert.Equal(1, fixture.Relay.RequestCount);
         Assert.False(fixture.SecretStore.Values.ContainsKey(RelaySecretKeys.DeviceId));
         Assert.False(fixture.SecretStore.Values.ContainsKey(RelaySecretKeys.DesktopToken));
         Assert.False(fixture.SecretStore.Values.ContainsKey(RelaySecretKeys.DesktopTokenStaging));
         Assert.False(fixture.SecretStore.Values.ContainsKey(RemoteSyncFixture.DesktopPrivateKeySecretKey));
+        Assert.Equal(PairingAvailability.Offline, fixture.Service.State);
+    }
+
+    [Fact]
+    public async Task Forget_pairing_keeps_a_readable_key_so_stored_notes_stay_revealable_after_repairing()
+    {
+        // H3: a readable key means every stored-but-unopened remote note is still decryptable --
+        // destroying it for no reason, as the old logic always did, would silently and needlessly
+        // turn every one of them into a permanent "cannot finish that" error. Only an actually
+        // unreadable key should be destroyed (the poisoned-key test above, and the isolated one
+        // below).
+        await using var fixture = await RemoteSyncFixture.WithStoredEncryptedEnvelopeAsync("still here");
+        fixture.SecretStore.Values[RelaySecretKeys.DeviceId] = Encoding.UTF8.GetBytes("device-1");
+        fixture.SecretStore.Values[RelaySecretKeys.DesktopToken] = Encoding.UTF8.GetBytes("token-1");
+
+        await fixture.Service.ForgetPairingLocallyAsync(fixture.CancellationToken);
+
+        Assert.True(fixture.SecretStore.Values.ContainsKey(RemoteSyncFixture.DesktopPrivateKeySecretKey));
+        Assert.Equal(
+            "still here",
+            (await fixture.Service.RevealAsync(fixture.MessageId, fixture.CancellationToken)).Text);
+    }
+
+    [Fact]
+    public async Task Forget_pairing_destroys_an_unreadable_key_and_purges_the_now_undecryptable_stored_envelope()
+    {
+        // H3: isolates the key-unreadable path from the registration-marker deletes -- only the
+        // key is poisoned, DeviceId/Token stay readable -- to prove specifically that an
+        // unreadable key both gets deleted and takes its now-permanently-undecryptable stored,
+        // unopened envelope with it, instead of leaving a row Love Notes can never finish opening.
+        await using var fixture = await RemoteSyncFixture.WithStoredEncryptedEnvelopeAsync("gone forever");
+        fixture.SecretStore.Values[RelaySecretKeys.DeviceId] = Encoding.UTF8.GetBytes("device-1");
+        fixture.SecretStore.Values[RelaySecretKeys.DesktopToken] = Encoding.UTF8.GetBytes("token-1");
+        fixture.SecretStore.PoisonedKeys.Add(RemoteSyncFixture.DesktopPrivateKeySecretKey);
+
+        await fixture.Service.ForgetPairingLocallyAsync(fixture.CancellationToken);
+
+        Assert.False(fixture.SecretStore.Values.ContainsKey(RemoteSyncFixture.DesktopPrivateKeySecretKey));
+        Assert.Empty(await fixture.RealRepository.ListPendingAsync(fixture.CancellationToken));
+    }
+
+    [Fact]
+    public async Task Forget_pairing_ignores_a_failed_relay_side_device_delete()
+    {
+        // H4: the relay-side delete is best-effort so the partner's device eventually stops
+        // queueing notes to a dead device, but it must never block the local-only forget path
+        // that exists specifically for when the relay itself is unreachable or broken.
+        await using var fixture = await RemoteSyncFixture.WithRegistrationAsync();
+        fixture.Relay.DeleteDeviceException = () => new RelayUnavailableException("simulated outage");
+
+        await fixture.Service.ForgetPairingLocallyAsync(fixture.CancellationToken);
+
+        Assert.False(fixture.SecretStore.Values.ContainsKey(RelaySecretKeys.DeviceId));
+        Assert.False(fixture.SecretStore.Values.ContainsKey(RelaySecretKeys.DesktopToken));
+        Assert.False(fixture.SecretStore.Values.ContainsKey(RelaySecretKeys.DesktopTokenStaging));
+        // The default fixture key is readable, so H3 keeps it -- unaffected by the relay failure.
+        Assert.True(fixture.SecretStore.Values.ContainsKey(RemoteSyncFixture.DesktopPrivateKeySecretKey));
+        Assert.Equal(PairingAvailability.Offline, fixture.Service.State);
+    }
+
+    [Fact]
+    public async Task Forget_pairing_blocks_behind_an_in_flight_registration_instead_of_racing_it()
+    {
+        // B1 (blocker): before the fix, ForgetPairingLocallyAsync neither stopped the loop nor
+        // took _registrationGate, so a re-registration racing an interleaved forget could leave a
+        // device registered on the relay (a fresh DeviceId/Token written mid-forget) with its
+        // matching private key deleted moments later by forget's own delete -- silently bricking
+        // every future note behind a permanent decrypt failure. Block RegisterAsync mid-call so a
+        // registration attempt is provably in flight and holding the gate, then start forget
+        // concurrently: it must not proceed until the registration either finishes or is released.
+        await using var fixture = await RemoteSyncFixture.WithPartialRegistrationAsync();
+        fixture.Relay.BlockRegister = true;
+
+        var pollTask = fixture.Service.PollOnceAsync(fixture.CancellationToken);
+        await fixture.Relay.RegisterEntered.Task.WaitAsync(fixture.CancellationToken);
+
+        var forgetTask = fixture.Service.ForgetPairingLocallyAsync(fixture.CancellationToken);
+        await Task.Delay(TimeSpan.FromMilliseconds(50), fixture.CancellationToken);
+        Assert.False(
+            forgetTask.IsCompleted,
+            "forget must block behind the in-flight registration's _registrationGate, not race it");
+
+        fixture.Relay.ReleaseRegister.TrySetResult(true);
+        await pollTask;
+        await forgetTask;
+
+        Assert.False(fixture.SecretStore.Values.ContainsKey(RelaySecretKeys.DeviceId));
+        Assert.False(fixture.SecretStore.Values.ContainsKey(RelaySecretKeys.DesktopToken));
+        // The registration that won the race used the still-present, readable key, so H3 keeps
+        // it -- there is no "registered but key-less" state reachable through this interleaving.
+        Assert.True(fixture.SecretStore.Values.ContainsKey(RemoteSyncFixture.DesktopPrivateKeySecretKey));
         Assert.Equal(PairingAvailability.Offline, fixture.Service.State);
     }
 
@@ -1181,6 +1324,9 @@ public sealed class RemoteSyncServiceTests
 
         public Task<int> PruneExpiredAsync(DateTimeOffset utcNow, TimeSpan retention, CancellationToken cancellationToken) =>
             _inner.PruneExpiredAsync(utcNow, retention, cancellationToken);
+
+        public Task<int> DeleteAllAsync(CancellationToken cancellationToken) =>
+            _inner.DeleteAllAsync(cancellationToken);
     }
 
     /// <summary>Always throws from the one member <see cref="RemoteSyncService"/> relies on to
@@ -1255,15 +1401,29 @@ public sealed class RemoteSyncServiceTests
         public TaskCompletionSource<bool> ReleasePoll { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public bool BlockPoll { get; set; }
+        // B1 regression seam: lets a test hold EnsureRegisteredAsync mid-registration (and thus
+        // mid-_registrationGate) so it can prove a concurrent ForgetPairingLocallyAsync blocks
+        // behind the gate instead of racing it.
+        public TaskCompletionSource<bool> RegisterEntered { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<bool> ReleaseRegister { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool BlockRegister { get; set; }
 
         public void FailNextPolls(int count) => _failuresRemaining = count;
 
-        public Task<RelayRegistrationResult> RegisterAsync(string publicKeySpki, CancellationToken cancellationToken)
+        public async Task<RelayRegistrationResult> RegisterAsync(string publicKeySpki, CancellationToken cancellationToken)
         {
             RequestCount++;
             RegisterCallCount++;
-            return Task.FromResult(new RelayRegistrationResult(
-                "device-1", "token-1", "ABC123", DateTimeOffset.UtcNow.AddMinutes(10)));
+            if (BlockRegister)
+            {
+                RegisterEntered.TrySetResult(true);
+                await ReleaseRegister.Task;
+            }
+
+            return new RelayRegistrationResult(
+                "device-1", "token-1", "ABC123", DateTimeOffset.UtcNow.AddMinutes(10));
         }
 
         public Task<RelayDeviceInfo> GetDeviceAsync(CancellationToken cancellationToken)

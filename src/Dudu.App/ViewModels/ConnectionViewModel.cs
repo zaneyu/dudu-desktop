@@ -119,8 +119,15 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
         ConnectionConfirmationAction.DeleteRemoteDevice => "delete remote device data cannot undo",
         // F2: distinct from DeleteRemoteDevice -- this never touches the relay, only the local
         // pairing and secrets, so it works even when the relay is unreachable or the secret store
-        // is unreadable. Every already-stored, unrevealed remote note becomes unreadable though.
-        ConnectionConfirmationAction.ForgetPairing => "forget pairing on this pc only cannot undo unopened remote notes lost",
+        // is unreadable.
+        // Review H3: short plain sentences instead of the page's usual cutesy shorthand -- this is
+        // a destructive confirmation, and what she loses genuinely differs by case (this app
+        // cannot know in advance which case applies, so both are stated), so clarity wins here.
+        ConnectionConfirmationAction.ForgetPairing =>
+            "Forgets pairing on this PC only. Unopened love notes usually stay safe and reappear "
+            + "after you pair again. If your saved key turns out to be broken, forgetting also "
+            + "deletes those unopened notes for good. Either way, your partner will need a new "
+            + "pairing code from you afterward.",
         _ => "pick an action above to see effect",
     };
     public string ConfirmationButtonText => PendingConfirmation switch

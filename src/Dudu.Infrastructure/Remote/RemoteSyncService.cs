@@ -52,6 +52,11 @@ public sealed class RemoteSyncService : IAsyncDisposable
     private Task? _loopTask;
     private Task? _stopTask;
     private bool _disposed;
+    // B1: the cancellation token StartAsync was last invoked with (the app's own lifetime token
+    // in production, not a short-lived per-click token). ForgetPairingLocallyAsync needs to stop
+    // and later restart the loop around its local cleanup, and restarting it with anything other
+    // than the token it originally ran under would tie the resumed loop to the wrong lifetime.
+    private CancellationToken _hostCancellationToken;
     private volatile PairingAvailability _state = PairingAvailability.Offline;
     private volatile PairingStatusReason _statusReason = PairingStatusReason.None;
 
@@ -188,6 +193,7 @@ public sealed class RemoteSyncService : IAsyncDisposable
                 _loopCts = null;
             }
 
+            _hostCancellationToken = cancellationToken;
             _loopCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             var token = _loopCts.Token;
             _loopTask = Task.Run(() => RunLoopAsync(token), CancellationToken.None);
@@ -831,41 +837,145 @@ public sealed class RemoteSyncService : IAsyncDisposable
 
     /// <summary>
     /// Audit finding F2's escape hatch: forgets this desktop's pairing entirely on the local
-    /// machine only, without reading any existing secret and without contacting the relay.
+    /// machine, tolerating a relay and/or secret store that are already broken.
     /// <para>
     /// <see cref="RevokeDeviceAsync"/> is the normal unpair path, but it needs a working bearer
     /// token to authenticate the relay delete call -- so it cannot get a user out of an unreadable
     /// secret store (e.g. after a Windows password reset invalidates the DPAPI master key), which
     /// is exactly the state that makes that same token unreadable. <see cref="ISecretStore.DeleteAsync"/>
-    /// never decrypts anything (it only removes the stored ciphertext file), so this works even
-    /// when every secret it touches is permanently unreadable.
+    /// never decrypts anything (it only removes the stored ciphertext file), so the local half of
+    /// this works even when every secret it touches is permanently unreadable.
     /// </para>
     /// <para>
-    /// The old device row is orphaned on the relay -- there is no credential left to delete it
-    /// with -- but the next registration creates a fresh device and key pair, so pairing again
-    /// works. Every already-stored, unrevealed remote note becomes permanently unreadable, same as
-    /// <see cref="RevokeDeviceAsync"/> with <c>destroyEncryptionKey: true</c>, so only a caller with
-    /// the user's explicit confirmation may call this.
+    /// Review B1: this used to race the background poll loop -- an interleaved re-registration
+    /// mid-delete could leave a device registered on the relay with its matching private key
+    /// already gone, silently bricking every future note. The loop is stopped for the duration and
+    /// every delete happens under <see cref="_registrationGate"/> (the same gate
+    /// <see cref="EnsureRegisteredAsync"/> takes), so no concurrent caller can observe or create a
+    /// half-forgotten state; the loop restarts afterward under the same host lifetime token it was
+    /// originally started with.
+    /// </para>
+    /// <para>
+    /// Review H3: the desktop's ECDH private key is destroyed only when it is already permanently
+    /// unreadable (a dead DPAPI blob or an unparsable PKCS#8 blob) -- in that case every
+    /// stored-but-unopened envelope is already undecryptable ciphertext, so those rows are purged
+    /// too, leaving Love Notes clean instead of full of permanent "cannot finish that" errors.
+    /// When the key is still readable it is kept: re-registration below reuses it, and every
+    /// already-stored, unrevealed remote note stays revealable after re-pairing. Already-saved
+    /// notes (<c>local_notes</c>) and relay-delivery dedup state (<c>processed_remote_messages</c>)
+    /// are never touched either way.
+    /// </para>
+    /// <para>
+    /// Review H4: a relay-side device delete is attempted first, best-effort, so the partner's
+    /// device stops queueing notes to what is about to become a dead device. It never blocks or
+    /// fails the local forget -- the whole reason this method exists is to recover when the relay
+    /// and/or the credential needed to talk to it are already broken.
+    /// </para>
+    /// <para>
+    /// Only a caller with the user's explicit confirmation may call this.
     /// </para>
     /// </summary>
     public async Task ForgetPairingLocallyAsync(CancellationToken cancellationToken)
     {
+        var wasRunning = IsRunning;
+        if (wasRunning)
+        {
+            await StopAsync(cancellationToken);
+        }
+
         try
         {
-            await _secretStore.DeleteAsync(RelaySecretKeys.DeviceId, cancellationToken);
-            await _secretStore.DeleteAsync(RelaySecretKeys.DesktopToken, cancellationToken);
-            await _secretStore.DeleteAsync(RelaySecretKeys.DesktopTokenStaging, cancellationToken);
-            await _secretStore.DeleteAsync(DesktopKeyService.SecretStoreKey, cancellationToken);
+            await _registrationGate.WaitAsync(cancellationToken);
+            try
+            {
+                // H4 first: still has a chance at a live token, and must never block the local
+                // forget that follows.
+                await TryDeleteDeviceOnRelayBestEffortAsync(cancellationToken);
+
+                // H3: decide the key's fate before mutating anything, so every local secret-store
+                // delete below is unconditional once it starts.
+                var keyIsReadable = await TryKeepDesktopKeyIfReadableAsync(cancellationToken);
+
+                // B1: device id first, matching RevokeDeviceAsync's own convention -- it is the
+                // registration completion marker, so any failure partway through the rest of this
+                // sequence (including the key delete below) leaves a state EnsureRegisteredAsync
+                // already treats as unregistered, never "registered but key-less".
+                await _secretStore.DeleteAsync(RelaySecretKeys.DeviceId, cancellationToken);
+                await _secretStore.DeleteAsync(RelaySecretKeys.DesktopToken, cancellationToken);
+                await _secretStore.DeleteAsync(RelaySecretKeys.DesktopTokenStaging, cancellationToken);
+
+                if (!keyIsReadable)
+                {
+                    await _secretStore.DeleteAsync(DesktopKeyService.SecretStoreKey, cancellationToken);
+                    await _envelopes.DeleteAllAsync(cancellationToken);
+                }
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                // P1: same diagnostic convention as every other local-cleanup failure. Type name only.
+                PrivacySafeLog.SyncStateProbeFailed(_logger, 0, exception.GetType().Name);
+                throw;
+            }
+            finally
+            {
+                _registrationGate.Release();
+            }
+
+            _state = PairingAvailability.Offline;
+            _statusReason = PairingStatusReason.None;
+        }
+        finally
+        {
+            if (wasRunning)
+            {
+                await StartAsync(_hostCancellationToken);
+            }
+        }
+    }
+
+    /// <summary>H4: stops the partner's device from queueing notes to what is about to become a
+    /// dead device, but never blocks or fails the local forget path this is called from -- that
+    /// path exists specifically for when the relay, or the credential needed to talk to it, is
+    /// already broken.</summary>
+    private async Task TryDeleteDeviceOnRelayBestEffortAsync(CancellationToken cancellationToken)
+    {
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+        try
+        {
+            await _relay.DeleteDeviceAsync(linkedCts.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // The bounded timeout fired, not the caller's own cancellation -- ignore, best-effort.
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            // P1: same diagnostic convention as every other local-cleanup failure. Type name only.
+            // Offline relay, already-gone device, dead token, anything else -- all ignored.
+            // Type name only, matching every other local-cleanup diagnostic in this class.
             PrivacySafeLog.SyncStateProbeFailed(_logger, 0, exception.GetType().Name);
-            throw;
         }
+    }
 
-        _state = PairingAvailability.Offline;
-        _statusReason = PairingStatusReason.None;
+    /// <summary>H3: true if the desktop's ECDH private key parses and is therefore still usable
+    /// (re-registration will reuse it and every already-stored envelope stays revealable) -- in
+    /// which case it must not be destroyed. False only when reading or parsing it threw
+    /// <see cref="SecretStoreException"/>, meaning it is permanently unreadable and every envelope
+    /// encrypted to it is already permanently undecryptable.</summary>
+    private async Task<bool> TryKeepDesktopKeyIfReadableAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var keyMaterial = await _keyService.GetOrCreateAsync(cancellationToken);
+            // Same M3 rule as PollOnceAsync/EnsureRegisteredAsync: the PKCS#8 copy this call
+            // owns never outlives the call.
+            CryptographicOperations.ZeroMemory(keyMaterial.PrivateKeyPkcs8);
+            return true;
+        }
+        catch (SecretStoreException)
+        {
+            return false;
+        }
     }
 
     private async Task EnsureRegisteredAsync(CancellationToken cancellationToken)

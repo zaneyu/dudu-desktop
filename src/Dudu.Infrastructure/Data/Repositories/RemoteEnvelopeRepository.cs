@@ -116,6 +116,18 @@ public sealed class RemoteEnvelopeRepository : SqliteRepository, IRemoteEnvelope
     public async Task DeleteAsync(string messageId, CancellationToken cancellationToken)
     { await using var connection=await OpenAsync(cancellationToken); await using var command=connection.CreateCommand(); command.CommandText="DELETE FROM remote_envelopes WHERE message_id=$id;"; Add(command,"$id",messageId); await command.ExecuteNonQueryAsync(cancellationToken); }
 
+    public async Task<int> DeleteAllAsync(CancellationToken cancellationToken)
+    {
+        // H3: processed_remote_messages (relay-delivery deduplication) is deliberately left
+        // alone, matching PruneExpiredAsync -- it is dedup state, not user-read state, and keeping
+        // it means a since-forgotten message id can never resurrect as "new" if it somehow
+        // reappeared on the relay.
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM remote_envelopes;";
+        return await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     public async Task<int> PruneExpiredAsync(DateTimeOffset utcNow, TimeSpan retention, CancellationToken cancellationToken)
     {
         if (retention < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(retention));
