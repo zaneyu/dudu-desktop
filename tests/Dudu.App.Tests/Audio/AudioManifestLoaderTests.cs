@@ -36,7 +36,7 @@ public sealed class AudioManifestLoaderTests
             ("bad signature", fixture => fixture.ReplaceCueBytesAsync("not-a-wave"u8.ToArray())),
             ("RIFF boundary", fixture => fixture.AppendCueBytesAsync("outside-container"u8.ToArray())),
             ("non-PCM", fixture => fixture.SetPcmFormatAsync(3)),
-            ("long duration", fixture => fixture.SetCueDurationAsync(AudioManifestContract.MaxCueDurationMs + 1)),
+            ("duration", fixture => fixture.SetCueDurationAsync(AudioManifestContract.MaxCueDurationMs + 1)),
             ("large file", fixture => fixture.ReplaceCueBytesAsync(new byte[AudioManifestContract.MaxCueFileBytes + 1])),
             ("hash mismatch", fixture => fixture.SetCueHashAsync(new string('a', 64))),
             ("uppercase hash", fixture => fixture.SetCueHashAsync(fixture.Sha256.ToUpperInvariant())),

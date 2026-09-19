@@ -21,7 +21,7 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
         RefreshCommand = new AsyncRelayCommand((CancellationToken ct) => RefreshAsync(ct));
         SaveLocalNoteCommand = new AsyncRelayCommand((CancellationToken ct) => SaveLocalNoteAsync(ct));
         NewNoteCommand = new RelayCommand(NewNote);
-        DeleteLocalNoteCommand = new AsyncRelayCommand<LocalLoveNote>((item, ct) => DeleteLocalNoteAsync(item, ct));
+        DeleteLocalNoteCommand = new AsyncRelayCommand<LocalLoveNote?>((item, ct) => DeleteLocalNoteAsync(item, ct));
         RevealRemoteNoteCommand = new AsyncRelayCommand<RemoteEnvelope>((item, ct) => RevealRemoteNoteAsync(item, ct));
         SaveOpenedNoteCommand = new AsyncRelayCommand<object?>((item, ct) => SaveOpenedNoteAsync(item, ct));
         ShowLocalNoteCommand = new AsyncRelayCommand((CancellationToken ct) => ShowLocalNoteAsync(ct));
@@ -30,7 +30,7 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
     public IAsyncRelayCommand RefreshCommand { get; }
     public IAsyncRelayCommand SaveLocalNoteCommand { get; }
     public IRelayCommand NewNoteCommand { get; }
-    public IAsyncRelayCommand<LocalLoveNote> DeleteLocalNoteCommand { get; }
+    public IAsyncRelayCommand<LocalLoveNote?> DeleteLocalNoteCommand { get; }
     public IAsyncRelayCommand<RemoteEnvelope> RevealRemoteNoteCommand { get; }
     public IAsyncRelayCommand<object?> SaveOpenedNoteCommand { get; }
     public IAsyncRelayCommand ShowLocalNoteCommand { get; }
@@ -113,9 +113,9 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
 
     public Task DeleteLocalNoteAsync(LocalLoveNote? note, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(note);
         return RunAsync(async () =>
         {
+            ArgumentNullException.ThrowIfNull(note);
             await _context.LocalNotes.DeleteAsync(note.Id, cancellationToken);
             await MutateAsync(() =>
             {
