@@ -193,6 +193,9 @@ public static class WindowsCompanionProductionComposition
                 provider.GetRequiredService<IReminderRepository>(),
                 () => presentationGateway
                     ?? throw new InvalidOperationException("The presentation gateway is not ready.")))
+            .AddSingleton<IRemoteNoteArrivalSink>(provider => new RemoteNoteArrivalSink(
+                () => presentationGateway
+                    ?? throw new InvalidOperationException("The presentation gateway is not ready.")))
             .BuildServiceProvider();
         var host = new AppHost(services, paths);
         WireDataFailureDiagnostics(services, paths);
@@ -202,6 +205,13 @@ public static class WindowsCompanionProductionComposition
             // before the host's error reporter existed; attach it now so
             // reminder-notify diagnostics reach the shared sink.
             reminderDueSink.ErrorReporter = host.ErrorReporter;
+        }
+
+        if (services.GetService<IRemoteNoteArrivalSink>() is RemoteNoteArrivalSink remoteNoteArrivalSink)
+        {
+            // Same reasoning as the reminder sink above: the host's error
+            // reporter does not exist yet when this sink is registered.
+            remoteNoteArrivalSink.ErrorReporter = host.ErrorReporter;
         }
         var composer = default(SkiaFrameComposer);
         var presenter = default(LayeredFramePresenter);

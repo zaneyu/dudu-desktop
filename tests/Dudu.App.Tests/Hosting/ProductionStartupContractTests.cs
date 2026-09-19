@@ -27,6 +27,52 @@ public sealed class ProductionStartupContractTests
     }
 
     [Fact]
+    public void Remote_note_arrival_sink_overrides_the_infrastructure_null_default()
+    {
+        // Dudu.Infrastructure.DependencyInjection registers NullRemoteNoteArrivalSink (and
+        // NullReminderDueSink) as safe library-level defaults. Building the real production
+        // ServiceProvider to assert what IRemoteNoteArrivalSink resolves to isn't practical
+        // here: composition lives inline in a private method that goes on to touch WinUI and
+        // the OS version, none of which this Mac/CI test host can run (see
+        // Safe_mode_returns_before_constructing_native_overlay_runtime above for the same
+        // constraint). So, like the other source-contract checks in this file, this asserts
+        // directly on the composition source: the App composition root must override both
+        // Null* defaults with their real implementations in the same builder chain, or a
+        // regression here means notes/reminders silently stop reaching the screen again.
+        var root = FindRepositoryRoot();
+        var dependencyInjection = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.Infrastructure", "DependencyInjection.cs"));
+        var composition = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.App", "Hosting", "WindowsCompanionProductionComposition.cs"));
+
+        Assert.Contains(
+            "services.AddSingleton<IRemoteNoteArrivalSink, NullRemoteNoteArrivalSink>();",
+            dependencyInjection);
+        Assert.Contains(
+            "services.AddSingleton<IReminderDueSink, NullReminderDueSink>();",
+            dependencyInjection);
+
+        var reminderSinkIndex = composition.IndexOf(
+            ".AddSingleton<IReminderDueSink>(provider => new ReminderDueSink(",
+            StringComparison.Ordinal);
+        var remoteNoteSinkIndex = composition.IndexOf(
+            ".AddSingleton<IRemoteNoteArrivalSink>(provider => new RemoteNoteArrivalSink(",
+            StringComparison.Ordinal);
+        var buildServiceProviderIndex = composition.IndexOf(
+            ".BuildServiceProvider();",
+            StringComparison.Ordinal);
+
+        Assert.True(reminderSinkIndex >= 0, "IReminderDueSink must be overridden with the real sink.");
+        Assert.True(remoteNoteSinkIndex >= 0, "IRemoteNoteArrivalSink must be overridden with the real sink.");
+        Assert.True(
+            remoteNoteSinkIndex > reminderSinkIndex,
+            "The remote-note sink override should sit next to the reminder sink override.");
+        Assert.True(
+            buildServiceProviderIndex > remoteNoteSinkIndex,
+            "Both overrides must be registered before the service provider is built.");
+    }
+
+    [Fact]
     public void Production_overlay_visibility_uses_the_sampled_fullscreen_gate()
     {
         var root = FindRepositoryRoot();

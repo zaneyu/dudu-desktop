@@ -14,7 +14,7 @@ namespace Dudu.App.Presentation;
 public sealed class RemoteNoteArrivalSink : IRemoteNoteArrivalSink
 {
     private readonly Func<IUnsolicitedPresentationGateway> _gateway;
-    private readonly IAppHostErrorReporter? _errorReporter;
+    private IAppHostErrorReporter? _errorReporter;
 
     public RemoteNoteArrivalSink(
         Func<IUnsolicitedPresentationGateway> gateway,
@@ -22,6 +22,17 @@ public sealed class RemoteNoteArrivalSink : IRemoteNoteArrivalSink
     {
         _gateway = gateway ?? throw new ArgumentNullException(nameof(gateway));
         _errorReporter = errorReporter;
+    }
+
+    /// <summary>
+    /// Settable so the production composition can attach the shared AppHost
+    /// sink after construction: the sink is registered before the host — and
+    /// therefore its error reporter — exists. Mirrors <see cref="ReminderDueSink.ErrorReporter"/>.
+    /// </summary>
+    public IAppHostErrorReporter? ErrorReporter
+    {
+        get => _errorReporter;
+        set => _errorReporter = value;
     }
 
     public async Task NotifyAsync(Guid messageId, CancellationToken cancellationToken)
