@@ -226,14 +226,37 @@ public static class WindowsCompanionProductionComposition
         try
         {
             var database = services.GetRequiredService<Database>();
-            await RunStartupPhaseAsync(
-                "db-init",
-                () => database.InitializeAsync(cancellationToken));
             var preferencesRepository = services.GetRequiredService<IPreferencesRepository>();
-            var preferences = await preferencesRepository.GetAsync(cancellationToken)
-                ?? services.GetRequiredService<Preferences>();
             var profileRepository = services.GetRequiredService<IProfileRepository>();
-            var profile = await profileRepository.GetAsync(cancellationToken);
+            var databaseUnavailable = false;
+            try
+            {
+                await RunStartupPhaseAsync(
+                    "db-init",
+                    () => database.InitializeAsync(cancellationToken));
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (StartupPhaseException)
+            {
+                // A database that cannot open (SQLITE_BUSY/CANTOPEN/FULL, etc.) must not
+                // silently exit the process: fall into safe mode below so she still sees
+                // the settings surface and the safe-mode notice instead of nothing at all.
+                // The failure itself is already recorded by the Database.FailureReporter
+                // hook wired above.
+                databaseUnavailable = true;
+                safeMode = true;
+            }
+
+            var preferences = databaseUnavailable
+                ? services.GetRequiredService<Preferences>()
+                : await preferencesRepository.GetAsync(cancellationToken)
+                    ?? services.GetRequiredService<Preferences>();
+            var profile = databaseUnavailable
+                ? null
+                : await profileRepository.GetAsync(cancellationToken);
             // The host starts from a safe neutral placement so its first
             // monitor snapshot describes the monitor it actually occupies.
             // Saved placements are selected only after that identity is known.
@@ -672,8 +695,6 @@ public static class WindowsCompanionProductionComposition
                 startup,
                 services,
                 crashGuard,
-                safeMode ? notificationService : null,
-                safeMode ? actions : null,
                 audioCueService,
                 audioPlayer);
         }
@@ -923,7 +944,20 @@ public static class WindowsCompanionProductionComposition
             AvailableOutfitKeys = ["base"],
         });
 
-        return new SafeModePrimaryRuntime(host, services, startup, actions, startupSettings, crashGuard);
+        // No overlay is composed in safe mode, so the notification service that
+        // normally comes from initializeOverlay does not exist yet; build one
+        // here so she still gets the safe-mode notice.
+        var notifications = new AppNotificationService(
+            new WindowsAppNotificationSink(),
+            errorReporter: host.ErrorReporter);
+        return new SafeModePrimaryRuntime(
+            host,
+            services,
+            startup,
+            actions,
+            startupSettings,
+            crashGuard,
+            notifications);
     }
 
     private static async Task CreateBackupAsync(
@@ -1057,8 +1091,6 @@ public static class WindowsCompanionProductionComposition
         StartupRegistrationService startup,
         ServiceProvider services,
         StartupCrashGuard crashGuard,
-        AppNotificationService? safeModeNotifications,
-        CompanionUiActions? safeModeActions,
         AudioCueService? audioCueService,
         IAudioCuePlayer? audioPlayer) : IPrimaryAppRuntime
     {
@@ -1070,22 +1102,6 @@ public static class WindowsCompanionProductionComposition
             await runtime.StartAsync(cancellationToken);
             Volatile.Write(ref _started, 1);
             _ = crashGuard.MarkCleanAfterAsync(StableRunPeriod, _stopping.Token);
-            if (safeModeActions is not null)
-            {
-                _ = ObserveNativeCallbackAsync(ShowSafeModeNoticeAsync(), "safe-mode-notice");
-            }
-        }
-
-        private async Task ShowSafeModeNoticeAsync()
-        {
-            var token = _stopping.Token;
-            if (safeModeNotifications is not null)
-            {
-                await safeModeNotifications.TryRegisterAsync(token);
-                await safeModeNotifications.ShowSafeModeNoticeAsync(token);
-            }
-
-            await safeModeActions!.OpenHome(token);
         }
 
         public Task ActivateAsync(
@@ -1117,7 +1133,8 @@ public static class WindowsCompanionProductionComposition
         StartupRegistrationService startup,
         CompanionUiActions actions,
         StartupSettingsService startupSettings,
-        StartupCrashGuard crashGuard) : IPrimaryAppRuntime
+        StartupCrashGuard crashGuard,
+        AppNotificationService? notifications) : IPrimaryAppRuntime
     {
         private readonly CancellationTokenSource _stopping = new();
         private int _started;
@@ -1127,6 +1144,17 @@ public static class WindowsCompanionProductionComposition
             await actions.OpenSettings(startupSettings, cancellationToken);
             Volatile.Write(ref _started, 1);
             _ = crashGuard.MarkCleanAfterAsync(StableRunPeriod, _stopping.Token);
+            if (notifications is not null)
+            {
+                _ = ObserveNativeCallbackAsync(ShowSafeModeNoticeAsync(), "safe-mode-notice");
+            }
+        }
+
+        private async Task ShowSafeModeNoticeAsync()
+        {
+            var token = _stopping.Token;
+            await notifications!.TryRegisterAsync(token);
+            await notifications.ShowSafeModeNoticeAsync(token);
         }
 
         public Task ActivateAsync(

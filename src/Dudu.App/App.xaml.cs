@@ -9,6 +9,9 @@ using Microsoft.Windows.AppLifecycle;
 using Microsoft.Windows.AppNotifications;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
+using Windows.Win32;
+using Windows.Win32.Foundation;
+using Windows.Win32.UI.WindowsAndMessaging;
 
 namespace Dudu.App;
 
@@ -31,6 +34,11 @@ public sealed partial class App : Application
     {
         InitializeComponent();
         SubscribeGlobalCrashReporting();
+        // The overlay runs its own window on a background thread; without this, closing
+        // the Settings window (the last XAML window on this thread) would exit the whole
+        // app. Only the explicit exit paths below (tray "quit", single-instance shutdown,
+        // startup failure) call Exit().
+        DispatcherShutdownMode = DispatcherShutdownMode.OnExplicitShutdown;
         _dispatcherQueue = DispatcherQueue.GetForCurrentThread()
             ?? throw new InvalidOperationException("Dudu must start on a WinUI dispatcher thread.");
         _uiDispatcher = new AwaitableUiDispatcher(
@@ -289,9 +297,10 @@ public sealed partial class App : Application
         var phase = exception is StartupPhaseException phaseException
             ? phaseException.Phase
             : "bootstrap";
+        var paths = AppPaths.ForCurrentUser();
         try
         {
-            StartupFailureLogger.Record(AppPaths.ForCurrentUser(), phase, exception);
+            StartupFailureLogger.Record(paths, phase, exception);
         }
         catch
         {
@@ -299,6 +308,31 @@ public sealed partial class App : Application
         }
 
         Trace.TraceError("Dudu startup failed: {0}", exception);
+        ShowStartupFailureMessageBox(paths);
+    }
+
+    /// <summary>
+    /// Startup failures used to be silent: the process exited with no window
+    /// and no explanation. A plain native message box needs nothing from the
+    /// (possibly broken) app composition, so it still works when everything
+    /// else has failed.
+    /// </summary>
+    private static void ShowStartupFailureMessageBox(AppPaths paths)
+    {
+        try
+        {
+            var logFile = Path.Combine(paths.Logs, StartupFailureLogger.FileName);
+            PInvoke.MessageBox(
+                HWND.Null,
+                $"aiyo dudu couldn't start this time. see the log for details:\n{logFile}",
+                "dudu",
+                MESSAGEBOX_STYLE.MB_OK | MESSAGEBOX_STYLE.MB_ICONERROR);
+        }
+        catch
+        {
+            // The message box is best-effort; it must never prevent the
+            // controlled exit path below.
+        }
     }
 
     /// <summary>
@@ -385,7 +419,33 @@ public sealed partial class App : Application
 
     private static void ExitApplicationCore()
     {
-        (Current as App)?._performanceAllocationTimer?.Dispose();
+        var app = Current as App;
+        app?._performanceAllocationTimer?.Dispose();
+        DisposeBootstrapBounded(app);
         Current?.Exit();
+    }
+
+    /// <summary>
+    /// A hung <see cref="WindowsCompanionBootstrap.DisposeAsync"/> must never
+    /// block the explicit exit paths (tray "quit", single-instance shutdown,
+    /// startup failure), so this waits for it but only up to 5 seconds.
+    /// </summary>
+    private static void DisposeBootstrapBounded(App? app)
+    {
+        var bootstrap = app?._bootstrap;
+        if (bootstrap is null)
+        {
+            return;
+        }
+
+        app!._bootstrap = null;
+        try
+        {
+            bootstrap.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5));
+        }
+        catch (Exception exception)
+        {
+            Trace.TraceError("Dudu bootstrap dispose on exit failed: {0}", exception);
+        }
     }
 }
