@@ -223,6 +223,81 @@ public sealed class PresentationCoordinatorTests
     }
 
     [Fact]
+    public async Task Reminder_presentation_is_acknowledged_so_the_pet_returns_to_idle()
+    {
+        // Regression for B5: before this fix, only LocalNote presentations
+        // were acknowledged in PresentAsync's finally block, so a due
+        // reminder's id sat in the state machine's pending set forever and
+        // Select() kept ranking PetState.Reminder above everything else.
+        var pet = PetStateMachine.CreateIdle();
+        var coordinator = new PresentationCoordinator(
+            new PresentationPolicy(TimeSpan.Zero),
+            new RecordingNotificationService(),
+            pet,
+            (_, _, _) => Task.CompletedTask,
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1));
+
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-1", "Stretch"),
+            bypassSuppression: false,
+            CancellationToken.None);
+
+        Assert.Equal(PetState.Idle, pet.Current.State);
+    }
+
+    [Fact]
+    public async Task RemoteNote_presentation_is_acknowledged_so_the_pet_returns_to_idle()
+    {
+        var pet = PetStateMachine.CreateIdle();
+        var coordinator = new PresentationCoordinator(
+            new PresentationPolicy(TimeSpan.Zero),
+            new RecordingNotificationService(),
+            pet,
+            (_, _, _) => Task.CompletedTask,
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1));
+
+        await coordinator.PublishAsync(
+            DurableNotification.RemoteNote(Guid.NewGuid().ToString("D")),
+            bypassSuppression: false,
+            CancellationToken.None);
+
+        Assert.Equal(PetState.Idle, pet.Current.State);
+    }
+
+    [Fact]
+    public async Task A_second_reminder_still_shows_while_the_first_is_acknowledged()
+    {
+        // The coalesced-card design (PetStateMachine.PendingCount) must
+        // survive the per-item acknowledgement: dismissing the item that was
+        // just shown should not touch a different reminder still pending.
+        var pet = PetStateMachine.CreateIdle();
+        pet.Handle(new PetEvent.ReminderDue("reminder-2"));
+        var coordinator = new PresentationCoordinator(
+            new PresentationPolicy(TimeSpan.Zero),
+            new RecordingNotificationService(),
+            pet,
+            (_, _, _) => Task.CompletedTask,
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1));
+
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-1", "Stretch"),
+            bypassSuppression: false,
+            CancellationToken.None);
+
+        Assert.Equal(PetState.Reminder, pet.Current.State);
+        Assert.Equal(1, pet.PendingCount);
+    }
+
+    [Fact]
     public async Task Eligible_ambient_tick_selects_and_presents_a_local_note_through_the_gateway()
     {
         var clock = new FixedClock(DateTimeOffset.Parse("2026-09-14T16:00:00Z"));

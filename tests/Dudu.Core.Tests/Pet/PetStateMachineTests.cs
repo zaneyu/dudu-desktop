@@ -193,6 +193,37 @@ public sealed class PetStateMachineTests
     }
 
     [Fact]
+    public void Acknowledging_a_presented_reminder_clears_it_so_select_returns_to_idle()
+    {
+        // PresentationCoordinator now dismisses a Reminder/RemoteNote item by
+        // id once it has finished presenting it, the same way it already did
+        // for a LocalNote — this is that acknowledgement's effect on the
+        // state machine itself. Before that fix, nothing but a manual
+        // Settings "complete" ever called Dismissed for these ids, so the
+        // pet stayed on the note-arrival pose forever after the first due
+        // reminder.
+        var machine = PetStateMachine.CreateIdle();
+        machine.Handle(new PetEvent.ReminderDue("medicine"));
+        Assert.Equal(PetState.Reminder, machine.Current.State);
+
+        var result = machine.Handle(new PetEvent.Dismissed("medicine"));
+
+        Assert.Equal(PetState.Idle, result.State);
+    }
+
+    [Fact]
+    public void Acknowledging_a_presented_remote_note_clears_it_so_select_returns_to_idle()
+    {
+        var machine = PetStateMachine.CreateIdle();
+        machine.Handle(new PetEvent.RemoteNoteArrived("m-1"));
+        Assert.Equal(PetState.RemoteNote, machine.Current.State);
+
+        var result = machine.Handle(new PetEvent.Dismissed("m-1"));
+
+        Assert.Equal(PetState.Idle, result.State);
+    }
+
+    [Fact]
     public async Task Concurrent_reads_and_events_are_serialized_without_corrupting_state()
     {
         var machine = PetStateMachine.CreateIdle();

@@ -380,6 +380,19 @@ public sealed class PresentationCoordinator :
                     item.AnimationKey ?? throw new InvalidOperationException(
                         "A local note presentation has no animation key.")));
             }
+            else if (item.Kind is PresentationItemKind.Reminder or PresentationItemKind.RemoteNote)
+            {
+                // A reminder/note id otherwise sits in the state machine's
+                // pending set forever (cleared only by an explicit Settings
+                // dismiss/complete): Select() would keep ranking it above
+                // ambient, welcome-back, and even a completed focus session
+                // for the rest of the session. Acknowledging it here, the
+                // same way a LocalNote is acknowledged above, lets the pet
+                // return to its normal presentation once this specific item
+                // has actually been shown; the coalesced card just shows one
+                // fewer pending item if others remain.
+                _pet.Handle(new PetEvent.Dismissed(item.Id));
+            }
             _petGate.Release();
         }
 
