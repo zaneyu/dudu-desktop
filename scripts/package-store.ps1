@@ -190,6 +190,21 @@ function Assert-StoreVersion {
 
 }
 
+function Set-StoreManifestVersion {
+    param(
+        [Parameter(Mandatory)][xml]$Manifest,
+        [Parameter(Mandatory)][string]$Version
+    )
+
+    $namespaceManager = [System.Xml.XmlNamespaceManager]::new($Manifest.NameTable)
+    $namespaceManager.AddNamespace('f', 'http://schemas.microsoft.com/appx/manifest/foundation/windows10')
+    $identity = $Manifest.SelectSingleNode('/f:Package/f:Identity', $namespaceManager)
+    if ($null -eq $identity) {
+        throw 'Store package manifest has no Identity element while staging its version.'
+    }
+    $identity.SetAttribute('Version', $Version)
+}
+
 function Assert-PartnerCenterIdentity {
     param(
         [Parameter(Mandatory)][System.Xml.XmlElement]$sourceIdentity,
@@ -374,7 +389,8 @@ try {
     $manifestPath = Join-Path $repoRoot 'src/Dudu.App/Package.appxmanifest'
     if (-not (Test-Path -LiteralPath $appProject)) { throw "Store app project is missing: $appProject" }
     if (-not (Test-Path -LiteralPath $manifestPath)) { throw "Store package manifest is missing: $manifestPath" }
-    [xml]$sourceManifest = Get-Content -Raw -LiteralPath $manifestPath
+    $originalManifestText = Get-Content -Raw -LiteralPath $manifestPath
+    [xml]$sourceManifest = $originalManifestText
     $sourceIdentity = $sourceManifest.Package.Identity
     if (-not $sourceIdentity) { throw "Store package manifest has no Identity element: $manifestPath" }
     if ($AcceptanceOnly) {
@@ -403,10 +419,16 @@ foreach ($directory in @($packageDirectory, $metadataDirectory)) {
 New-Item -ItemType Directory -Path $publishDirectory -Force | Out-Null
 New-Item -ItemType Directory -Path $unpackDirectory -Force | Out-Null
 
+$manifestVersionStaged = $false
 $stage = 'dotnet diagnostic'
 try {
     & dotnet --info | Set-Content -LiteralPath (Join-Path $metadataDirectory 'dotnet-info.txt') -Encoding utf8
     if ($LASTEXITCODE -ne 0) { throw "dotnet --info failed with exit code $LASTEXITCODE." }
+
+    $stage = 'manifest version staging'
+    Set-StoreManifestVersion -Manifest $sourceManifest -Version $expectedPackageVersion
+    $manifestVersionStaged = $true
+    $sourceManifest.Save($manifestPath)
 
     $stage = 'dotnet publish'
     & dotnet publish $appProject -c Release -r win-x64 --self-contained true --no-restore `
@@ -518,4 +540,9 @@ try {
 catch {
     Write-PostCleanupFailureEvidence -Stage $stage -Message $_.Exception.Message
     throw
+}
+finally {
+    if ($manifestVersionStaged) {
+        [IO.File]::WriteAllText($manifestPath, $originalManifestText, [Text.UTF8Encoding]::new($false))
+    }
 }

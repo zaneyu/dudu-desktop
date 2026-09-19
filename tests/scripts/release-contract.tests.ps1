@@ -156,6 +156,21 @@ if (Test-Path -LiteralPath $storeScriptPath) {
         }
         Assert-True "Store identity function rejects the local non-production identity" $rejectedLocalIdentity
     }
+    $manifestVersionFunction = @($storeScriptAst.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Set-StoreManifestVersion'
+    }, $true))
+    Assert-True "Store package script exposes a manifest-version staging function" ($manifestVersionFunction.Count -eq 1)
+    if ($manifestVersionFunction.Count -eq 1) {
+        . ([scriptblock]::Create($manifestVersionFunction[0].Extent.Text))
+        [xml]$versionManifest = '<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"><Identity Name="DuduDesktop.Local.NonProduction" Publisher="CN=Local" Version="1.0.0.0" ProcessorArchitecture="x64" /></Package>'
+        $stagedVersion = $true
+        try { Set-StoreManifestVersion -Manifest $versionManifest -Version '1.0.1.0' } catch { $stagedVersion = $false }
+        Assert-True "manifest-version staging updates the requested package version" ($stagedVersion -and $versionManifest.Package.Identity.Version -eq '1.0.1.0')
+    }
+    Assert-Contains "Store package stages the requested manifest version before publishing" $storeScript 'Set-StoreManifestVersion\s+-Manifest\s+\$sourceManifest\s+-Version\s+\$expectedPackageVersion'
+    Assert-Contains "Store package restores the source manifest after packaging" $storeScript 'WriteAllText\(\$manifestPath\s*,\s*\$originalManifestText'
     $acceptanceIdentityFunction = @($storeScriptAst.FindAll({
         param($node)
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
@@ -312,11 +327,12 @@ if (Test-Path -LiteralPath $storeScriptPath) {
     $preflightCommentIndex = $storeScript.IndexOf("# Validate every host, source, and tool input")
     $preflightTryIndex = $storeScript.IndexOf("try {", $preflightCommentIndex)
     $hostPreflightIndex = $storeScript.IndexOf("OperatingSystem]::IsWindows")
-    $manifestPreflightIndex = $storeScript.IndexOf("[xml]`$sourceManifest = Get-Content -Raw -LiteralPath `$manifestPath")
+    $manifestPreflightIndex = $storeScript.IndexOf("`$originalManifestText = Get-Content -Raw -LiteralPath `$manifestPath")
+    $sourceManifestIndex = $storeScript.IndexOf("[xml]`$sourceManifest = `$originalManifestText")
     $toolPreflightIndex = $storeScript.IndexOf("`$sdkTools = Resolve-WindowsSdkTools")
     Assert-True "Store host, manifest, and tool preflight use the protected evidence path before package output deletion" (
         $clearOutputIndex -ge 0 -and $preflightCommentIndex -ge 0 -and $preflightTryIndex -ge 0 -and $hostPreflightIndex -gt $preflightTryIndex -and
-        $manifestPreflightIndex -ge 0 -and $toolPreflightIndex -ge 0 -and
+        $manifestPreflightIndex -ge 0 -and $sourceManifestIndex -gt $manifestPreflightIndex -and $toolPreflightIndex -ge 0 -and
         $manifestPreflightIndex -lt $clearOutputIndex -and $toolPreflightIndex -lt $clearOutputIndex
     )
     Assert-Contains "Store package script sanitizes protected preflight evidence" $storeScript 'token\|secret\|password'
