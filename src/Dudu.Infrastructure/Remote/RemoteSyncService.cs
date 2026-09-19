@@ -403,9 +403,47 @@ public sealed class RemoteSyncService : IAsyncDisposable
         var keyMaterial = await _keyService.GetOrCreateAsync(cancellationToken);
         try
         {
+            // M2: one throwing envelope used to abort the whole batch, and -- because it is never
+            // acked when that happens -- come back first on every subsequent poll, permanently
+            // starving every envelope behind it (head-of-line blocking). Process every envelope in
+            // the batch regardless of earlier failures, then report the failure(s) once the batch
+            // ends so RunLoopAsync's existing backoff still applies. No attempt counter or
+            // quarantine: a still-broken envelope simply fails again next poll.
+            List<Exception>? failures = null;
             foreach (var envelope in envelopes)
             {
-                await ProcessEnvelopeAsync(envelope, keyMaterial.PrivateKeyPkcs8, cancellationToken);
+                try
+                {
+                    await ProcessEnvelopeAsync(envelope, keyMaterial.PrivateKeyPkcs8, cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    (failures ??= new List<Exception>()).Add(exception);
+                    if (Guid.TryParse(envelope.MessageId, out var failedId))
+                    {
+                        // Exception type only -- never the message, matching the decrypt-failure
+                        // logging convention elsewhere in this method.
+                        PrivacySafeLog.EnvelopeRejected(_logger, failedId, "batch:" + exception.GetType().Name);
+                    }
+                }
+            }
+
+            if (failures is { Count: > 0 })
+            {
+                // A dead credential ends the whole poll rather than being aggregated away, so
+                // RunLoopAsync's existing 401 handling (stop polling, converge on NeedsRepair)
+                // still applies even when it surfaced partway through a batch.
+                var authFailure = failures.OfType<RelayUnauthorizedException>().FirstOrDefault();
+                if (authFailure is not null)
+                {
+                    throw authFailure;
+                }
+
+                throw failures.Count == 1 ? failures[0] : new AggregateException(failures);
             }
         }
         finally

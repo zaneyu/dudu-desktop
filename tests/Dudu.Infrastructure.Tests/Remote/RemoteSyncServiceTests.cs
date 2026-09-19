@@ -85,6 +85,22 @@ public sealed class RemoteSyncServiceTests
     }
 
     [Fact]
+    public async Task One_failing_envelope_does_not_block_the_rest_of_the_batch()
+    {
+        // M2: a throwing envelope used to abort the whole foreach and -- since it was never acked
+        // -- come back first on every subsequent poll, permanently starving every envelope behind
+        // it. The good envelope listed after the failing one must still be stored, notified, and
+        // acked in the same poll.
+        await using var fixture = await RemoteSyncFixture.WithOneFailingEnvelopeAmongGoodOnesAsync();
+
+        await Assert.ThrowsAsync<RemoteSyncException>(
+            () => fixture.Service.PollOnceAsync(fixture.CancellationToken));
+
+        Assert.Equal(new[] { fixture.MessageId }, fixture.AcknowledgedIds);
+        Assert.Equal([Guid.ParseExact(fixture.MessageId, "D")], fixture.Presentations);
+    }
+
+    [Fact]
     public async Task Reveal_does_not_make_a_network_call_or_persist_plaintext()
     {
         await using var fixture = await RemoteSyncFixture.WithStoredEncryptedEnvelopeAsync("private hello");
@@ -864,6 +880,21 @@ public sealed class RemoteSyncServiceTests
             return fixture;
         }
 
+        // M2: the first envelope in the batch always fails to store; the second is perfectly
+        // good. Listed first so a regression to whole-batch-aborts-on-first-failure would starve
+        // it forever instead of just failing this one poll.
+        public static async Task<RemoteSyncFixture> WithOneFailingEnvelopeAmongGoodOnesAsync()
+        {
+            var failingId = Guid.NewGuid().ToString();
+            var fixture = await CreateAsync(
+                useThrowingRepository: true,
+                throwingRepositoryShouldFail: messageId => messageId == failingId);
+            var failing = CryptoFixture.EncryptFor(fixture.RecipientPublicKeySpki, "bad one", failingId);
+            var good = CryptoFixture.EncryptFor(fixture.RecipientPublicKeySpki, "good one", fixture.MessageId);
+            fixture.Relay.PollResult = [ToRelayEnvelope(failing), ToRelayEnvelope(good)];
+            return fixture;
+        }
+
         public static async Task<RemoteSyncFixture> WithPartialRegistrationAsync()
         {
             var fixture = await CreateAsync();
@@ -1077,7 +1108,8 @@ public sealed class RemoteSyncServiceTests
             bool useThrowingRepository = false,
             DateTimeOffset? clockNow = null,
             Microsoft.Extensions.Logging.ILogger<RemoteSyncService>? logger = null,
-            IClock? clock = null)
+            IClock? clock = null,
+            Func<string, bool>? throwingRepositoryShouldFail = null)
         {
             var root = Path.Combine(Path.GetTempPath(), "dudu-remote-sync-tests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
@@ -1086,7 +1118,7 @@ public sealed class RemoteSyncServiceTests
             var realRepository = new RemoteEnvelopeRepository(database);
             var recording = new RecordingRemoteEnvelopeRepository(realRepository);
             IRemoteEnvelopeRepository serviceRepository = useThrowingRepository
-                ? new ThrowingRemoteEnvelopeRepository(recording)
+                ? new ThrowingRemoteEnvelopeRepository(recording, throwingRepositoryShouldFail)
                 : recording;
 
             using var desktopKey = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
@@ -1334,8 +1366,16 @@ public sealed class RemoteSyncServiceTests
     private sealed class ThrowingRemoteEnvelopeRepository : IRemoteEnvelopeRepository
     {
         private readonly IRemoteEnvelopeRepository _inner;
+        private readonly Func<string, bool> _shouldFail;
 
-        public ThrowingRemoteEnvelopeRepository(IRemoteEnvelopeRepository inner) => _inner = inner;
+        /// <param name="shouldFail">Decides, per message id, whether
+        /// <see cref="TryInsertAndMarkProcessedAsync"/> fails. Defaults to failing every call,
+        /// matching every pre-existing use of this fake.</param>
+        public ThrowingRemoteEnvelopeRepository(IRemoteEnvelopeRepository inner, Func<string, bool>? shouldFail = null)
+        {
+            _inner = inner;
+            _shouldFail = shouldFail ?? (_ => true);
+        }
 
         public Task<RemoteEnvelope?> GetAsync(string messageId, CancellationToken cancellationToken) =>
             _inner.GetAsync(messageId, cancellationToken);
@@ -1354,13 +1394,18 @@ public sealed class RemoteSyncServiceTests
 
         public Task<bool> TryInsertAndMarkProcessedAsync(
             RemoteEnvelope envelope, DateTimeOffset processedUtc, CancellationToken cancellationToken) =>
-            throw new InvalidOperationException("simulated repository failure");
+            _shouldFail(envelope.MessageId)
+                ? throw new InvalidOperationException("simulated repository failure")
+                : _inner.TryInsertAndMarkProcessedAsync(envelope, processedUtc, cancellationToken);
 
         public Task DeleteAsync(string messageId, CancellationToken cancellationToken) =>
             _inner.DeleteAsync(messageId, cancellationToken);
 
         public Task<int> PruneExpiredAsync(DateTimeOffset utcNow, TimeSpan retention, CancellationToken cancellationToken) =>
             _inner.PruneExpiredAsync(utcNow, retention, cancellationToken);
+
+        public Task<int> DeleteAllAsync(CancellationToken cancellationToken) =>
+            _inner.DeleteAllAsync(cancellationToken);
     }
 
     /// <summary>An <see cref="IRemoteNoteArrivalSink"/> test double recording each notification.
