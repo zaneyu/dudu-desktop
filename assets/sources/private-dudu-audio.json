@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "privateUseOnly": true,
+  "accessedUtc": "2026-09-18T23:56:40Z",
+  "rightsNote": "Private local use only. The discovery pages do not establish redistribution rights; do not publish or distribute these copied clips.",
+  "sources": [
+    {
+      "id": "myinstants-bubu-dudu-atata",
+      "pageUrl": "https://www.myinstants.com/en/instant/bubu-dudu-atata-30881/",
+      "mediaUrl": "https://www.myinstants.com/media/sounds/bubu-dudu-atata.mp3",
+      "uploader": "shoro7",
+      "accessedUtc": "2026-09-18T22:04:18Z",
+      "originalFile": "bubu-dudu-atata.mp3",
+      "originalMediaType": "audio/mpeg",
+      "originalDurationMs": 2091,
+      "originalSha256": "8504bc4e7edded2711fec3e0ec2c87edee0c643ba9b37c2899bd5cabd0197731",
+      "derivedCues": [
+        {
+          "cueId": "bubu-dudu-atata/atata-01",
+          "sourceRange": null,
+          "derivedFile": "bubu-dudu-atata/atata-01.wav",
+          "derivedDurationMs": 2091,
+          "derivedSha256": "3ba10e1705d3ff04ccaf40270a2e565ac102f859b161be798ac45d934d7cbb35",
+          "transform": "Decoded MP3; converted to mono 48 kHz, 16-bit PCM WAV; conservative loudness normalization to -18 LUFS target with -1.5 dBTP ceiling; applied 10 ms fade-in and fade-out."
+        }
+      ]
+    },
+    {
+      "id": "zedge-tata-lala",
+      "pageUrl": "https://www.zedge.net/notification-sounds/c426e3cb-b829-422e-8499-a81c720905fb",
+      "uploader": "Alonsovz1",
+      "title": "Tata lala notification sound",
+      "accessedUtc": "2026-09-18T21:55:34Z",
+      "originalFile": "tata_lala.mp3",
+      "originalMediaType": "audio/mpeg",
+      "originalDurationMs": 2234,
+      "originalSha256": "fefbd5e18cd6cee960a1bb2979c63d31a45a94ba23850240140beaae0a7f0ad8",
+      "derivedCues": [
+        {
+          "cueId": "tata-lala/tata-lala-01",
+          "sourceRange": null,
+          "derivedFile": "tata-lala/tata-lala-01.wav",
+          "derivedDurationMs": 2234,
+          "derivedSha256": "98f6d34afe7d1be8be77a7b1729b993e0a2fcf154cc63dd3c43f4b461422ad9f",
+          "transform": "Decoded MP3; converted to mono 48 kHz, 16-bit PCM WAV; conservative loudness normalization to -18 LUFS target with -1.5 dBTP ceiling; applied 10 ms fade-in and fade-out."
+        }
+      ]
+    },
+    {
+      "id": "tiktok-dudu-lalala",
+      "pageUrl": "https://www.tiktok.com/@bubududucorner/video/7615183028486212872",
+      "creator": "@bubududucorner",
+      "accessedUtc": "2026-09-18T21:53:35Z",
+      "originalFile": "tiktok-7615183028486212872.mp4",
+      "originalMediaType": "video/mp4",
+      "originalDurationMs": 15673,
+      "originalSha256": "6848fb67066931c92a9035e72c2c2d7a9ac0f49bb2a48b96c10bb381c5053fe4",
+      "derivedCues": [
+        {
+          "cueId": "dudu-lalala/lalala-01",
+          "sourceRange": { "startMs": 0, "endMs": 2420, "label": "lalala" },
+          "derivedFile": "dudu-lalala/lalala-01.wav",
+          "derivedDurationMs": 2420,
+          "derivedSha256": "d890298fd77499d0af64eb9503d307b638a53279ff3e103d65390e30f00399e5",
+          "transform": "Extracted the observed lalala section; converted to mono 48 kHz, 16-bit PCM WAV; conservative loudness normalization to -18 LUFS target with -1.5 dBTP ceiling; applied 10 ms fade-in and fade-out."
+        }
+      ]
+    },
+    {
+      "id": "tiktok-dudu-atatata",
+      "pageUrl": "https://www.tiktok.com/@bubududucorner/video/7615183028486212872",
+      "creator": "@bubududucorner",
+      "accessedUtc": "2026-09-18T21:53:35Z",
+      "originalFile": "tiktok-7615183028486212872.mp4",
+      "originalMediaType": "video/mp4",
+      "originalDurationMs": 15673,
+      "originalSha256": "6848fb67066931c92a9035e72c2c2d7a9ac0f49bb2a48b96c10bb381c5053fe4",
+      "derivedCues": [
+        {
+          "cueId": "dudu-atatata/atatata-01",
+          "sourceRange": { "startMs": 4000, "endMs": 8000, "label": "atatata" },
+          "derivedFile": "dudu-atatata/atatata-01.wav",
+          "derivedDurationMs": 4000,
+          "derivedSha256": "55832bf28ae46c1c18669004f9f664a613a15d6186c190bf6be35261246e17e0",
+          "transform": "Extracted the observed atatata section; converted to mono 48 kHz, 16-bit PCM WAV; conservative loudness normalization to -18 LUFS target with -1.5 dBTP ceiling; applied 10 ms fade-in and fade-out."
+        }
+      ]
+    },
+    {
+      "id": "tiktok-dudu-yapapa",
+      "pageUrl": "https://www.tiktok.com/@bubududucorner/video/7615183028486212872",
+      "creator": "@bubududucorner",
+      "accessedUtc": "2026-09-18T21:53:35Z",
+      "originalFile": "tiktok-7615183028486212872.mp4",
+      "originalMediaType": "video/mp4",
+      "originalDurationMs": 15673,
+      "originalSha256": "6848fb67066931c92a9035e72c2c2d7a9ac0f49bb2a48b96c10bb381c5053fe4",
+      "derivedCues": [
+        {
+          "cueId": "dudu-yapapa/yapapa-01",
+          "sourceRange": { "startMs": 12800, "endMs": 15673, "label": "ya papa hmm ya papa" },
+          "derivedFile": "dudu-yapapa/yapapa-01.wav",
+          "derivedDurationMs": 2875,
+          "derivedSha256": "923138156237f9e3ae31fe27146c4a6b81dd9374e1aaa0b93f207165f62c2141",
+          "transform": "Extracted the observed ya papa hmm ya papa section; converted to mono 48 kHz, 16-bit PCM WAV; conservative loudness normalization to -18 LUFS target with -1.5 dBTP ceiling; applied 10 ms fade-in and fade-out."
+        }
+      ]
+    }
+  ]
+}

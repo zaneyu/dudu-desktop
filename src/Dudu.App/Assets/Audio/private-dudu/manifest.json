@@ -1,0 +1,69 @@
+{
+  "SchemaVersion": 1,
+  "PrivateUseOnly": true,
+  "Attribution": {
+    "Creator": "Bubu & Dudu community uploads",
+    "SourceUrls": [
+      "https://www.myinstants.com/en/instant/bubu-dudu-atata-30881/",
+      "https://www.zedge.net/notification-sounds/c426e3cb-b829-422e-8499-a81c720905fb",
+      "https://www.tiktok.com/@bubududucorner/video/7615183028486212872"
+    ]
+  },
+  "Packs": [
+    {
+      "PackId": "bubu-dudu-atata",
+      "Cues": [
+        {
+          "CueId": "atata-01",
+          "FilePath": "bubu-dudu-atata/atata-01.wav",
+          "DurationMs": 2091,
+          "Sha256": "3ba10e1705d3ff04ccaf40270a2e565ac102f859b161be798ac45d934d7cbb35"
+        }
+      ]
+    },
+    {
+      "PackId": "tata-lala",
+      "Cues": [
+        {
+          "CueId": "tata-lala-01",
+          "FilePath": "tata-lala/tata-lala-01.wav",
+          "DurationMs": 2234,
+          "Sha256": "98f6d34afe7d1be8be77a7b1729b993e0a2fcf154cc63dd3c43f4b461422ad9f"
+        }
+      ]
+    },
+    {
+      "PackId": "dudu-lalala",
+      "Cues": [
+        {
+          "CueId": "lalala-01",
+          "FilePath": "dudu-lalala/lalala-01.wav",
+          "DurationMs": 2420,
+          "Sha256": "d890298fd77499d0af64eb9503d307b638a53279ff3e103d65390e30f00399e5"
+        }
+      ]
+    },
+    {
+      "PackId": "dudu-atatata",
+      "Cues": [
+        {
+          "CueId": "atatata-01",
+          "FilePath": "dudu-atatata/atatata-01.wav",
+          "DurationMs": 4000,
+          "Sha256": "55832bf28ae46c1c18669004f9f664a613a15d6186c190bf6be35261246e17e0"
+        }
+      ]
+    },
+    {
+      "PackId": "dudu-yapapa",
+      "Cues": [
+        {
+          "CueId": "yapapa-01",
+          "FilePath": "dudu-yapapa/yapapa-01.wav",
+          "DurationMs": 2875,
+          "Sha256": "923138156237f9e3ae31fe27146c4a6b81dd9374e1aaa0b93f207165f62c2141"
+        }
+      ]
+    }
+  ]
+}
