@@ -272,6 +272,47 @@ public sealed class AppLifecycleCoordinatorTests
         Assert.True(overlay.IsVisible);
     }
 
+    [Fact]
+    public async Task Unlock_routes_the_welcome_back_greeting_through_the_one_shot_path_when_composed()
+    {
+        // Regression: AppLifecycleCoordinator used to call pet.Handle(new
+        // WelcomeBackRequested()) directly, and nothing ever raised
+        // WelcomeBackDismissed for it — the pet stayed on the greeting pose
+        // forever after the first unlock. Production now composes
+        // presentOneShotAsync from PetPresentationCoordinator.PresentOneShotAsync,
+        // which requests, plays, and dismisses in one call; this fake
+        // reproduces just the "requests and dismisses" half so the test can
+        // run without an animation engine.
+        var host = new FakeHost();
+        var overlay = new FakeOverlay();
+        var pet = PetStateMachine.CreateIdle();
+        var preferences = new Preferences(
+            AppTheme.System,
+            new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+            false, 3, true, false, true, TimeSpan.FromMinutes(15));
+        var requested = new List<PetEvent>();
+        await using var lifecycle = new AppLifecycleCoordinator(
+            host,
+            overlay,
+            pet,
+            preferences,
+            presentOneShotAsync: (petEvent, dismissalId, _) =>
+            {
+                requested.Add(petEvent);
+                pet.Handle(petEvent);
+                pet.Handle(PetEvent.CompletionForOneShot(petEvent, dismissalId));
+                return Task.CompletedTask;
+            });
+
+        await lifecycle.OnSessionLockedAsync(TestContext.Current.CancellationToken);
+        await lifecycle.OnSessionUnlockedAsync(TestContext.Current.CancellationToken);
+
+        Assert.Single(requested);
+        Assert.IsType<PetEvent.WelcomeBackRequested>(requested[0]);
+        // Already self-cleared: no lingering Dismissed("welcome-back") needed.
+        Assert.Equal(PetState.Idle, pet.Current.State);
+    }
+
     private sealed class FakeHost : IAppHostLifecycle
     {
         public Task ResumeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;

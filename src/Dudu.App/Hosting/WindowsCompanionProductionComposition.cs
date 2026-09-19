@@ -515,7 +515,21 @@ public static class WindowsCompanionProductionComposition
                         }
                     }),
                 cancellationToken: cancellationToken,
-                errorReporter: host.ErrorReporter));
+                errorReporter: host.ErrorReporter,
+                presentOneShotAsync: (petEvent, dismissalId, token) =>
+                {
+                    // presentationCoordinator is composed inside initializeOverlay
+                    // above; a lifecycle event racing ahead of that (implausible,
+                    // but not worth crashing over) falls back to a raw pet update
+                    // instead of throwing.
+                    if (presentationCoordinator is null)
+                    {
+                        pet.Handle(petEvent);
+                        return Task.CompletedTask;
+                    }
+
+                    return presentationCoordinator.PresentOneShotAsync(petEvent, dismissalId, token);
+                }));
             activeRuntime = runtime;
             host.AttachPresentationGateway(presentationGateway
                 ?? throw new InvalidOperationException("The presentation gateway was not composed."));

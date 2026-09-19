@@ -699,7 +699,8 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         IPresentationEnvironmentSink? presentationEnvironment = null,
         CancellationToken cancellationToken = default,
         IAppHostErrorReporter? errorReporter = null,
-        Func<PetPlacement, CancellationToken, Task>? persistPlacementAsync = null)
+        Func<PetPlacement, CancellationToken, Task>? persistPlacementAsync = null,
+        Func<PetEvent, string, CancellationToken, Task>? presentOneShotAsync = null)
     {
         ArgumentNullException.ThrowIfNull(openHome);
         if (trayCommandHandler is null && trayCommandHandlerFactory is null)
@@ -746,7 +747,8 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                 tray,
                 openHome,
                 initialUserVisible: initialUserVisible,
-                errorReporter: errorReporter);
+                errorReporter: errorReporter,
+                presentOneShotAsync: presentOneShotAsync);
             if (initializeOverlay is not null)
             {
                 await initializeOverlay(overlay);

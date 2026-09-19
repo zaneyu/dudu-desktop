@@ -34,6 +34,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
     private readonly Func<CancellationToken, Task>? _openHome;
     private readonly Action<Exception>? _diagnostic;
     private readonly IAppHostErrorReporter? _errorReporter;
+    private readonly Func<PetEvent, string, CancellationToken, Task>? _presentOneShotAsync;
     private readonly TrayIconService? _tray;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly SemaphoreSlim _visibilityGate = new(1, 1);
@@ -58,7 +59,8 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         Func<CancellationToken, Task>? openHome = null,
         Action<Exception>? diagnostic = null,
         bool? initialUserVisible = null,
-        IAppHostErrorReporter? errorReporter = null)
+        IAppHostErrorReporter? errorReporter = null,
+        Func<PetEvent, string, CancellationToken, Task>? presentOneShotAsync = null)
     {
         _host = host ?? throw new ArgumentNullException(nameof(host));
         _overlay = overlay ?? throw new ArgumentNullException(nameof(overlay));
@@ -73,6 +75,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         _diagnostic = diagnostic;
         _errorReporter = errorReporter;
         _userVisible = initialUserVisible ?? overlay.IsVisible;
+        _presentOneShotAsync = presentOneShotAsync;
     }
 
     public Preferences CurrentPreferences => Volatile.Read(ref _preferences);
@@ -448,10 +451,48 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         }
         finally { _gate.Release(); }
 
-        if (welcome) _pet.Handle(new PetEvent.WelcomeBackRequested());
+        // Show before presenting the welcome-back greeting so the one-shot
+        // animation (when routed through PresentOneShotAsync) is not played
+        // and dismissed against a still-hidden overlay.
         if (show)
         {
             await InvokeVisualSafelyAsync(_overlay.Show, "resume-show", cancellationToken);
+        }
+
+        if (welcome)
+        {
+            await PresentWelcomeBackAsync(cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Requests the welcome-back pose through the same one-shot presentation
+    /// path an explicit user action uses (e.g. <c>TasksFocusViewModel.EndFocusAsync</c>),
+    /// so the request is acknowledged and dismissed once shown instead of
+    /// latching <see cref="PetState.WelcomeBack"/> forever — nothing else
+    /// ever raises <see cref="PetEvent.WelcomeBackDismissed"/>. Falls back to
+    /// a raw <see cref="PetStateMachine.Handle"/> call when no one-shot
+    /// delegate is composed (e.g. in tests that only assert the pending pose).
+    /// </summary>
+    private async Task PresentWelcomeBackAsync(CancellationToken cancellationToken)
+    {
+        if (_presentOneShotAsync is null)
+        {
+            _pet.Handle(new PetEvent.WelcomeBackRequested());
+            return;
+        }
+
+        try
+        {
+            await _presentOneShotAsync(new PetEvent.WelcomeBackRequested(), "welcome-back", cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            ReportFailure("resume-welcome-back", exception);
         }
     }
 
