@@ -45,6 +45,13 @@ public sealed class MigrationRunner
         Database.ConfigureConnection(connection);
 
         var currentVersion = await ReadVersionAsync(connection, cancellationToken);
+        // One backup per upgrade run, taken before the first migration that
+        // actually applies. Backing up before every migration in the run let
+        // a multi-step upgrade (more migrations pending than the retention
+        // count) evict its own pre-upgrade backup -- the only copy of the
+        // database as it existed before this run touched it -- before the
+        // run even finished.
+        var backedUpThisRun = false;
         foreach (var migration in _migrations.OrderBy(migration => migration.Version))
         {
             if (migration.Version <= currentVersion)
@@ -52,42 +59,95 @@ public sealed class MigrationRunner
                 continue;
             }
 
-            if (createBackups && File.Exists(_options.DatabasePath))
+            if (createBackups && !backedUpThisRun && File.Exists(_options.DatabasePath))
             {
-                await _backups.CreatePreMigrationBackupAsync(connection, cancellationToken);
+                // A valid backup already sitting on disk at the exact version we're
+                // about to upgrade from is the same pre-upgrade snapshot we'd take
+                // here. Skipping the redundant copy makes the snapshot idempotent
+                // across repeated attempts from the same starting version -- a
+                // fresh process retrying a migration that keeps failing, for
+                // example -- instead of piling up redundant backups that
+                // eventually evict the one genuine pre-upgrade copy.
+                if (!await _backups.HasValidBackupAtSchemaVersionAsync(currentVersion, cancellationToken))
+                {
+                    await _backups.CreatePreMigrationBackupAsync(connection, cancellationToken);
+                }
+
+                backedUpThisRun = true;
             }
 
-            await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+            // Some migrations (0009's DROP TABLE local_notes, for one) touch a
+            // table that another table references with ON DELETE CASCADE. Per
+            // SQLite's documented procedure for this kind of schema change
+            // (https://www.sqlite.org/lang_altertable.html#otheralter), FK
+            // enforcement must be disabled *before* the transaction starts --
+            // PRAGMA foreign_keys is a documented no-op when set inside a
+            // transaction, so doing it after BEGIN would not actually suppress
+            // the cascade. We verify no dangling references were introduced with
+            // foreign_key_check before committing, and restore enforcement
+            // afterward regardless of outcome.
+            await ExecutePragmaAsync(connection, "PRAGMA foreign_keys=OFF;", cancellationToken);
             try
             {
-                await using (var command = connection.CreateCommand())
+                await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+                try
                 {
-                    command.Transaction = transaction;
-                    command.CommandText = migration.Sql;
-                    await command.ExecuteNonQueryAsync(cancellationToken);
-                }
+                    await using (var command = connection.CreateCommand())
+                    {
+                        command.Transaction = transaction;
+                        command.CommandText = migration.Sql;
+                        await command.ExecuteNonQueryAsync(cancellationToken);
+                    }
 
-                await using (var versionCommand = connection.CreateCommand())
+                    await using (var checkCommand = connection.CreateCommand())
+                    {
+                        checkCommand.Transaction = transaction;
+                        checkCommand.CommandText = "PRAGMA foreign_key_check;";
+                        await using var reader = await checkCommand.ExecuteReaderAsync(cancellationToken);
+                        if (await reader.ReadAsync(cancellationToken))
+                        {
+                            throw new SqliteException(
+                                $"Migration {migration.Version} would leave dangling foreign key references.",
+                                19);
+                        }
+                    }
+
+                    await using (var versionCommand = connection.CreateCommand())
+                    {
+                        versionCommand.Transaction = transaction;
+                        versionCommand.CommandText = """
+                            INSERT INTO schema_version (id, version)
+                            VALUES (1, $version)
+                            ON CONFLICT(id) DO UPDATE SET version = excluded.version;
+                            """;
+                        versionCommand.Parameters.AddWithValue("$version", migration.Version);
+                        await versionCommand.ExecuteNonQueryAsync(cancellationToken);
+                    }
+
+                    await transaction.CommitAsync(cancellationToken);
+                    currentVersion = migration.Version;
+                }
+                catch
                 {
-                    versionCommand.Transaction = transaction;
-                    versionCommand.CommandText = """
-                        INSERT INTO schema_version (id, version)
-                        VALUES (1, $version)
-                        ON CONFLICT(id) DO UPDATE SET version = excluded.version;
-                        """;
-                    versionCommand.Parameters.AddWithValue("$version", migration.Version);
-                    await versionCommand.ExecuteNonQueryAsync(cancellationToken);
+                    await transaction.RollbackAsync(CancellationToken.None);
+                    throw;
                 }
-
-                await transaction.CommitAsync(cancellationToken);
-                currentVersion = migration.Version;
             }
-            catch
+            finally
             {
-                await transaction.RollbackAsync(CancellationToken.None);
-                throw;
+                await ExecutePragmaAsync(connection, "PRAGMA foreign_keys=ON;", CancellationToken.None);
             }
         }
+    }
+
+    private static async Task ExecutePragmaAsync(
+        SqliteConnection connection,
+        string pragma,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = pragma;
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public Task RunMigrationsAsync(

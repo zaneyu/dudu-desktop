@@ -83,6 +83,12 @@ public sealed class DatabaseBackupService
                 DataSource = _options.DatabasePath,
                 Mode = SqliteOpenMode.ReadWrite,
                 ForeignKeys = true,
+                // Pooled connections keep the file open after Dispose; the validation
+                // connections elsewhere in this class already disable pooling for the
+                // same reason. This one-shot connection (e.g. "Back up now") otherwise
+                // gets a different pool key (no DefaultTimeout) than the one Database
+                // clears on Dispose, so its handle could keep dudu.db locked on Windows.
+                Pooling = false,
             }.ToString());
         await connection.OpenAsync(cancellationToken);
         Database.ConfigureConnection(connection);
@@ -113,6 +119,48 @@ public sealed class DatabaseBackupService
 
         await RotateAsync(cancellationToken);
         return path;
+    }
+
+    /// <summary>
+    /// Whether a valid backup already on disk was taken at exactly
+    /// <paramref name="schemaVersion"/>. Used by <see cref="MigrationRunner"/>
+    /// to make the pre-upgrade backup idempotent across repeated attempts
+    /// from the same starting version (a fresh process retrying a migration
+    /// that keeps failing, for example) instead of creating a fresh
+    /// redundant snapshot -- and eventually evicting the genuine pre-upgrade
+    /// backup -- on every attempt.
+    /// </summary>
+    public async Task<bool> HasValidBackupAtSchemaVersionAsync(
+        int schemaVersion,
+        CancellationToken cancellationToken = default)
+    {
+        if (!Directory.Exists(_options.BackupDirectory))
+        {
+            return false;
+        }
+
+        foreach (var path in Directory.GetFiles(_options.BackupDirectory, "*.db"))
+        {
+            if (!await IsSqliteBackupAsync(path, cancellationToken))
+            {
+                continue;
+            }
+
+            await using var connection = new SqliteConnection(
+                new SqliteConnectionStringBuilder
+                {
+                    DataSource = path,
+                    Mode = SqliteOpenMode.ReadOnly,
+                    Pooling = false,
+                }.ToString());
+            await connection.OpenAsync(cancellationToken);
+            if (await ReadSchemaVersionAsync(connection, cancellationToken) == schemaVersion)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public Task<RestoreResult> TryRestoreAsync(
@@ -382,7 +430,11 @@ public sealed class DatabaseBackupService
         var temporaryPaths = SafeFiles(directory, databasePath + ".restore-", excludeOld: true, excludeFailed: true);
         var stagedOldPaths = SafeFiles(directory, databasePath + ".restore-old-");
         var stagedFailedPaths = SafeFiles(directory, databasePath + ".restore-failed-");
-        var recoveryPaths = SafeFiles(directory, databasePath + ".restore-old-")
+        // Recovery-set files are named "<canonicalPath>{-wal,-shm}.corrupt-recovery"
+        // (see the RestoreAsync finally block below), not
+        // "<databasePath>.restore-old-*.corrupt-recovery" -- the previous prefix
+        // here never matched anything, so this branch was dead code.
+        var recoveryPaths = SafeFiles(directory, databasePath)
             .Where(path => path.EndsWith(RecoverySuffix, StringComparison.Ordinal))
             .ToArray();
 

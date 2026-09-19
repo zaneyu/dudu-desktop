@@ -29,13 +29,13 @@ public sealed class DatabaseTests
         await using var fixture = await DatabaseFixture.CreateAsync();
         await using var connection = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken);
         var runner = new MigrationRunner(fixture.Options);
-        // Version 8 is now a real migration; inject the failure at the next
-        // version so this test continues to exercise rollback rather than
-        // replacing production schema.
-        runner.AddMigration(9, "CREATE TABLE broken(;" );
+        // Versions 8-10 are now real migrations; inject the failure at the
+        // next version so this test continues to exercise rollback rather
+        // than replacing production schema.
+        runner.AddMigration(11, "CREATE TABLE broken(;" );
 
         await Assert.ThrowsAsync<SqliteException>(() => runner.RunAsync(connection, TestContext.Current.CancellationToken));
-        Assert.Equal(8, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(10, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
         Assert.True(File.Exists(fixture.Options.DatabasePath));
     }
 
@@ -127,7 +127,7 @@ public sealed class DatabaseTests
         var result = await fixture.Backups.TryRestoreAsync(
             backup!, TestContext.Current.CancellationToken);
         Assert.True(result.Restored);
-        Assert.Equal(8, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(10, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -720,11 +720,11 @@ public sealed class DatabaseTests
         Assert.True(result.Restored, result.ToString());
 
         var preferencesRepository = new PreferencesRepository(fixture.Database);
-        Assert.Equal(8, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(10, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
         _ = await preferencesRepository.GetAsync(TestContext.Current.CancellationToken);
 
         await using var freshDatabase = await Database.OpenAsync(fixture.Options, TestContext.Current.CancellationToken);
-        Assert.Equal(8, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(10, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
         var freshPreferences = new PreferencesRepository(freshDatabase);
         _ = await freshPreferences.GetAsync(TestContext.Current.CancellationToken);
     }
@@ -999,11 +999,17 @@ public sealed class DatabaseTests
 
         Assert.True(result.Restored);
         Assert.Equal(RestoreFailure.None, result.Failure);
-        Assert.Equal("Before", (await profiles.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
+        // Check the recovery set before reading through fixture.Database: that
+        // read re-initializes it (TryRestoreAsync invalidated the cached
+        // initialization), and reconciliation on a now-healthy canonical
+        // database disposes of the recovery set it kept -- see RecoverySuffix's
+        // doc comment ("...until LocalDataMaintenanceService or reconciliation
+        // disposes of it").
         var recoveryFiles = Directory.GetFiles(Path.GetDirectoryName(fixture.Options.DatabasePath)!, "*");
         Assert.True(
             recoveryFiles.Any(path => path.Contains(DatabaseBackupService.RecoverySuffix, StringComparison.Ordinal)),
             string.Join(Environment.NewLine, recoveryFiles));
+        Assert.Equal("Before", (await profiles.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
     }
 
     [Fact]
@@ -1024,12 +1030,158 @@ public sealed class DatabaseTests
 
         await fixture.Database.InitializeAsync(TestContext.Current.CancellationToken);
 
-        // The unreadable file is preserved for forensics, and the fresh
-        // database is usable (seeded defaults, no stale profile).
-        Assert.Single(Directory.GetFiles(fixture.Options.BackupDirectory, "dudu-corrupt-*.db"));
+        // The unreadable file is preserved for forensics -- both as the
+        // durable pre-restore-attempt copy (H1) and as the moved-aside
+        // original from QuarantineCorruptDatabase (no backup was available to
+        // restore instead) -- and the fresh database is usable (seeded
+        // defaults, no stale profile). Quarantine files live in their own
+        // subdirectory so they never pollute the "*.db" glob RotateAsync and
+        // RestoreLatestValidAsync use over BackupDirectory itself (M1).
+        var quarantineDirectory = Path.Combine(fixture.Options.BackupDirectory, "quarantine");
+        Assert.Empty(Directory.GetFiles(fixture.Options.BackupDirectory, "dudu-corrupt-*.db"));
+        Assert.Equal(2, Directory.GetFiles(quarantineDirectory, "dudu-corrupt-*.db").Length);
         Assert.Null(await profiles.GetAsync(TestContext.Current.CancellationToken));
         Assert.Equal(12, (await new LocalNoteRepository(fixture.Database)
             .ListEnabledAsync(TestContext.Current.CancellationToken)).Count);
+        Assert.Equal(DatabaseRecoveryOutcome.StartedFresh, fixture.Database.LastRecoveryOutcome);
+    }
+
+    [Fact]
+    public async Task Corrupt_database_restores_from_the_latest_valid_backup_instead_of_starting_fresh()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var profiles = new ProfileRepository(fixture.Database);
+        await profiles.SaveAsync(new Profile("Before", true), TestContext.Current.CancellationToken);
+        await fixture.Backups.CreatePreMigrationBackupAsync(TestContext.Current.CancellationToken);
+        await profiles.SaveAsync(new Profile("After the last backup", true), TestContext.Current.CancellationToken);
+
+        // Simulate the next process launch finding a torn write: drop the
+        // shared initialization so this InitializeAsync really re-runs.
+        SqliteConnection.ClearAllPools();
+        await File.WriteAllTextAsync(
+            fixture.Options.DatabasePath,
+            "not a sqlite database",
+            TestContext.Current.CancellationToken);
+        fixture.Database.InvalidateInitialization();
+
+        await fixture.Database.InitializeAsync(TestContext.Current.CancellationToken);
+
+        // A valid backup sat right next to the corrupt file: it is restored
+        // instead of quarantining and starting the user over from nothing.
+        Assert.Equal(DatabaseRecoveryOutcome.RestoredFromBackup, fixture.Database.LastRecoveryOutcome);
+        Assert.Empty(Directory.GetFiles(fixture.Options.BackupDirectory, "dudu-corrupt-*.db"));
+        Assert.Equal("Before", (await profiles.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
+
+        // The corrupt original was still preserved as a durable copy before the
+        // restore was attempted (H1) -- restoring over it must not lose the
+        // only recent copy of whatever was in it. It lives in its own
+        // subdirectory so RotateAsync/RestoreLatestValidAsync's "*.db" glob
+        // over BackupDirectory itself never sees it (M1).
+        var quarantineDirectory = Path.Combine(fixture.Options.BackupDirectory, "quarantine");
+        Assert.Single(Directory.GetFiles(quarantineDirectory, "dudu-corrupt-*.db"));
+
+        // And it survives a subsequent init: reconciliation's cleanup of the
+        // transient dudu.db.corrupt-recovery recovery set (a different, legitimate
+        // mechanism) must not reach into the durable quarantine copy.
+        fixture.Database.InvalidateInitialization();
+        await fixture.Database.InitializeAsync(TestContext.Current.CancellationToken);
+        Assert.Single(Directory.GetFiles(quarantineDirectory, "dudu-corrupt-*.db"));
+    }
+
+    [Fact]
+    public async Task Zero_byte_database_restores_from_the_latest_valid_backup()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var profiles = new ProfileRepository(fixture.Database);
+        await profiles.SaveAsync(new Profile("Before", true), TestContext.Current.CancellationToken);
+        await fixture.Backups.CreatePreMigrationBackupAsync(TestContext.Current.CancellationToken);
+
+        // A zero-byte file (e.g. a write interrupted before any bytes landed)
+        // opens as an empty-but-valid SQLite database, so it never throws the
+        // SqliteException the corruption catch relies on -- it must be
+        // recognized as corrupt up front instead.
+        SqliteConnection.ClearAllPools();
+        await File.WriteAllBytesAsync(fixture.Options.DatabasePath, [], TestContext.Current.CancellationToken);
+        fixture.Database.InvalidateInitialization();
+
+        await fixture.Database.InitializeAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(DatabaseRecoveryOutcome.RestoredFromBackup, fixture.Database.LastRecoveryOutcome);
+        Assert.Equal("Before", (await profiles.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
+
+        // Same durable-copy-before-restore preservation (H1) applies on the
+        // zero-byte branch too.
+        var quarantineDirectory = Path.Combine(fixture.Options.BackupDirectory, "quarantine");
+        Assert.Single(Directory.GetFiles(quarantineDirectory, "dudu-corrupt-*.db"));
+    }
+
+    [Fact]
+    public async Task Zero_byte_database_without_a_backup_quarantines_and_starts_fresh()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "dudu-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var options = new DatabaseOptions(Path.Combine(root, "dudu.db"), Path.Combine(root, "backups"));
+            await File.WriteAllBytesAsync(options.DatabasePath, [], TestContext.Current.CancellationToken);
+
+            await using var database = new Database(options);
+            await database.InitializeAsync(TestContext.Current.CancellationToken);
+
+            Assert.Equal(DatabaseRecoveryOutcome.StartedFresh, database.LastRecoveryOutcome);
+            // Durable copy (H1) plus QuarantineCorruptDatabase's own moved-aside
+            // original, both under backups/quarantine (M1) -- not the top-level
+            // backups directory the "*.db" restore/rotation glob scans.
+            var quarantineDirectory = Path.Combine(options.BackupDirectory, "quarantine");
+            Assert.Empty(Directory.GetFiles(options.BackupDirectory, "dudu-corrupt-*.db"));
+            Assert.Equal(2, Directory.GetFiles(quarantineDirectory, "dudu-corrupt-*.db").Length);
+            Assert.Equal(12, (await new LocalNoteRepository(database)
+                .ListEnabledAsync(TestContext.Current.CancellationToken)).Count);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
+    public async Task Reconciliation_recovers_the_corrupt_recovery_set_when_no_canonical_file_exists()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "dudu-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var options = new DatabaseOptions(Path.Combine(root, "dudu.db"), Path.Combine(root, "backups"));
+            var database = await Database.OpenAsync(options, TestContext.Current.CancellationToken);
+            var profiles = new ProfileRepository(database);
+            await profiles.SaveAsync(new Profile("Recovered from recovery set", true), TestContext.Current.CancellationToken);
+            SqliteConnection.ClearAllPools();
+            await database.DisposeAsync();
+
+            // Reproduces exactly what RestoreAsync's finally block names a kept
+            // recovery set: "<canonicalPath>.corrupt-recovery", not
+            // "<canonicalPath>.restore-old-*.corrupt-recovery" -- the previous
+            // (wrong) prefix ReconcileInterruptedRestoreAsync searched for meant
+            // this branch could never fire.
+            File.Move(options.DatabasePath, options.DatabasePath + DatabaseBackupService.RecoverySuffix);
+            Assert.False(File.Exists(options.DatabasePath));
+
+            var service = new DatabaseBackupService(options);
+            var recovered = await service.ReconcileInterruptedRestoreAsync(TestContext.Current.CancellationToken);
+
+            Assert.True(recovered);
+            Assert.True(File.Exists(options.DatabasePath));
+
+            await using var reopened = await Database.OpenAsync(options, TestContext.Current.CancellationToken);
+            var repository = new ProfileRepository(reopened);
+            Assert.Equal("Recovered from recovery set", (await repository.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+        }
     }
 
     [Fact]
@@ -1153,7 +1305,157 @@ public sealed class DatabaseTests
         await fixture.Database.InitializeAsync(TestContext.Current.CancellationToken);
         Assert.Equal(runsBefore + 1, fixture.Database.InitializationRunCount);
         Assert.Equal("Current", (await profiles.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
-        Assert.Equal(8, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(10, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task Repeated_calls_after_a_failed_migration_do_not_retry_or_duplicate_the_pre_upgrade_backup()
+    {
+        // B2 fix #1: a genuinely failed initialization (not corruption --
+        // IsCorruption doesn't match this error) must stay cached and faulted,
+        // so every later InitializeAsync call returns the same failure instead
+        // of re-running the whole initializer (migrations included) on every
+        // repository call. Re-running would also re-attempt the pre-upgrade
+        // backup on every call; retention is finite, so enough failed
+        // repository calls would eventually evict the genuine one.
+        await using var fixture = await DatabaseFixture.CreateAsync();
+
+        // Roll back to just before 0010_backfill_seed_watermark.sql and drop
+        // the table it writes to, so that migration keeps throwing "no such
+        // table: seed_state" -- SQLITE_ERROR (1), not one of IsCorruption's
+        // codes (11/26) -- on every attempt.
+        await using (var setup = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken))
+        {
+            await using var rollback = setup.CreateCommand();
+            rollback.CommandText = "UPDATE schema_version SET version = 9 WHERE id = 1;";
+            await rollback.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+
+            await using var dropSeedState = setup.CreateCommand();
+            dropSeedState.CommandText = "DROP TABLE seed_state;";
+            await dropSeedState.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        fixture.Database.InvalidateInitialization();
+        var runsBefore = fixture.Database.InitializationRunCount;
+
+        await Assert.ThrowsAsync<SqliteException>(
+            () => fixture.Database.InitializeAsync(TestContext.Current.CancellationToken));
+
+        var runsAfterFirstFailure = fixture.Database.InitializationRunCount;
+        var backupsAfterFirstFailure = Directory.GetFiles(fixture.Options.BackupDirectory, "*.db").Length;
+        Assert.Equal(runsBefore + 1, runsAfterFirstFailure);
+
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            await Assert.ThrowsAsync<SqliteException>(
+                () => fixture.Database.InitializeAsync(TestContext.Current.CancellationToken));
+        }
+
+        Assert.Equal(runsAfterFirstFailure, fixture.Database.InitializationRunCount);
+        Assert.Equal(
+            backupsAfterFirstFailure,
+            Directory.GetFiles(fixture.Options.BackupDirectory, "*.db").Length);
+    }
+
+    [Fact]
+    public async Task Repeated_migration_runner_instances_at_the_same_failing_version_create_only_one_backup()
+    {
+        // B2 fix #2: HasValidBackupAtSchemaVersionAsync makes the pre-upgrade
+        // backup idempotent across separate MigrationRunner instances at the
+        // same starting version -- e.g. separate process launches each
+        // retrying the same failing migration -- not just within one run
+        // (that's backedUpThisRun, which a fresh MigrationRunner never shares).
+        await using var fixture = await DatabaseFixture.CreateAsync();
+
+        await using (var setup = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken))
+        {
+            await using var rollback = setup.CreateCommand();
+            rollback.CommandText = "UPDATE schema_version SET version = 9 WHERE id = 1;";
+            await rollback.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+
+            await using var dropSeedState = setup.CreateCommand();
+            dropSeedState.CommandText = "DROP TABLE seed_state;";
+            await dropSeedState.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        var backupsBefore = Directory.GetFiles(fixture.Options.BackupDirectory, "*.db").Length;
+
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            await using var connection = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken);
+            var runner = new MigrationRunner(fixture.Options);
+            await Assert.ThrowsAsync<SqliteException>(
+                () => runner.RunAsync(connection, TestContext.Current.CancellationToken));
+        }
+
+        var backupsAfter = Directory.GetFiles(fixture.Options.BackupDirectory, "*.db");
+        Assert.Equal(backupsBefore + 1, backupsAfter.Length);
+
+        var newestBackupPath = backupsAfter.OrderByDescending(path => path).First();
+        await using var backupConnection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = newestBackupPath,
+            Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false,
+        }.ToString());
+        await backupConnection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var version = backupConnection.CreateCommand();
+        version.CommandText = "SELECT version FROM schema_version WHERE id = 1;";
+        Assert.Equal(9L, Convert.ToInt64(await version.ExecuteScalarAsync(TestContext.Current.CancellationToken)));
+    }
+
+    [Fact]
+    public async Task Explicitly_invalidating_after_a_failed_migration_allows_a_real_retry()
+    {
+        // The flip side of B2 fix #1: restore-from-backup and any deliberate
+        // retry path call InvalidateInitialization() explicitly to re-arm a
+        // faulted cached initialization. That must still work once the
+        // underlying problem is actually fixed -- caching a genuine failure
+        // must not become a permanent lockout.
+        await using var fixture = await DatabaseFixture.CreateAsync();
+
+        await using (var setup = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken))
+        {
+            await using var rollback = setup.CreateCommand();
+            rollback.CommandText = "UPDATE schema_version SET version = 9 WHERE id = 1;";
+            await rollback.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+
+            await using var dropSeedState = setup.CreateCommand();
+            dropSeedState.CommandText = "DROP TABLE seed_state;";
+            await dropSeedState.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        fixture.Database.InvalidateInitialization();
+        await Assert.ThrowsAsync<SqliteException>(
+            () => fixture.Database.InitializeAsync(TestContext.Current.CancellationToken));
+
+        // Repair with a raw connection: fixture.Database.CreateConnectionAsync
+        // would just rethrow the still-cached failure at this point.
+        SqliteConnection.ClearAllPools();
+        await using (var repair = new SqliteConnection(Database.ConnectionString(fixture.Options)))
+        {
+            await repair.OpenAsync(TestContext.Current.CancellationToken);
+            await using var recreate = repair.CreateCommand();
+            recreate.CommandText = """
+                CREATE TABLE IF NOT EXISTS seed_state (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    version INTEGER NOT NULL DEFAULT 1
+                );
+                """;
+            await recreate.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        SqliteConnection.ClearAllPools();
+
+        // Still cached and faulted -- fixing the underlying problem alone must
+        // not make a plain retry (without invalidating) magically succeed.
+        await Assert.ThrowsAsync<SqliteException>(
+            () => fixture.Database.InitializeAsync(TestContext.Current.CancellationToken));
+
+        fixture.Database.InvalidateInitialization();
+        await fixture.Database.InitializeAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(10, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]

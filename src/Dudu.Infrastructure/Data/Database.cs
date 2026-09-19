@@ -3,6 +3,24 @@ using System.Collections.Concurrent;
 
 namespace Dudu.Infrastructure.Data;
 
+/// <summary>
+/// What <see cref="Database.InitializeAsync"/> had to do about a corrupt or
+/// unreadable canonical database file, reported via
+/// <see cref="Database.LastRecoveryOutcome"/> so the App layer can tell the
+/// user instead of the recovery happening silently.
+/// </summary>
+public enum DatabaseRecoveryOutcome
+{
+    /// <summary>No corruption was found; the existing database opened normally.</summary>
+    None,
+
+    /// <summary>The canonical database was unreadable and was replaced from the newest valid backup.</summary>
+    RestoredFromBackup,
+
+    /// <summary>The canonical database was unreadable and no valid backup existed, so it was quarantined and a fresh database was started.</summary>
+    StartedFresh,
+}
+
 public sealed class Database : IAsyncDisposable, IDisposable
 {
     /// <summary>
@@ -41,6 +59,13 @@ public sealed class Database : IAsyncDisposable, IDisposable
     public DatabaseOptions Options => _options;
 
     public int InitializationRunCount => _coordinator.InitializationRunCount;
+
+    /// <summary>
+    /// What the most recent <see cref="InitializeAsync"/> had to do about the
+    /// canonical database file. <see cref="DatabaseRecoveryOutcome.None"/>
+    /// until the first initialization completes.
+    /// </summary>
+    public DatabaseRecoveryOutcome LastRecoveryOutcome { get; private set; }
 
     public static async Task<Database> OpenAsync(
         DatabaseOptions options,
@@ -101,8 +126,14 @@ public sealed class Database : IAsyncDisposable, IDisposable
 
     // Microsoft.Data.Sqlite pools connections per connection string and keeps the
     // database file open until the pool is cleared; on Windows that blocks deleting
-    // or moving the data root after the owning host has shut down.
-    public void Dispose() => SqliteConnection.ClearAllPools();
+    // or moving the data root after the owning host has shut down. Clearing only
+    // this database's pool (rather than every pool in the process) keeps this from
+    // knocking out other tests' in-flight connections when they share a process.
+    public void Dispose()
+    {
+        using var connection = new SqliteConnection(ConnectionString(_options));
+        SqliteConnection.ClearPool(connection);
+    }
 
     internal static string ConnectionString(DatabaseOptions options) =>
         new SqliteConnectionStringBuilder
@@ -154,39 +185,131 @@ public sealed class Database : IAsyncDisposable, IDisposable
         }
     }
 
+    // Bounds TryRestoreFromBackupAsync's wait for RestoreLatestValidAsync's own
+    // internal drain of in-flight connections. Startup must not hang forever on
+    // a connection that never closes -- fall through to quarantine+fresh instead.
+    private static readonly TimeSpan RestoreTimeout = TimeSpan.FromSeconds(30);
+
     private async Task InitializeCoreAsync()
     {
-        try
+        if (!IsZeroByteDatabaseFile())
         {
-            await InitializeCoreInnerAsync();
-            return;
+            try
+            {
+                await InitializeCoreInnerAsync();
+                LastRecoveryOutcome = DatabaseRecoveryOutcome.None;
+                return;
+            }
+            catch (SqliteException exception) when (IsCorruption(exception))
+            {
+                // A corrupt canonical database (torn write, AV quarantine remnant,
+                // disk error) otherwise fails every launch — including crash-loop
+                // safe mode, which still needs this same database. Fall through to
+                // recovery below instead of crash-looping forever.
+            }
         }
-        catch (SqliteException exception) when (IsCorruption(exception))
+
+        // The file at this point (corrupt, or zero-byte) may be the only copy of
+        // anything the user did since the newest backup -- which could be months
+        // old. RestoreAsync's own recovery-set staging (dudu.db.corrupt-recovery)
+        // is transient: the very next reconciliation pass deletes it once the
+        // canonical database is healthy again, milliseconds later. Preserve a
+        // durable copy before attempting restore or replacing anything, so a
+        // `.recover` still has something recent to salvage from (H1).
+        CreateDurableQuarantineCopy();
+
+        // Existing backups sitting right next to the corrupt file were
+        // previously never tried: prefer restoring the newest valid one over
+        // silently starting the user over from nothing. Only when no backup
+        // is usable do we quarantine the unreadable file and start fresh.
+        if (await TryRestoreFromBackupAsync())
         {
-            // A corrupt canonical database (torn write, AV quarantine remnant,
-            // disk error) otherwise fails every launch — including crash-loop
-            // safe mode, which still needs this same database. Quarantine the
-            // unreadable file and start fresh instead of crash-looping forever.
+            LastRecoveryOutcome = DatabaseRecoveryOutcome.RestoredFromBackup;
+            return;
         }
 
         QuarantineCorruptDatabase();
         await InitializeCoreInnerAsync();
+        LastRecoveryOutcome = DatabaseRecoveryOutcome.StartedFresh;
+    }
+
+    private bool IsZeroByteDatabaseFile()
+    {
+        try
+        {
+            return File.Exists(_options.DatabasePath) && new FileInfo(_options.DatabasePath).Length == 0;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    private async Task<bool> TryRestoreFromBackupAsync()
+    {
+        try
+        {
+            using var timeoutCts = new CancellationTokenSource(RestoreTimeout);
+            var result = await new DatabaseBackupService(_options).RestoreLatestValidAsync(timeoutCts.Token);
+            return result.Restored;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SqliteException or OperationCanceledException)
+        {
+            return false;
+        }
     }
 
     private static bool IsCorruption(SqliteException exception) =>
         exception.SqliteErrorCode is 11 or 26;
+
+    // Backups and quarantine files must not share a directory: RotateAsync and
+    // RestoreLatestValidAsync both glob BackupDirectory for "*.db" and would
+    // otherwise treat a quarantined corrupt file as a legitimate backup
+    // candidate -- and its timestamp-prefixed name can sort ahead of real
+    // backups (M1).
+    private string QuarantineDirectory => Path.Combine(_options.BackupDirectory, "quarantine");
+
+    // Best-effort forensic copy of the corrupt/unreadable file, made before any
+    // attempt to restore or replace it. Failures here must never block recovery.
+    private void CreateDurableQuarantineCopy()
+    {
+        try
+        {
+            if (!File.Exists(_options.DatabasePath))
+            {
+                return;
+            }
+
+            Directory.CreateDirectory(QuarantineDirectory);
+            var timestamp = DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss");
+            var destination = Path.Combine(
+                QuarantineDirectory,
+                $"dudu-corrupt-{timestamp}-{Guid.NewGuid():N}.db");
+            File.Copy(_options.DatabasePath, destination, overwrite: false);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
 
     private void QuarantineCorruptDatabase()
     {
         try
         {
             SqliteConnection.ClearAllPools();
-            Directory.CreateDirectory(_options.BackupDirectory);
+            Directory.CreateDirectory(QuarantineDirectory);
             if (File.Exists(_options.DatabasePath))
             {
                 var timestamp = DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss");
                 var quarantine = Path.Combine(
-                    _options.BackupDirectory,
+                    QuarantineDirectory,
                     $"dudu-corrupt-{timestamp}-{Guid.NewGuid():N}.db");
                 File.Move(_options.DatabasePath, quarantine);
             }
@@ -352,14 +475,16 @@ internal sealed class DatabaseAccessCoordinator
         }
         catch (Exception exception)
         {
-            lock (_sync)
-            {
-                if (ReferenceEquals(_initializationSource, source))
-                {
-                    _initializationSource = null;
-                }
-            }
-
+            // Deliberately do NOT clear _initializationSource here (B2). A
+            // genuine initialization failure (e.g. a migration that keeps
+            // throwing) must stay cached and faulted, so every subsequent
+            // InitializeAsync call returns the same failed task instead of
+            // silently re-running the whole initializer -- which re-runs
+            // migrations and, without this, would re-create the pre-upgrade
+            // backup on every retry, evicting the genuine one after enough
+            // attempts (retention is finite). Restore-from-backup and any
+            // deliberate retry path call ResetInitialization()/
+            // InvalidateInitialization() explicitly to re-arm this.
             source.TrySetException(exception);
         }
     }
