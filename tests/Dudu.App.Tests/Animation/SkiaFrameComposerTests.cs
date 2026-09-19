@@ -78,6 +78,38 @@ public sealed class SkiaFrameComposerTests
             invalid));
     }
 
+    // Regression for the decoded-frame cache having no eviction: 8 frames at
+    // 16 MiB decoded each (128 MiB) is well past the composer's 64 MiB cap,
+    // so composing every frame in order only succeeds if the cache evicts
+    // older entries instead of throwing once the cap is hit.
+    [Fact]
+    public void Frames_still_compose_after_decoded_cache_exceeds_its_byte_cap()
+    {
+        using var fixture = ComposerFixture.CreateWithOversizedFrames(frameCount: 8, dimension: 2048);
+
+        for (var i = 0; i < fixture.Animation.Frames.Count; i++)
+        {
+            using var frame = fixture.Composer.Compose(fixture.Pack, fixture.Animation, i);
+            var expectedGray = ExpectedGray(i);
+            Assert.Equal(expectedGray, frame.Bytes.Span[0]);
+            Assert.Equal(expectedGray, frame.Bytes.Span[1]);
+            Assert.Equal(expectedGray, frame.Bytes.Span[2]);
+            Assert.Equal(255, frame.Bytes.Span[3]);
+        }
+
+        // The first frame is long evicted by now: re-requesting it must
+        // re-decode from disk rather than throw or hand back stale/disposed
+        // bytes from the evicted (and disposed) SKImage.
+        using var revisited = fixture.Composer.Compose(fixture.Pack, fixture.Animation, 0);
+        var firstGray = ExpectedGray(0);
+        Assert.Equal(firstGray, revisited.Bytes.Span[0]);
+        Assert.Equal(firstGray, revisited.Bytes.Span[1]);
+        Assert.Equal(firstGray, revisited.Bytes.Span[2]);
+        Assert.Equal(255, revisited.Bytes.Span[3]);
+    }
+
+    private static byte ExpectedGray(int frameIndex) => (byte)(20 + frameIndex * 25);
+
     private sealed class ComposerFixture : IDisposable
     {
         private ComposerFixture(string root, AssetPack pack, AssetAnimation animation, SkiaFrameComposer composer)
@@ -118,6 +150,51 @@ public sealed class SkiaFrameComposerTests
             {
                 SchemaVersion = 1,
                 PackId = "fixture",
+                Version = "1",
+                PrivateUseOnly = true,
+                Attribution = new AssetAttribution { Creator = "test" },
+                Outfits = new Dictionary<string, AssetOutfit>(StringComparer.Ordinal)
+                {
+                    ["base"] = new AssetOutfit { Animations = new Dictionary<string, AssetAnimation> { ["idle"] = animation } },
+                },
+            };
+            var pack = new AssetPack(Path.Combine(root, "manifest.json"), manifest);
+            return new ComposerFixture(root, pack, animation, new SkiaFrameComposer(pack));
+        }
+
+        /// <summary>Builds a pack whose frames each decode far larger than they
+        /// encode (solid-color PNGs), so their combined decoded size blows
+        /// past the composer's byte cap while staying tiny on disk.</summary>
+        public static ComposerFixture CreateWithOversizedFrames(int frameCount, int dimension)
+        {
+            var root = Path.Combine(Path.GetTempPath(), "dudu-composer-tests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(root);
+
+            var frames = new List<AssetFrame>(frameCount);
+            for (var i = 0; i < frameCount; i++)
+            {
+                var fileName = $"frame-{i}.png";
+                var gray = ExpectedGray(i);
+                using var bitmap = new SKBitmap(new SKImageInfo(dimension, dimension, SKColorType.Bgra8888, SKAlphaType.Premul));
+                bitmap.Erase(new SKColor(gray, gray, gray, 255));
+                using var image = SKImage.FromBitmap(bitmap);
+                using var encoded = image.Encode(SKEncodedImageFormat.Png, 100);
+                File.WriteAllBytes(Path.Combine(root, fileName), encoded.ToArray());
+                frames.Add(new AssetFrame { File = fileName, DurationMs = 100 });
+            }
+
+            var animation = new AssetAnimation
+            {
+                Frames = frames,
+                Loop = "loop",
+                NominalSize = new PixelSize(4, 4),
+                Anchor = new PixelPoint(0, 0),
+                ReducedMotion = frames[0].File,
+            };
+            var manifest = new AssetManifest
+            {
+                SchemaVersion = 1,
+                PackId = "fixture-oversized",
                 Version = "1",
                 PrivateUseOnly = true,
                 Attribution = new AssetAttribution { Creator = "test" },
