@@ -83,6 +83,12 @@ public sealed class DatabaseBackupService
                 DataSource = _options.DatabasePath,
                 Mode = SqliteOpenMode.ReadWrite,
                 ForeignKeys = true,
+                // Pooled connections keep the file open after Dispose; the validation
+                // connections elsewhere in this class already disable pooling for the
+                // same reason. This one-shot connection (e.g. "Back up now") otherwise
+                // gets a different pool key (no DefaultTimeout) than the one Database
+                // clears on Dispose, so its handle could keep dudu.db locked on Windows.
+                Pooling = false,
             }.ToString());
         await connection.OpenAsync(cancellationToken);
         Database.ConfigureConnection(connection);
