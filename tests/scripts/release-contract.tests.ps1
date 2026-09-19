@@ -381,14 +381,29 @@ Assert-Contains "workflow uploads release metadata" $workflow 'artifacts/release
 Assert-Contains "workflow invokes the Store package wrapper" $workflow "scripts/package-store\.ps1"
 Assert-Contains "workflow invokes the Store wrapper in explicit acceptance-only mode" $workflow 'scripts/package-store\.ps1\s+-Version \$env:STORE_VERSION\s+-AcceptanceOnly'
 Assert-Contains "workflow uploads a Store package artifact" $workflow 'DuduDesktop-\$\{\{ env\.STORE_VERSION \}\}-win-x64-store'
-Assert-True "workflow excludes bulky Store build intermediates from every upload" (
-    (@([regex]::Matches($workflow, '!artifacts/store-package-metadata/publish/')).Count -eq 1) -and
-    (@([regex]::Matches($workflow, '!artifacts/store-package-metadata/unpacked/')).Count -eq 1)
-)
-Assert-True "production workflow excludes bulky Store build intermediates from every upload" (
-    (@([regex]::Matches($productionWorkflow, '!artifacts/store-package-metadata/publish/')).Count -eq 2) -and
-    (@([regex]::Matches($productionWorkflow, '!artifacts/store-package-metadata/unpacked/')).Count -eq 2)
-)
+function Assert-StoreUploadStepsExcludeIntermediatesAndKeepPdbs {
+    <#
+        Every upload-artifact step whose path includes store-package-metadata/ must
+        recursively exclude the bulky publish/ and unpacked/ intermediate trees, and
+        must then re-include the shipped MSIX's PDBs from publish/. upload-artifact
+        evaluates path patterns in order, so the PDB include line must appear AFTER
+        the publish/ and unpacked/ exclusions it overrides, not before. Rather than
+        pin an exact count of upload steps (brittle if one is added or removed),
+        this requires every publish/ exclusion to be immediately paired with an
+        unpacked/ exclusion and a publish/ PDB re-include, in that order.
+    #>
+    param([Parameter(Mandatory)][string]$Label, [Parameter(Mandatory)][string]$WorkflowText)
+
+    $publishExclusionCount = @([regex]::Matches($WorkflowText, [regex]::Escape('!artifacts/store-package-metadata/publish/**'))).Count
+    Assert-True "$Label has at least one Store upload step excluding the publish/ intermediate tree" ($publishExclusionCount -gt 0)
+    $pairedTripletCount = @([regex]::Matches($WorkflowText,
+        '!artifacts/store-package-metadata/publish/\*\*\r?\n\s*!artifacts/store-package-metadata/unpacked/\*\*\r?\n\s*artifacts/store-package-metadata/publish/\*\*/\*\.pdb'
+    )).Count
+    Assert-True "$Label every publish/ exclusion is paired with an unpacked/ exclusion and a publish/ PDB re-include, in that order" ($pairedTripletCount -eq $publishExclusionCount)
+}
+
+Assert-StoreUploadStepsExcludeIntermediatesAndKeepPdbs "installer workflow" $workflow
+Assert-StoreUploadStepsExcludeIntermediatesAndKeepPdbs "production workflow" $productionWorkflow
 Assert-Contains "workflow supports an explicit Store package version" $workflow "store_version"
 Assert-Contains "workflow requires a Store version for manual dispatch" $workflow "store_version:(?s).*required:\s*true"
 Assert-Contains "workflow keeps 1.0.0 as the push Store acceptance version" $workflow "github\.event_name\s*==\s*'push'.*1\.0\.0"

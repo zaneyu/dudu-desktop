@@ -170,12 +170,16 @@ jobs:
           name: DuduDesktop-${{ inputs.store_version }}-win-x64-store-diagnostics
           # publish/ and unpacked/ are package-store.ps1's intermediate build/validation
           # trees under store-package-metadata/, not diagnostic evidence; uploading them
-          # exhausted this repository's Actions storage quota.
+          # exhausted this repository's Actions storage quota. publish/ is also the only
+          # place the PDBs matching the shipped Store MSIX live, so re-include just those
+          # after the broader exclusion (upload-artifact evaluates path patterns in order,
+          # so this include must come after the exclusion it overrides).
           path: |
             artifacts/store-package-metadata/
             artifacts/store-package/
-            !artifacts/store-package-metadata/publish/
-            !artifacts/store-package-metadata/unpacked/
+            !artifacts/store-package-metadata/publish/**
+            !artifacts/store-package-metadata/unpacked/**
+            artifacts/store-package-metadata/publish/**/*.pdb
           if-no-files-found: warn
           retention-days: 7
 
@@ -204,11 +208,15 @@ jobs:
           name: DuduDesktop-${{ inputs.store_version }}-win-x64-production-store
           # publish/ and unpacked/ are package-store.ps1's intermediate build/validation
           # trees under store-package-metadata/, not release evidence; uploading them
-          # exhausted this repository's Actions storage quota.
+          # exhausted this repository's Actions storage quota. publish/ is also the only
+          # place the PDBs matching the shipped Store MSIX live, so re-include just those
+          # after the broader exclusion (upload-artifact evaluates path patterns in order,
+          # so this include must come after the exclusion it overrides).
           path: |
             artifacts/store-package/
             artifacts/store-package-metadata/
-            !artifacts/store-package-metadata/publish/
-            !artifacts/store-package-metadata/unpacked/
+            !artifacts/store-package-metadata/publish/**
+            !artifacts/store-package-metadata/unpacked/**
+            artifacts/store-package-metadata/publish/**/*.pdb
           if-no-files-found: error
           retention-days: 14
