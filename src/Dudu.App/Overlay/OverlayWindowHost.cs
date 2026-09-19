@@ -38,6 +38,25 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private const nint HTCLIENT = 1;
     private const nint HTTRANSPARENT = -1;
     private const int ErrorAccessDenied = 5;
+
+    /// <summary>
+    /// Extended style for the pet window. Deliberately omits WS_EX_TRANSPARENT:
+    /// that flag makes a window click-through for *all* input, which would
+    /// defeat the per-pixel hit testing this host implements itself in
+    /// WM_NCHITTEST (see <see cref="IsInteractive(int, int)"/>). Per-pixel
+    /// click-through already comes from returning HTTRANSPARENT for
+    /// fully-transparent pixels there.
+    /// </summary>
+    internal const WINDOW_EX_STYLE PetWindowExStyle =
+        WINDOW_EX_STYLE.WS_EX_LAYERED
+        | WINDOW_EX_STYLE.WS_EX_TOOLWINDOW
+        | WINDOW_EX_STYLE.WS_EX_NOACTIVATE;
+
+    /// <summary>
+    /// Window class style for the pet window. CS_DBLCLKS is required for
+    /// WM_LBUTTONDBLCLK (double-click to open Home) to ever be delivered.
+    /// </summary>
+    internal const WNDCLASS_STYLES PetWindowClassStyle = WNDCLASS_STYLES.CS_DBLCLKS;
     private static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(5);
     private static readonly object ClassGate = new();
     public const string WindowClassName = "Dudu.DesktopCompanion.PetOverlay.v1";
@@ -417,10 +436,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             {
                 using var module = PInvoke.GetModuleHandle(null);
                 _window = PInvoke.CreateWindowEx(
-                    WINDOW_EX_STYLE.WS_EX_LAYERED
-                    | WINDOW_EX_STYLE.WS_EX_TOOLWINDOW
-                    | WINDOW_EX_STYLE.WS_EX_NOACTIVATE
-                    | WINDOW_EX_STYLE.WS_EX_TRANSPARENT,
+                    PetWindowExStyle,
                     ClassName,
                     "Dudu",
                     WINDOW_STYLE.WS_POPUP,
@@ -519,8 +535,10 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             var windowClass = new WNDCLASSEXW
             {
                 cbSize = (uint)Marshal.SizeOf<WNDCLASSEXW>(),
+                style = PetWindowClassStyle,
                 lpfnWndProc = WindowProcedure,
                 hInstance = new HINSTANCE(instance.DangerousGetHandle()),
+                hCursor = PInvoke.LoadCursor(HINSTANCE.Null, PInvoke.IDC_ARROW),
             };
 
             using (instance)
@@ -935,6 +953,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             Scale = MonitorPlacementService.ClampScale(_placement.Scale * factor),
         };
         ResolveAndMove();
+        _placementDirty = true;
     }
 
     private void ReleasePointerCapture()

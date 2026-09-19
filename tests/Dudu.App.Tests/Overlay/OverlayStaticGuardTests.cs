@@ -1,9 +1,31 @@
+using Dudu.App.Overlay;
+using Windows.Win32.UI.WindowsAndMessaging;
 using Xunit;
 
 namespace Dudu.App.Tests.Overlay;
 
 public sealed class OverlayStaticGuardTests
 {
+    [Fact]
+    public void Pet_window_styles_stay_pinned_to_the_intended_flags()
+    {
+        // WS_EX_TRANSPARENT is deliberately excluded: it makes a window
+        // click-through for *all* input, which would defeat the per-pixel
+        // WM_NCHITTEST hit testing OverlayWindowHost relies on for
+        // drag/click/scroll (see OverlayHitTest and the WM_NCHITTEST case in
+        // OverlayWindowHost.WindowProc).
+        Assert.Equal(
+            WINDOW_EX_STYLE.WS_EX_LAYERED
+                | WINDOW_EX_STYLE.WS_EX_TOOLWINDOW
+                | WINDOW_EX_STYLE.WS_EX_NOACTIVATE,
+            OverlayWindowHost.PetWindowExStyle);
+        Assert.False(OverlayWindowHost.PetWindowExStyle.HasFlag(WINDOW_EX_STYLE.WS_EX_TRANSPARENT));
+
+        // CS_DBLCLKS is required for WM_LBUTTONDBLCLK (double-click to open
+        // Home) to ever be delivered to the window procedure.
+        Assert.True(OverlayWindowHost.PetWindowClassStyle.HasFlag(WNDCLASS_STYLES.CS_DBLCLKS));
+    }
+
     [Fact]
     public void Native_methods_allowlist_contains_overlay_contract_and_no_handwritten_imports()
     {
