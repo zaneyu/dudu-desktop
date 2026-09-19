@@ -8,6 +8,14 @@ namespace Dudu.App.Tests.Overlay;
 public sealed class MonitorPlacementServiceTests
 {
     [Fact]
+    public void Production_nominal_size_is_reduced_without_changing_user_scale()
+    {
+        Assert.Equal(
+            new PixelSize(384, 384),
+            MonitorPlacementService.ScaleNominalSize(new PixelSize(512, 512)));
+    }
+
+    [Fact]
     public void Missing_saved_monitor_moves_pet_into_primary_work_area()
     {
         var monitors = new[]

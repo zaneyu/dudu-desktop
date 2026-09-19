@@ -1,4 +1,5 @@
 using Dudu.App.Overlay;
+using Dudu.Core.Assets;
 using Xunit;
 
 namespace Dudu.App.Tests.Overlay;
@@ -77,5 +78,23 @@ public sealed class OverlayWindowHostTests
 
         Assert.False(result);
         Assert.Equal(1, releaseCalls);
+    }
+
+    [Fact]
+    public void Drag_bounds_use_screen_cursor_coordinates_after_the_window_moves()
+    {
+        var start = new PixelRect(100, 200, 384, 384);
+
+        var firstMove = OverlayWindowHost.CalculateDraggedBounds(
+            start,
+            new PixelPoint(150, 250),
+            new PixelPoint(190, 280));
+        var secondMove = OverlayWindowHost.CalculateDraggedBounds(
+            start,
+            new PixelPoint(150, 250),
+            new PixelPoint(220, 310));
+
+        Assert.Equal(new PixelRect(140, 230, 384, 384), firstMove);
+        Assert.Equal(new PixelRect(170, 260, 384, 384), secondMove);
     }
 }

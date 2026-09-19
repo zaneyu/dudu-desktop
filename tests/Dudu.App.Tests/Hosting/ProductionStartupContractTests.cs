@@ -72,6 +72,28 @@ public sealed class ProductionStartupContractTests
         Assert.Contains("completion.TrySetException", dispatcher);
     }
 
+    [Fact]
+    public void Production_overlay_persists_dropped_drag_placements()
+    {
+        var root = FindRepositoryRoot();
+        var composition = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "Dudu.App",
+            "Hosting",
+            "WindowsCompanionProductionComposition.cs"));
+        var runtime = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "Dudu.App",
+            "Hosting",
+            "WindowsCompanionBootstrap.cs"));
+
+        Assert.Contains("persistPlacementAsync:", composition);
+        Assert.Contains("placementRepository.SaveAsync", composition);
+        Assert.Contains("persistPlacementAsync", runtime);
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

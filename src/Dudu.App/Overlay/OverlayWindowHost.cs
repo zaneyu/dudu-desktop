@@ -51,6 +51,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private readonly IFramePresenter _presenter;
     private readonly PixelSize _nominalSize;
     private readonly Func<CancellationToken, Task> _openHome;
+    private readonly Func<PetPlacement, CancellationToken, Task>? _persistPlacementAsync;
     private readonly Action _showContextMenu;
     private readonly Action<uint, nint, nint>? _systemMessageHandler;
     private readonly Action<Exception> _diagnostic;
@@ -76,8 +77,11 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private bool _actionSurfacePointerArmed;
     private OverlaySurfaceAction? _armedOverlayAction;
     private bool _petBodyPointerArmed;
+    private bool _placementDirty;
     private int _dragOriginX;
     private int _dragOriginY;
+    private int _dragOriginScreenX;
+    private int _dragOriginScreenY;
     private PixelRect _dragStartBounds;
     private bool _shutdownIssued;
     private int _shutdownRequestPosted;
@@ -94,7 +98,8 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         Action<Exception>? diagnostic,
         Action<uint, nint, nint>? systemMessageHandler,
         CancellationToken creationCancellation,
-        IAppHostErrorReporter? errorReporter = null)
+        IAppHostErrorReporter? errorReporter = null,
+        Func<PetPlacement, CancellationToken, Task>? persistPlacementAsync = null)
     {
         _presenter = presenter ?? throw new ArgumentNullException(nameof(presenter));
         _placement = placement ?? throw new ArgumentNullException(nameof(placement));
@@ -105,6 +110,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
 
         _nominalSize = nominalSize;
         _openHome = openHome ?? (_ => Task.CompletedTask);
+        _persistPlacementAsync = persistPlacementAsync;
         _showContextMenu = showContextMenu ?? (() => { });
         _systemMessageHandler = systemMessageHandler;
         _bubbleHitRegions = bubbleHitRegions?.ToArray() ?? [];
@@ -138,7 +144,8 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         Action<Exception>? diagnostic = null,
         Action<uint, nint, nint>? systemMessageHandler = null,
         CancellationToken cancellationToken = default,
-        IAppHostErrorReporter? errorReporter = null)
+        IAppHostErrorReporter? errorReporter = null,
+        Func<PetPlacement, CancellationToken, Task>? persistPlacementAsync = null)
     {
         var host = new OverlayWindowHost(
             presenter,
@@ -150,7 +157,8 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             diagnostic,
             systemMessageHandler,
             cancellationToken,
-            errorReporter);
+            errorReporter,
+            persistPlacementAsync);
         host._creationRegistration = cancellationToken.Register(
             static state => ((OverlayWindowHost)state!).CancelStartup(),
             host);
@@ -213,6 +221,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         else
         {
             _ = PInvoke.ShowWindow(_window, SHOW_WINDOW_CMD.SW_HIDE);
+            CommitPlacementIfDirty();
             ReleasePointerCapture();
         }
     }
@@ -747,6 +756,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                     && Math.Abs(releasedPoint.X - _dragOriginX) <= 4
                     && Math.Abs(releasedPoint.Y - _dragOriginY) <= 4;
                 _petBodyPointerArmed = false;
+                CommitPlacementIfDirty();
                 ReleasePointerCapture();
                 if (_actionSurfacePointerArmed)
                 {
@@ -781,12 +791,14 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                 break;
             case WmCancelMode:
             case WmCaptureChanged:
+                CommitPlacementIfDirty();
                 ReleasePointerCapture();
                 _actionSurfacePointerArmed = false;
                 _armedOverlayAction = null;
                 _petBodyPointerArmed = false;
                 break;
             case WmDestroy:
+                CommitPlacementIfDirty();
                 ReleasePointerCapture();
                 _actionDispatchQueue.Dispose();
                 Hosts.TryRemove((nint)_window.Value, out _);
@@ -827,7 +839,18 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         _dragging = true;
         _dragOriginX = point.X;
         _dragOriginY = point.Y;
+        if (PInvoke.GetCursorPos(out var cursor))
+        {
+            _dragOriginScreenX = cursor.X;
+            _dragOriginScreenY = cursor.Y;
+        }
+        else
+        {
+            _dragOriginScreenX = _windowBounds.X + point.X;
+            _dragOriginScreenY = _windowBounds.Y + point.Y;
+        }
         _dragStartBounds = _windowBounds;
+        _placementDirty = false;
         return true;
     }
 
@@ -843,15 +866,60 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         {
             _petBodyPointerArmed = false;
         }
-        var x = _dragStartBounds.X + point.X - _dragOriginX;
-        var y = _dragStartBounds.Y + point.Y - _dragOriginY;
-        var bounds = new PixelRect(x, y, _windowBounds.Width, _windowBounds.Height);
+        var cursor = PInvoke.GetCursorPos(out var screenPoint)
+            ? new PixelPoint(screenPoint.X, screenPoint.Y)
+            : new PixelPoint(_windowBounds.X + point.X, _windowBounds.Y + point.Y);
+        var bounds = CalculateDraggedBounds(
+            _dragStartBounds,
+            new PixelPoint(_dragOriginScreenX, _dragOriginScreenY),
+            cursor);
         ApplyWindowState(bounds, _placement.Scale);
         _placement = MonitorPlacementService.Capture(
             bounds,
             _placement.Scale,
             _nominalSize,
             EnumerateMonitors());
+        _placementDirty = true;
+    }
+
+    internal static PixelRect CalculateDraggedBounds(
+        PixelRect startBounds,
+        PixelPoint startCursor,
+        PixelPoint currentCursor) =>
+        new(
+            startBounds.X + currentCursor.X - startCursor.X,
+            startBounds.Y + currentCursor.Y - startCursor.Y,
+            startBounds.Width,
+            startBounds.Height);
+
+    private void PersistPlacementAfterDrag()
+    {
+        if (_persistPlacementAsync is null)
+        {
+            return;
+        }
+
+        try
+        {
+            _ = OverlayNativeCallbackObserver.ObserveAsync(
+                _persistPlacementAsync(_placement, CancellationToken.None),
+                exception => ReportFailure("placement-save", exception));
+        }
+        catch (Exception exception)
+        {
+            ReportFailure("placement-save", exception);
+        }
+    }
+
+    private void CommitPlacementIfDirty()
+    {
+        if (!_placementDirty)
+        {
+            return;
+        }
+
+        _placementDirty = false;
+        PersistPlacementAfterDrag();
     }
 
     private void ChangeScale(short delta)
@@ -888,6 +956,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         _shutdownIssued = true;
         _actionDispatchQueue.Dispose();
         _ownerActions.Close(new ObjectDisposedException(nameof(OverlayWindowHost)));
+        CommitPlacementIfDirty();
         ReleasePointerCapture();
         if (!_window.IsNull)
         {

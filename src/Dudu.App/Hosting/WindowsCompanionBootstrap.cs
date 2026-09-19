@@ -698,7 +698,8 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         Func<Preferences, CancellationToken, Task>? onPreferencesChanged = null,
         IPresentationEnvironmentSink? presentationEnvironment = null,
         CancellationToken cancellationToken = default,
-        IAppHostErrorReporter? errorReporter = null)
+        IAppHostErrorReporter? errorReporter = null,
+        Func<PetPlacement, CancellationToken, Task>? persistPlacementAsync = null)
     {
         ArgumentNullException.ThrowIfNull(openHome);
         if (trayCommandHandler is null && trayCommandHandlerFactory is null)
@@ -726,7 +727,8 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                     _ = events.HandleWindowMessage(message, wParam, lParam);
                 },
                 cancellationToken: cancellationToken,
-                errorReporter: errorReporter);
+                errorReporter: errorReporter,
+                persistPlacementAsync: persistPlacementAsync);
             var handler = trayCommandHandler
                 ?? (command => trayCommandHandlerFactory!(lifecycle
                     ?? throw new InvalidOperationException("Lifecycle is not composed."))(command));

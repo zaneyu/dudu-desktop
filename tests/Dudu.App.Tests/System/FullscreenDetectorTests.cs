@@ -23,6 +23,20 @@ public sealed class FullscreenDetectorTests
             new FullscreenWindowSnapshot(42, 1, 2, WorkArea, Monitor, WorkArea)));
     }
 
+    [Fact]
+    public void Maximized_window_is_not_treated_as_exclusive_fullscreen()
+    {
+        Assert.False(FullscreenDetector.IsForegroundFullscreen(
+            new FullscreenWindowSnapshot(
+                42,
+                1,
+                2,
+                Monitor,
+                Monitor,
+                WorkArea,
+                IsMaximized: true)));
+    }
+
     [Theory]
     [InlineData(true, false, false)]
     [InlineData(false, true, false)]
@@ -100,6 +114,7 @@ public sealed class FullscreenDetectorTests
         public nint GetShellWindow() => 0;
         public nint GetDesktopWindow() => 0;
         public bool IsIconic(nint hwnd) => false;
+        public bool IsMaximized(nint hwnd) => false;
         public bool IsDuduWindow(nint hwnd) => false;
         public bool TryGetCloaked(nint hwnd, out bool cloaked) { cloaked = false; return true; }
         public bool TryGetExtendedFrameBounds(nint hwnd, out PixelRect bounds) { bounds = default; return false; }

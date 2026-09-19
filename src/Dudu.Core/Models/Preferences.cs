@@ -35,7 +35,7 @@ public sealed record Preferences(
         ReducedMotion: false,
         LocalNoteDailyLimit: 3,
         LaunchAtSignIn: true,
-        AlwaysOnTop: false,
+        AlwaysOnTop: true,
         HidePetDuringFullscreen: true,
         AmbientMinimumInterval: TimeSpan.FromMinutes(15),
         SoundsEnabled: true,

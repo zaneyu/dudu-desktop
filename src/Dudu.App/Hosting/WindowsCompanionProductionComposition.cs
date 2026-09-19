@@ -276,9 +276,8 @@ public static class WindowsCompanionProductionComposition
                     pet);
             }
 
-            var savedPlacements = await services
-                .GetRequiredService<IPetPlacementRepository>()
-                .ListAsync(cancellationToken);
+            var placementRepository = services.GetRequiredService<IPetPlacementRepository>();
+            var savedPlacements = await placementRepository.ListAsync(cancellationToken);
             var assetsRoot = Path.Combine(AppContext.BaseDirectory, "Assets");
             var packsRoot = Path.Combine(assetsRoot, "Packs");
             var privateManifestPath = Path.Combine(packsRoot, "private-dudu", "manifest.json");
@@ -357,11 +356,16 @@ public static class WindowsCompanionProductionComposition
                 host,
                 presenter,
                 initialPlacement,
-                animation.NominalSize,
+                MonitorPlacementService.ScaleNominalSize(animation.NominalSize),
                 pet,
                 preferences,
                 pauseState: () => pause.GetEffective(DateTimeOffset.UtcNow),
                 openHome: actions.OpenHome,
+                persistPlacementAsync: (placement, token) =>
+                {
+                    activePlacement = placement;
+                    return placementRepository.SaveAsync(placement, token);
+                },
                 trayCommandHandlerFactory: lifecycle =>
                 {
                     var router = new CompanionCommandRouter(

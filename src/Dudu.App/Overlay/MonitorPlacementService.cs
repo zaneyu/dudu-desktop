@@ -29,7 +29,20 @@ public static class MonitorPlacementService
     // physical resize and applying DPI here too would double-scale the pet.
     public const double MinimumScale = 0.5;
     public const double MaximumScale = 2.0;
+    public const double DefaultNominalScale = 0.75;
     internal const uint HResultAccessDenied = 0x80070005;
+
+    public static PixelSize ScaleNominalSize(PixelSize nominalSize)
+    {
+        if (nominalSize.Width <= 0 || nominalSize.Height <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(nominalSize));
+        }
+
+        return new PixelSize(
+            ToDimension(nominalSize.Width, DefaultNominalScale),
+            ToDimension(nominalSize.Height, DefaultNominalScale));
+    }
 
     internal static int ResolveEffectiveDpi(
         uint hresult,

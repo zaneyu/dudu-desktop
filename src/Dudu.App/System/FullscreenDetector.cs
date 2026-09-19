@@ -17,7 +17,8 @@ public sealed record FullscreenWindowSnapshot(
     PixelRect WorkArea,
     bool IsCloaked = false,
     bool IsMinimized = false,
-    bool IsDuduWindow = false);
+    bool IsDuduWindow = false,
+    bool IsMaximized = false);
 
 public interface IFullscreenNativeApi
 {
@@ -25,6 +26,7 @@ public interface IFullscreenNativeApi
     nint GetShellWindow();
     nint GetDesktopWindow();
     bool IsIconic(nint hwnd);
+    bool IsMaximized(nint hwnd);
     bool IsDuduWindow(nint hwnd);
     bool TryGetCloaked(nint hwnd, out bool cloaked);
     bool TryGetExtendedFrameBounds(nint hwnd, out PixelRect bounds);
@@ -66,6 +68,7 @@ public sealed class FullscreenDetector
             var desktop = _native.GetDesktopWindow();
             var isCloaked = !_native.TryGetCloaked(foreground, out var cloaked) || cloaked;
             var isMinimized = _native.IsIconic(foreground);
+            var isMaximized = _native.IsMaximized(foreground);
             if (!_native.TryGetExtendedFrameBounds(foreground, out var frame)
                 || !_native.TryGetMonitorBounds(foreground, out var monitor, out var workArea))
             {
@@ -84,7 +87,8 @@ public sealed class FullscreenDetector
                 workArea,
                 isCloaked,
                 isMinimized,
-                isDudu));
+                isDudu,
+                isMaximized));
         }
         catch
         {
@@ -108,6 +112,7 @@ public sealed class FullscreenDetector
             || snapshot.IsCloaked
             || snapshot.IsMinimized
             || snapshot.IsDuduWindow
+            || snapshot.IsMaximized
             || !snapshot.ExtendedFrameBounds.IsValid
             || !snapshot.MonitorBounds.IsValid)
         {
@@ -135,6 +140,8 @@ internal sealed unsafe class WindowsFullscreenNativeApi : IFullscreenNativeApi
     public nint GetDesktopWindow() => (nint)PInvoke.GetDesktopWindow().Value;
 
     public bool IsIconic(nint hwnd) => PInvoke.IsIconic(ToHwnd(hwnd));
+
+    public bool IsMaximized(nint hwnd) => PInvoke.IsZoomed(ToHwnd(hwnd));
 
     public bool IsDuduWindow(nint hwnd) => OverlayWindowHost.IsDuduWindowHandle(hwnd);
 
