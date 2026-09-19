@@ -1089,6 +1089,37 @@ public sealed class DatabaseTests
     }
 
     [Fact]
+    public async Task Second_InitializeAsync_after_a_corruption_restore_still_reports_it_restored()
+    {
+        // Review finding: DatabaseBackupService.RestoreAsync's own InvalidateInitialization()
+        // calls used to fire even when the restore was driven by
+        // Database.InitializeCoreAsync's own corruption-recovery path -- nulling the
+        // coordinator's latched initialization out from under the in-flight
+        // RunInitializationAsync. AppHost calls InitializeAsync again after startup (e.g. the
+        // first repository touch), and -- with no explicit InvalidateInitialization() in
+        // between, unlike the "next process launch" tests above -- that second call must not
+        // silently re-run InitializeCoreAsync and reset LastRecoveryOutcome back to None.
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var profiles = new ProfileRepository(fixture.Database);
+        await profiles.SaveAsync(new Profile("Before", true), TestContext.Current.CancellationToken);
+        await fixture.Backups.CreatePreMigrationBackupAsync(TestContext.Current.CancellationToken);
+        await profiles.SaveAsync(new Profile("After the last backup", true), TestContext.Current.CancellationToken);
+
+        SqliteConnection.ClearAllPools();
+        await File.WriteAllTextAsync(
+            fixture.Options.DatabasePath,
+            "not a sqlite database",
+            TestContext.Current.CancellationToken);
+        fixture.Database.InvalidateInitialization();
+
+        await fixture.Database.InitializeAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(DatabaseRecoveryOutcome.RestoredFromBackup, fixture.Database.LastRecoveryOutcome);
+
+        await fixture.Database.InitializeAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(DatabaseRecoveryOutcome.RestoredFromBackup, fixture.Database.LastRecoveryOutcome);
+    }
+
+    [Fact]
     public async Task Zero_byte_database_restores_from_the_latest_valid_backup()
     {
         await using var fixture = await DatabaseFixture.CreateAsync();

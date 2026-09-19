@@ -47,6 +47,7 @@ public sealed class DatabaseBackupService
     private readonly Action<string, string> _moveFile;
     private readonly Action<string> _deleteFile;
     private readonly Action? _beforeStaging;
+    private readonly bool _invalidateInitializationOnRestore;
 
     public DatabaseBackupService(DatabaseOptions options)
         : this(options, null)
@@ -58,6 +59,30 @@ public sealed class DatabaseBackupService
         Action<string, string>? moveFile,
         Action<string>? deleteFile = null,
         Action? beforeStaging = null)
+        : this(options, moveFile, deleteFile, beforeStaging, invalidateInitializationOnRestore: true)
+    {
+    }
+
+    // Used only by Database.TryRestoreFromBackupAsync's own corruption-recovery restore: that
+    // call already runs inside InitializeCoreAsync, under the same latched initialization
+    // attempt that will complete it. Invalidating there would null the coordinator's
+    // _initializationSource out from under the in-flight RunInitializationAsync, so the very
+    // next InitializeAsync call re-runs InitializeCoreAsync and resets LastRecoveryOutcome to
+    // None, erasing the record that a restore just happened. A restore triggered any other way
+    // (e.g. Settings' "restore latest backup") must keep invalidating, since the canonical file
+    // was replaced outside of any in-flight initialization and a later read must not skip
+    // migrations/reconciliation on it.
+    internal DatabaseBackupService(DatabaseOptions options, bool invalidateInitializationOnRestore)
+        : this(options, null, null, null, invalidateInitializationOnRestore)
+    {
+    }
+
+    private DatabaseBackupService(
+        DatabaseOptions options,
+        Action<string, string>? moveFile,
+        Action<string>? deleteFile,
+        Action? beforeStaging,
+        bool invalidateInitializationOnRestore)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _database = new Database(_options);
@@ -65,6 +90,7 @@ public sealed class DatabaseBackupService
             File.Move(source, destination, overwrite: true));
         _deleteFile = deleteFile ?? File.Delete;
         _beforeStaging = beforeStaging;
+        _invalidateInitializationOnRestore = invalidateInitializationOnRestore;
     }
 
     public DatabaseBackupService(string databasePath, string? backupDirectory = null)
@@ -332,7 +358,12 @@ public sealed class DatabaseBackupService
                 {
                     CleanupStagedFiles(stagedFiles);
                 }
-                _database.InvalidateInitialization();
+
+                if (_invalidateInitializationOnRestore)
+                {
+                    _database.InvalidateInitialization();
+                }
+
                 return new RestoreResult(true, RestoreFailure.None, backupPath);
             }
             catch (Exception exception) when (
@@ -364,7 +395,10 @@ public sealed class DatabaseBackupService
                     }
 
                     recoverySetKept = false;
-                    _database.InvalidateInitialization();
+                    if (_invalidateInitializationOnRestore)
+                    {
+                        _database.InvalidateInitialization();
+                    }
                 }
                 catch (Exception rollbackException) when (
                     rollbackException is IOException or UnauthorizedAccessException or SqliteException)
@@ -398,7 +432,11 @@ public sealed class DatabaseBackupService
                     }
                 }
 
-                _database.InvalidateInitialization();
+                if (_invalidateInitializationOnRestore)
+                {
+                    _database.InvalidateInitialization();
+                }
+
                 throw;
             }
             finally

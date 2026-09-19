@@ -267,7 +267,11 @@ public sealed class Database : IAsyncDisposable, IDisposable
         try
         {
             using var timeoutCts = new CancellationTokenSource(RestoreTimeout);
-            var result = await new DatabaseBackupService(_options).RestoreLatestValidAsync(timeoutCts.Token);
+            // This restore runs inside InitializeCoreAsync's own in-flight initialization
+            // attempt, so it must not invalidate that attempt out from under itself -- see
+            // DatabaseBackupService's invalidateInitializationOnRestore constructor comment.
+            var result = await new DatabaseBackupService(_options, invalidateInitializationOnRestore: false)
+                .RestoreLatestValidAsync(timeoutCts.Token);
             return result.Restored;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SqliteException or OperationCanceledException)
