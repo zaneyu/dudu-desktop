@@ -555,7 +555,17 @@ public static class WindowsCompanionProductionComposition
                         ambientScheduler: services.GetRequiredService<AmbientScheduler>(),
                         localNoteSelector: services.GetRequiredService<Dudu.Core.Notes.LocalNoteSelector>(),
                         errorReporter: host.ErrorReporter,
-                        playAudioAsync: (cue, token) => audioCueService.TryPlayAsync(cue, token));
+                        playAudioAsync: (cue, token) => audioCueService.TryPlayAsync(cue, token),
+                        // The scheduler has no access to the loaded pack, so the
+                        // sticker keys it may roll are passed in here instead —
+                        // otherwise a number the pack has no art for (e.g. the
+                        // shipped pack currently has no sticker-018/027) silently
+                        // resolves to the base idle loop via AssetPack.ResolveAnimation.
+                        availableStickerKeys: pack.Manifest.Outfits.TryGetValue("base", out var baseOutfit)
+                            ? baseOutfit.Animations.Keys
+                                .Where(AssetManifestContract.IsStickerAnimationKey)
+                                .ToArray()
+                            : null);
                     _ = StartAnimationPlayback(
                         animationEngine.PlayAsync(
                             pet.Current,

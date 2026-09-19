@@ -36,7 +36,7 @@
                 <ComboBox Header="outfit" ItemsSource="{x:Bind ViewModel.OutfitOptions, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.SelectedOutfit, Mode=TwoWay}" IsEnabled="{x:Bind ViewModel.CanPersistOutfit, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceOutfit" AutomationProperties.Name="outfit" />
                 <TextBlock Text="{x:Bind ViewModel.OutfitAvailabilityMessage, Mode=OneWay}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="AppearanceOutfitAvailability" AutomationProperties.Name="outfit availability" />
                 <CheckBox Content="let the calendar choose seasonal outfits" IsChecked="{x:Bind ViewModel.AutomaticSeasonalMode, Mode=TwoWay}" IsEnabled="{x:Bind ViewModel.CanConfigureSeasonalMode, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceSeasonalMode" AutomationProperties.Name="let the calendar choose seasonal outfits" />
-                <TextBlock Text="automatic mode checks these dates and the winter season on this pc only" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="AppearanceSeasonalAvailability" AutomationProperties.Name="automatic seasonal mode details" />
+                <TextBlock Text="seasonal outfits for these dates and winter aren't included in this version yet. the dates you save here are kept for when they are." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="AppearanceSeasonalAvailability" AutomationProperties.Name="automatic seasonal mode details" />
                 <Grid ColumnSpacing="16" RowSpacing="12">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />

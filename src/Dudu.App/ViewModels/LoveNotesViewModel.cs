@@ -264,6 +264,22 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
     /// on one readable line instead of dumping the whole note into it.</summary>
     private const int PromptTruncateLength = 40;
 
-    private static string TruncateForPrompt(string text) =>
-        text.Length <= PromptTruncateLength ? text : text[..PromptTruncateLength].TrimEnd() + "…";
+    private static string TruncateForPrompt(string text)
+    {
+        if (text.Length <= PromptTruncateLength)
+        {
+            return text;
+        }
+
+        // A cut exactly between a UTF-16 surrogate pair (an emoji, most
+        // commonly) splits the character and shows a garbage glyph in the
+        // delete prompt — back the cut up one char when that would happen.
+        var cutLength = PromptTruncateLength;
+        if (char.IsHighSurrogate(text[cutLength - 1]))
+        {
+            cutLength--;
+        }
+
+        return text[..cutLength].TrimEnd() + "…";
+    }
 }

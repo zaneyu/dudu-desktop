@@ -11,9 +11,10 @@ public sealed class AmbientScheduler
     // Keep ambient selection aligned with the shipped private pack. A missing
     // animation silently falls back to idle, which makes Dudu feel broken even
     // though the state machine appears to be moving.
+    private const string IdleAnimationKey = "idle";
     private const string StickerSentinel = "sticker";
     private static readonly string[] AnimationKeys =
-        ["idle", "blink", "greeting", "sleep", "drink", "celebrate", StickerSentinel];
+        [IdleAnimationKey, "blink", "greeting", "sleep", "drink", "celebrate", StickerSentinel];
     private readonly IClock _clock;
     private readonly IRandomSource _random;
     private readonly QuietHours _quietHours;
@@ -60,12 +61,25 @@ public sealed class AmbientScheduler
     /// PresentationCoordinator, which passes its per-tick <c>NowQuiet</c> snapshot taken
     /// from the same quiet-hours source on the same tick.
     /// </param>
+    /// <param name="availableStickerKeys">
+    /// The sticker animation keys the active pack actually ships. Null means the caller
+    /// has no pack-specific key list to give, so the scheduler falls back to rolling
+    /// uniformly over the full 1..<see cref="AssetManifestContract.StickerAnimationCount"/>
+    /// range — the scheduler itself has no access to the loaded pack, so a caller that
+    /// does (<c>PresentationCoordinator</c>) passes the pack's real keys here to avoid
+    /// rolling a number the pack has no art for. An empty (non-null) list means the
+    /// active pack legitimately ships zero stickers (e.g. the fallback pack) — that is
+    /// authoritative, not a "no list given" signal, so a sticker slot draw falls back to
+    /// the idle animation instead of rolling the legacy 1..30 range or indexing into the
+    /// empty list.
+    /// </param>
     public PetEvent? TryGetNextEvent(
         bool paused,
         bool focusActive,
         bool fullscreen,
         bool sessionLocked,
-        bool? quietHoursOverride = null)
+        bool? quietHoursOverride = null,
+        IReadOnlyList<string>? availableStickerKeys = null)
     {
         var now = _clock.UtcNow;
         if (paused || focusActive || fullscreen || sessionLocked)
@@ -84,12 +98,33 @@ public sealed class AmbientScheduler
 
         var selectedAnimation = AnimationKeys[NextRandom(AnimationKeys.Length)];
         var animationKey = selectedAnimation == StickerSentinel
-            ? AssetManifestContract.StickerAnimationKey(NextRandom(AssetManifestContract.StickerAnimationCount) + 1)
+            ? SelectStickerKey(availableStickerKeys)
             : selectedAnimation;
         var randomDelay = TimeSpan.FromMinutes(15 + NextRandom(31));
         var delay = randomDelay < _minimumInterval ? _minimumInterval : randomDelay;
         NextEligibleUtc = now + delay;
         return new PetEvent.AmbientRequested(animationKey);
+    }
+
+    private string SelectStickerKey(IReadOnlyList<string>? availableStickerKeys)
+    {
+        if (availableStickerKeys is null)
+        {
+            return AssetManifestContract.StickerAnimationKey(NextRandom(AssetManifestContract.StickerAnimationCount) + 1);
+        }
+
+        if (availableStickerKeys.Count == 0)
+        {
+            // The active pack ships zero stickers (e.g. the fallback pack) — there is
+            // nothing to pick. Still draw once so the random-source sequence lines up
+            // the same as the non-empty/null branches (the trailing next-eligible-delay
+            // draw must land at the same position regardless of which branch is taken),
+            // then fall back to idle instead of indexing into the empty list.
+            NextRandom(1);
+            return IdleAnimationKey;
+        }
+
+        return availableStickerKeys[NextRandom(availableStickerKeys.Count)];
     }
 
     public PetEvent? TryCreateEvent(

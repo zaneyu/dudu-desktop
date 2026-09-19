@@ -37,13 +37,15 @@ public sealed class RemoteNoteArrivalSink : IRemoteNoteArrivalSink
 
     public async Task NotifyAsync(Guid messageId, CancellationToken cancellationToken)
     {
-        // Resolving the gateway is deliberately outside the try/catch below: when it is not
-        // ready yet (safe mode, or a startup race before the overlay finishes composing), the
-        // failure must propagate so RemoteSyncService's poll loop does not acknowledge the
-        // envelope off the relay. RemoteSyncService stores the envelope locally and marks it
-        // processed before calling this sink, so the note itself is never lost either way -- it
-        // is already revealable through Love Notes (CompanionFeatureContext.RemoteEnvelopes) --
-        // but only a real presentation attempt should cost the relay's copy of it.
+        // Resolving the gateway is deliberately outside the try/catch below, but propagating
+        // that failure does NOT get the popup retried: RemoteSyncService stores the envelope
+        // locally and marks it processed before calling this sink, so the envelope is already
+        // committed as processed by the time a not-ready gateway (safe mode, or a startup race
+        // before the overlay finishes composing) throws here. The next poll takes the
+        // already-processed shortcut and acks the relay copy without ever calling this sink
+        // again -- the note itself is never lost (it is already revealable through Love Notes,
+        // CompanionFeatureContext.RemoteEnvelopes), but its popup is not retried. (Tracked
+        // separately; not fixed by this comment change.)
         var gateway = _gateway();
         try
         {
