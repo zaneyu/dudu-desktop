@@ -366,7 +366,8 @@ public sealed partial class App : Application
                 HWND.Null,
                 $"aiyo dudu couldn't start this time. see the log for details:\n{logFile}",
                 "dudu",
-                MESSAGEBOX_STYLE.MB_OK | MESSAGEBOX_STYLE.MB_ICONERROR);
+                MESSAGEBOX_STYLE.MB_OK | MESSAGEBOX_STYLE.MB_ICONERROR
+                    | MESSAGEBOX_STYLE.MB_SETFOREGROUND | MESSAGEBOX_STYLE.MB_TOPMOST);
         }
         catch
         {
