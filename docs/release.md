@@ -91,11 +91,17 @@ under `.wrangler/` and is already git-ignored.
 
    Paste a long random value when prompted; wrangler does not echo it back.
 
-4. Deploy:
+4. Build the sender bundle and deploy:
 
    ```powershell
-   npm exec wrangler deploy
+   npm run deploy   # runs `npm run build` (compiles sender-src/ into
+                     # public/dist/, not tracked in git) before `wrangler deploy`
    ```
+
+   Do not run `npm exec wrangler deploy` directly: `public/dist/` is
+   git-ignored and only produced by `npm run build`, so a bare `wrangler
+   deploy` from a clean clone uploads stale or missing sender JavaScript and
+   the sender page 404s.
 
    **Warning: do not try to "dry-run" or probe this with `-- --help`.**
    Unlike `d1 create`, `d1 migrations apply`, and `secret put` — which all

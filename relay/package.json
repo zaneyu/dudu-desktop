@@ -11,7 +11,8 @@
     "types": "wrangler types",
     "test": "vitest",
     "e2e": "npm run build && playwright test",
-    "test:e2e": "npm run build && playwright test"
+    "test:e2e": "npm run build && playwright test",
+    "deploy": "npm run build && wrangler deploy"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.1.8",
