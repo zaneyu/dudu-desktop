@@ -50,6 +50,19 @@ public sealed class AmbientSchedulerTests
     }
 
     [Fact]
+    public void Scheduler_can_request_one_random_sticker_animation()
+    {
+        var clock = new FakeClock(DateTimeOffset.Parse("2026-09-11T10:00:00Z"));
+        var random = new SequenceRandomSource(6, 29, 0);
+        var scheduler = new AmbientScheduler(clock, random, TimeSpan.Zero);
+
+        var result = Assert.IsType<PetEvent.AmbientRequested>(scheduler.TryGetNextEvent(
+            paused: false, focusActive: false, fullscreen: false, sessionLocked: false));
+
+        Assert.Equal("sticker-030", result.AnimationKey);
+    }
+
+    [Fact]
     public void Explicit_quiet_override_wins_over_the_policy_in_both_directions()
     {
         var clock = new FakeClock(DateTimeOffset.Parse("2026-09-11T23:00:00Z"));

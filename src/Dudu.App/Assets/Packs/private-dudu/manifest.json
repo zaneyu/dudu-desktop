@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "packId": "private-dudu",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "privateUseOnly": true,
   "attribution": {
     "creator": "Huang Xiao B",
@@ -13,7 +13,7 @@
       "https://tenor.com/view/bubu-dudu-gif-13961388528266603475",
       "https://getstickerpack.com/stickers/xiao-xiong-yi-er-he-bu-bu-credits-to-huang-xiaob"
     ],
-    "rightsNote": "Private local use only. Discovery pages may not establish redistribution rights; do not publish or distribute this pack."
+    "rightsNote": "Private local use only. Discovery pages may not establish redistribution rights; do not publish or distribute this pack. The sticker subset is sourced from the user-provided Telegram BUBU & DUDU pack and includes only unique stickers where brown Dudu is visible."
   },
   "outfits": {
     "base": {
@@ -443,6 +443,606 @@
           },
           "reducedMotion": "frames/base/note-arrival/0000-4c4baabe428b.png",
           "reducedMotionSha256": "4c4baabe428b61133ef8009278de4c589ea5fb4a21259f2449cf9ef5fc8b4262"
+        },
+        "sticker-001": {
+          "frames": [
+            {
+              "file": "frames/base/stickers/sticker-001-f25dea7493f0.png",
+              "durationMs": 2400,
+              "sha256": "f25dea7493f091e66052b0fbf483b1f065feab3890d70d0c7bf935330efaf5f0"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-001-f25dea7493f0.png",
+          "reducedMotionSha256": "f25dea7493f091e66052b0fbf483b1f065feab3890d70d0c7bf935330efaf5f0"
+        },
+        "sticker-002": {
+          "frames": [
+            {
+              "file": "frames/base/stickers/sticker-002-cbe98412c591.png",
+              "durationMs": 2400,
+              "sha256": "cbe98412c59110a5083a59a1ffc85e2e6d34323959def6c96746711bdd40e78e"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-002-cbe98412c591.png",
+          "reducedMotionSha256": "cbe98412c59110a5083a59a1ffc85e2e6d34323959def6c96746711bdd40e78e"
+        },
+        "sticker-003": {
+          "frames": [
+            {
+              "file": "frames/base/stickers/sticker-003-f8eba93f415f.png",
+              "durationMs": 2400,
+              "sha256": "f8eba93f415f8fd34b0ae6f88d1ac5ee164034dadb7cda5c50d72854c9a98056"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-003-f8eba93f415f.png",
+          "reducedMotionSha256": "f8eba93f415f8fd34b0ae6f88d1ac5ee164034dadb7cda5c50d72854c9a98056"
+        },
+        "sticker-004": {
+          "frames": [
+            {
+              "file": "frames/base/stickers/sticker-004-7cf443402ba8.png",
+              "durationMs": 2400,
+              "sha256": "7cf443402ba85548d4ba782d5b1dc70188107d8b4d4d0ac5c3079260c7cdea53"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-004-7cf443402ba8.png",
+          "reducedMotionSha256": "7cf443402ba85548d4ba782d5b1dc70188107d8b4d4d0ac5c3079260c7cdea53"
+        },
+        "sticker-005": {
+          "frames": [
+            {
+              "file": "frames/base/stickers/sticker-005-bb99561aa0ba.png",
+              "durationMs": 2400,
+              "sha256": "bb99561aa0ba5c8f4ff443b8a79c56f7ad01240ea288271a4e2d8e203f328aeb"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-005-bb99561aa0ba.png",
+          "reducedMotionSha256": "bb99561aa0ba5c8f4ff443b8a79c56f7ad01240ea288271a4e2d8e203f328aeb"
+        },
+        "sticker-006": {
+          "frames": [
+            {
+              "file": "frames/base/stickers/sticker-006-21f1d9ba7789.png",
+              "durationMs": 2400,
+              "sha256": "21f1d9ba7789e110827bc6226cc34fa1084a379ec08227f9fcb0366f78731b95"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-006-21f1d9ba7789.png",
+          "reducedMotionSha256": "21f1d9ba7789e110827bc6226cc34fa1084a379ec08227f9fcb0366f78731b95"
+        },
+        "sticker-007": {
+          "frames": [
+            {
+              "file": "frames/base/stickers/sticker-007-bde3b60bb35b.png",
+              "durationMs": 2400,
+              "sha256": "bde3b60bb35b5e5a182b96959a6b5dfdb3ac9f1b9bc6a7b90ae2c47bd8d84033"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-007-bde3b60bb35b.png",
+          "reducedMotionSha256": "bde3b60bb35b5e5a182b96959a6b5dfdb3ac9f1b9bc6a7b90ae2c47bd8d84033"
+        },
+        "sticker-008": {
+          "frames": [
+            {
+              "file": "frames/base/stickers/sticker-008-be70be265202.png",
+              "durationMs": 2400,
+              "sha256": "be70be265202a909a24d9aad3b1e83d920485146b31ae93cef5aecefbdbf06a6"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-008-be70be265202.png",
+          "reducedMotionSha256": "be70be265202a909a24d9aad3b1e83d920485146b31ae93cef5aecefbdbf06a6"
+        },
+        "sticker-009": {
+          "frames": [
+            {
+              "file": "frames/base/stickers/sticker-009-8f2f5b150a3f.png",
+              "durationMs": 2400,
+              "sha256": "8f2f5b150a3f96aa80a21e5b8f5d922b68a700329edda2a920886ac64286dba9"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-009-8f2f5b150a3f.png",
+          "reducedMotionSha256": "8f2f5b150a3f96aa80a21e5b8f5d922b68a700329edda2a920886ac64286dba9"
+        },
+        "sticker-010": {
+          "frames": [
+            {
+              "file": "frames/base/stickers/sticker-010-28504d915ff6.png",
+              "durationMs": 2400,
+              "sha256": "28504d915ff61371e30ef14ccb4bc9e1e440e62c3129c5d06273003d912c43d0"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-010-28504d915ff6.png",
+          "reducedMotionSha256": "28504d915ff61371e30ef14ccb4bc9e1e440e62c3129c5d06273003d912c43d0"
+        },
+        "sticker-011": {
+          "frames": [
+            {
+              "file": "frames/base/stickers/sticker-011-1ae38b62cac0.png",
+              "durationMs": 2400,
+              "sha256": "1ae38b62cac01609754e2fe8a09371c049904d6ded4cef7046bee3a78b43c728"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-011-1ae38b62cac0.png",
+          "reducedMotionSha256": "1ae38b62cac01609754e2fe8a09371c049904d6ded4cef7046bee3a78b43c728"
+        },
+        "sticker-012": {
+          "frames": [
+            {
+              "file": "frames/base/stickers/sticker-012-243cd723bda4.png",
+              "durationMs": 2400,
+              "sha256": "243cd723bda441893e0b05fc968bc28ecf60ecf6d0bd31f0b8d9a9903383b720"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-012-243cd723bda4.png",
+          "reducedMotionSha256": "243cd723bda441893e0b05fc968bc28ecf60ecf6d0bd31f0b8d9a9903383b720"
+        },
+        "sticker-013": {
+          "frames": [
+            {
+              "file": "frames/base/stickers/sticker-013-2b52e62bf1f3.png",
+              "durationMs": 2400,
+              "sha256": "2b52e62bf1f3c18da5be78dd2b5972695bbb1dfa768662eb7b7813067fc626f9"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-013-2b52e62bf1f3.png",
+          "reducedMotionSha256": "2b52e62bf1f3c18da5be78dd2b5972695bbb1dfa768662eb7b7813067fc626f9"
+        },
+        "sticker-014": {
+          "frames": [
+            {
+              "file": "frames/base/stickers/sticker-014-7b315c10a6c5.png",
+              "durationMs": 2400,
+              "sha256": "7b315c10a6c5992c76ea6de834ae56d823ff70c152ab2bf4d666eb1dbc1f318c"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-014-7b315c10a6c5.png",
+          "reducedMotionSha256": "7b315c10a6c5992c76ea6de834ae56d823ff70c152ab2bf4d666eb1dbc1f318c"
+        },
+        "sticker-015": {
+          "frames": [
+            {
+              "file": "frames/base/stickers/sticker-015-1e87a099b151.png",
+              "durationMs": 2400,
+              "sha256": "1e87a099b15194ec68380e97b424dcc6cd1f21e65900566f2cae5c92adbeacac"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-015-1e87a099b151.png",
+          "reducedMotionSha256": "1e87a099b15194ec68380e97b424dcc6cd1f21e65900566f2cae5c92adbeacac"
+        },
+        "sticker-016": {
+          "frames": [
+            {
+              "file": "frames/base/stickers/sticker-016-43f103b44094.png",
+              "durationMs": 2400,
+              "sha256": "43f103b44094918bfb7f43ab9250df1a4cd4a8e28b57a7582edda95f480b4893"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-016-43f103b44094.png",
+          "reducedMotionSha256": "43f103b44094918bfb7f43ab9250df1a4cd4a8e28b57a7582edda95f480b4893"
+        },
+        "sticker-017": {
+          "frames": [
+            {
+              "file": "frames/base/stickers/sticker-017-db40a56cfc6d.png",
+              "durationMs": 2400,
+              "sha256": "db40a56cfc6d0cbdaddae885a0c0956812abbf84d55b783f06f2bb765122c5ea"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-017-db40a56cfc6d.png",
+          "reducedMotionSha256": "db40a56cfc6d0cbdaddae885a0c0956812abbf84d55b783f06f2bb765122c5ea"
+        },
+        "sticker-018": {
+          "frames": [
+            {
+              "file": "frames/base/stickers/sticker-018-49ffcbe7a954.png",
+              "durationMs": 2400,
+              "sha256": "49ffcbe7a954307fa002c405891dd2106cc853de9ab9b94676378f47ec7f78a1"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-018-49ffcbe7a954.png",
+          "reducedMotionSha256": "49ffcbe7a954307fa002c405891dd2106cc853de9ab9b94676378f47ec7f78a1"
+        },
+        "sticker-019": {
+          "frames": [
+            {
+              "file": "frames/base/stickers/sticker-019-9ff86690c141.png",
+              "durationMs": 2400,
+              "sha256": "9ff86690c1419045599c48add94d79ed03e6519d0f0f6c54427ce309e7020c28"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-019-9ff86690c141.png",
+          "reducedMotionSha256": "9ff86690c1419045599c48add94d79ed03e6519d0f0f6c54427ce309e7020c28"
+        },
+        "sticker-020": {
+          "frames": [
+            {
+              "file": "frames/base/stickers/sticker-020-203af1595c80.png",
+              "durationMs": 2400,
+              "sha256": "203af1595c80270e4ace05e6abb2af6bf23f9533f4dc0d729a343bc65e6ead75"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-020-203af1595c80.png",
+          "reducedMotionSha256": "203af1595c80270e4ace05e6abb2af6bf23f9533f4dc0d729a343bc65e6ead75"
+        },
+        "sticker-021": {
+          "frames": [
+            {
+              "file": "frames/base/stickers/sticker-021-e838e61535de.png",
+              "durationMs": 2400,
+              "sha256": "e838e61535decaff9b1a866a78604eb14816777e3bb25444332adbffb199cc0a"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-021-e838e61535de.png",
+          "reducedMotionSha256": "e838e61535decaff9b1a866a78604eb14816777e3bb25444332adbffb199cc0a"
+        },
+        "sticker-022": {
+          "frames": [
+            {
+              "file": "frames/base/stickers/sticker-022-b015874455f8.png",
+              "durationMs": 2400,
+              "sha256": "b015874455f877d64b8e6160b5f0e9ab2427d45863f8774bac1f86af7bee80ec"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-022-b015874455f8.png",
+          "reducedMotionSha256": "b015874455f877d64b8e6160b5f0e9ab2427d45863f8774bac1f86af7bee80ec"
+        },
+        "sticker-023": {
+          "frames": [
+            {
+              "file": "frames/base/stickers/sticker-023-3bbb33abf89b.png",
+              "durationMs": 2400,
+              "sha256": "3bbb33abf89ba6d0f27f00d3a997a9132c3b9909cd4df03487b3fe19f8841867"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-023-3bbb33abf89b.png",
+          "reducedMotionSha256": "3bbb33abf89ba6d0f27f00d3a997a9132c3b9909cd4df03487b3fe19f8841867"
+        },
+        "sticker-024": {
+          "frames": [
+            {
+              "file": "frames/base/stickers/sticker-024-e05258ef9758.png",
+              "durationMs": 2400,
+              "sha256": "e05258ef9758e673d1cd3b5225ce0d5a93243dc73f05ae92044e779ad3d9955d"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-024-e05258ef9758.png",
+          "reducedMotionSha256": "e05258ef9758e673d1cd3b5225ce0d5a93243dc73f05ae92044e779ad3d9955d"
+        },
+        "sticker-025": {
+          "frames": [
+            {
+              "file": "frames/base/stickers/sticker-025-dc1af8edd3c9.png",
+              "durationMs": 2400,
+              "sha256": "dc1af8edd3c97973a8a905f848b1f29d0bb5065a8e0bb31ecfc9e827df93088e"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-025-dc1af8edd3c9.png",
+          "reducedMotionSha256": "dc1af8edd3c97973a8a905f848b1f29d0bb5065a8e0bb31ecfc9e827df93088e"
+        },
+        "sticker-026": {
+          "frames": [
+            {
+              "file": "frames/base/stickers/sticker-026-b3d73b7283de.png",
+              "durationMs": 2400,
+              "sha256": "b3d73b7283de5f9835e26f4bdd580a4a352f3cab248eb251693fad54d8678205"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-026-b3d73b7283de.png",
+          "reducedMotionSha256": "b3d73b7283de5f9835e26f4bdd580a4a352f3cab248eb251693fad54d8678205"
+        },
+        "sticker-027": {
+          "frames": [
+            {
+              "file": "frames/base/stickers/sticker-027-3095bf743a1e.png",
+              "durationMs": 2400,
+              "sha256": "3095bf743a1e2ec74b11be26df814e768e4dbeb8715d1fac1be2d953db371e37"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-027-3095bf743a1e.png",
+          "reducedMotionSha256": "3095bf743a1e2ec74b11be26df814e768e4dbeb8715d1fac1be2d953db371e37"
+        },
+        "sticker-028": {
+          "frames": [
+            {
+              "file": "frames/base/stickers/sticker-028-eb0bce798e6a.png",
+              "durationMs": 2400,
+              "sha256": "eb0bce798e6a06e01ca84ce56c8bb42fcdf7a2765fab6f54e5bd63e27e357123"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-028-eb0bce798e6a.png",
+          "reducedMotionSha256": "eb0bce798e6a06e01ca84ce56c8bb42fcdf7a2765fab6f54e5bd63e27e357123"
+        },
+        "sticker-029": {
+          "frames": [
+            {
+              "file": "frames/base/stickers/sticker-029-84627d2904d7.png",
+              "durationMs": 2400,
+              "sha256": "84627d2904d774188c22f26c949939a39f87fe81703927663361b41488b6c6d6"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-029-84627d2904d7.png",
+          "reducedMotionSha256": "84627d2904d774188c22f26c949939a39f87fe81703927663361b41488b6c6d6"
+        },
+        "sticker-030": {
+          "frames": [
+            {
+              "file": "frames/base/stickers/sticker-030-657dfb97730f.png",
+              "durationMs": 2400,
+              "sha256": "657dfb97730fce703ddff50fac787e19e7834d8564f906f989936827c09fff2d"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-030-657dfb97730f.png",
+          "reducedMotionSha256": "657dfb97730fce703ddff50fac787e19e7834d8564f906f989936827c09fff2d"
         }
       }
     },

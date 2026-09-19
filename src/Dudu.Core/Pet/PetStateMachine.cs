@@ -1,4 +1,5 @@
 using Dudu.Core.Models;
+using Dudu.Core.Assets;
 
 namespace Dudu.Core.Pet;
 
@@ -289,7 +290,8 @@ public sealed class PetStateMachine
     private static bool IsAllowedAmbientAnimation(string animationKey)
     {
         return animationKey is "idle" or "blink" or "greeting" or "sleep"
-            or "drink" or "celebrate";
+            or "drink" or "celebrate"
+            || AssetManifestContract.IsStickerAnimationKey(animationKey);
     }
 
     private static PetPresentation Present(PetState state, string animationKey)

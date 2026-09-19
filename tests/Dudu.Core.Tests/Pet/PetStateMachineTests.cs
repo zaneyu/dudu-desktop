@@ -113,6 +113,19 @@ public sealed class PetStateMachineTests
     }
 
     [Fact]
+    public void Ambient_sticker_is_a_dismissible_one_sticker_presentation()
+    {
+        var machine = PetStateMachine.CreateIdle();
+
+        var result = machine.Handle(new PetEvent.AmbientRequested("sticker-030"));
+
+        Assert.Equal(PetState.Ambient, result.State);
+        Assert.Equal("sticker-030", result.AnimationKey);
+
+        Assert.Equal(PetState.Idle, machine.Handle(new PetEvent.AmbientDismissed("sticker-030")).State);
+    }
+
+    [Fact]
     public void Comfort_dismiss_event_clears_the_comfort_state()
     {
         var machine = PetStateMachine.CreateIdle();

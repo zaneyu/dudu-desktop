@@ -105,7 +105,7 @@ public sealed class AssetManifestContractTests
     private static AssetAnimation Animation(string key, List<AssetFrame>? frames = null) => new()
     {
         Frames = frames ?? [new AssetFrame { File = "pose.png", DurationMs = 100, Sha256 = new string('a', 64) }],
-        Loop = AssetManifestContract.OneShotAnimationKeys.Contains(key) ? "once" : "loop",
+        Loop = AssetManifestContract.IsOneShotAnimationKey(key) ? "once" : "loop",
         Anchor = new PixelPoint(16, 24),
         NominalSize = new PixelSize(32, 32),
         ReducedMotion = "pose.png",

@@ -44,6 +44,17 @@ public sealed class ManifestContractTests
     }
 
     [Fact]
+    public void Sticker_animation_keys_are_supported_one_shots()
+    {
+        var manifest = FixtureManifest.Create();
+        manifest.Outfits["base"].Animations["sticker-030"] = FixtureManifest.Animation("sticker-030");
+
+        Assert.Empty(AssetManifestContract.Validate(manifest));
+        Assert.True(AssetManifestContract.IsOneShotAnimationKey("sticker-030"));
+        Assert.False(AssetManifestContract.IsOneShotAnimationKey("sticker-nope"));
+    }
+
+    [Fact]
     public void Manifest_rejects_non_positive_duration_traversal_and_bad_geometry()
     {
         var manifest = FixtureManifest.Create();
@@ -173,7 +184,7 @@ public sealed class ManifestContractTests
         public static AssetAnimation Animation(string key, string sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") => new()
         {
             Frames = [new AssetFrame { File = "pose.png", DurationMs = 100, Sha256 = sha256 }],
-            Loop = AssetManifestContract.OneShotAnimationKeys.Contains(key) ? "once" : "loop",
+            Loop = AssetManifestContract.IsOneShotAnimationKey(key) ? "once" : "loop",
             Anchor = new PixelPoint(16, 24),
             NominalSize = new PixelSize(32, 32),
             ReducedMotion = "pose.png",

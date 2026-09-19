@@ -1,4 +1,5 @@
 using Dudu.Core.Abstractions;
+using Dudu.Core.Assets;
 using Dudu.Core.Models;
 using Dudu.Core.Policies;
 using Dudu.Core.Time;
@@ -10,8 +11,9 @@ public sealed class AmbientScheduler
     // Keep ambient selection aligned with the shipped private pack. A missing
     // animation silently falls back to idle, which makes Dudu feel broken even
     // though the state machine appears to be moving.
+    private const string StickerSentinel = "sticker";
     private static readonly string[] AnimationKeys =
-        ["idle", "blink", "greeting", "sleep", "drink", "celebrate"];
+        ["idle", "blink", "greeting", "sleep", "drink", "celebrate", StickerSentinel];
     private readonly IClock _clock;
     private readonly IRandomSource _random;
     private readonly QuietHours _quietHours;
@@ -80,7 +82,10 @@ public sealed class AmbientScheduler
             return null;
         }
 
-        var animationKey = AnimationKeys[NextRandom(AnimationKeys.Length)];
+        var selectedAnimation = AnimationKeys[NextRandom(AnimationKeys.Length)];
+        var animationKey = selectedAnimation == StickerSentinel
+            ? AssetManifestContract.StickerAnimationKey(NextRandom(AssetManifestContract.StickerAnimationCount) + 1)
+            : selectedAnimation;
         var randomDelay = TimeSpan.FromMinutes(15 + NextRandom(31));
         var delay = randomDelay < _minimumInterval ? _minimumInterval : randomDelay;
         NextEligibleUtc = now + delay;

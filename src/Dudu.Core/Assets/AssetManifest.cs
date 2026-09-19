@@ -22,6 +22,9 @@ public static class AssetManifestContract
     /// <summary>Maximum summed bytes of every PNG file referenced by a pack.</summary>
     public const long MaxPackBytes = 33_554_432;
 
+    public const string StickerAnimationPrefix = "sticker-";
+    public const int StickerAnimationCount = 30;
+
     public static IReadOnlyList<string> RequiredAnimationKeys { get; } =
     [
         "idle",
@@ -45,6 +48,38 @@ public static class AssetManifestContract
             "comfort-hug",
             "note-arrival",
         };
+
+    public static string StickerAnimationKey(int oneBasedIndex)
+    {
+        if (oneBasedIndex is < 1 or > StickerAnimationCount)
+        {
+            throw new ArgumentOutOfRangeException(nameof(oneBasedIndex));
+        }
+
+        return $"{StickerAnimationPrefix}{oneBasedIndex:000}";
+    }
+
+    public static bool IsStickerAnimationKey(string? key)
+    {
+        if (key is null
+            || !key.StartsWith(StickerAnimationPrefix, StringComparison.Ordinal)
+            || key.Length != StickerAnimationPrefix.Length + 3
+            || !int.TryParse(key.AsSpan(StickerAnimationPrefix.Length), out var index))
+        {
+            return false;
+        }
+
+        return index is >= 1 and <= StickerAnimationCount
+            && string.Equals(key, StickerAnimationKey(index), StringComparison.Ordinal);
+    }
+
+    public static bool IsSupportedAnimationKey(string? key) =>
+        key is not null
+        && (RequiredAnimationKeys.Contains(key, StringComparer.Ordinal) || IsStickerAnimationKey(key));
+
+    public static bool IsOneShotAnimationKey(string? key) =>
+        key is not null
+        && (OneShotAnimationKeys.Contains(key) || IsStickerAnimationKey(key));
 
     public static IReadOnlyList<string> Validate(AssetManifest? manifest)
     {
@@ -116,7 +151,7 @@ public static class AssetManifestContract
 
             foreach (var (animationKey, animation) in outfit.Animations.OrderBy(pair => pair.Key, StringComparer.Ordinal))
             {
-                if (!RequiredAnimationKeys.Contains(animationKey, StringComparer.Ordinal))
+                if (!IsSupportedAnimationKey(animationKey))
                 {
                     errors.Add($"outfits.{outfitKey}.animations.{animationKey} is not a supported animation key.");
                 }
@@ -136,9 +171,9 @@ public static class AssetManifestContract
 
                 foreach (var animationKey in outfit.Animations.Keys)
                 {
-                    if (!RequiredAnimationKeys.Contains(animationKey, StringComparer.Ordinal))
+                    if (!IsSupportedAnimationKey(animationKey))
                     {
-                        errors.Add($"outfits.base.animations must contain exactly the required animation keys; '{animationKey}' is unexpected.");
+                        errors.Add($"outfits.base.animations contains unsupported animation key '{animationKey}'.");
                     }
                 }
             }
@@ -254,7 +289,7 @@ public static class AssetManifestContract
         }
 
         var animationKey = path[(path.LastIndexOf('.') + 1)..];
-        if (OneShotAnimationKeys.Contains(animationKey) && string.Equals(animation.Loop, "loop", StringComparison.Ordinal))
+        if (IsOneShotAnimationKey(animationKey) && string.Equals(animation.Loop, "loop", StringComparison.Ordinal))
         {
             errors.Add($"{path}.loop must not be loop for a one-shot animation.");
         }
