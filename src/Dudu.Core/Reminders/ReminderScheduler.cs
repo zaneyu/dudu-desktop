@@ -218,16 +218,26 @@ public static class ReminderScheduler
             windowCount++;
         }
 
+        // A snooze only stands in for nextDueUtc when it postponed an occurrence
+        // that was already due; a snooze set while the reminder was not yet due
+        // (SnoozedUntilUtc earlier than NextDueUtc) fires early instead and must
+        // not suppress the real, still-pending occurrence at NextDueUtc.
+        var isLiveSnooze = snoozedUntilUtc is not null && nextDueUtc <= snoozedUntilUtc.Value;
+
         if (reminder.Rule is RecurrenceRule.Once)
         {
-            if (snoozedUntilUtc is not null)
+            if (isLiveSnooze)
             {
                 return (latest, windowCount);
             }
 
-            return nextDueUtc >= fromUtc && nextDueUtc <= throughUtc
-                ? (nextDueUtc, windowCount)
-                : (latest, windowCount);
+            if (!baseCounted && nextDueUtc >= fromUtc && nextDueUtc <= throughUtc)
+            {
+                latest = Max(latest, nextDueUtc);
+                windowCount++;
+            }
+
+            return (latest, windowCount);
         }
 
         switch (reminder.Rule)
@@ -243,7 +253,7 @@ public static class ReminderScheduler
                 var intervalLatest = LatestInterval(nextDueUtc, interval.Period, throughUtc);
                 if (intervalLatest is { } intervalDue
                     && intervalDue >= fromUtc
-                    && !(snoozedUntilUtc is not null && intervalDue == nextDueUtc))
+                    && !(isLiveSnooze && intervalDue == nextDueUtc))
                 {
                     latest = Max(latest, intervalDue);
                 }
@@ -253,7 +263,7 @@ public static class ReminderScheduler
                     interval.Period,
                     fromUtc,
                     throughUtc,
-                    excludeAnchor: snoozedUntilUtc is not null || baseCounted);
+                    excludeAnchor: isLiveSnooze || baseCounted);
                 break;
 
             case RecurrenceRule.Daily daily:
@@ -309,6 +319,10 @@ public static class ReminderScheduler
         DateTimeOffset? latest = null;
         windowCount = 0;
 
+        // See the matching comment in LatestIntendedOccurrence: only a snooze of an
+        // already-due occurrence stands in for nextDueUtc.
+        var isLiveSnooze = snoozedUntilUtc is not null && nextDueUtc <= snoozedUntilUtc.Value;
+
         for (var localDate = fromLocalDate;
              localDate <= throughLocalDate;
              localDate = localDate.AddDays(1))
@@ -326,7 +340,7 @@ public static class ReminderScheduler
                 continue;
             }
 
-            if (snoozedUntilUtc is not null && candidate == nextDueUtc)
+            if (isLiveSnooze && candidate == nextDueUtc)
             {
                 continue;
             }

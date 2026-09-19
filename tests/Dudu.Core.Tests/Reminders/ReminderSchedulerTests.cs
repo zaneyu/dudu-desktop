@@ -594,6 +594,89 @@ public sealed class ReminderSchedulerTests
         ReminderScheduler.ValidateForSave(ReminderBuilder.AtLocalTime(9, 0).On(DayOfWeek.Monday).Build());
     }
 
+    [Fact]
+    public void Snoozing_a_not_yet_due_daily_reminder_does_not_lose_the_pending_occurrence()
+    {
+        // Audit regression: a snooze set while the reminder was not yet due
+        // (SnoozedUntilUtc earlier than NextDueUtc) used to make the reconciler
+        // skip NextDueUtc's own candidate once the window reached it, silently
+        // dropping that legitimate occurrence in favor of the premature snooze.
+        var reminder = ReminderBuilder.AtLocalTime(21, 0).Build() with
+        {
+            NextDueUtc = DateTimeOffset.Parse("2026-09-12T21:00:00Z"),
+            SnoozedUntilUtc = DateTimeOffset.Parse("2026-09-11T14:15:00Z"),
+        };
+
+        var result = ReminderScheduler.Reconcile(
+            reminder,
+            DateTimeOffset.Parse("2026-09-11T13:55:00Z"),
+            DateTimeOffset.Parse("2026-09-12T21:30:00Z"),
+            TimeZoneInfo.Utc);
+
+        Assert.Equal(DateTimeOffset.Parse("2026-09-12T21:00:00Z"), Assert.Single(result.DueNow).DueUtc);
+        Assert.Equal(DateTimeOffset.Parse("2026-09-13T21:00:00Z"), result.NextUtc);
+    }
+
+    [Fact]
+    public void Snoozing_a_not_yet_due_interval_reminder_does_not_lose_the_pending_occurrence()
+    {
+        var reminder = ReminderBuilder.Every(TimeSpan.FromHours(2)).Build() with
+        {
+            NextDueUtc = DateTimeOffset.Parse("2026-09-11T20:00:00Z"),
+            SnoozedUntilUtc = DateTimeOffset.Parse("2026-09-11T10:15:00Z"),
+        };
+
+        var result = ReminderScheduler.Reconcile(
+            reminder,
+            DateTimeOffset.Parse("2026-09-11T10:00:00Z"),
+            DateTimeOffset.Parse("2026-09-11T20:30:00Z"),
+            TimeZoneInfo.Utc);
+
+        Assert.Equal(DateTimeOffset.Parse("2026-09-11T20:00:00Z"), Assert.Single(result.DueNow).DueUtc);
+        Assert.Equal(DateTimeOffset.Parse("2026-09-11T22:00:00Z"), result.NextUtc);
+    }
+
+    [Fact]
+    public void Snoozing_a_not_yet_due_once_reminder_does_not_lose_its_only_occurrence()
+    {
+        var reminder = new Reminder(
+            "once-reminder", "Once", null, true, new RecurrenceRule.Once(), "UTC",
+            QuietHoursBehavior.DeliverImmediately, MissedOccurrencePolicy.LatestOnly,
+            NextDueUtc: DateTimeOffset.Parse("2026-09-12T09:00:00Z"),
+            SnoozedUntilUtc: DateTimeOffset.Parse("2026-09-11T14:15:00Z"));
+
+        var result = ReminderScheduler.Reconcile(
+            reminder,
+            DateTimeOffset.Parse("2026-09-11T13:55:00Z"),
+            DateTimeOffset.Parse("2026-09-12T09:30:00Z"),
+            TimeZoneInfo.Utc);
+
+        Assert.Equal(DateTimeOffset.Parse("2026-09-12T09:00:00Z"), Assert.Single(result.DueNow).DueUtc);
+        Assert.Null(result.NextUtc);
+    }
+
+    [Fact]
+    public void A_live_snooze_of_an_already_due_reminder_still_suppresses_the_double_fire()
+    {
+        // Guards against over-correcting: when the reminder really was due at
+        // snooze time (NextDueUtc <= SnoozedUntilUtc), the snoozed instant is
+        // still the one and only delivery -- NextDueUtc's own candidate must
+        // stay suppressed so the reminder does not fire twice.
+        var reminder = ReminderBuilder.AtLocalTime(9, 0).Build() with
+        {
+            SnoozedUntilUtc = DateTimeOffset.Parse("2026-09-11T09:15:00Z"),
+        };
+
+        var result = ReminderScheduler.Reconcile(
+            reminder,
+            DateTimeOffset.Parse("2026-09-11T09:00:00Z"),
+            DateTimeOffset.Parse("2026-09-11T09:20:00Z"),
+            TimeZoneInfo.Utc);
+
+        Assert.Equal(DateTimeOffset.Parse("2026-09-11T09:15:00Z"), Assert.Single(result.DueNow).DueUtc);
+        Assert.Equal(DateTimeOffset.Parse("2026-09-12T09:00:00Z"), result.NextUtc);
+    }
+
     private static RecurrenceRule RuleForTest(string rule) => rule switch
     {
         "once" => new RecurrenceRule.Once(),
