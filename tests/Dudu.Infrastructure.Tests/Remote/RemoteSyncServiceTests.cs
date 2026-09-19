@@ -101,6 +101,21 @@ public sealed class RemoteSyncServiceTests
     }
 
     [Fact]
+    public async Task Multiple_ack_failures_of_the_same_type_surface_that_type_not_AggregateException()
+    {
+        // Review finding: more than one envelope failing in the same batch used to be wrapped
+        // in AggregateException, which matches none of RunLoopAsync's typed catches
+        // (RelayUnauthorizedException, SecretStoreException, RelayProtocolException,
+        // RemoteSyncException) -- so two envelopes whose ack both throw RelayProtocolException
+        // would skip MaxDelay() backoff and never set the RelayProtocolError status reason.
+        await using var fixture = await RemoteSyncFixture.WithTwoGoodEnvelopesAsync();
+        fixture.Relay.AckException = () => new RelayProtocolException("simulated unreadable ack response");
+
+        await Assert.ThrowsAsync<RelayProtocolException>(
+            () => fixture.Service.PollOnceAsync(fixture.CancellationToken));
+    }
+
+    [Fact]
     public async Task Reveal_does_not_make_a_network_call_or_persist_plaintext()
     {
         await using var fixture = await RemoteSyncFixture.WithStoredEncryptedEnvelopeAsync("private hello");
@@ -676,6 +691,32 @@ public sealed class RemoteSyncServiceTests
         }
     }
 
+    // Review finding: with two envelopes both failing ack with RelayProtocolException, the
+    // loop must still reach the same protocol-backoff path (and RelayProtocolError status
+    // reason) as a single failure -- not silently fall through as an unmatched AggregateException.
+    [Fact]
+    public async Task RunLoop_sets_protocol_status_reason_when_multiple_envelopes_fail_ack_the_same_way()
+    {
+        var (fixture, sink) = await RemoteSyncFixture.WithTwoGoodEnvelopesFailingAckAndLoggerAsync();
+        await using (fixture)
+        {
+            await fixture.Service.StartAsync(fixture.CancellationToken);
+            try
+            {
+                await WaitUntilAsync(
+                    () => sink.EventIds.Contains(1006),
+                    fixture.CancellationToken);
+
+                Assert.Contains(1006, sink.EventIds);
+                Assert.Equal(PairingStatusReason.RelayProtocolError, fixture.Service.StatusReason);
+            }
+            finally
+            {
+                await fixture.Service.StopAsync(fixture.CancellationToken);
+            }
+        }
+    }
+
     // P1: a failed iteration that retries logs SyncLoopRetry in addition to reportError.
     [Fact]
     public async Task RunLoop_logs_retry_after_a_transient_failure()
@@ -1025,6 +1066,17 @@ public sealed class RemoteSyncServiceTests
             return fixture;
         }
 
+        // Two independently-good envelopes so both reach the ack step; the test sets
+        // fixture.Relay.AckException itself to control what type both acks fail with.
+        public static async Task<RemoteSyncFixture> WithTwoGoodEnvelopesAsync()
+        {
+            var fixture = await CreateAsync();
+            var first = CryptoFixture.EncryptFor(fixture.RecipientPublicKeySpki, "one", Guid.NewGuid().ToString());
+            var second = CryptoFixture.EncryptFor(fixture.RecipientPublicKeySpki, "two", fixture.MessageId);
+            fixture.Relay.PollResult = [ToRelayEnvelope(first), ToRelayEnvelope(second)];
+            return fixture;
+        }
+
         public static async Task<RemoteSyncFixture> WithFutureDeliverAfterAsync()
         {
             var fixture = await CreateAsync();
@@ -1075,6 +1127,19 @@ public sealed class RemoteSyncServiceTests
             var fixture = await CreateAsync(logger: new RecordingLogger<RemoteSyncService>(sink));
             fixture.SecretStore.Values[RelaySecretKeys.DeviceId] = Encoding.UTF8.GetBytes("device-1");
             fixture.SecretStore.Values[RelaySecretKeys.DesktopToken] = Encoding.UTF8.GetBytes("token-1");
+            return (fixture, sink);
+        }
+
+        // Registered fixture with a logger sink, plus two good envelopes whose ack both throw
+        // RelayProtocolException -- for observing RunLoopAsync's protocol-backoff path (and
+        // resulting status reason) when more than one envelope fails the same way in one poll.
+        public static async Task<(RemoteSyncFixture Fixture, RecordingLoggerSink Sink)> WithTwoGoodEnvelopesFailingAckAndLoggerAsync()
+        {
+            var (fixture, sink) = await WithRegistrationAndLoggerAsync();
+            var first = CryptoFixture.EncryptFor(fixture.RecipientPublicKeySpki, "one", Guid.NewGuid().ToString());
+            var second = CryptoFixture.EncryptFor(fixture.RecipientPublicKeySpki, "two", fixture.MessageId);
+            fixture.Relay.PollResult = [ToRelayEnvelope(first), ToRelayEnvelope(second)];
+            fixture.Relay.AckException = () => new RelayProtocolException("simulated unreadable ack response");
             return (fixture, sink);
         }
 

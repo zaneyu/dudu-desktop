@@ -436,11 +436,18 @@ public sealed class RemoteSyncService : IAsyncDisposable
             {
                 // A dead credential ends the whole poll rather than being aggregated away, so
                 // RunLoopAsync's existing 401 handling (stop polling, converge on NeedsRepair)
-                // still applies even when it surfaced partway through a batch.
-                var authFailure = failures.OfType<RelayUnauthorizedException>().FirstOrDefault();
-                if (authFailure is not null)
+                // still applies even when it surfaced partway through a batch. The same reasoning
+                // extends to RunLoopAsync's other typed catches -- SecretStoreException,
+                // RelayProtocolException, and RemoteSyncException -- since an AggregateException
+                // matches none of them and would otherwise skip their backoff/status handling
+                // entirely once more than one envelope fails in the same poll.
+                Exception? significantFailure = failures.OfType<RelayUnauthorizedException>().FirstOrDefault();
+                significantFailure ??= failures.OfType<SecretStoreException>().FirstOrDefault();
+                significantFailure ??= failures.OfType<RelayProtocolException>().FirstOrDefault();
+                significantFailure ??= failures.OfType<RemoteSyncException>().FirstOrDefault();
+                if (significantFailure is not null)
                 {
-                    throw authFailure;
+                    throw significantFailure;
                 }
 
                 throw failures.Count == 1 ? failures[0] : new AggregateException(failures);
