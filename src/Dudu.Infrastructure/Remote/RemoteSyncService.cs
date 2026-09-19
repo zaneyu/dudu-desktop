@@ -425,10 +425,17 @@ public sealed class RemoteSyncService : IAsyncDisposable
         // Base64Url decode of the wire fields, so a malformed field used to throw here -- before
         // the catch below, outside any handler -- and take the whole poll loop down; and the old
         // catch filter (CryptographicException/EnvelopeValidationException only) let a null
-        // payload field escape as a NullReferenceException. Any non-cancellation failure now
-        // means the same thing to this method: undecryptable. Store the ciphertext without
-        // plaintext, do not notify, and acknowledge, so a poison message drains instead of being
-        // redelivered forever.
+        // payload field escape as a NullReferenceException. Widening the filter to "any
+        // non-cancellation failure" fixed that, but went too far the other way (audit finding F1):
+        // a transient failure unrelated to this envelope's content -- SQLite busy, IO, a secret
+        // store hiccup -- is not "undecryptable" and must not be acked away, since ack is
+        // irreversible. Only the three permanent, content-is-the-problem failures below take the
+        // ack-and-discard path (CryptographicException covers AuthenticationTagMismatchException;
+        // EnvelopeValidationException already wraps FormatException for the wire fields it decodes
+        // itself, but BuildStoredEnvelope below decodes the same fields again with the raw
+        // Base64Url API, so FormatException is listed explicitly too). Everything else -- and
+        // OperationCanceledException, which was never caught here -- propagates so the note stays
+        // on the relay and is retried next sync.
         var decrypted = true;
         var deferred = false;
         RemoteEnvelope? stored = null;
@@ -438,7 +445,9 @@ public sealed class RemoteSyncService : IAsyncDisposable
             stored = BuildStoredEnvelope(wire, _clock.UtcNow);
             deferred = IsDeliveryDeferred(wire.DeliverAfterUtc, _clock.UtcNow);
         }
-        catch (Exception exception) when (exception is not OperationCanceledException)
+        catch (Exception exception) when (exception is CryptographicException
+            or EnvelopeValidationException
+            or FormatException)
         {
             decrypted = false;
             if (Guid.TryParse(wire.MessageId, out var messageId))

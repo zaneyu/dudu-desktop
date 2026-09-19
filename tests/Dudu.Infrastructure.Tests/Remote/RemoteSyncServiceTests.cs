@@ -280,6 +280,46 @@ public sealed class RemoteSyncServiceTests
     }
 
     [Fact]
+    public async Task Tampered_ciphertext_is_still_acked_after_narrowing_the_decrypt_catch()
+    {
+        // F1 regression guard: narrowing ProcessEnvelopeAsync's decrypt catch to specific
+        // exception types must not change behavior for a genuinely permanent failure. A
+        // bit-flipped (but validly encoded) ciphertext fails AES-GCM authentication with a raw
+        // CryptographicException, which the narrowed filter still catches.
+        await using var fixture = await RemoteSyncFixture.WithTamperedCiphertextAsync();
+
+        await fixture.Service.PollOnceAsync(fixture.CancellationToken);
+
+        Assert.Empty(fixture.Presentations);
+        Assert.Equal(new[] { fixture.MessageId }, fixture.AcknowledgedIds);
+        Assert.Contains(fixture.ReportedErrors, error => error.Tag == "remote-sync-decrypt");
+    }
+
+    [Fact]
+    public async Task Transient_failure_during_decrypt_leaves_the_note_on_the_relay_for_the_next_sync()
+    {
+        // F1: the audit's core finding. A failure unrelated to this envelope's content (here
+        // injected via a clock hiccup after decrypt itself already succeeded) must NOT be treated
+        // as "undecryptable" -- that would ack it away and destroy the note forever. It must
+        // propagate instead, leaving the envelope un-acked so the next sync retries and delivers
+        // it once the transient condition clears.
+        await using var fixture = await RemoteSyncFixture.WithFlakyDecryptAsync();
+
+        await Assert.ThrowsAsync<TimeoutException>(
+            () => fixture.Service.PollOnceAsync(fixture.CancellationToken));
+
+        Assert.Empty(fixture.AcknowledgedIds);
+        Assert.Empty(fixture.Presentations);
+
+        // The hiccup was a one-off: the retry on the next sync succeeds and delivers the note.
+        await fixture.Service.PollOnceAsync(fixture.CancellationToken);
+
+        Assert.Equal(new[] { fixture.MessageId }, fixture.AcknowledgedIds);
+        Assert.Equal([Guid.ParseExact(fixture.MessageId, "D")], fixture.Presentations);
+        Assert.Single(fixture.Envelopes);
+    }
+
+    [Fact]
     public async Task Poll_loop_survives_an_unexpected_exception_instead_of_faulting()
     {
         // Review I1: an exception that is not a RemoteSyncException at all (here, a relay client
@@ -694,6 +734,43 @@ public sealed class RemoteSyncServiceTests
             return fixture;
         }
 
+        // F1: a genuinely tampered (bit-flipped, still valid Base64URL) ciphertext fails AES-GCM
+        // authentication -- CryptographicException, raised natively by AesGcm and never wrapped by
+        // EnvelopeCrypto -- unlike WithMalformedCiphertextAsync above, which fails the earlier
+        // Base64Url decode (EnvelopeValidationException). Both are genuinely permanent failures
+        // and must still be acked after narrowing the decrypt catch to specific exception types.
+        public static async Task<RemoteSyncFixture> WithTamperedCiphertextAsync()
+        {
+            var fixture = await CreateAsync();
+            var envelope = CryptoFixture.EncryptFor(fixture.RecipientPublicKeySpki, "hi there", fixture.MessageId);
+            var ciphertextAndTag = Base64Url.DecodeFromChars(envelope.Ciphertext);
+            ciphertextAndTag[0] ^= 0xFF;
+            var wire = ToRelayEnvelope(envelope) with
+            {
+                Ciphertext = Base64Url.EncodeToString(ciphertextAndTag),
+            };
+            fixture.Relay.PollResult = [wire];
+            return fixture;
+        }
+
+        // F1: simulates a transient, non-cryptographic failure (e.g. the class of "SQLite busy,
+        // IO, secret store hiccup" the audit named) landing inside ProcessEnvelopeAsync's
+        // decrypt/build try, after EnvelopeCrypto.Decrypt itself has already succeeded. The old
+        // catch-all treated this identically to a tampered envelope: ack and discard, permanently
+        // losing a note that was never actually undecryptable.
+        public static async Task<RemoteSyncFixture> WithFlakyDecryptAsync()
+        {
+            var flakyClock = new FlakyClock(DateTimeOffset.UtcNow);
+            var fixture = await CreateAsync(clock: flakyClock);
+            var envelope = CryptoFixture.EncryptFor(fixture.RecipientPublicKeySpki, "hi there", fixture.MessageId);
+            fixture.Relay.PollResult = [ToRelayEnvelope(envelope)];
+            // The first _clock.UtcNow read (EnvelopeCrypto.Decrypt's nowUtc argument) must succeed
+            // so decrypt genuinely runs to completion; the second (BuildStoredEnvelope's argument)
+            // throws once, simulating a hiccup that has nothing to do with this envelope's content.
+            flakyClock.ThrowOnAccessNumber = 2;
+            return fixture;
+        }
+
         public static async Task<RemoteSyncFixture> WithUnexpectedPollExceptionAsync()
         {
             var fixture = await CreateAsync();
@@ -799,7 +876,8 @@ public sealed class RemoteSyncServiceTests
         internal static async Task<RemoteSyncFixture> CreateAsync(
             bool useThrowingRepository = false,
             DateTimeOffset? clockNow = null,
-            Microsoft.Extensions.Logging.ILogger<RemoteSyncService>? logger = null)
+            Microsoft.Extensions.Logging.ILogger<RemoteSyncService>? logger = null,
+            IClock? clock = null)
         {
             var root = Path.Combine(Path.GetTempPath(), "dudu-remote-sync-tests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
@@ -825,7 +903,7 @@ public sealed class RemoteSyncServiceTests
             // Must track real UtcNow (not an arbitrary fixed date): EnvelopeCrypto.Decrypt rejects
             // an envelope whose wire createdUtc is more than 5 minutes ahead of the clock it is
             // given, and CryptoFixture.EncryptFor always stamps createdUtc with the real clock.
-            var clock = new FixedClock(clockNow ?? DateTimeOffset.UtcNow);
+            clock ??= new FixedClock(clockNow ?? DateTimeOffset.UtcNow);
             var backoff = new PollBackoff(new FixedFractionRandomSource(0));
             var messageId = Guid.NewGuid().ToString();
             var reportedErrors = new List<(string Tag, Exception Exception)>();
@@ -902,6 +980,33 @@ public sealed class RemoteSyncServiceTests
     private sealed class FixedFractionRandomSource(double fraction) : IRandomSource
     {
         public int Next(int exclusiveMax) => (int)(fraction * exclusiveMax);
+    }
+
+    // F1: an IClock whose UtcNow getter throws once, on a chosen 1-based access number, then
+    // behaves like FixedClock forever after. Stands in for a transient failure (e.g. "SQLite
+    // busy, IO, secret store hiccup") landing partway through ProcessEnvelopeAsync's decrypt/build
+    // step, which is otherwise pure in-memory work with no seam a test can fault-inject into.
+    private sealed class FlakyClock(DateTimeOffset now) : IClock
+    {
+        private int _accessCount;
+
+        public int? ThrowOnAccessNumber { get; set; }
+
+        public DateTimeOffset UtcNow
+        {
+            get
+            {
+                _accessCount++;
+                if (_accessCount == ThrowOnAccessNumber)
+                {
+                    throw new TimeoutException("simulated transient failure unrelated to envelope content");
+                }
+
+                return now;
+            }
+        }
+
+        public TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
     }
 
     // P1: captures every string the service hands to a logger, mirroring the sink in
