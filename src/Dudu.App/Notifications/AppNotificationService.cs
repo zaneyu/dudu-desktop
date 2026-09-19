@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using Dudu.App.Hosting;
@@ -88,15 +89,26 @@ public sealed class AppNotificationService : INotificationService, IRegistrableN
         }
     }
 
-    /// <summary>Tells the user this run started in crash-loop safe mode.
-    /// Display-safe static text only.</summary>
-    public Task ShowSafeModeNoticeAsync(CancellationToken cancellationToken) =>
+    /// <summary>Tells the user this run started in safe mode. When
+    /// <paramref name="databaseUnavailable"/> is set, safe mode was entered
+    /// because the local database itself failed to open (not a crash loop),
+    /// so this reuses the startup-failure wording with the log folder path
+    /// instead of the generic explanation -- otherwise a broken database
+    /// looked identical to an ordinary crash loop with no pointer to the
+    /// log.</summary>
+    public Task ShowSafeModeNoticeAsync(bool databaseUnavailable, CancellationToken cancellationToken) =>
         ShowIfAvailableAsync(
-            new NotificationRequest(
-                "Dudu started in safe mode",
-                "Dudu closed unexpectedly several times, so the desktop pet and remote notes are paused for this run. They return after a normal restart.",
-                null,
-                Array.Empty<NotificationButton>()),
+            databaseUnavailable
+                ? new NotificationRequest(
+                    "Dudu started in safe mode",
+                    $"Dudu's local database could not be opened, so the desktop pet and remote notes are paused for this run. See the log for details:\n{Path.Combine(AppPaths.ForCurrentUser().Logs, StartupFailureLogger.FileName)}",
+                    null,
+                    Array.Empty<NotificationButton>())
+                : new NotificationRequest(
+                    "Dudu started in safe mode",
+                    "Dudu closed unexpectedly several times, so the desktop pet and remote notes are paused for this run. They return after a normal restart.",
+                    null,
+                    Array.Empty<NotificationButton>()),
             cancellationToken);
 
     public Task ShowReminderAsync(

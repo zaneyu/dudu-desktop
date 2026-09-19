@@ -313,7 +313,8 @@ public static class WindowsCompanionProductionComposition
                     preferenceMutations,
                     profile,
                     initialPlacement,
-                    pet);
+                    pet,
+                    databaseUnavailable);
             }
 
             var placementRepository = services.GetRequiredService<IPetPlacementRepository>();
@@ -881,7 +882,8 @@ public static class WindowsCompanionProductionComposition
         PreferenceMutationCoordinator preferenceMutations,
         Profile? profile,
         PetPlacement initialPlacement,
-        PetStateMachine pet)
+        PetStateMachine pet,
+        bool databaseUnavailable)
     {
         // Safe mode is deliberately composed before any native overlay object: it only keeps
         // the database, settings services, and the recoverable settings surface alive.
@@ -965,7 +967,8 @@ public static class WindowsCompanionProductionComposition
             actions,
             startupSettings,
             crashGuard,
-            notifications);
+            notifications,
+            databaseUnavailable);
     }
 
     private static async Task CreateBackupAsync(
@@ -1142,7 +1145,8 @@ public static class WindowsCompanionProductionComposition
         CompanionUiActions actions,
         StartupSettingsService startupSettings,
         StartupCrashGuard crashGuard,
-        AppNotificationService? notifications) : IPrimaryAppRuntime
+        AppNotificationService? notifications,
+        bool databaseUnavailable) : IPrimaryAppRuntime
     {
         private readonly CancellationTokenSource _stopping = new();
         private int _started;
@@ -1162,7 +1166,7 @@ public static class WindowsCompanionProductionComposition
         {
             var token = _stopping.Token;
             await notifications!.TryRegisterAsync(token);
-            await notifications.ShowSafeModeNoticeAsync(token);
+            await notifications.ShowSafeModeNoticeAsync(databaseUnavailable, token);
         }
 
         public Task ActivateAsync(
