@@ -68,6 +68,15 @@ public sealed class Database : IAsyncDisposable, IDisposable
     /// </summary>
     public DatabaseRecoveryOutcome LastRecoveryOutcome { get; private set; }
 
+    // H2: DatabaseBackupService.RestoreAsync's corruption-recovery restore always invalidates
+    // initialization (as it must -- the canonical file it just replaced needs
+    // SeedData.SeedAsync and ReconcileInterruptedRestoreAsync to run on it), so the very next
+    // InitializeAsync call (e.g. AppHost's own post-startup touch) re-runs InitializeCoreAsync.
+    // That second run finds the now-restored file perfectly healthy and would otherwise reset
+    // LastRecoveryOutcome back to None, erasing the record that a restore just happened this
+    // instance's lifetime. Once true, stays true for the life of this Database instance.
+    private bool _hasRecoveredThisLifetime;
+
     public static async Task<Database> OpenAsync(
         DatabaseOptions options,
         CancellationToken cancellationToken = default)
@@ -209,12 +218,19 @@ public sealed class Database : IAsyncDisposable, IDisposable
 
     private async Task InitializeCoreAsync()
     {
+        // Sticky outcome (H2): only reset to None if this instance has never recovered. A
+        // clean re-run right after a corruption-recovery restore (see
+        // _hasRecoveredThisLifetime's own comment) must not overwrite that record.
+        if (!_hasRecoveredThisLifetime)
+        {
+            LastRecoveryOutcome = DatabaseRecoveryOutcome.None;
+        }
+
         if (!IsZeroByteDatabaseFile())
         {
             try
             {
                 await InitializeCoreInnerAsync();
-                LastRecoveryOutcome = DatabaseRecoveryOutcome.None;
                 return;
             }
             catch (SqliteException exception) when (IsCorruption(exception))
@@ -242,12 +258,14 @@ public sealed class Database : IAsyncDisposable, IDisposable
         if (await TryRestoreFromBackupAsync())
         {
             LastRecoveryOutcome = DatabaseRecoveryOutcome.RestoredFromBackup;
+            _hasRecoveredThisLifetime = true;
             return;
         }
 
         QuarantineCorruptDatabase();
         await InitializeCoreInnerAsync();
         LastRecoveryOutcome = DatabaseRecoveryOutcome.StartedFresh;
+        _hasRecoveredThisLifetime = true;
     }
 
     private bool IsZeroByteDatabaseFile()
@@ -271,11 +289,7 @@ public sealed class Database : IAsyncDisposable, IDisposable
         try
         {
             using var timeoutCts = new CancellationTokenSource(RestoreTimeout);
-            // This restore runs inside InitializeCoreAsync's own in-flight initialization
-            // attempt, so it must not invalidate that attempt out from under itself -- see
-            // DatabaseBackupService's invalidateInitializationOnRestore constructor comment.
-            var result = await new DatabaseBackupService(_options, invalidateInitializationOnRestore: false)
-                .RestoreLatestValidAsync(timeoutCts.Token);
+            var result = await new DatabaseBackupService(_options).RestoreLatestValidAsync(timeoutCts.Token);
             return result.Restored;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SqliteException or OperationCanceledException)

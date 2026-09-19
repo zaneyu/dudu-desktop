@@ -1092,13 +1092,15 @@ public sealed class DatabaseTests
     public async Task Second_InitializeAsync_after_a_corruption_restore_still_reports_it_restored()
     {
         // Review finding: DatabaseBackupService.RestoreAsync's own InvalidateInitialization()
-        // calls used to fire even when the restore was driven by
-        // Database.InitializeCoreAsync's own corruption-recovery path -- nulling the
-        // coordinator's latched initialization out from under the in-flight
-        // RunInitializationAsync. AppHost calls InitializeAsync again after startup (e.g. the
-        // first repository touch), and -- with no explicit InvalidateInitialization() in
-        // between, unlike the "next process launch" tests above -- that second call must not
-        // silently re-run InitializeCoreAsync and reset LastRecoveryOutcome back to None.
+        // calls must keep firing unconditionally, including when the restore is driven by
+        // Database.InitializeCoreAsync's own corruption-recovery path -- otherwise the very next
+        // InitializeAsync call (e.g. AppHost's own post-startup touch) never re-runs
+        // InitializeCoreInnerAsync on the restored file, so SeedData.SeedAsync and
+        // ReconcileInterruptedRestoreAsync (which deletes the .corrupt-recovery file set
+        // RestoreAsync just kept) never run that session (H2). Instead, LastRecoveryOutcome
+        // itself is sticky for this Database instance's lifetime (see
+        // Database._hasRecoveredThisLifetime), so that second, perfectly clean re-run must not
+        // reset it back to None.
         await using var fixture = await DatabaseFixture.CreateAsync();
         var profiles = new ProfileRepository(fixture.Database);
         await profiles.SaveAsync(new Profile("Before", true), TestContext.Current.CancellationToken);
@@ -1117,6 +1119,13 @@ public sealed class DatabaseTests
 
         await fixture.Database.InitializeAsync(TestContext.Current.CancellationToken);
         Assert.Equal(DatabaseRecoveryOutcome.RestoredFromBackup, fixture.Database.LastRecoveryOutcome);
+
+        // The second InitializeAsync really did re-run InitializeCoreInnerAsync on the restored
+        // file: ReconcileInterruptedRestoreAsync cleaned up the transient recovery set the first
+        // restore kept, and the restored database is still readable.
+        var databaseDirectory = Path.GetDirectoryName(fixture.Options.DatabasePath)!;
+        Assert.Empty(Directory.GetFiles(databaseDirectory, "*" + DatabaseBackupService.RecoverySuffix));
+        Assert.Equal("Before", (await profiles.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
     }
 
     [Fact]
