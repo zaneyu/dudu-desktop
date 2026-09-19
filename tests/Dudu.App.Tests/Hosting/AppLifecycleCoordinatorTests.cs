@@ -181,6 +181,80 @@ public sealed class AppLifecycleCoordinatorTests
     }
 
     [Fact]
+    public async Task Hotkey_shows_the_pet_even_during_quiet_hours()
+    {
+        // Owner decision 1: quiet hours suppress proactive presentation
+        // only. The hotkey is an explicit user gesture (also used for
+        // second launch/activation) and must always show the pet.
+        var overlay = new FakeOverlay { IsVisible = false };
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            isQuietHours: () => true,
+            initialUserVisible: false);
+
+        await lifecycle.OnHotkeyAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, overlay.ShowCount);
+        Assert.True(overlay.IsVisible);
+    }
+
+    [Fact]
+    public async Task Tray_show_dudu_shows_the_pet_even_during_quiet_hours()
+    {
+        // Owner decision 1: the tray "show dudu" command is an explicit
+        // user gesture and must always show the pet, unlike a proactive
+        // release (welcome-back, fullscreen/pause restore).
+        var overlay = new FakeOverlay { IsVisible = false };
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            isQuietHours: () => true,
+            initialUserVisible: false);
+
+        await lifecycle.OnUserShowOrHideAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, overlay.ShowCount);
+        Assert.True(overlay.IsVisible);
+    }
+
+    [Fact]
+    public async Task Explicit_gesture_still_respects_lock_suspend_and_pause()
+    {
+        // Quiet hours are bypassed for an explicit gesture, but lock,
+        // suspend, and the pause policy are not gestures she is actively
+        // making right now -- they still gate the hotkey and tray show.
+        var overlay = new FakeOverlay { IsVisible = false };
+        var now = new DateTimeOffset(2026, 9, 11, 10, 0, 0, TimeSpan.Zero);
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            pauseState: () => PausePolicy.ForOneHour(now),
+            clock: () => now,
+            initialUserVisible: false);
+
+        await lifecycle.OnHotkeyAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(0, overlay.ShowCount);
+        Assert.False(overlay.IsVisible);
+    }
+
+    [Fact]
     public async Task Fullscreen_restore_rechecks_pause_before_showing()
     {
         var overlay = new FakeOverlay();
