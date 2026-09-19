@@ -113,6 +113,43 @@ public sealed class SkiaFrameComposerTests
         Assert.Equal(255, revisited.Bytes.Span[3]);
     }
 
+    // Proves the decoded-frame cache evicts least-recently-used entries, not
+    // first-in-first-out ones. Each of the 4 animations' frames decodes to
+    // ~25 MiB, so only 2 can be resident under the composer's 64 MiB cap at
+    // once. The access pattern 0,1,0,2,0,3 keeps touching animation 0, so
+    // under LRU it must never be the eviction victim -- animations 1 and 2
+    // are evicted in its place. To prove animation 0 is never evicted (and
+    // never silently re-decoded), its source file is deleted from disk right
+    // after it is first cached: if the composer ever evicted and then
+    // re-requested it, the re-decode would fail loudly instead of the test
+    // passing by coincidence.
+    [Fact]
+    public void Cache_eviction_prefers_least_recently_used_entries_over_first_in_first_out()
+    {
+        using var fixture = ComposerFixture.CreateWithDistinctSizedAnimations(animationCount: 4, dimension: 2560);
+
+        ComposeAndAssert(fixture, 0);
+        ComposeAndAssert(fixture, 1);
+        ComposeAndAssert(fixture, 0);
+
+        File.Delete(fixture.FramePaths[0]);
+
+        ComposeAndAssert(fixture, 2);
+        ComposeAndAssert(fixture, 0);
+        ComposeAndAssert(fixture, 3);
+        ComposeAndAssert(fixture, 0);
+    }
+
+    private static void ComposeAndAssert(ComposerFixture fixture, int animationIndex)
+    {
+        using var frame = fixture.Composer.Compose(fixture.Pack, fixture.Animations[animationIndex], 0);
+        var expectedGray = ExpectedGray(animationIndex);
+        Assert.Equal(expectedGray, frame.Bytes.Span[0]);
+        Assert.Equal(expectedGray, frame.Bytes.Span[1]);
+        Assert.Equal(expectedGray, frame.Bytes.Span[2]);
+        Assert.Equal(255, frame.Bytes.Span[3]);
+    }
+
     private static byte ExpectedGray(int frameIndex) => (byte)(20 + frameIndex * 25);
 
     private sealed class ComposerFixture : IDisposable
@@ -122,13 +159,15 @@ public sealed class SkiaFrameComposerTests
             AssetPack pack,
             AssetAnimation animation,
             SkiaFrameComposer composer,
-            IReadOnlyList<AssetAnimation>? animations = null)
+            IReadOnlyList<AssetAnimation>? animations = null,
+            IReadOnlyList<string>? framePaths = null)
         {
             Root = root;
             Pack = pack;
             Animation = animation;
             Composer = composer;
             Animations = animations ?? [animation];
+            FramePaths = framePaths ?? [];
         }
 
         private string Root { get; }
@@ -138,6 +177,8 @@ public sealed class SkiaFrameComposerTests
         public AssetAnimation Animation { get; }
 
         public IReadOnlyList<AssetAnimation> Animations { get; }
+
+        public IReadOnlyList<string> FramePaths { get; }
 
         public SkiaFrameComposer Composer { get; }
 
@@ -187,6 +228,7 @@ public sealed class SkiaFrameComposerTests
             Directory.CreateDirectory(root);
 
             var animations = new List<AssetAnimation>(animationCount);
+            var framePaths = new List<string>(animationCount);
             var animationsByKey = new Dictionary<string, AssetAnimation>(StringComparer.Ordinal);
             for (var i = 0; i < animationCount; i++)
             {
@@ -196,7 +238,9 @@ public sealed class SkiaFrameComposerTests
                 bitmap.Erase(new SKColor(gray, gray, gray, 255));
                 using var image = SKImage.FromBitmap(bitmap);
                 using var encoded = image.Encode(SKEncodedImageFormat.Png, 100);
-                File.WriteAllBytes(Path.Combine(root, fileName), encoded.ToArray());
+                var fullPath = Path.Combine(root, fileName);
+                File.WriteAllBytes(fullPath, encoded.ToArray());
+                framePaths.Add(fullPath);
 
                 var animation = new AssetAnimation
                 {
@@ -223,7 +267,7 @@ public sealed class SkiaFrameComposerTests
                 },
             };
             var pack = new AssetPack(Path.Combine(root, "manifest.json"), manifest);
-            return new ComposerFixture(root, pack, animations[0], new SkiaFrameComposer(pack), animations);
+            return new ComposerFixture(root, pack, animations[0], new SkiaFrameComposer(pack), animations, framePaths);
         }
 
         public void Dispose()
