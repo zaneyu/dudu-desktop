@@ -4,6 +4,16 @@ This is a private, single-recipient release. The artwork and installer must
 remain private. Nothing in this document authorizes publishing the repository,
 the Worker, the sender page, the installer, or this release tag.
 
+For ordinary requests to update, release, ship, rebuild for recipients, or
+publish the app, the production Microsoft Store MSIX procedure is mandatory.
+The Inno Setup EXE is a legacy recovery path and must be used only when the
+user explicitly requests an installer EXE. The normal Store update includes
+triggering the production workflow, verifying its production artifact,
+uploading it to the existing private Partner Center submission, updating the
+listing, preserving the private audience, and preparing certification. Stop
+for confirmation immediately before the final **Submit for certification**
+action.
+
 ## 1. Prerequisites
 
 - Windows 11, version 24H2 (build 26100) or newer, x64.
@@ -231,7 +241,7 @@ All commands run from the repository root with `pwsh`.
    "optional data deletion" requirement — deletion is optional and
    recipient-initiated, not automatic on uninstall.
 
-## 5. Private Store submission and migration fallback
+## 5. Production private Store submission and EXE migration fallback
 
 The Store path is a private-audience distribution path, not a public release.
 Reserve and maintain the private-audience Store app in Partner Center, and
@@ -252,7 +262,9 @@ Partner Center prerequisite. If the restricted-capability approval has not
 been obtained and retained privately, stop before production submission; the
 local and CI package flows remain acceptance-only.
 
-Then the owner must produce the submission package with the identity gate:
+The production Store workflow is the normal way to produce the submission
+package. The local identity-gated command remains available for investigation
+or an explicitly requested local package:
 
 ```powershell
 pwsh scripts/package-store.ps1 -Version <Major.Minor.Patch> `
@@ -262,11 +274,10 @@ pwsh scripts/package-store.ps1 -Version <Major.Minor.Patch> `
 ```
 
 The command fails unless the manifest matches both exact values and is not the
-local identity. Only the package produced after that successful gate may be
-submitted; the ordinary CI artifact remains acceptance-only. Do not commit the
-private identity values. Store artifacts become Microsoft-signed only after
-Microsoft Store publication. The current Inno installer remains unsigned and
-may trigger SmartScreen or Smart App Control behavior.
+local identity. Do not commit the private identity values. Store artifacts
+become Microsoft-signed only after Microsoft Store publication. The current
+Inno installer remains unsigned and may trigger SmartScreen or Smart App
+Control behavior.
 
 ### Production packaging through GitHub Actions
 
@@ -301,9 +312,11 @@ secrets.
 The workflow writes those values only into the ephemeral checkout, runs the
 identity-gated package command and WACK, then uploads a private artifact. It
 does not submit to Partner Center. Download the artifact from the successful
-run, verify `store-package-metadata/SHA256SUMS.txt`, and upload the single
-`.msix` file manually to the draft submission. Never reuse the ordinary hosted
-CI Store artifact.
+run, verify `store-package-metadata/SHA256SUMS.txt`, and, when the user has
+asked to automate the update, upload the single production `.msix` file to the
+existing draft submission through Partner Center. Never reuse the ordinary
+hosted CI Store artifact. Stop before the final certification submission for
+action-time confirmation.
 
 In production mode, the wrapper resets the Windows App Certification Kit before
 testing and accepts the package only when AppCert exits successfully and its XML
@@ -315,45 +328,39 @@ its checksum is integrity evidence for acceptance only, never a production
 certification pass or Partner Center upload authorization. See Microsoft's
 [Desktop Bridge test guidance](https://learn.microsoft.com/en-us/windows/uwp/debug-test-perf/windows-desktop-bridge-app-tests).
 
-For each Store release:
+For each normal Store release or update:
 
 1. Wait for a green Windows workflow, including its package and verification
-   jobs. A CI artifact is not evidence that recipient Windows acceptance has
-   completed. The CI Store artifact is acceptance-only: **never upload it to
-   Partner Center**.
+   jobs. The production workflow is
+   `.github/workflows/windows-store-production.yml`; the ordinary CI Store
+   artifact is acceptance-only and must never be uploaded to Partner Center.
 2. Download the workflow artifact named
-   `DuduDesktop-<version>-win-x64-store` to a newly created temporary directory.
-   It contains the `.msix` package under `artifacts/store-package/` and
-   the private release metadata under `artifacts/store-package-metadata/`.
-3. Use that CI `.msix` only for acceptance and integrity verification. Compare
-   its SHA-256 hash with the `Store package SHA-256` value in the Store job
-   summary and with `store-package-metadata/SHA256SUMS.txt`; also confirm
-   `package-version.txt` matches the intended release. This comparison applies
-   only to the acceptance artifact; it is not an upload authorization.
-4. Separately configure the exact Partner Center `Identity Name` and
-   `Publisher` in the private working copy of
-   `src/Dudu.App/Package.appxmanifest`, then run the identity-gated local
-   command above. It must produce a new local `.msix` and its own metadata.
-5. Verify the locally produced `.msix` against its own
-   `store-package-metadata/SHA256SUMS.txt` and `package-version.txt`, confirming
-   the intended strictly increasing version. Do not substitute the CI package
-   or use its job-summary hash for this local package.
-6. Upload only that locally produced, identity-gated `.msix` (the Partner
-   Center upload container, if the portal requests one, is not the raw `.msix`)
-   to Partner Center, keep the audience private, and submit it for
-   certification.
-7. After publication, verify from the recipient's invited Store account that
+   `DuduDesktop-<version>-win-x64-production-store` to a newly created
+   temporary directory. It contains the production `.msix` under
+   `store-package/` and the private release metadata under
+   `store-package-metadata/`.
+3. Verify `validation-summary.txt` contains the Store-ready marker, confirm
+   `package-version.txt` is the intended strictly increasing `<version>.0`,
+   and compare `store-package-metadata/SHA256SUMS.txt` with a fresh local hash.
+   Do not substitute the ordinary CI package or a diagnostics artifact.
+4. In the existing Partner Center product, select **Start update**, upload
+   only the verified production `.msix`, review identity and x64 architecture,
+   update **What's new**, and preserve the existing private audience. When
+   automation was requested, perform the upload and listing edits; stop before
+   the final certification click for action-time confirmation.
+5. After publication, verify from the recipient's invited Store account that
    the private Store listing is visible and that Dudu Desktop installs.
-8. For later updates, start the workflow with `workflow_dispatch` and enter
+6. For later updates, start the workflow with `workflow_dispatch` and enter
    the explicit `store_version` three-part value. Pushes retain the `1.0.0`
-   default for repeatable acceptance builds. Use a strictly increasing package
-   version and confirm the corresponding package filename and
-   `package-version.txt` before submission. If a rollout is bad, pause it in
-   Partner Center and submit a corrected package with the next increasing
-   version.
+   default for repeatable acceptance builds, but normal recipient updates must
+   use the production workflow and a strictly increasing package version.
+   Confirm the corresponding package filename and `package-version.txt` before
+   submission. If a rollout is bad, pause it in Partner Center and submit a
+   corrected package with the next increasing version.
 
-During migration, retain the Inno installer as the recovery path until two
-Store versions have upgraded successfully on the recipient's Windows device.
+During migration, retain the Inno installer only as an explicit-opt-in recovery
+path until two Store versions have upgraded successfully on the recipient's
+Windows device.
 A package identity change can affect startup shortcuts, notifications,
 activation, and uninstall behavior even when `%LocalAppData%\DuduDesktop` is
 preserved. Complete the Windows acceptance matrix in

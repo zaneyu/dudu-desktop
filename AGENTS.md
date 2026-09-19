@@ -65,9 +65,34 @@ npm run dev
 Do not use a globally installed Wrangler when the repository dependency is
 available. Use `npm exec wrangler` or `npx wrangler`.
 
-## Building the Windows EXE/installer
+## Default distribution and update policy (mandatory)
 
-### Recommended release build
+When the user asks to update, release, ship, rebuild for recipients, or publish
+the app, the default path is always the production Microsoft Store MSIX path
+below. Do not route the request to the private Inno Setup EXE workflow or the
+ordinary acceptance-only Store workflow unless the user explicitly asks for an
+EXE or acceptance artifact.
+
+For a normal update, complete the whole path: use the next strictly increasing
+Store version on `main`, trigger and watch
+`.github/workflows/windows-store-production.yml`, verify the WACK Store-ready
+metadata, package version, and checksum, download the production artifact,
+open the existing private Partner Center submission, upload the verified MSIX,
+update **What's new**, preserve the existing private audience, and prepare the
+submission. A user request to automate the update authorizes the Partner Center
+upload and listing edits. Stop only immediately before the final
+**Submit for certification** action and request the required action-time
+confirmation for that external certification submission.
+
+Never create a new Store product or audience for a routine update. Never reuse
+the ordinary CI Store artifact, an installer EXE, or a diagnostics artifact.
+
+The EXE/installer procedures below are a legacy, explicit-opt-in recovery path,
+not the default meaning of “update” or “release”.
+
+## Legacy direct Windows EXE/installer path (explicit opt-in only)
+
+### Explicitly requested EXE release build
 
 On a clean, supported Windows machine, run the complete release gate from the
 repository root:
@@ -93,7 +118,7 @@ Its checksum manifest is:
 artifacts/SHA256SUMS.txt
 ```
 
-### Focused EXE/installer build
+### Focused EXE/installer build (explicit opt-in only)
 
 Use this when the full release gate has already been run or when iterating on
 the Windows package:
@@ -125,7 +150,7 @@ Before sending the EXE, compare the recipient-facing checksum against a fresh
 `Get-FileHash` result. The installer is unsigned, so SmartScreen warnings are
 expected; checksum verification is the release check.
 
-### CI build and retrieving the latest artifact
+### Legacy EXE CI build and retrieving the latest artifact
 
 Every push to `main` runs `.github/workflows/windows-installer.yml`. The
 workflow is the authoritative Windows build because WinUI cannot be fully
@@ -151,13 +176,14 @@ artifacts/SHA256SUMS.txt
 
 Do not commit or publicly upload either file.
 
-### Production Microsoft Store MSIX procedure
+### Production Microsoft Store MSIX procedure (default)
 
-The production Store path is separate from the ordinary acceptance-only Store
-workflow. Use `.github/workflows/windows-store-production.yml` and run it only
-from `main`; it is manual-only and uses the private repository's hosted
-Windows x64 Actions minutes. The hosted runner is authoritative for this
-package because macOS cannot run the real WinUI packaging and WACK path.
+The production Store path is the default distribution and update workflow. It
+is separate from the ordinary acceptance-only Store workflow. Use
+`.github/workflows/windows-store-production.yml` and run it only from `main`;
+it is manual-only and uses the private repository's hosted Windows x64 Actions
+minutes. The hosted runner is authoritative for this package because macOS
+cannot run the real WinUI packaging and WACK path.
 
 Before the first run, add these repository-level Actions secrets from the
 Partner Center Product Identity page. Do not put the values in source, logs,
@@ -235,13 +261,14 @@ grep -F "Windows App Certification Kit report: Store-ready" \
 cat "$DUDU_STORE_RELEASE_TMP/store-package-metadata/SHA256SUMS.txt"
 ```
 
-Keep the `.msix` and checksum private. The final transfer is manual: open the
-already-created private Partner Center submission, upload only the production
-`.msix`, review the package identity and architecture, provide any restricted
-capability justification, and submit for Microsoft's official certification.
-Do not automate or silently perform that external file upload. The Store signs
-the package during publication; local WACK is pre-submission evidence, not
-Store approval.
+Keep the `.msix` and checksum private. When the user asks to automate the
+update, open the already-created private Partner Center submission, upload
+only the production `.msix`, review the package identity and architecture,
+provide any restricted-capability justification, and update the listing. Do
+not upload the ordinary acceptance-only artifact or diagnostics artifact. Stop
+immediately before the final certification submission and request the required
+action-time confirmation. The Store signs the package during publication;
+local WACK is pre-submission evidence, not Store approval.
 
 #### Subsequent Store updates
 
@@ -270,17 +297,24 @@ artifact name with the next strictly increasing version for later updates.
 In Partner Center, select **Start update** on the existing product, upload
 only the verified production `.msix`, review the package identity and x64
 architecture, update **What's new**, preserve the existing private audience,
-and submit the new submission for certification. Do not upload the ordinary
-acceptance-only artifact or a diagnostic artifact. Do not automate or silently
-perform this external file upload. After Microsoft publishes the update,
+and prepare the new submission for certification. When automation was
+requested, perform the upload and listing edits directly in Partner Center;
+stop before the final certification click for action-time confirmation. Do not
+upload the ordinary acceptance-only artifact or a diagnostic artifact. After
+Microsoft publishes the update,
 invited recipients normally receive it through Microsoft Store updates; they
 can use **Microsoft Store → Library → Get updates** if it does not appear
 immediately. A bad rollout cannot be downgraded in place; pause it and submit
 the next corrected higher version.
 
-### Exact Mac rebuild procedure
+### Explicit-opt-in Mac EXE rebuild procedure (not a Store update)
 
-This is the procedure for rebuilding from the macOS authoring host. It is
+This section applies only when the user explicitly requests the private EXE
+installer. For an ordinary update, ignore this section and follow the
+production Microsoft Store MSIX procedure above.
+
+This is the procedure for rebuilding the legacy EXE from the macOS authoring
+host. It is
 important to understand what “build” means on Mac:
 
 - macOS can run the relay tests and compile Windows-targeted .NET sources in a
@@ -613,16 +647,23 @@ Symptom-first lookup (data root overridable via `DUDU_DATA_ROOT`):
 
 ## Release handoff
 
-Before handing the installer to anyone:
+The default recipient release is the production Microsoft Store MSIX. Use the
+Store procedure above for every ordinary update or release. The EXE checks
+below apply only when the user explicitly requested the legacy installer.
 
-1. Run `pwsh scripts/verify.ps1` on supported Windows, or confirm the matching
-   Windows CI run is green.
-2. Confirm `artifacts/SHA256SUMS.txt` matches the exact EXE being sent.
-3. Confirm there is exactly one retained `.exe` in `artifacts/`.
-4. Keep the repository, relay URL, sender URL, artwork, installer, and checksum
+Before handing a release to anyone:
+
+1. For the default Store path, confirm the production workflow is green,
+   `Store-ready` metadata and `package-version.txt` are correct, and the
+   verified MSIX is the package uploaded to the existing private submission.
+2. For the explicit legacy EXE path only, run `pwsh scripts/verify.ps1` on
+   supported Windows or confirm the matching Windows CI run is green; confirm
+   `artifacts/SHA256SUMS.txt` matches the exact EXE and exactly one retained
+   `.exe` exists in `artifacts/`.
+3. Keep the repository, relay URL, sender URL, artwork, package, and checksum
    in private channels only.
-5. Tell the recipient that the installer is unsigned and that the checksum must
-   be verified before bypassing SmartScreen.
+4. For an explicit EXE handoff, tell the recipient that the installer is
+   unsigned and that the checksum must be verified before bypassing SmartScreen.
 
 For installation, upgrade, uninstall, pairing, backup/restore, and the full
 acceptance matrix, follow [docs/release.md](docs/release.md) and
