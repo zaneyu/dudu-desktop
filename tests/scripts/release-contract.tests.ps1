@@ -54,6 +54,7 @@ $readme = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "README.md")
 $releaseDoc = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "docs/release.md")
 $acceptanceDoc = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "docs/testing/windows-acceptance.md")
 $changelog = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "CHANGELOG.md")
+$installGuide = Get-Content -Raw -LiteralPath (Join-Path $repoRoot "docs/install-guide.md")
 $releaseDocs = @($readme, $releaseDoc, $acceptanceDoc, $changelog, $workflow)
 
 $officialMicrosoftDocumentationUrlPattern = '(?i)https?://(?:learn|support)\.microsoft\.com(?:[/ :]|$)'
@@ -471,6 +472,9 @@ Assert-Contains "smoke test can exercise a normal interactive launch" $smoke 'Ex
 Assert-Contains "normal launch checks startup failure diagnostics" $smoke 'startup-failure\.log'
 Assert-Contains "normal launch closes the exact process cleanly" $smoke 'Close-NormalLaunchApp'
 Assert-True "installer contains no image-wide Dudu taskkill" ($iss -notmatch 'taskkill\s+/IM\s+Dudu\.App\.exe')
+Assert-Contains "installer's last page launches Dudu via a [Run] postinstall entry" $iss 'Description: "Launch Dudu Desktop"; Flags: postinstall'
+Assert-Contains "install guide tells her to leave Launch Dudu Desktop ticked and click Finish" $installGuide 'leave the \*\*Launch Dudu\s*\r?\n\s*Desktop\*\* box ticked and click \*\*Finish\*\*'
+Assert-True "install guide drops the old click-Next-until-it-finishes wording" ($installGuide -notmatch 'until it finishes')
 Assert-Contains "Inno download verifies before Start-Process" $innoScript 'Assert-PinnedInnoSetupFile -Path \$downloadPath'
 Assert-Contains "app copies the private animation pack" $appProject '<Content Include="Assets/Packs/private-dudu/\*\*" CopyToOutputDirectory="PreserveNewest" />'
 Assert-Contains "app copies the private audio pack" $appProject '<Content Include="Assets/Audio/private-dudu/\*\*" CopyToOutputDirectory="PreserveNewest" />'

@@ -9,9 +9,10 @@ You only need to do this once. It takes about two minutes.
 3. Windows will show a blue **"Windows protected your PC"** box. This is
    normal for a small private app that is not signed by a company.
    Click **More info**, then **Run anyway**.
-4. Click **Next** until it finishes. Dudu opens on its own. Once you finish
-   the short setup below, it also starts with Windows from then on (this is
-   on by default; you can turn it off in Dudu's settings).
+4. Click **Next** through the setup pages, then leave the **Launch Dudu
+   Desktop** box ticked and click **Finish** so Dudu opens right away. Once
+   you finish the short setup below, it also starts with Windows from then
+   on (this is on by default; you can turn it off in Dudu's settings).
 
 Nothing is installed for other users of the PC, and no administrator
 password is needed.
