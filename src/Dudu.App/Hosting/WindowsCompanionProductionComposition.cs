@@ -257,25 +257,45 @@ public static class WindowsCompanionProductionComposition
             var preferencesRepository = services.GetRequiredService<IPreferencesRepository>();
             var profileRepository = services.GetRequiredService<IProfileRepository>();
             var databaseUnavailable = false;
-            try
+            // A transient SQLITE_BUSY/LOCKED here (an AV scanner or OneDrive briefly holding
+            // dudu.db) would otherwise drop straight into safe mode for the whole session:
+            // Database's own bounded transient retry (DatabaseAccessCoordinator) never gets a
+            // chance to run, because that retry only fires on a SUBSEQUENT InitializeAsync call
+            // and db-init is the very first one. Retry it here instead, bounded the same way the
+            // coordinator bounds its own retries -- a capped number of attempts, each separated by
+            // the same cooldown -- before falling into safe mode. A non-transient failure (a
+            // corrupt file, CANTOPEN, FULL) retries zero times, exactly as before.
+            const int maxTransientDbInitRetries = 2;
+            for (var attempt = 0; ; attempt++)
             {
-                await RunStartupPhaseAsync(
-                    "db-init",
-                    () => database.InitializeAsync(cancellationToken));
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (StartupPhaseException)
-            {
-                // A database that cannot open (SQLITE_BUSY/CANTOPEN/FULL, etc.) must not
-                // silently exit the process: fall into safe mode below so she still sees
-                // the settings surface and the safe-mode notice instead of nothing at all.
-                // The failure itself is already recorded by the Database.FailureReporter
-                // hook wired above.
-                databaseUnavailable = true;
-                safeMode = true;
+                try
+                {
+                    await RunStartupPhaseAsync(
+                        "db-init",
+                        () => database.InitializeAsync(cancellationToken));
+                    break;
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (StartupPhaseException exception)
+                {
+                    if (attempt < maxTransientDbInitRetries && Database.IsTransientBusyOrLocked(exception))
+                    {
+                        await Task.Delay(Database.TransientBusyRetryCooldown, cancellationToken);
+                        continue;
+                    }
+
+                    // A database that cannot open (SQLITE_BUSY/CANTOPEN/FULL, etc.) must not
+                    // silently exit the process: fall into safe mode below so she still sees
+                    // the settings surface and the safe-mode notice instead of nothing at all.
+                    // The failure itself is already recorded by the Database.FailureReporter
+                    // hook wired above.
+                    databaseUnavailable = true;
+                    safeMode = true;
+                    break;
+                }
             }
 
             var preferences = databaseUnavailable

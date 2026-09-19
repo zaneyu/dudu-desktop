@@ -154,6 +154,46 @@ public sealed class ProductionStartupContractTests
         Assert.Contains("persistPlacementAsync", runtime);
     }
 
+    [Fact]
+    public void Db_init_retries_a_transient_busy_or_locked_failure_before_falling_into_safe_mode()
+    {
+        // Pre-handoff audit: a transient SQLITE_BUSY/LOCKED at the very first InitializeAsync
+        // call (db-init) used to drop straight into safe mode for the whole session, because
+        // Database's own bounded transient retry can only run on a SUBSEQUENT call. This asserts
+        // the retry loop classifies the failure with the same public helper the data layer uses,
+        // waits the same cooldown, is capped, and still falls into safe mode exactly as before
+        // once the cap is spent or the failure is not transient.
+        var root = FindRepositoryRoot();
+        var composition = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "Dudu.App",
+            "Hosting",
+            "WindowsCompanionProductionComposition.cs"));
+
+        var loopStart = composition.IndexOf(
+            "const int maxTransientDbInitRetries = 2;",
+            StringComparison.Ordinal);
+        var databaseInit = composition.IndexOf(
+            "\"db-init\",",
+            StringComparison.Ordinal);
+        var retryCondition = composition.IndexOf(
+            "attempt < maxTransientDbInitRetries && Database.IsTransientBusyOrLocked(exception)",
+            StringComparison.Ordinal);
+        var cooldownDelay = composition.IndexOf(
+            "await Task.Delay(Database.TransientBusyRetryCooldown, cancellationToken);",
+            StringComparison.Ordinal);
+        var safeModeFallback = composition.IndexOf(
+            "databaseUnavailable = true;\n                    safeMode = true;",
+            StringComparison.Ordinal);
+
+        Assert.True(loopStart >= 0);
+        Assert.True(databaseInit > loopStart);
+        Assert.True(retryCondition > databaseInit);
+        Assert.True(cooldownDelay > retryCondition);
+        Assert.True(safeModeFallback > cooldownDelay);
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

@@ -267,4 +267,33 @@ public sealed class DatabaseAccessCoordinatorTests
         Assert.Equal(1, coordinator.InitializationRunCount);
         Assert.Equal(1, attempt);
     }
+
+    // Pre-handoff audit: Database.IsTransientBusyOrLocked/TransientBusyRetryCooldown are the
+    // public seams the App-layer db-init startup phase uses to apply this same classification to
+    // its very first InitializeAsync call, where this coordinator's own retry above can never run.
+    [Fact]
+    public void Public_classifier_matches_busy_and_locked_and_rejects_other_failures()
+    {
+        Assert.True(Database.IsTransientBusyOrLocked(new SqliteException("database is busy", 5)));
+        Assert.True(Database.IsTransientBusyOrLocked(new SqliteException("database is locked", 6)));
+        Assert.False(Database.IsTransientBusyOrLocked(new SqliteException("no such table: seed_state", 1)));
+        Assert.False(Database.IsTransientBusyOrLocked(new InvalidOperationException("not a sqlite failure")));
+    }
+
+    [Fact]
+    public void Public_classifier_walks_wrapping_exceptions_the_same_way_as_the_coordinator()
+    {
+        var wrapped = new InvalidOperationException(
+            "wrapped", new SqliteException("database is locked", 6));
+        Assert.True(Database.IsTransientBusyOrLocked(wrapped));
+
+        var aggregate = new AggregateException(new SqliteException("database is busy", 5));
+        Assert.True(Database.IsTransientBusyOrLocked(aggregate));
+    }
+
+    [Fact]
+    public void Public_cooldown_matches_the_coordinators_own_retry_cooldown()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(10), Database.TransientBusyRetryCooldown);
+    }
 }

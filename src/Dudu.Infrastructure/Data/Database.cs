@@ -68,6 +68,22 @@ public sealed class Database : IAsyncDisposable, IDisposable
     /// </summary>
     public DatabaseRecoveryOutcome LastRecoveryOutcome { get; private set; }
 
+    /// <summary>
+    /// True when <paramref name="exception"/> is a transient SQLITE_BUSY/SQLITE_LOCKED failure --
+    /// the same classification <see cref="DatabaseAccessCoordinator"/> uses for its own bounded
+    /// retry. Exposed so the App-layer startup composition can apply it to a failure from the very
+    /// first <see cref="InitializeAsync"/> call (the "db-init" phase), where the coordinator's own
+    /// retry can never run because there is no earlier call for it to retry against.
+    /// </summary>
+    public static bool IsTransientBusyOrLocked(Exception exception) =>
+        DatabaseAccessCoordinator.IsTransientBusyOrLocked(exception);
+
+    /// <summary>
+    /// The cooldown <see cref="DatabaseAccessCoordinator"/> itself waits between transient
+    /// retries, exposed for the same reason as <see cref="IsTransientBusyOrLocked(Exception)"/>.
+    /// </summary>
+    public static TimeSpan TransientBusyRetryCooldown => DatabaseAccessCoordinator.TransientRetryCooldown;
+
     // H2: DatabaseBackupService.RestoreAsync's corruption-recovery restore always invalidates
     // initialization (as it must -- the canonical file it just replaced needs
     // SeedData.SeedAsync and ReconcileInterruptedRestoreAsync to run on it), so the very next
@@ -417,7 +433,7 @@ internal sealed class DatabaseAccessCoordinator
     // or past the cap, callers get the latched faulted task fast, exactly like a deterministic
     // failure.
     private const int MaxTransientRetries = 3;
-    private static readonly TimeSpan TransientRetryCooldown = TimeSpan.FromSeconds(10);
+    internal static readonly TimeSpan TransientRetryCooldown = TimeSpan.FromSeconds(10);
 
     private readonly object _sync = new();
     private readonly HashSet<SqliteConnection> _connections = [];
@@ -603,7 +619,7 @@ internal sealed class DatabaseAccessCoordinator
     private const int SqliteErrorBusy = 5;
     private const int SqliteErrorLocked = 6;
 
-    private static bool IsTransientBusyOrLocked(Exception exception)
+    internal static bool IsTransientBusyOrLocked(Exception exception)
     {
         for (var current = exception; current is not null; current = current.InnerException)
         {
