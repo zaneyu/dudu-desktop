@@ -229,6 +229,33 @@ public static class WindowsCompanionProductionComposition
             // Saved placements are selected only after that identity is known.
             var initialPlacement = new PetPlacement("MISSING", 0.8, 0.8, 1);
             var pet = services.GetRequiredService<PetStateMachine>();
+            // The 30-second reminder tick (ReminderEngine.TickAsync, via
+            // AppHost) completes an expired focus session on the user's
+            // behalf, but nothing else ever raises FocusEnded for that path
+            // (only TasksFocusViewModel.EndFocusAsync does, for a manual
+            // end) — without this, the pet stays latched in Focus, which
+            // suppresses every reminder and note presentation until restart.
+            // Route it through the same one-shot path a manual end uses.
+            services.GetRequiredService<Dudu.Core.Focus.FocusService>().SessionExpired += focusId =>
+            {
+                var focusEnded = new PetEvent.FocusEnded(focusId.ToString("D"));
+                Task callback;
+                if (presentationCoordinator is null)
+                {
+                    // Composed inside initializeOverlay below; a session
+                    // expiring before that (implausible this early in
+                    // startup, but not worth crashing over) still updates
+                    // the pet state so the suppression clears.
+                    pet.Handle(focusEnded);
+                    callback = Task.CompletedTask;
+                }
+                else
+                {
+                    callback = presentationCoordinator.PresentOneShotAsync(focusEnded, "focus-end", CancellationToken.None);
+                }
+
+                _ = ObserveNativeCallbackAsync(callback, "focus-expiry", host.ErrorReporter);
+            };
             startup = new StartupRegistrationService();
             WindowsCompanionRuntime? activeRuntime = null;
             var activePlacement = initialPlacement;

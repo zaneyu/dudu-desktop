@@ -17,6 +17,17 @@ public sealed class FocusService
     private readonly ITaskRepository? _taskRepository;
     private readonly IClock _clock;
 
+    /// <summary>
+    /// Raised when <see cref="CompleteExpiredAsync(Guid, CancellationToken)"/> actually
+    /// transitions a running session to <see cref="FocusStatus.Completed"/> because its
+    /// timer ran out. This is the only signal that a session ended without the user
+    /// pressing "end focus" (see <c>TasksFocusViewModel.EndFocusAsync</c>), so a
+    /// subscriber must publish <c>PetEvent.FocusEnded</c> here the same way that manual
+    /// path does — otherwise the pet stays latched in Focus, which suppresses every
+    /// reminder and note presentation until the app restarts.
+    /// </summary>
+    public event Action<Guid>? SessionExpired;
+
     public FocusService(
         IFocusSessionRepository repository,
         IClock clock,
@@ -237,7 +248,13 @@ public sealed class FocusService
             Status = FocusStatus.Completed,
             UpdatedUtc = now,
         };
-        return await _repository.TryCompareAndSetAsync(session, completed, cancellationToken);
+        var succeeded = await _repository.TryCompareAndSetAsync(session, completed, cancellationToken);
+        if (succeeded)
+        {
+            SessionExpired?.Invoke(session.Id);
+        }
+
+        return succeeded;
     }
 
     public async Task<bool> CompleteExpiredAsync(CancellationToken cancellationToken)
