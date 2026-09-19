@@ -263,7 +263,7 @@ been obtained and retained privately, stop before production submission; the
 local and CI package flows remain acceptance-only.
 
 The production Store workflow is the normal way to produce the submission
-package. The local identity-gated command remains available for investigation
+package. The identity-gated local command remains available for investigation
 or an explicitly requested local package:
 
 ```powershell
@@ -274,10 +274,12 @@ pwsh scripts/package-store.ps1 -Version <Major.Minor.Patch> `
 ```
 
 The command fails unless the manifest matches both exact values and is not the
-local identity. Do not commit the private identity values. Store artifacts
-become Microsoft-signed only after Microsoft Store publication. The current
-Inno installer remains unsigned and may trigger SmartScreen or Smart App
-Control behavior.
+local identity. Upload only that locally produced, identity-gated `.msix`
+(the Partner Center upload container, if the portal requests one, is not the
+raw `.msix`) when using this local path — never the CI artifact. Do not
+commit the private identity values. Store artifacts become Microsoft-signed
+only after Microsoft Store publication. The current Inno installer remains
+unsigned and may trigger SmartScreen or Smart App Control behavior.
 
 ### Production packaging through GitHub Actions
 
@@ -332,8 +334,9 @@ For each normal Store release or update:
 
 1. Wait for a green Windows workflow, including its package and verification
    jobs. The production workflow is
-   `.github/workflows/windows-store-production.yml`; the ordinary CI Store
-   artifact is acceptance-only and must never be uploaded to Partner Center.
+   `.github/workflows/windows-store-production.yml`; the ordinary CI artifact
+   (`DuduDesktop-<version>-win-x64-store`) is acceptance-only — never upload
+   the CI artifact to Partner Center.
 2. Download the workflow artifact named
    `DuduDesktop-<version>-win-x64-production-store` to a newly created
    temporary directory. It contains the production `.msix` under
@@ -341,8 +344,9 @@ For each normal Store release or update:
    `store-package-metadata/`.
 3. Verify `validation-summary.txt` contains the Store-ready marker, confirm
    `package-version.txt` is the intended strictly increasing `<version>.0`,
-   and compare `store-package-metadata/SHA256SUMS.txt` with a fresh local hash.
-   Do not substitute the ordinary CI package or a diagnostics artifact.
+   and compare its SHA-256 hash in `store-package-metadata/SHA256SUMS.txt`
+   with a fresh local hash. Do not substitute the ordinary CI package or a
+   diagnostics artifact.
 4. In the existing Partner Center product, select **Start update**, upload
    only the verified production `.msix`, review identity and x64 architecture,
    update **What's new**, and preserve the existing private audience. When
