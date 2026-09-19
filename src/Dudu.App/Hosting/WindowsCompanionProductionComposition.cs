@@ -136,7 +136,8 @@ internal static class ProductionPresentationSinks
         return services
             .AddSingleton<IReminderDueSink>(provider => new ReminderDueSink(
                 provider.GetRequiredService<IReminderRepository>(),
-                gateway))
+                gateway,
+                profiles: provider.GetRequiredService<IProfileRepository>()))
             .AddSingleton<IRemoteNoteArrivalSink>(provider => new RemoteNoteArrivalSink(gateway));
     }
 }

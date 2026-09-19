@@ -19,16 +19,19 @@ public sealed class ReminderDueSink : IReminderDueSink
 {
     private readonly IReminderRepository _reminders;
     private readonly Func<IUnsolicitedPresentationGateway> _gateway;
+    private readonly IProfileRepository? _profiles;
     private IAppHostErrorReporter? _errorReporter;
 
     public ReminderDueSink(
         IReminderRepository reminders,
         Func<IUnsolicitedPresentationGateway> gateway,
-        IAppHostErrorReporter? errorReporter = null)
+        IAppHostErrorReporter? errorReporter = null,
+        IProfileRepository? profiles = null)
     {
         _reminders = reminders ?? throw new ArgumentNullException(nameof(reminders));
         _gateway = gateway ?? throw new ArgumentNullException(nameof(gateway));
         _errorReporter = errorReporter;
+        _profiles = profiles;
     }
 
     /// <summary>
@@ -92,13 +95,24 @@ public sealed class ReminderDueSink : IReminderDueSink
                 return;
             }
 
+            // Reminder text may carry LocalReminderDefaults.RecipientNameToken; rows
+            // persisted before the token existed have a name already baked in and are
+            // left untouched by ApplyRecipientName.
+            var recipientName = _profiles is null
+                ? null
+                : (await _profiles.GetAsync(cancellationToken))?.RecipientName;
+            var title = LocalReminderDefaults.ApplyRecipientName(reminder.Title, recipientName);
+            var details = reminder.Details is null
+                ? null
+                : LocalReminderDefaults.ApplyRecipientName(reminder.Details, recipientName);
+
             var routine = reminder.Id is LocalReminderDefaults.EveningCheckInId or LocalReminderDefaults.BedtimeId;
             var body = reminder.Id == LocalReminderDefaults.EveningCheckInId
-                ? $"{reminder.Details} open Home to check in."
-                : reminder.Details;
+                ? $"{details} open Home to check in."
+                : details;
             var item = DurableNotification.Reminder(
                 reminder.Id,
-                reminder.Title,
+                title,
                 body: routine ? body : null,
                 animationKey: reminder.Id == LocalReminderDefaults.BedtimeId ? "sleep" : null,
                 expiresUtc: routine ? NextLocalMidnight(occurrence.DueUtc, reminder.LocalTimeZoneId) : null);

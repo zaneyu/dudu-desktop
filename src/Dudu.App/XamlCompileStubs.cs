@@ -72,6 +72,7 @@ namespace Dudu.App.Pages
         private TextBlock HomePetState = null!;
         private TextBlock HomePetAnimation = null!;
         private TextBlock HomeActionStatus = null!;
+        private TextBlock HomeNextCountdown = null!;
         private TextBox CountdownTargetBox = null!;
         private TextBlock CountdownTargetValidation = null!;
         private Button HomeSaveCountdownButton = null!;
@@ -88,6 +89,7 @@ namespace Dudu.App.Pages
             HomePetState = new TextBlock();
             HomePetAnimation = new TextBlock();
             HomeActionStatus = new TextBlock();
+            HomeNextCountdown = new TextBlock();
             CountdownTargetBox = new TextBox();
             CountdownTargetValidation = new TextBlock();
             HomeSaveCountdownButton = new Button();

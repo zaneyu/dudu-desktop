@@ -73,8 +73,8 @@ public sealed class LocalReminderDefaultsTests
 
         var evening = reminders.Single(reminder => reminder.Id == LocalReminderDefaults.EveningCheckInId);
         var bedtime = reminders.Single(reminder => reminder.Id == LocalReminderDefaults.BedtimeId);
-        Assert.Equal("how was your day, ada?", evening.Title);
-        Assert.Equal("shuijiaojiao, ada", bedtime.Title);
+        Assert.Equal("how was your day{recipient}?", evening.Title);
+        Assert.Equal("shuijiaojiao{recipient}", bedtime.Title);
         Assert.Equal(new RecurrenceRule.Daily(new TimeOnly(20, 0)), evening.Rule);
         Assert.Equal(new RecurrenceRule.Daily(new TimeOnly(22, 0)), bedtime.Rule);
 
@@ -132,6 +132,39 @@ public sealed class LocalReminderDefaultsTests
 
         var evening = reminders.Single(reminder => reminder.Id == LocalReminderDefaults.EveningCheckInId);
         Assert.Equal(DateTimeOffset.Parse("2026-11-02T04:00:00Z"), evening.NextDueUtc);
+    }
+
+    [Fact]
+    public void ApplyRecipientName_inserts_a_comma_led_name_when_present()
+    {
+        Assert.Equal(
+            "how was your day, mei?",
+            LocalReminderDefaults.ApplyRecipientName("how was your day{recipient}?", "mei"));
+        Assert.Equal(
+            "shuijiaojiao, mei",
+            LocalReminderDefaults.ApplyRecipientName("shuijiaojiao{recipient}", " mei "));
+    }
+
+    [Fact]
+    public void ApplyRecipientName_drops_the_clause_cleanly_when_the_name_is_blank()
+    {
+        Assert.Equal(
+            "how was your day?",
+            LocalReminderDefaults.ApplyRecipientName("how was your day{recipient}?", null));
+        Assert.Equal(
+            "shuijiaojiao",
+            LocalReminderDefaults.ApplyRecipientName("shuijiaojiao{recipient}", "   "));
+    }
+
+    [Fact]
+    public void ApplyRecipientName_leaves_already_stored_text_without_the_token_untouched()
+    {
+        // Reminders persisted before this token existed already have a name
+        // baked into their stored text; there is no token to expand and no
+        // migration rewrites the row, so the old text passes through as-is.
+        Assert.Equal(
+            "how was your day, ada?",
+            LocalReminderDefaults.ApplyRecipientName("how was your day, ada?", "mei"));
     }
 
     private static TimeZoneInfo FindPacificTimeZone()

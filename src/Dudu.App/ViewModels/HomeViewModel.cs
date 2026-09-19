@@ -4,6 +4,7 @@ using Dudu.App.System;
 using Dudu.Core.Countdowns;
 using Dudu.Core.Models;
 using Dudu.Core.Pet;
+using Dudu.Core.Reminders;
 
 namespace Dudu.App.ViewModels;
 
@@ -19,6 +20,7 @@ public sealed class HomeViewModel : FeatureViewModelBase
     private DateTimeOffset? _countdownTargetUtc;
     private MoodChoice _selectedMood = MoodChoice.Okay;
     private string? _checkInNote;
+    private string _recipientName = string.Empty;
 
     public HomeViewModel(CompanionFeatureContext context)
     {
@@ -135,8 +137,32 @@ public sealed class HomeViewModel : FeatureViewModelBase
     public string NextReminderText => NextReminder is null
         ? "no reminders yet ah"
         : NextReminder.NextDueUtc is { } nextDue
-            ? $"next reminder {NextReminder.Title} at {nextDue.ToLocalTime():g}"
+            ? $"next reminder {LocalReminderDefaults.ApplyRecipientName(NextReminder.Title, _recipientName)} at {nextDue.ToLocalTime():g}"
             : "no reminders yet ah";
+
+    /// <summary>Days remaining for the countdown due soonest, from the countdowns
+    /// the page already loaded in <see cref="RefreshAsync"/>.</summary>
+    public string NextCountdownText
+    {
+        get
+        {
+            var nowUtc = _context.Clock.UtcNow;
+            var upcoming = Countdowns
+                .Where(countdown => countdown.TargetUtc is not null || countdown.TargetDate is not null)
+                .Select(countdown => (countdown, display: CountdownService.GetDisplay(countdown, nowUtc)))
+                .OrderBy(entry => entry.display.Remaining)
+                .FirstOrDefault();
+
+            if (upcoming.countdown is null) return "no countdowns yet ah";
+
+            return upcoming.display.Days switch
+            {
+                <= 0 => $"{upcoming.countdown.Title} is today",
+                1 => $"{upcoming.countdown.Title} in 1 day",
+                _ => $"{upcoming.countdown.Title} in {upcoming.display.Days} days",
+            };
+        }
+    }
 
     public string ActiveFocusText => ActiveFocus is null
         ? "no focus running ah"
@@ -152,6 +178,12 @@ public sealed class HomeViewModel : FeatureViewModelBase
         ? "no check-ins yet ah"
         : $"{CheckInSummary.Recent.Count} optional check-in{(CheckInSummary.Recent.Count == 1 ? string.Empty : "s")} in the last 7 days";
 
+    /// <summary>", name" when a recipient name is on file, or empty so
+    /// copy built from it still reads naturally.</summary>
+    private string RecipientClause => string.IsNullOrWhiteSpace(_recipientName) ? string.Empty : $", {_recipientName}";
+
+    public string CheckInSectionHeading => $"how was your day{RecipientClause}?";
+
     public string YesterdayReflectionText
     {
         get
@@ -163,9 +195,9 @@ public sealed class HomeViewModel : FeatureViewModelBase
                 .Where(item => DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(item.CreatedUtc, zone).DateTime) == yesterday)
                 .OrderByDescending(item => item.CreatedUtc)
                 .FirstOrDefault();
-            if (previous is null) return "a fresh check-in whenever u feel like it, ada";
+            if (previous is null) return $"a fresh check-in whenever u feel like it{RecipientClause}";
             var reflection = string.IsNullOrWhiteSpace(previous.Note) ? string.Empty : $"\nyour note: {previous.Note}";
-            return $"yesterday you chose {previous.Choice.ToString().ToLowerInvariant()}.{reflection}\nhow does today feel, ada?";
+            return $"yesterday you chose {previous.Choice.ToString().ToLowerInvariant()}.{reflection}\nhow does today feel{RecipientClause}?";
         }
     }
 
@@ -217,8 +249,10 @@ public sealed class HomeViewModel : FeatureViewModelBase
             var focus = await _context.FocusService.GetCurrentAsync(ct);
             var countdowns = await _context.Countdowns.ListAsync(ct);
             var summary = await _context.CheckInService.SummarizeAsync(7, ct);
+            var profile = await _context.Profiles.GetAsync(ct);
             await MutateAsync(() =>
             {
+                _recipientName = profile?.RecipientName ?? string.Empty;
                 NextReminder = reminders
                     .Where(reminder => reminder.Enabled)
                     .Where(reminder => reminder.NextDueUtc is not null)
@@ -240,6 +274,10 @@ public sealed class HomeViewModel : FeatureViewModelBase
                 OnPropertyChanged(nameof(PetStateText));
                 OnPropertyChanged(nameof(PetAnimationText));
                 OnPropertyChanged(nameof(CheckInSummaryText));
+                OnPropertyChanged(nameof(CheckInSectionHeading));
+                OnPropertyChanged(nameof(YesterdayReflectionText));
+                OnPropertyChanged(nameof(NextReminderText));
+                OnPropertyChanged(nameof(NextCountdownText));
                 // The shell caches pages/view models across visits: a stale pending
                 // confirmation from a previous visit must not resurface on this one.
                 PendingDeleteCountdown = null;
@@ -316,6 +354,7 @@ public sealed class HomeViewModel : FeatureViewModelBase
                 if (existing is null) Countdowns.Add(countdown);
                 else Countdowns[Countdowns.IndexOf(existing)] = countdown;
                 SelectCountdown(null);
+                OnPropertyChanged(nameof(NextCountdownText));
             }, cancellationToken);
         }, "oki countdown saved");
 
@@ -332,6 +371,7 @@ public sealed class HomeViewModel : FeatureViewModelBase
                 if (existing is not null) Countdowns.Remove(existing);
                 if (SelectedCountdown?.Id == countdown.Id) SelectCountdown(null);
                 if (PendingDeleteCountdown?.Id == countdown.Id) PendingDeleteCountdown = null;
+                OnPropertyChanged(nameof(NextCountdownText));
             }, cancellationToken);
         }, "okkk countdown deleted le");
 
@@ -352,4 +392,9 @@ public sealed class HomeViewModel : FeatureViewModelBase
                 OnPropertyChanged(nameof(CheckInSummaryText));
             }, cancellationToken);
         }, "oki noted mwamwa");
+
+    /// <summary>Shares FeatureViewModelBase's exception-to-copy mapping with
+    /// HomePage's code-behind click handlers, which run outside any
+    /// RunAsync call and would otherwise surface raw exception.Message.</summary>
+    public static string DescribeError(Exception exception) => ToUserMessage(exception);
 }

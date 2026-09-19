@@ -55,6 +55,7 @@
             <StackPanel Spacing="12">
                 <TextBlock Text="countdowns" Style="{StaticResource SectionHeadingStyle}" />
                 <TextBlock Text="one date to look forward to" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <TextBlock x:Name="HomeNextCountdown" Text="{x:Bind ViewModel.NextCountdownText, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.AutomationId="HomeNextCountdown" AutomationProperties.Name="next countdown" />
                 <StackPanel Spacing="8">
                     <TextBox Header="title" Text="{x:Bind ViewModel.CountdownTitle, Mode=TwoWay}" PlaceholderText="for example, next visit" AutomationProperties.AutomationId="HomeCountdownTitle" AutomationProperties.Name="title" />
                     <TextBox x:Name="CountdownTargetBox" Header="target" PlaceholderText="blank means tmrw" TextChanged="CountdownTarget_Changed" AutomationProperties.AutomationId="HomeCountdownTarget" AutomationProperties.Name="target" />
@@ -79,7 +80,7 @@
             </StackPanel>
 
             <StackPanel Spacing="12">
-                <TextBlock Text="how was your day, ada?" Style="{StaticResource SectionHeadingStyle}" />
+                <TextBlock Text="{x:Bind ViewModel.CheckInSectionHeading, Mode=OneWay}" Style="{StaticResource SectionHeadingStyle}" />
                 <TextBlock Text="optional, saved on this pc only. dudu's check-in, not a message from your partner. enable the evening prompt in Reminders." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                 <TextBlock Text="{x:Bind ViewModel.YesterdayReflectionText, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.AutomationId="HomeYesterdayReflection" AutomationProperties.Name="yesterday's check-in" />
                 <ComboBox Header="how are u feeling?" SelectedIndex="1" SelectionChanged="MoodBox_SelectionChanged" AutomationProperties.AutomationId="HomeMoodChoice" AutomationProperties.Name="how are u feeling?">

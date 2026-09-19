@@ -123,22 +123,89 @@ public sealed class ReminderDueSinkTests
         Assert.Equal("a little space to reflect. your check-in stays on this device. open Home to check in.", item.Body);
     }
 
+    [Fact]
+    public async Task Evening_checkin_title_and_body_take_the_saved_recipient_name()
+    {
+        var reminders = new RecordingReminderRepository(
+            MakeReminder(
+                LocalReminderDefaults.EveningCheckInId,
+                "how was your day{recipient}?"));
+        var gateway = new RecordingGateway();
+        var profiles = new RecordingProfileRepository(new Profile("mei", OnboardingComplete: true));
+        var sink = new ReminderDueSink(reminders, () => gateway, profiles: profiles);
+
+        await sink.NotifyAsync(
+            new ReminderOccurrence(LocalReminderDefaults.EveningCheckInId, DueUtc),
+            TestContext.Current.CancellationToken);
+
+        var item = Assert.IsType<DurableNotification>(gateway.LastItem);
+        Assert.Equal("how was your day, mei?", item.Title);
+    }
+
+    [Fact]
+    public async Task Bedtime_drops_the_name_clause_naturally_when_the_profile_has_none()
+    {
+        var reminders = new RecordingReminderRepository(
+            MakeReminder(
+                LocalReminderDefaults.BedtimeId,
+                "shuijiaojiao{recipient}",
+                details: "time to wind down. goodnight{recipient}."));
+        var gateway = new RecordingGateway();
+        var profiles = new RecordingProfileRepository(new Profile(string.Empty, OnboardingComplete: true));
+        var sink = new ReminderDueSink(reminders, () => gateway, profiles: profiles);
+
+        await sink.NotifyAsync(
+            new ReminderOccurrence(LocalReminderDefaults.BedtimeId, DueUtc),
+            TestContext.Current.CancellationToken);
+
+        var item = Assert.IsType<DurableNotification>(gateway.LastItem);
+        Assert.Equal("shuijiaojiao", item.Title);
+        Assert.Equal("time to wind down. goodnight.", item.Body);
+    }
+
+    [Fact]
+    public async Task Reminders_already_stored_with_a_baked_in_name_are_unaffected_by_the_saved_profile()
+    {
+        // No IProfileRepository wired at all: the sink must still behave exactly as
+        // before for rows persisted before recipient-name substitution existed.
+        var reminders = new RecordingReminderRepository(
+            MakeReminder(LocalReminderDefaults.EveningCheckInId, "how was your day, ada?"));
+        var gateway = new RecordingGateway();
+        var sink = new ReminderDueSink(reminders, () => gateway);
+
+        await sink.NotifyAsync(
+            new ReminderOccurrence(LocalReminderDefaults.EveningCheckInId, DueUtc),
+            TestContext.Current.CancellationToken);
+
+        var item = Assert.IsType<DurableNotification>(gateway.LastItem);
+        Assert.Equal("how was your day, ada?", item.Title);
+    }
+
     private static Reminder MakeReminder(
         string id,
         string title,
-        bool enabled = true) =>
+        bool enabled = true,
+        string? details = null) =>
         new(
             id,
             title,
-            id == LocalReminderDefaults.BedtimeId
+            details ?? (id == LocalReminderDefaults.BedtimeId
                 ? "time to wind down. goodnight, ada."
-                : "a little space to reflect. your check-in stays on this device.",
+                : "a little space to reflect. your check-in stays on this device."),
             enabled,
             new RecurrenceRule.Daily(new TimeOnly(20, 0)),
             "UTC",
             QuietHoursBehavior.DeliverImmediately,
             MissedOccurrencePolicy.Skip,
             DueUtc);
+
+    private sealed class RecordingProfileRepository(Profile? profile) : IProfileRepository
+    {
+        public Task<Profile?> GetAsync(CancellationToken cancellationToken) => Task.FromResult(profile);
+
+        public Task SaveAsync(Profile profile, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
 
     private sealed class RecordingReminderRepository(params Reminder[] reminders) : IReminderRepository
     {

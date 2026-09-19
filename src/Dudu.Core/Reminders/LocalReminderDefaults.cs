@@ -8,6 +8,28 @@ public static class LocalReminderDefaults
     public const string EveningCheckInId = "default-evening-checkin";
     public const string BedtimeId = "default-bedtime";
 
+    /// <summary>
+    /// Marks where a recipient's name belongs in default reminder text.
+    /// Reminders created before this token existed were persisted with a
+    /// name already baked in (e.g. "ada") and contain no token, so
+    /// <see cref="ApplyRecipientName"/> leaves them untouched -- no
+    /// migration of stored rows is needed.
+    /// </summary>
+    public const string RecipientNameToken = "{recipient}";
+
+    /// <summary>
+    /// Expands <see cref="RecipientNameToken"/> with ", name" when a name is
+    /// given, or drops it entirely when the name is empty or whitespace so
+    /// the copy still reads naturally.
+    /// </summary>
+    public static string ApplyRecipientName(string text, string? recipientName)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        var trimmed = recipientName?.Trim();
+        var suffix = string.IsNullOrEmpty(trimmed) ? string.Empty : $", {trimmed}";
+        return text.Replace(RecipientNameToken, suffix);
+    }
+
     public static IReadOnlyList<Reminder> Create(
         Preferences preferences,
         DateTimeOffset nowUtc,
@@ -37,7 +59,7 @@ public static class LocalReminderDefaults
                 timeZone),
             CreateReminder(
                 EveningCheckInId,
-                "how was your day, ada?",
+                $"how was your day{RecipientNameToken}?",
                 preferences.EveningCheckInEnabled,
                 new TimeOnly(20, 0),
                 null,
@@ -47,13 +69,13 @@ public static class LocalReminderDefaults
                 MissedOccurrencePolicy.Skip),
             CreateReminder(
                 BedtimeId,
-                "shuijiaojiao, ada",
+                $"shuijiaojiao{RecipientNameToken}",
                 preferences.BedtimeRitualEnabled,
                 new TimeOnly(22, 0),
                 null,
                 nowUtc,
                 timeZone,
-                "time to wind down. goodnight, ada.",
+                $"time to wind down. goodnight{RecipientNameToken}.",
                 MissedOccurrencePolicy.Skip),
         ];
     }
