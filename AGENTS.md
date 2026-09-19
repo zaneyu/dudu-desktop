@@ -243,6 +243,41 @@ Do not automate or silently perform that external file upload. The Store signs
 the package during publication; local WACK is pre-submission evidence, not
 Store approval.
 
+#### Subsequent Store updates
+
+After the first published version, keep the same Partner Center product and
+private audience. Do not create a new product or send a new invitation for
+each update. Make and verify the code change on `main`, then trigger the
+production workflow with a strictly increasing three-part version. If the
+current Store version is `1.0.0`, the next version is `1.0.1`:
+
+```zsh
+cd "$DUDU_REPO"
+gh workflow run windows-store-production.yml --ref main -f store_version=1.0.1
+gh run list --workflow windows-store-production.yml --limit 1 \
+  --json databaseId,headSha,status,conclusion,url
+gh run watch <run-id> --interval 10 --exit-status
+```
+
+The successful artifact is named
+`DuduDesktop-1.0.1-win-x64-production-store`. Download it into a new
+temporary directory, confirm `validation-summary.txt` contains
+`Windows App Certification Kit report: Store-ready`, confirm
+`package-version.txt` is `1.0.1.0`, and recompute the SHA-256 against
+`SHA256SUMS.txt` before using the package. Replace `1.0.1` in the commands and
+artifact name with the next strictly increasing version for later updates.
+
+In Partner Center, select **Start update** on the existing product, upload
+only the verified production `.msix`, review the package identity and x64
+architecture, update **What's new**, preserve the existing private audience,
+and submit the new submission for certification. Do not upload the ordinary
+acceptance-only artifact or a diagnostic artifact. Do not automate or silently
+perform this external file upload. After Microsoft publishes the update,
+invited recipients normally receive it through Microsoft Store updates; they
+can use **Microsoft Store → Library → Get updates** if it does not appear
+immediately. A bad rollout cannot be downgraded in place; pause it and submit
+the next corrected higher version.
+
 ### Exact Mac rebuild procedure
 
 This is the procedure for rebuilding from the macOS authoring host. It is
