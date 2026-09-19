@@ -196,7 +196,7 @@ public sealed class XamlContractTests
             ["TasksFocusPage.xaml"] = ["ViewModel.ActiveTasks", "ViewModel.CompletedTasks", "ViewModel.FocusHistory", "ViewModel.SaveTaskCommand", "ViewModel.StartFocusCommand", "ViewModel.PauseFocusCommand", "ViewModel.ResumeFocusCommand", "ViewModel.ExtendFocusCommand", "ViewModel.EndFocusCommand"],
             ["LoveNotesPage.xaml"] = ["ViewModel.LocalNotes", "ViewModel.PendingRemoteNotes", "ViewModel.SaveLocalNoteCommand", "ViewModel.DeleteLocalNoteCommand", "ViewModel.ShowLocalNoteCommand", "ViewModel.SaveOpenedNoteCommand"],
             ["AppearancePage.xaml"] = ["ViewModel.SaveCommand", "ViewModel.SavePlacementCommand", "ViewModel.SaveShortcutCommand"],
-            ["ConnectionPage.xaml"] = ["ViewModel.CreateCodeCommand", "ViewModel.RevokeSessionsCommand", "ViewModel.DeleteRemoteDeviceCommand"],
+            ["ConnectionPage.xaml"] = ["ViewModel.CreateCodeCommand", "ViewModel.RequestRevokeSessionsCommand", "ViewModel.RequestDeleteRemoteDeviceCommand", "ViewModel.RequestForgetPairingCommand", "ViewModel.ConfirmCommand", "ViewModel.CancelConfirmationCommand"],
             ["PrivacyDataPage.xaml"] = ["ViewModel.BackupCommand", "ViewModel.RequestRestoreCommand", "ViewModel.RequestDeleteLocalDataCommand", "ViewModel.RequestDeleteRemoteDataCommand", "ViewModel.ConfirmCommand", "ViewModel.CancelConfirmationCommand"],
         };
         var expectedLabels = new[]

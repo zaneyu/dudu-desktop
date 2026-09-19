@@ -4,6 +4,19 @@ using Dudu.Core.Abstractions;
 
 namespace Dudu.App.ViewModels;
 
+/// <summary>
+/// Audit finding F3: a destructive Connection-page action awaiting confirmation. Mirrors
+/// <see cref="PrivacyConfirmationAction"/>'s request-then-confirm pattern so every one-click
+/// revoke/delete/forget button here gets the same guard rail.
+/// </summary>
+public enum ConnectionConfirmationAction
+{
+    None,
+    RevokeSessions,
+    DeleteRemoteDevice,
+    ForgetPairing,
+}
+
 public sealed class ConnectionViewModel : FeatureViewModelBase
 {
     private readonly CompanionFeatureContext _context;
@@ -12,20 +25,29 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
     private string? _pairingCode;
     private DateTimeOffset? _codeExpiresUtc;
     private int _sessionCount;
+    private ConnectionConfirmationAction _pendingConfirmation;
 
     public ConnectionViewModel(CompanionFeatureContext context)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
         RefreshCommand = new AsyncRelayCommand((CancellationToken ct) => RefreshAsync(ct));
         CreateCodeCommand = new AsyncRelayCommand((CancellationToken ct) => CreateCodeAsync(ct));
-        RevokeSessionsCommand = new AsyncRelayCommand((CancellationToken ct) => RevokeSessionsAsync(ct));
-        DeleteRemoteDeviceCommand = new AsyncRelayCommand((CancellationToken ct) => DeleteRemoteDeviceAsync(ct));
+        RequestRevokeSessionsCommand = new RelayCommand(() => RequestConfirmation(ConnectionConfirmationAction.RevokeSessions));
+        RequestDeleteRemoteDeviceCommand = new RelayCommand(() => RequestConfirmation(ConnectionConfirmationAction.DeleteRemoteDevice));
+        RequestForgetPairingCommand = new RelayCommand(() => RequestConfirmation(ConnectionConfirmationAction.ForgetPairing));
+        ConfirmCommand = new AsyncRelayCommand(
+            () => ConfirmAsync(CancellationToken.None),
+            () => PendingConfirmation != ConnectionConfirmationAction.None);
+        CancelConfirmationCommand = new RelayCommand(CancelConfirmation);
     }
 
     public IAsyncRelayCommand RefreshCommand { get; }
     public IAsyncRelayCommand CreateCodeCommand { get; }
-    public IAsyncRelayCommand RevokeSessionsCommand { get; }
-    public IAsyncRelayCommand DeleteRemoteDeviceCommand { get; }
+    public IRelayCommand RequestRevokeSessionsCommand { get; }
+    public IRelayCommand RequestDeleteRemoteDeviceCommand { get; }
+    public IRelayCommand RequestForgetPairingCommand { get; }
+    public IAsyncRelayCommand ConfirmCommand { get; }
+    public IRelayCommand CancelConfirmationCommand { get; }
     public ObservableCollection<PairingSessionSummary> Sessions { get; } = [];
     public PairingAvailability Availability
     {
@@ -76,6 +98,38 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
         }
     }
     public bool IsPaired => Availability == PairingAvailability.Available && SessionCount > 0;
+    public ConnectionConfirmationAction PendingConfirmation
+    {
+        get => _pendingConfirmation;
+        private set
+        {
+            if (!SetProperty(ref _pendingConfirmation, value)) return;
+            OnPropertyChanged(nameof(ConfirmationTitle));
+            OnPropertyChanged(nameof(ConfirmationMessage));
+            OnPropertyChanged(nameof(ConfirmationButtonText));
+            ConfirmCommand.NotifyCanExecuteChanged();
+        }
+    }
+    public string ConfirmationTitle => PendingConfirmation == ConnectionConfirmationAction.None
+        ? "confirmation needed"
+        : "confirm this action";
+    public string ConfirmationMessage => PendingConfirmation switch
+    {
+        ConnectionConfirmationAction.RevokeSessions => "revoke all paired sender sessions now",
+        ConnectionConfirmationAction.DeleteRemoteDevice => "delete remote device data cannot undo",
+        // F2: distinct from DeleteRemoteDevice -- this never touches the relay, only the local
+        // pairing and secrets, so it works even when the relay is unreachable or the secret store
+        // is unreadable. Every already-stored, unrevealed remote note becomes unreadable though.
+        ConnectionConfirmationAction.ForgetPairing => "forget pairing on this pc only cannot undo unopened remote notes lost",
+        _ => "pick an action above to see effect",
+    };
+    public string ConfirmationButtonText => PendingConfirmation switch
+    {
+        ConnectionConfirmationAction.RevokeSessions => "confirm revoke",
+        ConnectionConfirmationAction.DeleteRemoteDevice => "confirm delete",
+        ConnectionConfirmationAction.ForgetPairing => "confirm forget pairing",
+        _ => "confirm",
+    };
     // A specific reason always wins over the coarse availability: "pairing offline dudu still
     // works here" is true but useless when the real answer is "you never set a relay up" (I9) or
     // "the relay is answering with something dudu cannot read" (C1).
@@ -149,7 +203,9 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
             }
         }, "yayyy code ready for 10 min");
 
-    public Task RevokeSessionsAsync(CancellationToken cancellationToken = default) =>
+    // F3: no longer bound directly to a button -- each is reached only through ConfirmAsync,
+    // after RequestConfirmation put the page into the matching pending-confirmation state.
+    private Task<bool> RevokeSessionsAsync(CancellationToken cancellationToken = default) =>
         RunAsync(async () =>
         {
             var result = await _context.Pairing.RevokeSessionsWithResultAsync(cancellationToken);
@@ -162,7 +218,7 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
             }, cancellationToken);
         }, "done le sessions revoked");
 
-    public Task DeleteRemoteDeviceAsync(CancellationToken cancellationToken = default) =>
+    private Task<bool> DeleteRemoteDeviceAsync(CancellationToken cancellationToken = default) =>
         RunAsync(async () =>
         {
             var result = await _context.Pairing.DeleteRemoteDeviceWithResultAsync(cancellationToken: cancellationToken);
@@ -177,4 +233,44 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
                 OnPropertyChanged(nameof(IsPaired));
             }, cancellationToken);
         }, "can remote data deleted le");
+
+    // F2's escape hatch: forgets this desktop's pairing on this machine only, without reading any
+    // existing secret or contacting the relay, so it works even when GetStateAsync/RefreshAsync
+    // already reported NeedsRepair (an unreadable secret) or Offline (relay unreachable) --
+    // exactly the state that leaves DeleteRemoteDeviceAsync unable to help.
+    private Task<bool> ForgetPairingAsync(CancellationToken cancellationToken = default) =>
+        RunAsync(async () =>
+        {
+            await _context.Pairing.ForgetPairingAsync(cancellationToken);
+            await MutateAsync(() =>
+            {
+                PairingCode = null;
+                CodeExpiresUtc = null;
+                Sessions.Clear();
+                SessionCount = 0;
+                Availability = PairingAvailability.Offline;
+                StatusReason = PairingStatusReason.None;
+                OnPropertyChanged(nameof(IsPaired));
+            }, cancellationToken);
+        }, "otayyy pairing forgotten on this pc pair again anytime");
+
+    public async Task ConfirmAsync(CancellationToken cancellationToken = default)
+    {
+        var action = PendingConfirmation;
+        if (action == ConnectionConfirmationAction.None) return;
+
+        var succeeded = action switch
+        {
+            ConnectionConfirmationAction.RevokeSessions => await RevokeSessionsAsync(cancellationToken),
+            ConnectionConfirmationAction.DeleteRemoteDevice => await DeleteRemoteDeviceAsync(cancellationToken),
+            ConnectionConfirmationAction.ForgetPairing => await ForgetPairingAsync(cancellationToken),
+            _ => false,
+        };
+        if (succeeded) PendingConfirmation = ConnectionConfirmationAction.None;
+    }
+
+    private void RequestConfirmation(ConnectionConfirmationAction action) =>
+        PendingConfirmation = action;
+
+    private void CancelConfirmation() => PendingConfirmation = ConnectionConfirmationAction.None;
 }
