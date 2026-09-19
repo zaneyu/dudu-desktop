@@ -152,7 +152,10 @@ public sealed class XamlContractTests
         Assert.Contains("AutomationProperties.AutomationId=\"ConnectionForgetPairing\"", connection);
         Assert.Contains("AutomationProperties.AutomationId=\"ConnectionConfirm\"", connection);
         Assert.Contains("AutomationProperties.AutomationId=\"ConnectionCancel\"", connection);
-        Assert.Contains("automatic mode checks these dates", allPages);
+        // Seasonal outfits (anniversary/birthday/winter) aren't shipped yet, so the
+        // copy must say so honestly instead of claiming automatic mode does something
+        // it can't currently do.
+        Assert.Contains("aren't included in this version yet", allPages);
         var automationIds = Regex.Matches(
                 allPages,
                 "AutomationProperties\\.AutomationId=\\\"([^\\\"]+)\\\"")
