@@ -30,6 +30,18 @@ public sealed class DatabaseBackupService
     /// </summary>
     public const string PruneFailurePhase = "backup-prune";
 
+    /// <summary>
+    /// Filename marker distinguishing a pre-migration backup -- the automatic snapshot
+    /// <see cref="MigrationRunner"/> takes before the first migration in an upgrade run --
+    /// from a manual or (future) scheduled one. Only a pre-migration backup is the pre-upgrade
+    /// safety net <see cref="HasValidBackupAtSchemaVersionAsync"/> exists to make idempotent;
+    /// a manual/scheduled backup at the same schema version was taken for an unrelated reason
+    /// and must never be mistaken for it. Appended after the existing timestamp-guid name so
+    /// restore, rotation, and listing -- which all just glob "*.db" -- keep working unchanged
+    /// for backups written before this marker existed.
+    /// </summary>
+    private const string PreMigrationMarker = "-premigration";
+
     private readonly DatabaseOptions _options;
     private readonly Database _database;
     private readonly Action<string, string> _moveFile;
@@ -92,16 +104,33 @@ public sealed class DatabaseBackupService
             }.ToString());
         await connection.OpenAsync(cancellationToken);
         Database.ConfigureConnection(connection);
-        return await CreatePreMigrationBackupAsync(connection, cancellationToken);
+        // This overload backs a manual "Back up now" (and any future scheduled backup); it
+        // must NOT carry the pre-migration marker, or HasValidBackupAtSchemaVersionAsync would
+        // treat a manual snapshot as the pre-upgrade safety net it never was.
+        return await CreateBackupAsync(connection, isPreMigration: false, cancellationToken);
     }
 
-    public async Task<string> CreatePreMigrationBackupAsync(
+    /// <summary>
+    /// Creates the automatic pre-upgrade snapshot. Called only by <see cref="MigrationRunner"/>,
+    /// immediately before the first migration that actually applies in an upgrade run -- the
+    /// resulting file carries the pre-migration marker so it, and only it, can satisfy
+    /// <see cref="HasValidBackupAtSchemaVersionAsync"/>.
+    /// </summary>
+    public Task<string> CreatePreMigrationBackupAsync(
         SqliteConnection source,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(source);
+        return CreateBackupAsync(source, isPreMigration: true, cancellationToken);
+    }
+
+    private async Task<string> CreateBackupAsync(
+        SqliteConnection source,
+        bool isPreMigration,
+        CancellationToken cancellationToken)
+    {
         Directory.CreateDirectory(_options.BackupDirectory);
-        var path = NewBackupPath();
+        var path = NewBackupPath(isPreMigration);
 
         await using (var command = source.CreateCommand())
         {
@@ -122,13 +151,14 @@ public sealed class DatabaseBackupService
     }
 
     /// <summary>
-    /// Whether a valid backup already on disk was taken at exactly
-    /// <paramref name="schemaVersion"/>. Used by <see cref="MigrationRunner"/>
-    /// to make the pre-upgrade backup idempotent across repeated attempts
-    /// from the same starting version (a fresh process retrying a migration
-    /// that keeps failing, for example) instead of creating a fresh
-    /// redundant snapshot -- and eventually evicting the genuine pre-upgrade
-    /// backup -- on every attempt.
+    /// Whether a valid <em>pre-migration</em> backup already on disk was taken at exactly
+    /// <paramref name="schemaVersion"/>. Used by <see cref="MigrationRunner"/> to make the
+    /// pre-upgrade backup idempotent across repeated attempts from the same starting version
+    /// (a fresh process retrying a migration that keeps failing, for example) instead of
+    /// creating a fresh redundant snapshot -- and eventually evicting the genuine pre-upgrade
+    /// backup -- on every attempt. Manual and (future) scheduled backups never satisfy this,
+    /// even when one happens to sit at the same schema version: it was taken for an unrelated
+    /// reason and is not the pre-upgrade snapshot this run needs.
     /// </summary>
     public async Task<bool> HasValidBackupAtSchemaVersionAsync(
         int schemaVersion,
@@ -141,6 +171,11 @@ public sealed class DatabaseBackupService
 
         foreach (var path in Directory.GetFiles(_options.BackupDirectory, "*.db"))
         {
+            if (!Path.GetFileName(path).Contains(PreMigrationMarker, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
             if (!await IsSqliteBackupAsync(path, cancellationToken))
             {
                 continue;
@@ -622,9 +657,9 @@ public sealed class DatabaseBackupService
         }
     }
 
-    private string NewBackupPath() => Path.Combine(
+    private string NewBackupPath(bool isPreMigration) => Path.Combine(
         _options.BackupDirectory,
-        $"{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}.db");
+        $"{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}{(isPreMigration ? PreMigrationMarker : string.Empty)}.db");
 
     private void StageFile(
         string canonicalPath,

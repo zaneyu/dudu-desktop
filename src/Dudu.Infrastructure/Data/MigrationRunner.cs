@@ -61,13 +61,14 @@ public sealed class MigrationRunner
 
             if (createBackups && !backedUpThisRun && File.Exists(_options.DatabasePath))
             {
-                // A valid backup already sitting on disk at the exact version we're
-                // about to upgrade from is the same pre-upgrade snapshot we'd take
-                // here. Skipping the redundant copy makes the snapshot idempotent
-                // across repeated attempts from the same starting version -- a
-                // fresh process retrying a migration that keeps failing, for
-                // example -- instead of piling up redundant backups that
-                // eventually evict the one genuine pre-upgrade copy.
+                // A valid PRE-MIGRATION backup already sitting on disk at the exact version
+                // we're about to upgrade from is the same pre-upgrade snapshot we'd take here
+                // -- HasValidBackupAtSchemaVersionAsync only ever matches that kind, never a
+                // manual or scheduled backup that merely happens to sit at this version.
+                // Skipping the redundant copy makes the snapshot idempotent across repeated
+                // attempts from the same starting version -- a fresh process retrying a
+                // migration that keeps failing, for example -- instead of piling up redundant
+                // backups that eventually evict the one genuine pre-upgrade copy.
                 if (!await _backups.HasValidBackupAtSchemaVersionAsync(currentVersion, cancellationToken))
                 {
                     await _backups.CreatePreMigrationBackupAsync(connection, cancellationToken);

@@ -1405,6 +1405,67 @@ public sealed class DatabaseTests
     }
 
     [Fact]
+    public async Task Stale_manual_backup_at_the_current_version_does_not_suppress_the_pre_migration_backup()
+    {
+        // Audit finding #1: HasValidBackupAtSchemaVersionAsync must only recognize backups of
+        // the pre-migration kind. A manual "Back up now" snapshot sitting on disk at the exact
+        // version we're about to upgrade from is NOT the pre-upgrade safety net -- it was taken
+        // for an unrelated reason, at an earlier point, and does not include rows written since.
+        await using var fixture = await DatabaseFixture.CreateAsync();
+
+        await using (var setup = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken))
+        {
+            await using var rollback = setup.CreateCommand();
+            rollback.CommandText = "UPDATE schema_version SET version = 9 WHERE id = 1;";
+            await rollback.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
+        }
+
+        // A manual backup, taken (e.g. months ago) while the database sat at version 9. (Opening
+        // the very first connection above already creates one backup of its own -- the initial
+        // migration run's own pre-migration snapshot of the brand-new database -- so count
+        // relatively rather than asserting an absolute total, matching
+        // Repeated_migration_runner_instances_at_the_same_failing_version_create_only_one_backup.)
+        var backupsBeforeManual = Directory.GetFiles(fixture.Options.BackupDirectory, "*.db").Length;
+        var manualBackup = await fixture.Backups.CreatePreMigrationBackupAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(backupsBeforeManual + 1, Directory.GetFiles(fixture.Options.BackupDirectory, "*.db").Length);
+
+        // More data is written after that manual backup, before the upgrade ever runs.
+        var profiles = new ProfileRepository(fixture.Database);
+        await profiles.SaveAsync(new Profile("Post-backup", true), TestContext.Current.CancellationToken);
+
+        await using (var connection = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken))
+        {
+            var runner = new MigrationRunner(fixture.Options);
+            await runner.RunAsync(connection, TestContext.Current.CancellationToken);
+        }
+
+        var allBackups = Directory.GetFiles(fixture.Options.BackupDirectory, "*.db");
+        Assert.Equal(backupsBeforeManual + 2, allBackups.Length);
+
+        var preMigrationBackup = allBackups
+            .Where(path => path != manualBackup)
+            .OrderByDescending(Path.GetFileName, StringComparer.Ordinal)
+            .First();
+        await using var backupConnection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = preMigrationBackup,
+            Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false,
+        }.ToString());
+        await backupConnection.OpenAsync(TestContext.Current.CancellationToken);
+
+        await using (var version = backupConnection.CreateCommand())
+        {
+            version.CommandText = "SELECT version FROM schema_version WHERE id = 1;";
+            Assert.Equal(9L, Convert.ToInt64(await version.ExecuteScalarAsync(TestContext.Current.CancellationToken)));
+        }
+
+        await using var name = backupConnection.CreateCommand();
+        name.CommandText = "SELECT recipient_name FROM profiles WHERE id = 1;";
+        Assert.Equal("Post-backup", Convert.ToString(await name.ExecuteScalarAsync(TestContext.Current.CancellationToken)));
+    }
+
+    [Fact]
     public async Task Explicitly_invalidating_after_a_failed_migration_allows_a_real_retry()
     {
         // The flip side of B2 fix #1: restore-from-backup and any deliberate
