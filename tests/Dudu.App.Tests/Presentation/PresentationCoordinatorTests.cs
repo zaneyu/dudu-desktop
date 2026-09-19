@@ -295,6 +295,108 @@ public sealed class PresentationCoordinatorTests
     }
 
     [Fact]
+    public async Task An_item_expired_while_held_does_not_swallow_a_later_same_key_toast()
+    {
+        // Regression: an item toasted-while-held that then expires before
+        // ever reaching a real presentation (PresentationPolicy.Decide
+        // silently purges it from the queue) used to leave its key latched
+        // in _toastedWhileHeldIds forever. A future item recurring under the
+        // same key (e.g. a daily routine reminder) would then find that
+        // stale entry and skip its own Windows toast.
+        var pet = PetStateMachine.CreateIdle();
+        var policy = new PresentationPolicy(TimeSpan.Zero);
+        var notifications = new RecordingNotificationService();
+        var now = DateTimeOffset.Parse("2026-09-19T08:00:00Z");
+        var coordinator = new PresentationCoordinator(
+            policy,
+            notifications,
+            pet,
+            (_, _, _) => Task.CompletedTask,
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            utcNow: () => now);
+        coordinator.SetUserVisible(false);
+
+        var expiring = DurableNotification.Reminder(
+            "reminder-1",
+            "Stretch",
+            expiresUtc: now.AddMinutes(1));
+        await coordinator.PublishAsync(expiring, bypassSuppression: false, CancellationToken.None);
+
+        // The immediate toast for the held item.
+        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.Equal(1, policy.QueuedCount);
+
+        // Let the queued item expire and get silently purged by a tick —
+        // it never reaches a real presentation.
+        now = now.AddMinutes(2);
+        await coordinator.TickAsync(CancellationToken.None);
+        Assert.Equal(0, policy.QueuedCount);
+        Assert.Equal(1, notifications.ReminderCalls);
+
+        // A new item recurring under the same key (unsuppressed this time)
+        // must still get its own toast.
+        coordinator.SetUserVisible(true);
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-1", "Stretch"),
+            bypassSuppression: false,
+            CancellationToken.None);
+
+        Assert.Equal(2, notifications.ReminderCalls);
+    }
+
+    [Fact]
+    public async Task A_failed_attempt_after_a_held_toast_does_not_toast_twice_on_retry()
+    {
+        // Regression: the toasted-while-held marker used to be consumed
+        // (removed) even when the presentation attempt failed, so the
+        // requeued retry no longer saw it and fired a second Windows toast
+        // for the same item.
+        var pet = PetStateMachine.CreateIdle();
+        var policy = new PresentationPolicy(TimeSpan.Zero);
+        var notifications = new RecordingNotificationService();
+        var attempt = 0;
+        var coordinator = new PresentationCoordinator(
+            policy,
+            notifications,
+            pet,
+            (_, _, _) =>
+            {
+                attempt++;
+                return attempt == 1
+                    ? Task.FromException(new InvalidOperationException("playback failed"))
+                    : Task.CompletedTask;
+            },
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1));
+        coordinator.SetUserVisible(false);
+
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-1", "Stretch"),
+            bypassSuppression: false,
+            CancellationToken.None);
+
+        // The immediate toast for the held item.
+        Assert.Equal(1, notifications.ReminderCalls);
+
+        coordinator.SetUserVisible(true);
+
+        // First release attempt: playback fails, item is requeued.
+        await coordinator.TickAsync(CancellationToken.None);
+        Assert.Equal(1, policy.QueuedCount);
+        Assert.Equal(1, notifications.ReminderCalls);
+
+        // Retry succeeds — must not toast a second time in total.
+        await coordinator.TickAsync(CancellationToken.None);
+        Assert.Equal(0, policy.QueuedCount);
+        Assert.Equal(1, notifications.ReminderCalls);
+    }
+
+    [Fact]
     public async Task Reminder_presentation_is_acknowledged_so_the_pet_returns_to_idle()
     {
         // Regression for B5: before this fix, only LocalNote presentations

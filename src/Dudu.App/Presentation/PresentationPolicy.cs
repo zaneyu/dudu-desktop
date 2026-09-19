@@ -123,9 +123,17 @@ public sealed record DurableNotification
 }
 
 /// <summary>The outcome of one <see cref="PresentationPolicy.Decide"/> call.</summary>
+/// <param name="PurgedKeys">
+/// Keys of items silently dropped from the queue this call because they had
+/// expired, so a caller tracking per-key state outside the queue (such as
+/// <c>PresentationCoordinator</c>'s toasted-while-held set) can clear it for
+/// the same key instead of leaking it onto a future item that happens to
+/// recur under the same key.
+/// </param>
 public sealed record PresentationDecision(
     IReadOnlyList<DurableNotification> ToPresent,
-    int RemainingQueuedCount);
+    int RemainingQueuedCount,
+    IReadOnlyList<string> PurgedKeys);
 
 /// <summary>
 /// The single policy that decides whether an unsolicited event is queued,
@@ -263,6 +271,7 @@ public sealed class PresentationPolicy
         var suppressed = nowQuiet || fullscreen || paused || sessionLocked || focusActive || userHidden;
         lock (_sync)
         {
+            List<string>? purgedKeys = null;
             var queuedCount = _queue.Count;
             for (var index = 0; index < queuedCount; index++)
             {
@@ -270,6 +279,7 @@ public sealed class PresentationPolicy
                 if (queued.IsExpired(now))
                 {
                     _queuedIds.Remove(queued.Key);
+                    (purgedKeys ??= new List<string>()).Add(queued.Key);
                 }
                 else
                 {
@@ -277,11 +287,13 @@ public sealed class PresentationPolicy
                 }
             }
 
+            IReadOnlyList<string> purged = purgedKeys ?? (IReadOnlyList<string>)Array.Empty<string>();
+
             if (_queue.Count == 0
                 || suppressed
                 || (_lastReleaseUtc is { } last && now - last < _minimumSilentInterval))
             {
-                return new PresentationDecision(Array.Empty<DurableNotification>(), _queue.Count);
+                return new PresentationDecision(Array.Empty<DurableNotification>(), _queue.Count, purged);
             }
 
             var item = _queue.Dequeue();
@@ -290,7 +302,7 @@ public sealed class PresentationPolicy
             {
                 _lastReleaseUtc = now;
             }
-            return new PresentationDecision(new[] { item }, _queue.Count);
+            return new PresentationDecision(new[] { item }, _queue.Count, purged);
         }
     }
 }

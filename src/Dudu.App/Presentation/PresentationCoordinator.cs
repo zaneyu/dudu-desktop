@@ -67,6 +67,7 @@ public sealed class PresentationCoordinator :
     private readonly SemaphoreSlim _petGate;
     private readonly AmbientScheduler? _ambientScheduler;
     private readonly LocalNoteSelector? _localNoteSelector;
+    private readonly IReadOnlyList<string>? _availableStickerKeys;
     private readonly object _gate = new();
     private readonly HashSet<string> _presentingIds = new(StringComparer.Ordinal);
     private readonly HashSet<string> _toastedWhileHeldIds = new(StringComparer.Ordinal);
@@ -97,7 +98,8 @@ public sealed class PresentationCoordinator :
         Func<bool>? isFullscreenNow = null,
         Func<DateTimeOffset>? utcNow = null,
         IAppHostErrorReporter? errorReporter = null,
-        Func<AudioCueEvent, CancellationToken, Task>? playAudioAsync = null)
+        Func<AudioCueEvent, CancellationToken, Task>? playAudioAsync = null,
+        IReadOnlyList<string>? availableStickerKeys = null)
     {
         _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
         _policy = policy ?? throw new ArgumentNullException(nameof(policy));
@@ -111,6 +113,7 @@ public sealed class PresentationCoordinator :
         _petGate = petGate ?? throw new ArgumentNullException(nameof(petGate));
         _ambientScheduler = ambientScheduler;
         _localNoteSelector = localNoteSelector;
+        _availableStickerKeys = availableStickerKeys;
         _isFullscreenNow = isFullscreenNow ?? (() => { lock (_gate) return _fullscreen; });
         _errorReporter = errorReporter;
         if ((_ambientScheduler is null) != (_localNoteSelector is null))
@@ -295,6 +298,18 @@ public sealed class PresentationCoordinator :
                 recordRelease: false,
                 userHidden: environment.UserHidden);
 
+            // An item purged here was queued while held (and already toasted
+            // for that hold) but expired before ever reaching PresentAsync,
+            // so nothing downstream will ever clear its toasted-while-held
+            // entry. Left alone it orphans that key — most concretely for a
+            // routine reminder, which recurs daily under the same key, so a
+            // stale entry from yesterday would silently swallow today's
+            // Windows toast.
+            foreach (var purgedKey in decision.PurgedKeys)
+            {
+                _toastedWhileHeldIds.Remove(purgedKey);
+            }
+
             toPresent = decision.ToPresent.FirstOrDefault(item => !_presentingIds.Contains(item.Key));
             if (toPresent is not null)
             {
@@ -344,7 +359,8 @@ public sealed class PresentationCoordinator :
             environment.FocusActive,
             environment.Fullscreen,
             environment.SessionLocked,
-            environment.NowQuiet);
+            environment.NowQuiet,
+            _availableStickerKeys);
         if (ambient is not PetEvent.AmbientRequested ambientRequest)
         {
             return;
@@ -393,6 +409,15 @@ public sealed class PresentationCoordinator :
             var now = _utcNow();
             if (item.IsExpired(now))
             {
+                // Dropped for good (no requeue): clear its toasted-while-held
+                // entry here too, for the same reason the policy's own purge
+                // does in TickAsync — otherwise it orphans the key for a
+                // future item recurring under it.
+                lock (_gate)
+                {
+                    _toastedWhileHeldIds.Remove(item.Key);
+                }
+
                 return true;
             }
 
@@ -466,7 +491,7 @@ public sealed class PresentationCoordinator :
         bool alreadyToasted;
         lock (_gate)
         {
-            alreadyToasted = _toastedWhileHeldIds.Remove(item.Key);
+            alreadyToasted = _toastedWhileHeldIds.Contains(item.Key);
         }
 
         if (!alreadyToasted)
@@ -474,6 +499,18 @@ public sealed class PresentationCoordinator :
             succeeded &= await ObserveAsync(
                 () => ShowNotificationAsync(item, cancellationToken),
                 "presentation-notification");
+        }
+        else if (succeeded)
+        {
+            // Only consume the marker once this presentation has actually
+            // succeeded for good. A failed attempt is requeued by the
+            // caller for a later retry, and that retry must still see
+            // alreadyToasted so it does not show a second Windows toast for
+            // an item that was already toasted once while held.
+            lock (_gate)
+            {
+                _toastedWhileHeldIds.Remove(item.Key);
+            }
         }
 
         return succeeded;
