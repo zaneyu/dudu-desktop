@@ -36,7 +36,7 @@ public sealed class FieldDiagnosticsContractTests
         Assert.Contains("e.SetObserved()", app, StringComparison.Ordinal);
 
         // Existing behavior stays untouched.
-        Assert.Contains("ReportStartupFailure", app, StringComparison.Ordinal);
+        Assert.Contains("LogStartupFailure", app, StringComparison.Ordinal);
         Assert.Contains("ObserveStartupAsync", app, StringComparison.Ordinal);
     }
 
@@ -62,6 +62,28 @@ public sealed class FieldDiagnosticsContractTests
         Assert.Contains("ReportSecondaryExit()", bootstrap, StringComparison.Ordinal);
         Assert.Contains("Dudu.SingleInstance", bootstrap, StringComparison.Ordinal);
         Assert.Contains("AppendRedactedLine", bootstrap, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Startup_failure_box_is_guarded_to_show_at_most_once()
+    {
+        var app = ReadSource("App.xaml.cs");
+
+        var guardDeclaration = app.IndexOf("_startupFailureBoxShown", StringComparison.Ordinal);
+        var methodStart = app.IndexOf(
+            "private static void ShowStartupFailureBox()",
+            StringComparison.Ordinal);
+        var exchangeGuard = app.IndexOf(
+            "Interlocked.Exchange(ref _startupFailureBoxShown, 1)",
+            StringComparison.Ordinal);
+        var messageBoxCall = app.IndexOf(
+            "ShowStartupFailureMessageBox(AppPaths.ForCurrentUser())",
+            StringComparison.Ordinal);
+
+        Assert.True(guardDeclaration >= 0);
+        Assert.True(methodStart >= 0);
+        Assert.True(exchangeGuard > methodStart);
+        Assert.True(messageBoxCall > exchangeGuard);
     }
 
     [Fact]

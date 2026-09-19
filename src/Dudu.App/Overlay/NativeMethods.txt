@@ -71,6 +71,7 @@ TrackPopupMenuEx
 DestroyMenu
 GetCursorPos
 IsZoomed
+MessageBox
 MENU_ITEM_FLAGS
 TRACK_POPUP_MENU_FLAGS
 WTSRegisterSessionNotification

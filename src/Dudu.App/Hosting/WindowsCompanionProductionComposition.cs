@@ -73,6 +73,13 @@ public sealed record CompanionSettingsContext(
     public OverlayActionSurfaceController? ActionSurface { get; init; }
     public OverlayCommandRouter? OverlayCommands { get; init; }
     public IReadOnlyList<string> AvailableOutfitKeys { get; init; } = ["base"];
+
+    /// <summary>
+    /// True when this context was configured by <c>CreateSafeModeRuntimeAsync</c>:
+    /// no tray and no overlay are composed, so the settings window is the only
+    /// UI surface. App.xaml.cs uses this to exit when that window closes.
+    /// </summary>
+    public bool IsSafeMode { get; init; }
 }
 
 public sealed record CompanionLaunchOptions(bool Background, bool SelfTest = false)
@@ -108,6 +115,30 @@ public sealed record CompanionLaunchOptions(bool Background, bool SelfTest = fal
 
     public bool ShouldShowOverlay(Preferences preferences, Profile? profile) =>
         profile?.OnboardingComplete == true && ShouldShowOverlay(preferences);
+}
+
+/// <summary>
+/// Overrides Dudu.Infrastructure's Null* safe defaults for
+/// <see cref="IReminderDueSink"/> and <see cref="IRemoteNoteArrivalSink"/>
+/// with the real WinUI-backed sinks. Extracted out of the composition root so
+/// a real <see cref="IServiceCollection"/> can be built and its resolved
+/// types asserted in a test, instead of only pattern-matching the
+/// composition source as text -- a source-text test still passes with the
+/// registration commented out or reordered.
+/// </summary>
+internal static class ProductionPresentationSinks
+{
+    internal static IServiceCollection AddProductionPresentationSinks(
+        this IServiceCollection services,
+        Func<IUnsolicitedPresentationGateway> gateway)
+    {
+        ArgumentNullException.ThrowIfNull(gateway);
+        return services
+            .AddSingleton<IReminderDueSink>(provider => new ReminderDueSink(
+                provider.GetRequiredService<IReminderRepository>(),
+                gateway))
+            .AddSingleton<IRemoteNoteArrivalSink>(provider => new RemoteNoteArrivalSink(gateway));
+    }
 }
 
 public static class WindowsCompanionProductionComposition
@@ -180,6 +211,9 @@ public static class WindowsCompanionProductionComposition
         // captures this variable and resolves the gateway lazily once the
         // rest of the runtime is ready.
         PresentationCoordinator? presentationGateway = null;
+        IUnsolicitedPresentationGateway ResolveGateway() =>
+            presentationGateway
+                ?? throw new InvalidOperationException("The presentation gateway is not ready.");
         var services = new ServiceCollection()
             .AddDuduInfrastructure(
                 new DatabaseOptions(paths.Database, paths.Backups),
@@ -189,10 +223,7 @@ public static class WindowsCompanionProductionComposition
                 RelayConfiguration.Resolve(logResolvedBaseUrl: static origin =>
                     Trace.TraceInformation("Dudu relay base URL resolved to {0}.", origin)))
             .AddFileDiagnosticLogging(paths)
-            .AddSingleton<IReminderDueSink>(provider => new ReminderDueSink(
-                provider.GetRequiredService<IReminderRepository>(),
-                () => presentationGateway
-                    ?? throw new InvalidOperationException("The presentation gateway is not ready.")))
+            .AddProductionPresentationSinks(ResolveGateway)
             .BuildServiceProvider();
         var host = new AppHost(services, paths);
         WireDataFailureDiagnostics(services, paths);
@@ -202,6 +233,13 @@ public static class WindowsCompanionProductionComposition
             // before the host's error reporter existed; attach it now so
             // reminder-notify diagnostics reach the shared sink.
             reminderDueSink.ErrorReporter = host.ErrorReporter;
+        }
+
+        if (services.GetService<IRemoteNoteArrivalSink>() is RemoteNoteArrivalSink remoteNoteArrivalSink)
+        {
+            // Same reasoning as the reminder sink above: the host's error
+            // reporter does not exist yet when this sink is registered.
+            remoteNoteArrivalSink.ErrorReporter = host.ErrorReporter;
         }
         var composer = default(SkiaFrameComposer);
         var presenter = default(LayeredFramePresenter);
@@ -216,14 +254,37 @@ public static class WindowsCompanionProductionComposition
         try
         {
             var database = services.GetRequiredService<Database>();
-            await RunStartupPhaseAsync(
-                "db-init",
-                () => database.InitializeAsync(cancellationToken));
             var preferencesRepository = services.GetRequiredService<IPreferencesRepository>();
-            var preferences = await preferencesRepository.GetAsync(cancellationToken)
-                ?? services.GetRequiredService<Preferences>();
             var profileRepository = services.GetRequiredService<IProfileRepository>();
-            var profile = await profileRepository.GetAsync(cancellationToken);
+            var databaseUnavailable = false;
+            try
+            {
+                await RunStartupPhaseAsync(
+                    "db-init",
+                    () => database.InitializeAsync(cancellationToken));
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (StartupPhaseException)
+            {
+                // A database that cannot open (SQLITE_BUSY/CANTOPEN/FULL, etc.) must not
+                // silently exit the process: fall into safe mode below so she still sees
+                // the settings surface and the safe-mode notice instead of nothing at all.
+                // The failure itself is already recorded by the Database.FailureReporter
+                // hook wired above.
+                databaseUnavailable = true;
+                safeMode = true;
+            }
+
+            var preferences = databaseUnavailable
+                ? services.GetRequiredService<Preferences>()
+                : await preferencesRepository.GetAsync(cancellationToken)
+                    ?? services.GetRequiredService<Preferences>();
+            var profile = databaseUnavailable
+                ? null
+                : await profileRepository.GetAsync(cancellationToken);
             // The host starts from a safe neutral placement so its first
             // monitor snapshot describes the monitor it actually occupies.
             // Saved placements are selected only after that identity is known.
@@ -273,7 +334,8 @@ public static class WindowsCompanionProductionComposition
                     preferenceMutations,
                     profile,
                     initialPlacement,
-                    pet);
+                    pet,
+                    databaseUnavailable);
             }
 
             var placementRepository = services.GetRequiredService<IPetPlacementRepository>();
@@ -662,8 +724,6 @@ public static class WindowsCompanionProductionComposition
                 startup,
                 services,
                 crashGuard,
-                safeMode ? notificationService : null,
-                safeMode ? actions : null,
                 audioCueService,
                 audioPlayer);
         }
@@ -843,7 +903,8 @@ public static class WindowsCompanionProductionComposition
         PreferenceMutationCoordinator preferenceMutations,
         Profile? profile,
         PetPlacement initialPlacement,
-        PetStateMachine pet)
+        PetStateMachine pet,
+        bool databaseUnavailable)
     {
         // Safe mode is deliberately composed before any native overlay object: it only keeps
         // the database, settings services, and the recoverable settings surface alive.
@@ -911,9 +972,24 @@ public static class WindowsCompanionProductionComposition
         {
             Features = featureContext,
             AvailableOutfitKeys = ["base"],
+            IsSafeMode = true,
         });
 
-        return new SafeModePrimaryRuntime(host, services, startup, actions, startupSettings, crashGuard);
+        // No overlay is composed in safe mode, so the notification service that
+        // normally comes from initializeOverlay does not exist yet; build one
+        // here so she still gets the safe-mode notice.
+        var notifications = new AppNotificationService(
+            new WindowsAppNotificationSink(),
+            errorReporter: host.ErrorReporter);
+        return new SafeModePrimaryRuntime(
+            host,
+            services,
+            startup,
+            actions,
+            startupSettings,
+            crashGuard,
+            notifications,
+            databaseUnavailable);
     }
 
     private static async Task CreateBackupAsync(
@@ -1047,8 +1123,6 @@ public static class WindowsCompanionProductionComposition
         StartupRegistrationService startup,
         ServiceProvider services,
         StartupCrashGuard crashGuard,
-        AppNotificationService? safeModeNotifications,
-        CompanionUiActions? safeModeActions,
         AudioCueService? audioCueService,
         IAudioCuePlayer? audioPlayer) : IPrimaryAppRuntime
     {
@@ -1060,22 +1134,6 @@ public static class WindowsCompanionProductionComposition
             await runtime.StartAsync(cancellationToken);
             Volatile.Write(ref _started, 1);
             _ = crashGuard.MarkCleanAfterAsync(StableRunPeriod, _stopping.Token);
-            if (safeModeActions is not null)
-            {
-                _ = ObserveNativeCallbackAsync(ShowSafeModeNoticeAsync(), "safe-mode-notice");
-            }
-        }
-
-        private async Task ShowSafeModeNoticeAsync()
-        {
-            var token = _stopping.Token;
-            if (safeModeNotifications is not null)
-            {
-                await safeModeNotifications.TryRegisterAsync(token);
-                await safeModeNotifications.ShowSafeModeNoticeAsync(token);
-            }
-
-            await safeModeActions!.OpenHome(token);
         }
 
         public Task ActivateAsync(
@@ -1107,7 +1165,9 @@ public static class WindowsCompanionProductionComposition
         StartupRegistrationService startup,
         CompanionUiActions actions,
         StartupSettingsService startupSettings,
-        StartupCrashGuard crashGuard) : IPrimaryAppRuntime
+        StartupCrashGuard crashGuard,
+        AppNotificationService? notifications,
+        bool databaseUnavailable) : IPrimaryAppRuntime
     {
         private readonly CancellationTokenSource _stopping = new();
         private int _started;
@@ -1117,6 +1177,17 @@ public static class WindowsCompanionProductionComposition
             await actions.OpenSettings(startupSettings, cancellationToken);
             Volatile.Write(ref _started, 1);
             _ = crashGuard.MarkCleanAfterAsync(StableRunPeriod, _stopping.Token);
+            if (notifications is not null)
+            {
+                _ = ObserveNativeCallbackAsync(ShowSafeModeNoticeAsync(), "safe-mode-notice");
+            }
+        }
+
+        private async Task ShowSafeModeNoticeAsync()
+        {
+            var token = _stopping.Token;
+            await notifications!.TryRegisterAsync(token);
+            await notifications.ShowSafeModeNoticeAsync(databaseUnavailable, token);
         }
 
         public Task ActivateAsync(
@@ -1132,6 +1203,7 @@ public static class WindowsCompanionProductionComposition
                 crashGuard.MarkCleanRun();
             }
 
+            notifications?.Dispose();
             await host.DisposeAsync();
             await startup.DisposeAsync();
             await services.DisposeAsync();

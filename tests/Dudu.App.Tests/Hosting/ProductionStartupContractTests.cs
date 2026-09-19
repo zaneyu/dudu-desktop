@@ -1,3 +1,9 @@
+using Dudu.App.Hosting;
+using Dudu.App.Presentation;
+using Dudu.Core.Abstractions;
+using Dudu.Infrastructure;
+using Dudu.Infrastructure.Data;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Dudu.App.Tests.Hosting;
@@ -24,6 +30,60 @@ public sealed class ProductionStartupContractTests
         Assert.True(nativeRuntime > safeModeBranch);
         Assert.Contains("new SafeModePrimaryRuntime", composition);
         Assert.DoesNotContain("AttachRemoteSync", composition[safeModeBranch..nativeRuntime]);
+    }
+
+    [Fact]
+    public void Remote_note_arrival_sink_overrides_the_infrastructure_null_default()
+    {
+        // Dudu.Infrastructure.DependencyInjection registers NullRemoteNoteArrivalSink (and
+        // NullReminderDueSink) as safe library-level defaults; that registration itself is
+        // asserted below by source, since it is a simple library-level default with no
+        // reason to change. The override in the App composition root is instead asserted by
+        // building a real ServiceCollection through AddProductionPresentationSinks (below):
+        // a source-text check of the composition method here would still pass with the
+        // override commented out or reordered, since the composition method itself can't be
+        // invoked on this Mac/CI test host (it goes on to touch WinUI and the OS version).
+        var root = FindRepositoryRoot();
+        var dependencyInjection = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.Infrastructure", "DependencyInjection.cs"));
+
+        Assert.Contains(
+            "services.AddSingleton<IRemoteNoteArrivalSink, NullRemoteNoteArrivalSink>();",
+            dependencyInjection);
+        Assert.Contains(
+            "services.AddSingleton<IReminderDueSink, NullReminderDueSink>();",
+            dependencyInjection);
+    }
+
+    [Fact]
+    public void Production_presentation_sinks_resolve_to_the_real_implementations()
+    {
+        // Unlike the source-text check above, this builds a real ServiceCollection and
+        // resolves from it: it fails if AddProductionPresentationSinks is never called from
+        // the composition root, is called before AddDuduInfrastructure (so the Null*
+        // defaults would win instead), or is wired to the wrong interface -- regressions a
+        // string search over the composition source could miss entirely.
+        var testRoot = Path.Combine(Path.GetTempPath(), "dudu-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(testRoot);
+        try
+        {
+            var options = new DatabaseOptions(
+                Path.Combine(testRoot, "dudu.db"),
+                Path.Combine(testRoot, "backups"));
+            using var provider = new ServiceCollection()
+                .AddDuduInfrastructure(options)
+                .AddProductionPresentationSinks(() => throw new InvalidOperationException(
+                    "The presentation gateway is not ready."))
+                .BuildServiceProvider();
+
+            Assert.IsType<ReminderDueSink>(provider.GetRequiredService<IReminderDueSink>());
+            Assert.IsType<RemoteNoteArrivalSink>(provider.GetRequiredService<IRemoteNoteArrivalSink>());
+        }
+        finally
+        {
+            try { Directory.Delete(testRoot, recursive: true); }
+            catch (IOException) { }
+        }
     }
 
     [Fact]

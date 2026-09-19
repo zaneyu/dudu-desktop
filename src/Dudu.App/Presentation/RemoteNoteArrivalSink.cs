@@ -14,7 +14,7 @@ namespace Dudu.App.Presentation;
 public sealed class RemoteNoteArrivalSink : IRemoteNoteArrivalSink
 {
     private readonly Func<IUnsolicitedPresentationGateway> _gateway;
-    private readonly IAppHostErrorReporter? _errorReporter;
+    private IAppHostErrorReporter? _errorReporter;
 
     public RemoteNoteArrivalSink(
         Func<IUnsolicitedPresentationGateway> gateway,
@@ -24,12 +24,31 @@ public sealed class RemoteNoteArrivalSink : IRemoteNoteArrivalSink
         _errorReporter = errorReporter;
     }
 
+    /// <summary>
+    /// Settable so the production composition can attach the shared AppHost
+    /// sink after construction: the sink is registered before the host — and
+    /// therefore its error reporter — exists. Mirrors <see cref="ReminderDueSink.ErrorReporter"/>.
+    /// </summary>
+    public IAppHostErrorReporter? ErrorReporter
+    {
+        get => _errorReporter;
+        set => _errorReporter = value;
+    }
+
     public async Task NotifyAsync(Guid messageId, CancellationToken cancellationToken)
     {
+        // Resolving the gateway is deliberately outside the try/catch below: when it is not
+        // ready yet (safe mode, or a startup race before the overlay finishes composing), the
+        // failure must propagate so RemoteSyncService's poll loop does not acknowledge the
+        // envelope off the relay. RemoteSyncService stores the envelope locally and marks it
+        // processed before calling this sink, so the note itself is never lost either way -- it
+        // is already revealable through Love Notes (CompanionFeatureContext.RemoteEnvelopes) --
+        // but only a real presentation attempt should cost the relay's copy of it.
+        var gateway = _gateway();
         try
         {
             var item = DurableNotification.RemoteNote(messageId.ToString("D"));
-            await _gateway().PublishAsync(item, bypassSuppression: false, cancellationToken);
+            await gateway.PublishAsync(item, bypassSuppression: false, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -37,7 +56,8 @@ public sealed class RemoteNoteArrivalSink : IRemoteNoteArrivalSink
         }
         catch (Exception exception)
         {
-            // The envelope is already durably recorded before this sink runs; a presentation
+            // A genuine presentation failure (the gateway exists but PublishAsync itself threw)
+            // is swallowed: the note is already durably stored and revealable as above, and a
             // failure here must never roll that back or break the poll loop. It now leaves
             // an operation-named diagnostic carrying the exception type only — the
             // message id itself is never logged.
