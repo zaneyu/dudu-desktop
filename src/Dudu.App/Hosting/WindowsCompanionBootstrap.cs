@@ -663,6 +663,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
     private readonly GlobalHotkeyService _hotkey;
     private readonly ICompanionEventSource _events;
     private readonly bool _initialUserVisible;
+    private readonly Func<CancellationToken, Task> _openHome;
     private readonly Func<Preferences, CancellationToken, Task>? _onPreferencesChanged;
     private readonly IPresentationEnvironmentSink? _presentationEnvironment;
     private readonly IAppHostErrorReporter? _errorReporter;
@@ -682,6 +683,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         GlobalHotkeyService hotkey,
         ICompanionEventSource events,
         bool initialUserVisible,
+        Func<CancellationToken, Task> openHome,
         Func<Preferences, CancellationToken, Task>? onPreferencesChanged,
         IPresentationEnvironmentSink? presentationEnvironment = null,
         IAppHostErrorReporter? errorReporter = null)
@@ -693,6 +695,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         _hotkey = hotkey ?? throw new ArgumentNullException(nameof(hotkey));
         _events = events ?? throw new ArgumentNullException(nameof(events));
         _initialUserVisible = initialUserVisible;
+        _openHome = openHome ?? throw new ArgumentNullException(nameof(openHome));
         _onPreferencesChanged = onPreferencesChanged;
         _presentationEnvironment = presentationEnvironment;
         _errorReporter = errorReporter;
@@ -781,6 +784,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                 hotkey,
                 events,
                 initialUserVisible,
+                openHome,
                 onPreferencesChanged,
                 presentationEnvironment,
                 errorReporter);
@@ -931,6 +935,28 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                     }
                 }
             });
+            if (forceVisible)
+            {
+                // The forced overlay show below still goes through
+                // SetUserVisibleAsync's normal TryCanShow gate (quiet
+                // hours/pause), so it alone can leave a hidden launch with
+                // neither a tray icon nor a visible overlay — no exit
+                // surface at all. Open Settings directly here instead, the
+                // same "open home" action the tray would have offered, so
+                // there is always a way to reach and quit the app.
+                try
+                {
+                    await _openHome(cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    ReportFailure("tray-attach-fallback-open-home", exception);
+                }
+            }
             await StartupVisibilityGate.ApplyAsync(
                 token => _events.StartAsync(_overlay.Handle, this, token),
                 _lifecycle.SetUserVisibleAsync,

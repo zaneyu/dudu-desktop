@@ -174,6 +174,52 @@ public sealed class WindowsCompanionBootstrapTests
         Assert.Equal(1, runtime.Disposals);
     }
 
+    [Fact]
+    public void Tray_attach_failure_on_a_hidden_launch_also_opens_home_before_the_forced_show()
+    {
+        // Regression: forceVisible alone does not guarantee an exit surface
+        // for a hidden (--background) launch whose tray attach also failed.
+        // The forced overlay show still goes through SetUserVisibleAsync's
+        // normal TryCanShow gate (quiet hours/pause), which can veto it,
+        // leaving neither a tray icon nor a visible overlay. Opening
+        // Settings directly (not through OnHotkeyAsync, which is itself
+        // gated by TryCanShow) guarantees a way to reach and quit the app
+        // regardless of quiet hours or a pause. This can't run on Mac
+        // (StartCoreAsync needs real Win32 window/tray/hotkey handles), so
+        // the ordering is asserted from source the same way
+        // ProductionStartupContractTests does for other native-only paths.
+        var root = FindRepositoryRoot();
+        var runtime = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.App", "Hosting", "WindowsCompanionBootstrap.cs"));
+
+        var forceVisibleSet = runtime.IndexOf("forceVisible = true;", StringComparison.Ordinal);
+        var openHomeFallback = runtime.IndexOf("await _openHome(cancellationToken);", StringComparison.Ordinal);
+        var visibilityGate = runtime.IndexOf(
+            "await StartupVisibilityGate.ApplyAsync(",
+            StringComparison.Ordinal);
+
+        Assert.True(forceVisibleSet >= 0);
+        Assert.True(openHomeFallback > forceVisibleSet);
+        Assert.True(visibilityGate > openHomeFallback);
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "PRODUCT.md")))
+            {
+                return directory.FullName;
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException(
+            "Repository root was not found from the test output path.");
+    }
+
     private sealed class FakeRuntime : IPrimaryAppRuntime
     {
         public TaskCompletionSource<bool> Activation { get; } = new(
