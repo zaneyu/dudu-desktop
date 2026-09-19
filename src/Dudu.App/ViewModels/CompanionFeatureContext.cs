@@ -331,13 +331,17 @@ public abstract class FeatureViewModelBase : CommunityToolkit.Mvvm.ComponentMode
         await dispatcher(mutation, cancellationToken);
     }
 
+    /// <summary>Shared with the Request-delete commands so a null selection reports the
+    /// same wording whether the command runs directly or a caller checks before running it.</summary>
+    protected const string SelectOneFirstMessage = "select one first";
+
     protected static string ToUserMessage(Exception exception) =>
         exception switch
         {
             // Null command parameters mean "nothing selected" (buttons stay enabled
             // with no selection). This must precede ArgumentException: the raw
             // "Value cannot be null" text is meaningless to the recipient.
-            ArgumentNullException => "select one first",
+            ArgumentNullException => SelectOneFirstMessage,
             NotSupportedException => exception.Message,
             ArgumentException => exception.Message,
             KeyNotFoundException => exception.Message,

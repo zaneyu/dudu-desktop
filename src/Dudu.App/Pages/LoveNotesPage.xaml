@@ -26,9 +26,18 @@
                 <StackPanel Spacing="8">
                     <Button Content="save note" Command="{x:Bind ViewModel.SaveLocalNoteCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="LoveNotesSave" AutomationProperties.Name="save note" />
                     <Button Content="new note" Command="{x:Bind ViewModel.NewNoteCommand}" AutomationProperties.AutomationId="LoveNotesNew" AutomationProperties.Name="new note" />
-                    <Button Content="delete selected" Command="{x:Bind ViewModel.DeleteLocalNoteCommand}" CommandParameter="{x:Bind ViewModel.SelectedNote}" AutomationProperties.AutomationId="LoveNotesDelete" AutomationProperties.Name="delete selected" />
+                    <Button Content="delete selected" Command="{x:Bind ViewModel.RequestDeleteLocalNoteCommand}" CommandParameter="{x:Bind ViewModel.SelectedNote, Mode=OneWay}" AutomationProperties.AutomationId="LoveNotesDelete" AutomationProperties.Name="delete selected" />
                     <Button Content="let dudu choose" Command="{x:Bind ViewModel.ShowLocalNoteCommand}" AutomationProperties.AutomationId="LoveNotesChoose" AutomationProperties.Name="let dudu choose" />
                 </StackPanel>
+                <Border Padding="16" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource WarningBrush}" Visibility="{x:Bind ViewModel.IsConfirmingDeleteNote, Mode=OneWay}" AutomationProperties.AutomationId="LoveNotesDeleteConfirmationPanel" AutomationProperties.Name="delete note confirmation panel">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="{x:Bind ViewModel.DeleteNotePrompt, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Assertive" AutomationProperties.AutomationId="LoveNotesDeleteConfirmationMessage" AutomationProperties.Name="delete note confirmation message" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Content="confirm delete" Command="{x:Bind ViewModel.DeleteLocalNoteCommand}" CommandParameter="{x:Bind ViewModel.PendingDeleteNote, Mode=OneWay}" AutomationProperties.AutomationId="LoveNotesDeleteConfirm" AutomationProperties.Name="confirm delete note" />
+                            <Button Content="cancel" Command="{x:Bind ViewModel.CancelDeleteLocalNoteCommand}" AutomationProperties.AutomationId="LoveNotesDeleteCancel" AutomationProperties.Name="cancel delete note" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
             </StackPanel>
 
             <StackPanel Spacing="12">
@@ -41,7 +50,7 @@
                         </DataTemplate>
                     </ListView.ItemTemplate>
                 </ListView>
-                <Button Content="reveal selected note" Command="{x:Bind ViewModel.RevealRemoteNoteCommand}" CommandParameter="{x:Bind ViewModel.SelectedRemoteEnvelope}" IsEnabled="{x:Bind ViewModel.CanRevealRemoteNote, Mode=OneWay}" AutomationProperties.AutomationId="LoveNotesRevealSelected" AutomationProperties.Name="reveal selected note" HorizontalAlignment="Left" />
+                <Button Content="reveal selected note" Command="{x:Bind ViewModel.RevealRemoteNoteCommand}" CommandParameter="{x:Bind ViewModel.SelectedRemoteEnvelope, Mode=OneWay}" IsEnabled="{x:Bind ViewModel.CanRevealRemoteNote, Mode=OneWay}" AutomationProperties.AutomationId="LoveNotesRevealSelected" AutomationProperties.Name="reveal selected note" HorizontalAlignment="Left" />
                 <TextBox Header="opened note" Text="{x:Bind ViewModel.OpenedRemoteNoteText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" AutomationProperties.AutomationId="LoveNotesOpened" AutomationProperties.Name="opened note" />
                 <Button Content="save opened note to local jar" Command="{x:Bind ViewModel.SaveOpenedNoteCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="LoveNotesSaveOpened" AutomationProperties.Name="save opened note to local jar" HorizontalAlignment="Left" />
             </StackPanel>

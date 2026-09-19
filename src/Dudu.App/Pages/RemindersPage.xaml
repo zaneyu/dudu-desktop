@@ -30,8 +30,8 @@
                     </ListView.ItemTemplate>
                 </ListView>
                 <StackPanel Spacing="8">
-                    <Button Content="complete selected" Command="{x:Bind ViewModel.CompleteCommand}" CommandParameter="{x:Bind ViewModel.SelectedReminder}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="RemindersComplete" AutomationProperties.Name="complete selected" />
-                    <Button Content="snooze 15 min" Command="{x:Bind ViewModel.SnoozeCommand}" CommandParameter="{x:Bind ViewModel.SelectedReminder}" AutomationProperties.AutomationId="RemindersSnooze" AutomationProperties.Name="snooze 15 min" />
+                    <Button Content="complete selected" Command="{x:Bind ViewModel.CompleteCommand}" CommandParameter="{x:Bind ViewModel.SelectedReminder, Mode=OneWay}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="RemindersComplete" AutomationProperties.Name="complete selected" />
+                    <Button Content="snooze 15 min" Command="{x:Bind ViewModel.SnoozeCommand}" CommandParameter="{x:Bind ViewModel.SelectedReminder, Mode=OneWay}" AutomationProperties.AutomationId="RemindersSnooze" AutomationProperties.Name="snooze 15 min" />
                 </StackPanel>
             </StackPanel>
 
