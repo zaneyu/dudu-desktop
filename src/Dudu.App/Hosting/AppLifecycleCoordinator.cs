@@ -243,8 +243,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         try
         {
             ThrowIfDisposed();
-            if (!CurrentPreferences.HidePetDuringFullscreen) return;
-            if (fullscreen)
+            if (CurrentPreferences.HidePetDuringFullscreen && fullscreen)
             {
                 if (_fullscreenHidden) return;
                 _fullscreenHidden = true;
@@ -255,6 +254,12 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
             }
             else
             {
+                // Either she isn't in fullscreen anymore, or "hide during
+                // fullscreen" was turned off while she was still hidden from
+                // an earlier fullscreen session. Either way she must not
+                // stay hidden forever waiting for a fullscreen-exit
+                // notification that the now-disabled setting no longer cares
+                // about.
                 if (!_fullscreenHidden) return;
                 restoreVisible = _userVisible;
                 _fullscreenHidden = false;

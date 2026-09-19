@@ -313,6 +313,45 @@ public sealed class AppLifecycleCoordinatorTests
         Assert.Equal(PetState.Idle, pet.Current.State);
     }
 
+    [Fact]
+    public async Task Turning_off_hide_during_fullscreen_while_hidden_restores_visibility()
+    {
+        // Regression: the early "if (!HidePetDuringFullscreen) return;" ran
+        // before the fullscreen-exit branch could clear _fullscreenHidden.
+        // A user who disabled the setting while the pet was hidden (still in
+        // fullscreen, or after leaving it) would never see her again until
+        // restart, since the very next OnFullscreenChangedAsync(false) call
+        // bailed out at that same top check.
+        var overlay = new FakeOverlay();
+        var preferences = new Preferences(
+            AppTheme.System,
+            new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+            false, 3, true, false, true, TimeSpan.FromMinutes(15));
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            preferences,
+            isFullscreen: () => true);
+
+        await lifecycle.OnFullscreenChangedAsync(true, TestContext.Current.CancellationToken);
+        Assert.Equal(1, overlay.HideCount);
+        Assert.False(overlay.IsVisible);
+
+        await lifecycle.UpdatePreferencesAsync(
+            preferences with { HidePetDuringFullscreen = false },
+            TestContext.Current.CancellationToken);
+
+        // Still fullscreen per the app's own detector, but the setting no
+        // longer cares — she must come back now, not wait for a fullscreen
+        // exit notification.
+        await lifecycle.OnFullscreenChangedAsync(true, TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, overlay.RestoreCount);
+        Assert.Equal(1, overlay.ShowCount);
+        Assert.True(overlay.IsVisible);
+    }
+
     private sealed class FakeHost : IAppHostLifecycle
     {
         public Task ResumeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
