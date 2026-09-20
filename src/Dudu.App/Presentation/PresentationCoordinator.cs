@@ -246,6 +246,11 @@ public sealed class PresentationCoordinator :
         var key = $"{kind}:{id}";
         lock (_gate)
         {
+            // Finding 7: run under the same _gate as DiscardHeldByKindAsync's
+            // own RemoveAllOfKind call, not after releasing it -- an item
+            // published in the window between an unlocked Remove and this
+            // lock would otherwise survive the discard entirely.
+            _policy.Remove(key);
             if (_presentingIds.Contains(key))
             {
                 // Finding E: a presentation for this exact key is in flight
@@ -272,7 +277,6 @@ public sealed class PresentationCoordinator :
             }
         }
 
-        _policy.Remove(key);
         await RemoveHeldAsync(key, cancellationToken);
     }
 
@@ -550,6 +554,18 @@ public sealed class PresentationCoordinator :
                 await ObserveAsync(
                     () => ShowNotificationAsync(item, cancellationToken),
                     "presentation-notification");
+
+                // Finding 6: the in-memory _toastedWhileHeldIds marker set
+                // above is not enough on its own -- a restart before the
+                // held row is ever released would reload it as untoasted
+                // and show this same toast a second time. Persist it the
+                // same way PresentAsync's own toastShown-and-not-succeeded
+                // path does (LocalNote has no durable row to mark, and no
+                // real toast either).
+                if (item.Kind != PresentationItemKind.LocalNote)
+                {
+                    await MarkToastedAsync(item.Key, cancellationToken);
+                }
             }
 
             return;

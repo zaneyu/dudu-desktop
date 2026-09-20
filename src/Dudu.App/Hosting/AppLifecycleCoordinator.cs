@@ -167,9 +167,9 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
         var fullscreen = TryReadFullscreen("hotkey-fullscreen");
         // The hotkey is an explicit user gesture (also used for second
         // launch/activation, see WindowsCompanionRuntime.ActivateAsync):
-        // quiet hours suppress proactive presentation only, never a request
-        // she made herself.
-        if (!TryCanShow(fullscreen, snapshot.Locked, snapshot.Suspended, "hotkey-gate", ignoreQuietHours: true))
+        // quiet hours never veto the overlay's visibility (see TryCanShow),
+        // so this always shows the pet regardless of the hour.
+        if (!TryCanShow(fullscreen, snapshot.Locked, snapshot.Suspended, "hotkey-gate"))
         {
             return;
         }
@@ -186,7 +186,6 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
             }
 
             _userVisible = true;
-            _presentationEnvironment?.SetUserVisible(true);
         }
         finally { _gate.Release(); }
 
@@ -194,27 +193,61 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
         {
             await _openHome(cancellationToken);
         }
-        await InvokeVisualSafelyAsync(_overlay.Show, "hotkey-show", cancellationToken);
+
+        // Finding 1: _openHome above can run arbitrarily long (it pumps the
+        // UI thread), and a tray "hide" landing during it already flipped
+        // _userVisible to false and pushed false to the presentation sink
+        // via HideForUserAsync's own gate section. Showing the overlay
+        // unconditionally here would leave it visible with _userVisible
+        // false and false already pushed -- out of sync until some other
+        // caller happens to touch visibility again. Re-check under the same
+        // visibilityGate-then-gate nesting EnsureUserVisibleAsync uses, and
+        // skip the show if she has since hidden.
+        //
+        // Finding E: the presentation-sink push moved down here, next to the
+        // Show it describes. Pushing it up above (right after the
+        // _userVisible write) meant that if _openHome throws, the sink is
+        // left saying "visible" with no overlay ever shown -- this method
+        // propagates that exception with nothing to correct the push.
+        await _visibilityGate.WaitAsync(cancellationToken);
+        try
+        {
+            await _gate.WaitAsync(cancellationToken);
+            try
+            {
+                ThrowIfDisposed();
+                if (!_userVisible)
+                {
+                    return;
+                }
+            }
+            finally { _gate.Release(); }
+
+            _presentationEnvironment?.SetUserVisible(true);
+            InvokeSafely(_overlay.Show, "hotkey-show");
+        }
+        finally { _visibilityGate.Release(); }
     }
 
     public async Task OnUserShowOrHideAsync(CancellationToken cancellationToken = default)
     {
         var snapshot = await CaptureAsync(cancellationToken);
         // Keyed on the overlay's real visibility, not just the desired
-        // _userVisible flag: quiet hours (TryCanShow) or a pause-state hide
-        // can leave _userVisible true while the overlay itself never came
-        // up or was hidden again. Branching on desired state alone made the
-        // first tray click a no-op in exactly that case -- it took the HIDE
-        // branch against an overlay that was already hidden.
+        // _userVisible flag: a pause-state hide can leave _userVisible true
+        // while the overlay itself never came up or was hidden again.
+        // Branching on desired state alone made the first tray click a
+        // no-op in exactly that case -- it took the HIDE branch against an
+        // overlay that was already hidden.
         if (snapshot.UserVisible && _overlay.IsVisible)
         {
             await SetUserVisibleAsync(false, cancellationToken);
             return;
         }
 
-        // Tray "show dudu" is an explicit user gesture: quiet hours suppress
-        // proactive presentation only, never a request she made herself.
-        await EnsureUserVisibleAsync(cancellationToken, explicitUserGesture: true);
+        // Tray "show dudu" is an explicit user gesture: quiet hours never
+        // veto the overlay's visibility (see TryCanShow), so this always
+        // shows the pet regardless of the hour.
+        await EnsureUserVisibleAsync(cancellationToken);
     }
 
     public Task SetUserVisibleAsync(
@@ -226,7 +259,6 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
 
     private async Task EnsureUserVisibleAsync(
         CancellationToken cancellationToken,
-        bool explicitUserGesture = false,
         bool requireStillDesired = false)
     {
         // Throw fast if already disposed before even queuing on the
@@ -261,19 +293,30 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
                 // hotkey show whenever any window was fullscreen -- TryCanShow
                 // below already applies that preference correctly, so this is
                 // redundant with it and wrong on top of being redundant.
+                //
+                // Owner decision 3: TryCanShow no longer has a quiet-hours
+                // term at all -- quiet hours gates proactive presentation
+                // (welcome-back, reminder/note animations, audio), never the
+                // overlay window's own visibility. Every show, gesture or
+                // reconcile-driven restore alike, is gated only by lock/
+                // suspend/fullscreen-hidden/pause here.
                 if (_fullscreenHidden
                     || _locked
                     || _suspended
-                    || !TryCanShow(fullscreen, _locked, _suspended, "show-gate", ignoreQuietHours: explicitUserGesture))
+                    || !TryCanShow(
+                        fullscreen,
+                        _locked,
+                        _suspended,
+                        "show-gate"))
                 {
                     // Vetoed: the overlay was never actually shown, so the
                     // presentation layer must not be told otherwise -- pushing
                     // true here used to let a held reminder animate into a
                     // window that was never shown once the veto's reason ended
-                    // (e.g. quiet hours), then delete its row on that
-                    // "successful" presentation. _userVisible (her desired
-                    // state) stays true above so ReconcileVisibilityAsync can
-                    // retry once the veto ends.
+                    // (e.g. a pause that hasn't yet expired), then delete its
+                    // row on that "successful" presentation. _userVisible
+                    // (her desired state) stays true above so
+                    // ReconcileVisibilityAsync can retry once the veto ends.
                     _presentationEnvironment?.SetUserVisible(false);
                     return;
                 }
@@ -293,7 +336,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
     /// Re-attempts the non-explicit show path when she still wants Dudu
     /// visible (<see cref="_userVisible"/>) but the overlay is not actually
     /// on screen -- the case an earlier vetoed <see cref="EnsureUserVisibleAsync"/>
-    /// leaves behind (e.g. quiet hours at sign-in). Nothing previously
+    /// leaves behind (e.g. a pause active at sign-in). Nothing previously
     /// retried that show once the veto's reason ended, so the pet stayed
     /// invisible for the rest of the session. Ticked from <c>AppHost</c>'s
     /// existing 30 s reminder tick, before the presentation gateway's own
@@ -317,6 +360,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
             // section (which flips _userVisible and pushes false) is
             // blocked out entirely while we hold _gate here, so nothing can
             // race between these two checks and the push that follows them.
+            bool needsHide;
             await _gate.WaitAsync(cancellationToken);
             try
             {
@@ -324,16 +368,31 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
                 if (!_userVisible)
                 {
                     _presentationEnvironment?.SetUserVisible(false);
-                    return;
+                    // Finding 2: authoritative in both directions -- a
+                    // desired-hidden pet whose overlay is still visible
+                    // (e.g. Finding 1's _openHome race, or any other missed
+                    // hide) must actually be hidden here, not just have
+                    // false pushed to the presentation sink while the
+                    // window stays on screen indefinitely.
+                    needsHide = _overlay.IsVisible;
                 }
-
-                if (_overlay.IsVisible)
+                else if (_overlay.IsVisible)
                 {
                     _presentationEnvironment?.SetUserVisible(true);
                     return;
                 }
+                else
+                {
+                    needsHide = false;
+                }
             }
             finally { _gate.Release(); }
+
+            if (needsHide)
+            {
+                await HideIfStillDesiredHiddenAsync(cancellationToken);
+                return;
+            }
 
             await EnsureUserVisibleAsync(cancellationToken, requireStillDesired: true);
         }
@@ -369,6 +428,36 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
         finally { _gate.Release(); }
 
         await InvokeVisualSafelyAsync(_overlay.Hide, "user-hide", cancellationToken);
+    }
+
+    /// <summary>
+    /// Finding 2: hides the overlay when <see cref="ReconcileVisibilityAsync"/>
+    /// finds it still visible despite <see cref="_userVisible"/> already
+    /// being false. Takes <see cref="_visibilityGate"/> then re-checks
+    /// <see cref="_userVisible"/> under <see cref="_gate"/> (same nesting as
+    /// <see cref="EnsureUserVisibleAsync"/>) before hiding, so a show that
+    /// lands between the caller's initial check and this call is never
+    /// undone.
+    /// </summary>
+    private async Task HideIfStillDesiredHiddenAsync(CancellationToken cancellationToken)
+    {
+        await _visibilityGate.WaitAsync(cancellationToken);
+        try
+        {
+            await _gate.WaitAsync(cancellationToken);
+            try
+            {
+                ThrowIfDisposed();
+                if (_userVisible)
+                {
+                    return;
+                }
+            }
+            finally { _gate.Release(); }
+
+            InvokeSafely(_overlay.Hide, "reconcile-hide");
+        }
+        finally { _visibilityGate.Release(); }
     }
 
     public async Task OnDisplayChangedAsync(CancellationToken cancellationToken = default)
@@ -590,8 +679,15 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
 
         var fullscreen = TryReadFullscreen("resume-fullscreen");
         var canShow = TryCanShow(fullscreen, snapshot.Locked, snapshot.Suspended, "resume-gate");
-        var welcome = canShow && !fullscreen && !snapshot.FullscreenHidden;
+        // Finding 4: welcome must depend on show (which already accounts
+        // for snapshot.UserVisible), not just canShow -- otherwise the
+        // welcome-back greeting (with audio) plays after she hid the pet
+        // before the lock/suspend.
         var show = canShow && !snapshot.FullscreenHidden && snapshot.UserVisible;
+        // Owner decision 3: the overlay itself always restores (show, above,
+        // has no quiet-hours term), but the welcome-back greeting is
+        // proactive presentation and stays gated by quiet hours here.
+        var welcome = show && !fullscreen && !TryIsQuietHours("resume-welcome-quiet-hours");
 
         await _gate.WaitAsync(cancellationToken);
         try
@@ -677,19 +773,20 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
     }
 
     /// <summary>
-    /// Quiet hours suppress proactive presentation (welcome-back, fullscreen/
-    /// pause restore) only. An explicit user gesture -- tray "show dudu",
-    /// the global hotkey, or a second launch/activation -- always shows the
-    /// pet, so those callers pass <paramref name="ignoreQuietHours"/>. Lock,
-    /// suspend, fullscreen, and the pause policy are not gestures the user
-    /// is actively making right now and still gate every caller.
+    /// Owner decision 3: quiet hours gate proactive PRESENTATION only
+    /// (greetings, reminder/note animations, audio -- see
+    /// <c>ResumeAndMaybeWelcomeAsync</c>'s <c>welcome</c> term and
+    /// <c>PresentationCoordinator.IsSuppressed</c>), never the overlay
+    /// window's own visibility. Quiet hours never hid an already-visible
+    /// pet, so this is the only consistent reading. Lock, suspend,
+    /// fullscreen (when HidePetDuringFullscreen is on), and the pause
+    /// policy are the only vetoes here, and gate every caller equally.
     /// </summary>
     private bool TryCanShow(
         bool fullscreen,
         bool locked,
         bool suspended,
-        string operation,
-        bool ignoreQuietHours = false)
+        string operation)
     {
         try
         {
@@ -698,8 +795,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
                 return false;
             }
 
-            return (ignoreQuietHours || !_isQuietHours())
-                && !PausePolicy.IsSuppressed(_pauseState(), _clock(), fullscreen);
+            return !PausePolicy.IsSuppressed(_pauseState(), _clock(), fullscreen);
         }
         catch (Exception exception)
         {
@@ -711,6 +807,24 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
     private bool TryReadFullscreen(string operation)
     {
         try { return _isFullscreen(); }
+        catch (Exception exception)
+        {
+            ReportFailure(operation, exception);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Guards the quiet-hours delegate the same way <see cref="TryReadFullscreen"/>
+    /// guards <c>_isFullscreen</c>. A failure here gates a presentation
+    /// decision (see <c>ResumeAndMaybeWelcomeAsync</c>'s <c>welcome</c>
+    /// term), not the overlay's visibility, so it fails conservatively
+    /// toward "assume quiet hours" -- suppressing a greeting on an error is
+    /// safer than risking one at 3am.
+    /// </summary>
+    private bool TryIsQuietHours(string operation)
+    {
+        try { return _isQuietHours(); }
         catch (Exception exception)
         {
             ReportFailure(operation, exception);

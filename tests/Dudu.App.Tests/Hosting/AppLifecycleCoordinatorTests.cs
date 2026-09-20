@@ -10,7 +10,7 @@ namespace Dudu.App.Tests.Hosting;
 public sealed class AppLifecycleCoordinatorTests
 {
     [Fact]
-    public async Task Unlock_welcomes_back_only_when_all_gates_are_clear()
+    public async Task Unlock_shows_the_overlay_during_quiet_hours_but_does_not_welcome_back()
     {
         // A presentOneShotAsync spy stands in for the composed
         // PetPresentationCoordinator.PresentOneShotAsync (see M2): the fix
@@ -18,7 +18,14 @@ public sealed class AppLifecycleCoordinatorTests
         // pet stayed pinned on WelcomeBack — the very bug this work package
         // exists to remove) now makes even the no-delegate case self-clear
         // immediately, so a raised-events spy is what actually distinguishes
-        // "welcome-back fired" from "gated by quiet hours" going forward.
+        // "welcome-back fired" from "gated by pause" going forward.
+        //
+        // Owner decision 3: quiet hours gate proactive PRESENTATION only
+        // (the welcome-back greeting, with its audio), never the overlay
+        // window's own visibility -- an unlock during quiet hours still
+        // restores the overlay, it just skips the greeting. Pause is still
+        // an authoritative veto over both and takes over as the gating
+        // scenario below.
         var host = new FakeHost();
         var overlay = new FakeOverlay();
         var pet = PetStateMachine.CreateIdle();
@@ -31,9 +38,10 @@ public sealed class AppLifecycleCoordinatorTests
             false,
             true,
             TimeSpan.FromMinutes(15));
-        var quiet = false;
+        var quiet = true;
         var fullscreen = false;
         var pause = PauseState.None;
+        var now = new DateTimeOffset(2026, 9, 11, 10, 0, 0, TimeSpan.Zero);
         var requested = new List<PetEvent>();
         var cancellationToken = TestContext.Current.CancellationToken;
         await using var lifecycle = new AppLifecycleCoordinator(
@@ -44,7 +52,7 @@ public sealed class AppLifecycleCoordinatorTests
             () => pause,
             () => quiet,
             () => fullscreen,
-            () => new DateTimeOffset(2026, 9, 11, 10, 0, 0, TimeSpan.Zero),
+            () => now,
             presentOneShotAsync: (petEvent, dismissalId, _) =>
             {
                 requested.Add(petEvent);
@@ -53,18 +61,63 @@ public sealed class AppLifecycleCoordinatorTests
                 return Task.CompletedTask;
             });
 
-        await lifecycle.OnSessionLockedAsync(cancellationToken);
-        await lifecycle.OnSessionUnlockedAsync(cancellationToken);
-        Assert.Single(requested);
-        Assert.IsType<PetEvent.WelcomeBackRequested>(requested[0]);
-        Assert.Equal(PetState.Idle, pet.Current.State);
-
-        requested.Clear();
-        quiet = true;
+        // Quiet hours throughout, not paused: unlock restores the overlay
+        // but does not welcome her back.
         await lifecycle.OnSessionLockedAsync(cancellationToken);
         await lifecycle.OnSessionUnlockedAsync(cancellationToken);
         Assert.Empty(requested);
+        Assert.Equal(1, overlay.ShowCount);
+        Assert.True(overlay.IsVisible);
         Assert.Equal(PetState.Idle, pet.Current.State);
+
+        // Still paused at unlock (quiet hours unchanged): pause vetoes both
+        // the overlay restore and the welcome-back.
+        requested.Clear();
+        pause = PausePolicy.ForOneHour(now);
+        await lifecycle.OnSessionLockedAsync(cancellationToken);
+        await lifecycle.OnSessionUnlockedAsync(cancellationToken);
+        Assert.Empty(requested);
+        Assert.Equal(1, overlay.ShowCount);
+        Assert.False(overlay.IsVisible);
+        Assert.Equal(PetState.Idle, pet.Current.State);
+    }
+
+    [Fact]
+    public async Task Unlock_does_not_welcome_back_when_she_hid_the_pet_before_locking()
+    {
+        // Finding 4: welcome used to be computed as
+        // `canShow && !fullscreen && !snapshot.FullscreenHidden`, ignoring
+        // snapshot.UserVisible entirely -- so the welcome-back greeting
+        // (with audio) played on unlock even though she had explicitly
+        // hidden Dudu before locking. welcome now derives from show, which
+        // already accounts for snapshot.UserVisible.
+        var overlay = new FakeOverlay();
+        var pet = PetStateMachine.CreateIdle();
+        var requested = new List<PetEvent>();
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            pet,
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            presentOneShotAsync: (petEvent, dismissalId, _) =>
+            {
+                requested.Add(petEvent);
+                pet.Handle(petEvent);
+                pet.Handle(PetEvent.CompletionForOneShot(petEvent, dismissalId));
+                return Task.CompletedTask;
+            });
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        await lifecycle.SetUserVisibleAsync(false, cancellationToken);
+        await lifecycle.OnSessionLockedAsync(cancellationToken);
+        await lifecycle.OnSessionUnlockedAsync(cancellationToken);
+
+        Assert.Empty(requested);
+        Assert.Equal(0, overlay.ShowCount);
+        Assert.False(overlay.IsVisible);
     }
 
     [Fact]
@@ -162,7 +215,13 @@ public sealed class AppLifecycleCoordinatorTests
     [Fact]
     public async Task Open_home_dispatch_failure_propagates_and_does_not_show_overlay()
     {
+        // Finding E: the presentation-sink push used to happen right after
+        // the _userVisible write, before awaiting _openHome -- so a faulting
+        // _openHome propagated its exception with the sink already told
+        // "visible" and no overlay ever shown. The push now happens next to
+        // the Show call itself, after _openHome has already succeeded.
         var overlay = new FakeOverlay { IsVisible = false };
+        var sink = new RecordingPresentationEnvironmentSink();
         await using var lifecycle = new AppLifecycleCoordinator(
             new FakeHost(),
             overlay,
@@ -172,13 +231,59 @@ public sealed class AppLifecycleCoordinatorTests
                 new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
                 false, 3, true, false, true, TimeSpan.FromMinutes(15)),
             openHome: _ => Task.FromException(new InvalidOperationException("home dispatch failed")),
-            initialUserVisible: false);
+            initialUserVisible: false,
+            presentationEnvironment: sink);
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             lifecycle.OnHotkeyAsync(TestContext.Current.CancellationToken));
 
         Assert.Equal("home dispatch failed", exception.Message);
         Assert.Equal(0, overlay.ShowCount);
+        Assert.Null(sink.LastUserVisible);
+    }
+
+    [Fact]
+    public async Task Hotkey_skips_its_post_open_home_show_if_she_hid_while_it_ran()
+    {
+        // Finding 1: OnHotkeyAsync writes _userVisible=true + pushes true
+        // under _gate, releases the gate, awaits _openHome (which can run
+        // arbitrarily long -- it pumps the UI thread), and only then shows
+        // the overlay. A tray "hide" landing during _openHome used to end
+        // with the overlay shown anyway, despite _userVisible already false
+        // and false already pushed to the presentation sink -- permanently
+        // out of sync until some other caller happened to touch visibility
+        // again.
+        var overlay = new FakeOverlay { IsVisible = false };
+        var openHomeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseOpenHome = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            initialUserVisible: false,
+            openHome: async _ =>
+            {
+                openHomeStarted.TrySetResult();
+                await releaseOpenHome.Task;
+            });
+
+        var hotkey = Task.Run(() => lifecycle.OnHotkeyAsync(cancellationToken), cancellationToken);
+        await openHomeStarted.Task.WaitAsync(cancellationToken);
+
+        // A tray "hide" lands while _openHome is still running -- it needs
+        // no gate the hotkey call is still holding, so it completes freely.
+        await lifecycle.SetUserVisibleAsync(false, cancellationToken);
+
+        releaseOpenHome.SetResult();
+        await hotkey;
+
+        Assert.Equal(0, overlay.ShowCount);
+        Assert.False(overlay.IsVisible);
     }
 
     [Fact]
@@ -239,6 +344,32 @@ public sealed class AppLifecycleCoordinatorTests
     }
 
     [Fact]
+    public async Task SetUserVisibleAsyncTrue_shows_the_pet_immediately_during_quiet_hours()
+    {
+        // Owner decision 3: TryCanShow has no quiet-hours term at all any
+        // more -- quiet hours gates proactive presentation only, never the
+        // overlay window's own visibility. The plain SetUserVisibleAsync(true)
+        // API path (used by the settings window and production composition)
+        // must show right away, not wait for quiet hours to end.
+        var overlay = new FakeOverlay { IsVisible = false };
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            isQuietHours: () => true,
+            initialUserVisible: false);
+
+        await lifecycle.SetUserVisibleAsync(true, TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, overlay.ShowCount);
+        Assert.True(overlay.IsVisible);
+    }
+
+    [Fact]
     public async Task Tray_show_dudu_shows_the_pet_after_a_pause_state_hide_leaves_it_hidden()
     {
         // Same inversion as above, reached through a different path: a
@@ -275,13 +406,14 @@ public sealed class AppLifecycleCoordinatorTests
     [Fact]
     public async Task Explicit_gesture_still_respects_lock_suspend_and_pause()
     {
-        // Quiet hours are bypassed for an explicit gesture, but lock,
-        // suspend, and the pause policy are not gestures she is actively
-        // making right now -- they still gate the hotkey and tray show.
-        // isQuietHours is true throughout, matching the real quiet-hours
-        // scenario -- this test previously only ever exercised the pause
-        // path and passed against pre-fix code that didn't check lock or
-        // suspend at all, because it never actually drove them.
+        // Owner decision 3: quiet hours never veto the overlay's visibility
+        // for any caller (see TryCanShow), but lock, suspend, and the pause
+        // policy are not gestures she is actively making right now -- they
+        // still gate the hotkey and tray show. isQuietHours is true
+        // throughout to prove it has no bearing here -- this test
+        // previously only ever exercised the pause path and passed against
+        // pre-fix code that didn't check lock or suspend at all, because it
+        // never actually drove them.
         var overlay = new FakeOverlay { IsVisible = false };
         var now = new DateTimeOffset(2026, 9, 11, 10, 0, 0, TimeSpan.Zero);
         var flags = new PauseFlags();
@@ -524,18 +656,24 @@ public sealed class AppLifecycleCoordinatorTests
     {
         // Findings 3 & 4: EnsureUserVisibleAsync used to push
         // SetUserVisible(true) to the presentation environment sink before
-        // its own veto check ran, so a sign-in launch during quiet hours told
+        // its own veto check ran, so a sign-in launch while paused told
         // PresentationCoordinator the pet was visible even though the
         // overlay was never shown -- a held reminder could then animate into
-        // that still-hidden window once quiet hours ended and have its row
+        // that still-hidden window once the pause ended and have its row
         // deleted on that "successful" presentation. Nothing previously
         // re-attempted the show once the veto ended either, so the pet
         // stayed invisible for the rest of the session.
         // ReconcileVisibilityAsync (wired into AppHost's 30 s tick) now
         // retries the show and only then reports the pet visible.
+        //
+        // Owner decision 3: quiet hours no longer vetoes the overlay's
+        // visibility at all (see TryCanShow), so this uses a pause -- a
+        // veto that still exists -- as the gate that survives long enough
+        // to observe the retry.
         var overlay = new FakeOverlay { IsVisible = false };
         var sink = new RecordingPresentationEnvironmentSink();
-        var quiet = true;
+        var now = new DateTimeOffset(2026, 9, 11, 10, 0, 0, TimeSpan.Zero);
+        var pause = PausePolicy.ForOneHour(now);
         await using var lifecycle = new AppLifecycleCoordinator(
             new FakeHost(),
             overlay,
@@ -544,7 +682,8 @@ public sealed class AppLifecycleCoordinatorTests
                 AppTheme.System,
                 new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
                 false, 3, true, false, true, TimeSpan.FromMinutes(15)),
-            isQuietHours: () => quiet,
+            pauseState: () => pause,
+            clock: () => now,
             initialUserVisible: false,
             presentationEnvironment: sink);
 
@@ -554,12 +693,53 @@ public sealed class AppLifecycleCoordinatorTests
         Assert.False(overlay.IsVisible);
         Assert.Equal(false, sink.LastUserVisible);
 
-        quiet = false;
+        pause = PauseState.None;
         await lifecycle.ReconcileVisibilityAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(1, overlay.ShowCount);
         Assert.True(overlay.IsVisible);
         Assert.Equal(true, sink.LastUserVisible);
+    }
+
+    [Fact]
+    public async Task Pause_expiring_inside_quiet_hours_restores_the_overlay_on_the_next_reconcile()
+    {
+        // Finding 3: quiet hours vetoed every restore path but never
+        // actually hid a pet that was already visible -- a pause (same as
+        // suspend/fullscreen) ending inside quiet hours used to strand her
+        // invisible until quiet hours ended (morning), because
+        // ReconcileVisibilityAsync's restore call routes through
+        // EnsureUserVisibleAsync(requireStillDesired: true), which used to
+        // respect quiet hours like every other non-gesture caller. That
+        // restore now ignores quiet hours, the same way an explicit gesture
+        // already did.
+        var overlay = new FakeOverlay { IsVisible = true };
+        var now = new DateTimeOffset(2026, 9, 11, 10, 0, 0, TimeSpan.Zero);
+        var pause = PauseState.None;
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            pauseState: () => pause,
+            isQuietHours: () => true,
+            clock: () => now,
+            initialUserVisible: true);
+
+        pause = PausePolicy.ForOneHour(now);
+        await lifecycle.OnPauseStateChangedAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(1, overlay.HideCount);
+        Assert.False(overlay.IsVisible);
+
+        // Quiet hours never changes (still true) -- only the pause expires.
+        pause = PauseState.None;
+        await lifecycle.ReconcileVisibilityAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, overlay.ShowCount);
+        Assert.True(overlay.IsVisible);
     }
 
     [Fact]
@@ -582,6 +762,42 @@ public sealed class AppLifecycleCoordinatorTests
 
         Assert.Equal(0, overlay.ShowCount);
         Assert.False(overlay.IsVisible);
+    }
+
+    [Fact]
+    public async Task Reconcile_hides_an_overlay_left_visible_by_a_missed_hide()
+    {
+        // Finding 2 (same root as Finding 1): ReconcileVisibilityAsync's
+        // !_userVisible branch used to push false to the presentation sink
+        // and return without checking whether the overlay itself was still
+        // visible -- e.g. Finding 1's _openHome race (before that fix), or
+        // any other site that changes _userVisible without successfully
+        // hiding the overlay too. Reconcile is now authoritative in both
+        // directions: a desired-hidden pet whose overlay is still visible
+        // gets hidden right here, not left on screen indefinitely.
+        var overlay = new FakeOverlay { IsVisible = true };
+        var sink = new RecordingPresentationEnvironmentSink();
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            initialUserVisible: false,
+            presentationEnvironment: sink);
+
+        // Simulate a missed hide: _userVisible is already false, but the
+        // overlay itself is still showing -- exactly the state a race like
+        // Finding 1's (before that fix) left behind.
+        overlay.IsVisible = true;
+
+        await lifecycle.ReconcileVisibilityAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, overlay.HideCount);
+        Assert.False(overlay.IsVisible);
+        Assert.Equal(false, sink.LastUserVisible);
     }
 
     [Fact]
