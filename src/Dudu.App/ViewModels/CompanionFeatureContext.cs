@@ -335,6 +335,10 @@ public abstract class FeatureViewModelBase : CommunityToolkit.Mvvm.ComponentMode
     /// same wording whether the command runs directly or a caller checks before running it.</summary>
     protected const string SelectOneFirstMessage = "select one first";
 
+    /// <summary>Shared between the switch's default arm and <see cref="StripParamNameSuffix"/>
+    /// so an ArgumentException that strips down to nothing still tells the user something.</summary>
+    private const string GenericFallbackMessage = "cannot finish that try again";
+
     protected static string ToUserMessage(Exception exception) =>
         exception switch
         {
@@ -346,20 +350,25 @@ public abstract class FeatureViewModelBase : CommunityToolkit.Mvvm.ComponentMode
             ArgumentException argumentException => StripParamNameSuffix(argumentException),
             KeyNotFoundException => exception.Message,
             InvalidOperationException => exception.Message,
-            _ => "cannot finish that try again",
+            _ => GenericFallbackMessage,
         };
 
-    /// <summary>ArgumentException.Message appends " (Parameter 'name')" from
-    /// ParamName when one was supplied at the throw site. That framework
-    /// wording is not something a non-technical user should see, so strip it
-    /// back off using the known ParamName rather than parsing arbitrary text.</summary>
+    /// <summary>ArgumentException.Message appends " (Parameter 'name')" from ParamName when
+    /// one was supplied at the throw site -- and subclasses such as ArgumentOutOfRangeException
+    /// can append further framework text (e.g. "Actual value was 5.") after that suffix, so the
+    /// cut has to happen at the suffix's start, not its end. None of that framework wording is
+    /// something a non-technical user should see. (If the runtime is ever localized, the suffix
+    /// text below won't match a non-English message, and it falls through unstripped rather than
+    /// throwing -- acceptable since this app is English-only today.)</summary>
     private static string StripParamNameSuffix(ArgumentException exception)
     {
         var message = exception.Message;
         if (string.IsNullOrEmpty(exception.ParamName)) return message;
         var suffix = $" (Parameter '{exception.ParamName}')";
-        return message.EndsWith(suffix, StringComparison.Ordinal)
-            ? message[..^suffix.Length]
-            : message;
+        var index = message.IndexOf(suffix, StringComparison.Ordinal);
+        var stripped = index < 0 ? message : message[..index];
+        // A blank (or whitespace-only) message plus ParamName strips down to nothing, which
+        // would hide the error panel entirely -- fall back to the generic copy instead.
+        return string.IsNullOrWhiteSpace(stripped) ? GenericFallbackMessage : stripped;
     }
 }

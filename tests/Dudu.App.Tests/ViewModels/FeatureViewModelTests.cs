@@ -1,3 +1,4 @@
+using System.Reflection;
 using Dudu.App.Overlay;
 using Dudu.App.Hosting;
 using Dudu.App.Presentation;
@@ -141,6 +142,45 @@ public sealed class FeatureViewModelTests
 
         Assert.Equal("wait type a shortcut first", viewModel.ErrorMessage);
         Assert.DoesNotContain("Parameter", viewModel.ErrorMessage);
+    }
+
+    [Fact]
+    public void ArgumentOutOfRangeException_error_text_strips_the_suffix_and_the_trailing_actual_value_line()
+    {
+        // Regression: the old strip only matched an EndsWith on " (Parameter 'name')".
+        // ArgumentOutOfRangeException appends "Actual value was X." AFTER that suffix, so the
+        // whole framework tail (suffix and actual-value line) leaked straight through untouched.
+        var exception = new ArgumentOutOfRangeException("count", 5, "must be between 1 and 3");
+
+        var message = InvokeToUserMessage(exception);
+
+        Assert.Equal("must be between 1 and 3", message);
+        Assert.DoesNotContain("Parameter", message);
+        Assert.DoesNotContain("Actual value", message);
+    }
+
+    [Fact]
+    public void ArgumentException_with_a_blank_message_falls_back_to_the_generic_copy_instead_of_going_blank()
+    {
+        // Regression: stripping "" + " (Parameter 'p')" produced an empty string, which would
+        // hide the whole error panel instead of telling the user anything went wrong at all.
+        var exception = new ArgumentException(string.Empty, "shortcut");
+
+        var message = InvokeToUserMessage(exception);
+
+        Assert.Equal("cannot finish that try again", message);
+    }
+
+    /// <summary>ToUserMessage is `protected static` on FeatureViewModelBase with no reachable
+    /// call site that throws ArgumentOutOfRangeException or a blank-message ArgumentException,
+    /// so these two edge cases are exercised directly via reflection (the same non-public-member
+    /// access pattern already used in WinUiHardeningTests for TrayIconService's private fields).</summary>
+    private static string InvokeToUserMessage(Exception exception)
+    {
+        var method = typeof(FeatureViewModelBase).GetMethod(
+            "ToUserMessage", BindingFlags.NonPublic | BindingFlags.Static, [typeof(Exception)])
+            ?? throw new InvalidOperationException("FeatureViewModelBase.ToUserMessage was not found.");
+        return (string)method.Invoke(null, [exception])!;
     }
 
     [Fact]
