@@ -146,6 +146,10 @@ public sealed partial class SettingsWindow : UserControl
         _tasksFocusPage?.ViewModel.DetachFocusExpiry();
     }
 
+    /// <summary>Called by App from the hosting Window's Closed event, the one close signal
+    /// WinUI 3 raises reliably (Unloaded is not guaranteed for a closed window's content).</summary>
+    public void OnHostWindowClosed() => _tasksFocusPage?.ViewModel.DetachFocusExpiry();
+
     private async Task EnsureDuduPackAsync()
     {
         if (_duduPack is not null) return;

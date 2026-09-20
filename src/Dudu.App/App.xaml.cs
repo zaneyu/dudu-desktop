@@ -205,6 +205,7 @@ public sealed partial class App : Application
             _settingsWindow.SetTitleBar(view.TitleBarElement);
             _settingsWindow.Closed += (_, _) =>
             {
+                view.OnHostWindowClosed();
                 var wasSafeMode = _settingsContext?.IsSafeMode == true;
                 _settingsWindow = null;
                 if (wasSafeMode)
