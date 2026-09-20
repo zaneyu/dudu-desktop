@@ -607,11 +607,17 @@ authoritative for future changes.
   `overlay-message-loop`, `fullscreen-poll` (fail-closed to hidden, unchanged),
   native callbacks (`session-lock/unlock`, `suspend`, `resume`,
   `display-change`, `taskbar-created`, `hotkey`), `remote-note-notify`,
-  `reminder-notify`, `presentation-tick`, `toast-notify`,
-  `startup-chrome-attach`, `partial-startup-*` / `partial-runtime-*` /
-  `runtime-*-shutdown` cleanup ops, `shutdown-host`, `shutdown-overlay`,
-  `shutdown-tray`. All best-effort/fail-closed behavior is unchanged —
-  logging only, report-and-(re)throw where the original threw.
+  `reminder-notify`, `reminder-notify-profile` (a transient failure reading
+  the profile for name personalization; the notify itself still goes out
+  with the neutral copy), `presentation-tick`, `toast-notify`,
+  `presentation-held-load`, `presentation-held-persist`,
+  `presentation-held-remove` (throttled once per kind/exception-type/Sqlite
+  error code, see `PresentationCoordinator.ReportHeldFailureOnce`),
+  `audio-cue-playback`, `startup-chrome-attach`, `partial-startup-*` /
+  `partial-runtime-*` / `runtime-*-shutdown` cleanup ops, `shutdown-host`,
+  `shutdown-overlay`, `shutdown-tray`. All best-effort/fail-closed behavior
+  is unchanged — logging only, report-and-(re)throw where the original
+  threw.
 - Data-layer failure phases recorded via `StartupFailureLogger`
   (report-and-(re)throw, ordering guarantees untouched):
   `Database.InitializationFailurePhase = "db-init"`,
@@ -649,6 +655,11 @@ Symptom-first lookup (data root overridable via `DUDU_DATA_ROOT`):
 - Unopened-note or settings data loss after crash: check for `db-init`,
   `secret-read`, `secret-write`, `backup-prune` phases; secret-write ordering
   (token before device ID) is a recovery invariant — do not "fix" it.
+- A reminder that was held during quiet hours/fullscreen never reappeared:
+  search `diagnostics.log` for `presentation-held-load`,
+  `presentation-held-persist`, `presentation-held-remove` (throttled once per
+  kind/exception-type/Sqlite error code); also check `reminder-notify` and
+  `reminder-notify-profile`.
 - Relay-side 5xx spike: `wrangler tail`, correlate `route` + status code +
   error class; never ask for or paste request bodies.
 - Tests for any of the above: `FieldDiagnosticsContractTests`,
