@@ -177,6 +177,37 @@ public sealed class PresentationCoordinator :
     }
 
     /// <summary>
+    /// Discards a pending unsolicited item -- from the in-memory queue, its
+    /// toasted-while-held marker, and its persisted row -- without ever
+    /// presenting it. Used when the event it represents is separately
+    /// resolved before this gateway released it: completing a reminder from
+    /// the Reminders page does not go through <see cref="PresentAsync"/> at
+    /// all (it advances the reminder directly), so a copy that was queued or
+    /// held for later would otherwise still surface here on a later tick or
+    /// the next app launch even though it was already handled. A no-op (but
+    /// still safe, since Remove/RemoveHeldAsync are themselves no-ops for a
+    /// key that is not present) when the item was never queued or held.
+    /// Not meant for an item currently in <see cref="_presentingIds"/> — this
+    /// does not touch that set, so a concurrent presentation in flight for
+    /// the same key is left alone.
+    /// </summary>
+    public async Task DiscardHeldAsync(
+        PresentationItemKind kind,
+        string id,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(id);
+        var key = $"{kind}:{id}";
+        lock (_gate)
+        {
+            _toastedWhileHeldIds.Remove(key);
+        }
+
+        _policy.Remove(key);
+        await RemoveHeldAsync(key, cancellationToken);
+    }
+
+    /// <summary>
     /// Registers Windows app notifications. A registration failure is
     /// swallowed here: it must never throw out of startup, and durable
     /// events still reach the user through the pet bubble fallback.

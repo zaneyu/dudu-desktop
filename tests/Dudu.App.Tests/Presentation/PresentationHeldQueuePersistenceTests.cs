@@ -468,6 +468,54 @@ public sealed class PresentationHeldQueuePersistenceTests
     }
 
     [Fact]
+    public async Task DiscardHeldAsync_removes_a_queued_items_marker_row_and_queue_entry()
+    {
+        // Finding 13: completing a reminder from the Reminders page advances
+        // it directly, never going through PresentAsync -- so a copy that
+        // was separately queued/held (e.g. it became due while she had Dudu
+        // hidden) must be discarded explicitly, or it resurfaces on a later
+        // tick or the next launch even though it was already handled.
+        var repository = new RecordingHeldPresentationRepository();
+        var notifications = new CountingNotificationService();
+        var policy = new PresentationPolicy(TimeSpan.Zero);
+        var played = 0;
+        var coordinator = new PresentationCoordinator(
+            policy,
+            notifications,
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => { played++; return Task.CompletedTask; },
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            heldPresentations: repository);
+        // Held for the sole reason of being hidden from the tray -- the one
+        // case where the toast fires immediately while still held (see
+        // PublishAsync's toastNow). Verify DiscardHeldAsync clears the
+        // toasted-while-held marker too, not just the row/queue entry.
+        coordinator.SetUserVisible(false);
+
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-1", "Stretch"),
+            bypassSuppression: false,
+            CancellationToken.None);
+        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.Single(repository.Rows);
+        Assert.Equal(1, policy.QueuedCount);
+
+        await coordinator.DiscardHeldAsync(PresentationItemKind.Reminder, "reminder-1", CancellationToken.None);
+
+        Assert.Equal(0, policy.QueuedCount);
+        Assert.Empty(repository.Rows);
+
+        // If it were still queued, un-hiding and ticking would present it.
+        coordinator.SetUserVisible(true);
+        await coordinator.TickAsync(CancellationToken.None);
+        Assert.Equal(0, played);
+        Assert.Equal(1, notifications.ReminderCalls);
+    }
+
+    [Fact]
     public void Held_presentation_key_format_matches_the_literal_strings_the_cascading_deletes_rely_on()
     {
         // M3's cascading deletes in LocalNoteRepository/ReminderRepository/

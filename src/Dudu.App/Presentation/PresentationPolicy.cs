@@ -239,6 +239,41 @@ public sealed class PresentationPolicy
     }
 
     /// <summary>
+    /// Removes a queued item by key, for good, without presenting it.
+    /// Used when the event it represents is separately resolved (e.g. a
+    /// reminder completed from the Reminders page) before this queue ever
+    /// released it. Returns true when an item was actually removed.
+    /// </summary>
+    public bool Remove(string key)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(key);
+        lock (_sync)
+        {
+            if (!_queuedIds.Remove(key))
+            {
+                return false;
+            }
+
+            var kept = new Queue<DurableNotification>(_queue.Count);
+            while (_queue.Count > 0)
+            {
+                var candidate = _queue.Dequeue();
+                if (candidate.Key != key)
+                {
+                    kept.Enqueue(candidate);
+                }
+            }
+
+            while (kept.Count > 0)
+            {
+                _queue.Enqueue(kept.Dequeue());
+            }
+
+            return true;
+        }
+    }
+
+    /// <summary>
     /// Records that an item was released immediately (not from the queue)
     /// so the minimum silent interval still applies to whatever is released
     /// next from the queue.

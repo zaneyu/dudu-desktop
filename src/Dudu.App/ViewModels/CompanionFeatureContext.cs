@@ -50,7 +50,8 @@ public sealed class CompanionFeatureContext
         Func<CancellationToken, Task>? deleteRemoteDataAsync = null,
         Func<string?, CancellationToken, Task>? applyOutfitAsync = null,
         Func<string, CancellationToken, Task>? setGlobalShortcutAsync = null,
-        Func<string, CancellationToken, Task>? dismissReminderNotificationAsync = null)
+        Func<string, CancellationToken, Task>? dismissReminderNotificationAsync = null,
+        Func<string, CancellationToken, Task>? discardHeldReminderAsync = null)
     {
         Clock = clock ?? throw new ArgumentNullException(nameof(clock));
         PreferenceMutations = preferenceMutations ?? throw new ArgumentNullException(nameof(preferenceMutations));
@@ -122,6 +123,7 @@ public sealed class CompanionFeatureContext
         SetGlobalShortcutAsync = setGlobalShortcutAsync ?? ((_, _) => Task.FromException(
             new NotSupportedException("oh no shortcuts not ready yet")));
         DismissReminderNotificationAsync = dismissReminderNotificationAsync ?? ((_, _) => Task.CompletedTask);
+        DiscardHeldReminderAsync = discardHeldReminderAsync ?? ((_, _) => Task.CompletedTask);
     }
 
     public IClock Clock { get; }
@@ -162,6 +164,12 @@ public sealed class CompanionFeatureContext
     /// <summary>Best-effort removal of a reminder's toast after the user
     /// acknowledged it (Done or Snooze).</summary>
     public Func<string, CancellationToken, Task> DismissReminderNotificationAsync { get; }
+
+    /// <summary>Best-effort removal of a reminder's queued/held presentation
+    /// (in PresentationCoordinator's in-memory queue and its persisted row)
+    /// after the user completed it directly from the Reminders page, so a
+    /// copy that was queued or held back does not surface again later.</summary>
+    public Func<string, CancellationToken, Task> DiscardHeldReminderAsync { get; }
 
     /// <summary>Serializes preference read/modify/write operations across
     /// feature pages. The shared current snapshot changes only after durable

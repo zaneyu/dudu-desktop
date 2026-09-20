@@ -219,6 +219,15 @@ public sealed class RemindersViewModel : FeatureViewModelBase
             var updated = reminder with { NextDueUtc = next, SnoozedUntilUtc = null };
             await MutateAsync(() => Replace(updated), cancellationToken);
             await _context.DismissReminderNotificationAsync(reminder.Id, cancellationToken);
+
+            // Completing here is a direct advance of the reminder row, not a
+            // PresentationCoordinator.PresentAsync call -- so a copy that was
+            // separately queued or held back (e.g. it became due while she
+            // had Dudu hidden, or during quiet hours) would otherwise still
+            // be sitting in that gateway's queue/persisted row and surface
+            // again on a later tick or the next app launch, even though it
+            // was just completed here.
+            await _context.DiscardHeldReminderAsync(reminder.Id, cancellationToken);
         }, "yayyy done le good job");
     }
 

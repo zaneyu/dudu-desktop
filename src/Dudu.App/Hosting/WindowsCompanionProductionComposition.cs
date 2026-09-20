@@ -825,6 +825,9 @@ public static class WindowsCompanionProductionComposition
                 setGlobalShortcutAsync: runtime.SetGlobalShortcutAsync,
                 dismissReminderNotificationAsync: (reminderId, token) =>
                     notificationService?.DismissReminderAsync(reminderId, token) ?? Task.CompletedTask,
+                discardHeldReminderAsync: (reminderId, token) =>
+                    presentationGateway?.DiscardHeldAsync(PresentationItemKind.Reminder, reminderId, token)
+                        ?? Task.CompletedTask,
                 deleteRemoteDataAsync: async token =>
                 {
                     var result = await services.GetRequiredService<IPairingService>()
