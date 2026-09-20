@@ -47,26 +47,36 @@ public sealed partial class HomePage : Page
 
     private void RefreshStartupRecovery()
     {
-        var visible = Startup.NeedsReconciliation;
-        StartupRecoveryPanel.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
-        StartupRecoveryMessage.Text = visible
-            ? Startup.ReconciliationError ?? "aiyo startup registration needs another try"
-            : string.Empty;
-
-        // Sets the checkbox's initial and every subsequent state imperatively (the XAML
-        // does not bind IsChecked at all -- x:Bind evaluates during InitializeComponent,
-        // before this suppression flag exists, so a OneTime IsChecked binding would fire
-        // Checked/Unchecked and perform a real OS startup-registration write on every
-        // Home load). Also keeps the checkbox on the last applied state after a failed
-        // write is reverted and "try again" then succeeds.
-        _suppressStartupToggle = true;
+        // Called from async void handlers (Page_Loaded, RetryStartupButton_Click,
+        // StartupToggle_Changed) with no surrounding try/catch of their own -- an
+        // unhandled throw here would crash the process, so this guards its own body.
         try
         {
-            StartupToggle.IsChecked = Startup.ActualLaunchAtSignIn;
+            var visible = Startup.NeedsReconciliation;
+            StartupRecoveryPanel.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+            StartupRecoveryMessage.Text = visible
+                ? Startup.ReconciliationError ?? "aiyo startup registration needs another try"
+                : string.Empty;
+
+            // Sets the checkbox's initial and every subsequent state imperatively (the XAML
+            // does not bind IsChecked at all -- x:Bind evaluates during InitializeComponent,
+            // before this suppression flag exists, so a OneTime IsChecked binding would fire
+            // Checked/Unchecked and perform a real OS startup-registration write on every
+            // Home load). Also keeps the checkbox on the last applied state after a failed
+            // write is reverted and "try again" then succeeds.
+            _suppressStartupToggle = true;
+            try
+            {
+                StartupToggle.IsChecked = Startup.ActualLaunchAtSignIn;
+            }
+            finally
+            {
+                _suppressStartupToggle = false;
+            }
         }
-        finally
+        catch (Exception exception)
         {
-            _suppressStartupToggle = false;
+            global::System.Diagnostics.Trace.TraceError("Dudu startup recovery refresh failed: {0}", exception);
         }
     }
 
