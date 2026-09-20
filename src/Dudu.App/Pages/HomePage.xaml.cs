@@ -48,6 +48,18 @@ public sealed partial class HomePage : Page
         StartupRecoveryMessage.Text = visible
             ? Startup.ReconciliationError ?? "aiyo startup registration needs another try"
             : string.Empty;
+
+        // Keep the checkbox on the last applied state: after a failed write is reverted and
+        // "try again" then succeeds, nothing else would re-check it (the binding is OneTime).
+        _suppressStartupToggle = true;
+        try
+        {
+            StartupToggle.IsChecked = Startup.ActualLaunchAtSignIn;
+        }
+        finally
+        {
+            _suppressStartupToggle = false;
+        }
     }
 
     private async void RetryStartupButton_Click(object sender, RoutedEventArgs args)

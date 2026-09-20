@@ -78,6 +78,7 @@ namespace Dudu.App.Pages
         private Button HomeSaveCountdownButton = null!;
         private TextBlock HomeCheckInSummary = null!;
         private ItemsControl HomeCheckInHistory = null!;
+        private CheckBox StartupToggle = null!;
         private StackPanel StartupRecoveryPanel = null!;
         private TextBlock StartupRecoveryMessage = null!;
         private Button RetryStartupButton = null!;
@@ -95,6 +96,7 @@ namespace Dudu.App.Pages
             HomeSaveCountdownButton = new Button();
             HomeCheckInSummary = new TextBlock();
             HomeCheckInHistory = new ItemsControl();
+            StartupToggle = new CheckBox();
             StartupRecoveryPanel = new StackPanel { Visibility = Visibility.Collapsed };
             StartupRecoveryMessage = new TextBlock();
             RetryStartupButton = new Button();
