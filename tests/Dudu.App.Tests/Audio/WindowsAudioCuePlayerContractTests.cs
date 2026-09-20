@@ -71,6 +71,50 @@ public sealed class WindowsAudioCuePlayerContractTests
     }
 
     [Fact]
+    public void Timeout_teardown_also_defers_the_media_event_unsubscribe()
+    {
+        // Finding 15: MediaEnded/MediaFailed unsubscribe used to still run
+        // inline in `finally` even on the timeout branch, against a
+        // possibly-hung player -- the same class of stall the deferred
+        // Source/Dispose teardown above already exists to avoid. Both
+        // unsubscribes must live inside the same background Task.Run as
+        // the rest of the timeout-path teardown, not before the
+        // `if (timedOut)` branch.
+        var root = FindRepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.App", "Audio", "WindowsAudioCuePlayer.cs"));
+
+        var finallyIndex = source.IndexOf("finally", StringComparison.Ordinal);
+        Assert.True(finallyIndex >= 0, "Expected a finally block.");
+        var timedOutBranchIndex = source.IndexOf("if (timedOut)", finallyIndex, StringComparison.Ordinal);
+        Assert.True(timedOutBranchIndex >= 0, "Expected the timedOut branch inside finally.");
+
+        // Nothing between `finally` and the timedOut branch touches the
+        // MediaPlayer's event subscriptions -- both unsubscribe calls must
+        // be inside a conditional branch, never unconditional ahead of it.
+        var beforeBranch = source[finallyIndex..timedOutBranchIndex];
+        Assert.DoesNotContain("MediaEnded -=", beforeBranch);
+        Assert.DoesNotContain("MediaFailed -=", beforeBranch);
+
+        var taskRunIndex = source.IndexOf("Task.Run(", timedOutBranchIndex, StringComparison.Ordinal);
+        Assert.True(taskRunIndex >= 0, "Expected the deferred Task.Run inside the timedOut branch.");
+        var elseIndex = source.IndexOf("else", taskRunIndex, StringComparison.Ordinal);
+        Assert.True(elseIndex >= 0, "Expected the non-timeout else branch after Task.Run.");
+
+        // Both unsubscribes appear inside the deferred task (between
+        // Task.Run( and the else branch that handles the normal path).
+        var deferredBody = source[taskRunIndex..elseIndex];
+        Assert.Contains("hungPlayer.MediaEnded -= ended;", deferredBody);
+        Assert.Contains("hungPlayer.MediaFailed -= failed;", deferredBody);
+
+        // The normal (non-timeout) path still tears the subscriptions down
+        // inline, synchronously with the rest of its teardown.
+        var normalBody = source[elseIndex..];
+        Assert.Contains("player.MediaEnded -= ended;", normalBody);
+        Assert.Contains("player.MediaFailed -= failed;", normalBody);
+    }
+
+    [Fact]
     public void Cancellation_registration_only_completes_the_tcs_and_never_touches_the_player()
     {
         // Finding H: the `using var cancellation` registration below is

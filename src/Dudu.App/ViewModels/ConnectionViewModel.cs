@@ -254,10 +254,21 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
         RunAsync(async () =>
         {
             await _context.Pairing.ForgetPairingAsync(cancellationToken);
-            // A broken/unreadable key makes ForgetPairingAsync delete every
-            // local remote-note envelope, not just one -- any remote note
-            // still queued or held for later presentation must go with them.
-            await _context.DiscardHeldRemoteNotesAsync(cancellationToken);
+            // ForgetPairingLocallyAsync only wipes every local remote-note
+            // envelope when the desktop's ECDH key turned out unreadable;
+            // in the ordinary re-pair case the key is kept and every
+            // envelope survives, still revealable after pairing again. Kind-
+            // wide discarding held remote notes unconditionally here used to
+            // silently lose that normal case's held arrival. Check what
+            // actually remains instead of assuming: no pending envelopes
+            // left means the unreadable-key branch ran and wiped them, so
+            // any held note referencing them is already orphaned and must
+            // go too; any envelope still pending means it is still
+            // revealable, so its held note must be left alone.
+            if ((await _context.RemoteEnvelopes.ListPendingAsync(cancellationToken)).Count == 0)
+            {
+                await _context.DiscardHeldRemoteNotesAsync(cancellationToken);
+            }
             await MutateAsync(() =>
             {
                 PairingCode = null;

@@ -612,7 +612,20 @@ public sealed class AppLifecycleCoordinatorTests
 
     private sealed class FakeHost : IAppHostLifecycle
     {
-        public Task ResumeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        /// <summary>
+        /// Finding 5 test hook: fires synchronously from inside ResumeAsync,
+        /// standing in for AppHost.RunResumeTickAsync's own synchronous
+        /// catch-up reminder tick -- lets a test observe exactly what the
+        /// overlay/sink state is at the moment the host is resumed.
+        /// </summary>
+        public Action? OnResume { get; set; }
+
+        public Task ResumeAsync(CancellationToken cancellationToken = default)
+        {
+            OnResume?.Invoke();
+            return Task.CompletedTask;
+        }
+
         public Task StopAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 
@@ -790,6 +803,144 @@ public sealed class AppLifecycleCoordinatorTests
 
         Assert.True(sink.UserVisiblePushes.Count > pushesBeforeReconcile);
         Assert.Equal(true, sink.LastUserVisible);
+    }
+
+    [Fact]
+    public async Task A_stale_reconcile_push_of_true_is_corrected_by_a_hide_that_lands_right_after()
+    {
+        // Finding 2: ReconcileVisibilityAsync used to read _userVisible and
+        // _overlay.IsVisible, then push to the sink, all *outside* the
+        // coordinator's state gate. That let an explicit hide's entire
+        // _userVisible=false + push(false) run in between reconcile's reads
+        // and its own push(true), so reconcile's stale "yes, show her" push
+        // could land last and stick the gateway on true even though she was
+        // actually just hidden. The fix makes the whole read-decide-push
+        // sequence run inside a single _gate acquisition -- the same lock
+        // the hide's own state write takes -- so the two critical sections
+        // can never interleave, only sequence one after the other.
+        //
+        // Engineered deterministically: the sink's OnPush hook blocks
+        // synchronously *while reconcile is still holding the state gate*
+        // (SetUserVisible(true) is called from inside the locked section,
+        // before _gate.Release()). A concurrent hide queued behind that same
+        // gate cannot perform its own state write until reconcile's whole
+        // decision -- including the push -- has completed and released it.
+        var overlay = new FakeOverlay { IsVisible = true };
+        var sink = new RecordingPresentationEnvironmentSink();
+        var reconcilePushedTrue = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseReconcilePush = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            initialUserVisible: true,
+            presentationEnvironment: sink);
+        sink.OnPush = visible =>
+        {
+            if (visible)
+            {
+                reconcilePushedTrue.TrySetResult();
+                releaseReconcilePush.Task.GetAwaiter().GetResult();
+            }
+        };
+
+        var reconcile = Task.Run(
+            () => lifecycle.ReconcileVisibilityAsync(cancellationToken),
+            cancellationToken);
+        await reconcilePushedTrue.Task.WaitAsync(cancellationToken);
+
+        // Queued behind the same gate reconcile is still holding inside the
+        // blocked push above -- it cannot run its state write until
+        // reconcile's own critical section (push included) has completed.
+        var hide = Task.Run(
+            () => lifecycle.SetUserVisibleAsync(false, cancellationToken),
+            cancellationToken);
+
+        releaseReconcilePush.SetResult();
+        await reconcile;
+        await hide;
+
+        Assert.Equal(false, sink.LastUserVisible);
+        Assert.False(overlay.IsVisible);
+    }
+
+    [Fact]
+    public async Task Suspend_pushes_false_immediately_without_a_separate_reconcile_tick()
+    {
+        // Finding 4: unlike a session lock (which has its own
+        // SetSessionLocked suppression signal on the sink), OnSuspendAsync
+        // used to push nothing at all -- only the next 30 s
+        // ReconcileVisibilityAsync tick noticed the overlay was hidden and
+        // corrected the sink. That left up to a 30 s window where a held
+        // item could animate into an overlay that was actually hidden. The
+        // fix pushes SetUserVisible(false) directly from OnSuspendAsync, with
+        // no reconcile tick needed.
+        var overlay = new FakeOverlay { IsVisible = true };
+        var sink = new RecordingPresentationEnvironmentSink();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            initialUserVisible: true,
+            presentationEnvironment: sink);
+
+        await lifecycle.OnSuspendAsync(cancellationToken);
+
+        Assert.Equal(false, sink.LastUserVisible);
+    }
+
+    [Fact]
+    public async Task Unlock_shows_before_resuming_the_host_so_a_catch_up_tick_sees_cleared_state()
+    {
+        // Finding 5 (regression): AppHost.ResumeAsync can run an immediate
+        // catch-up reminder tick (RunResumeTickAsync) that reconciles
+        // visibility and releases the presentation gateway's queue,
+        // synchronously, before returning. ResumeAndMaybeWelcomeAsync used
+        // to await _host.ResumeAsync BEFORE clearing _locked/_suspended and
+        // showing the overlay, so that catch-up tick's reconcile saw stale
+        // locked/suspended state, vetoed, and pushed the gateway back to
+        // user-hidden -- stranding a reminder that became due exactly at
+        // unlock until the next periodic tick (~30 s later). By the time the
+        // host is resumed, the overlay must already be shown and the sink
+        // already pushed true.
+        var overlay = new FakeOverlay { IsVisible = false };
+        var host = new FakeHost();
+        var sink = new RecordingPresentationEnvironmentSink();
+        int? showCountAtResume = null;
+        bool? sinkVisibleAtResume = null;
+        host.OnResume = () =>
+        {
+            showCountAtResume = overlay.ShowCount;
+            sinkVisibleAtResume = sink.LastUserVisible;
+        };
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await using var lifecycle = new AppLifecycleCoordinator(
+            host,
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            initialUserVisible: true,
+            presentationEnvironment: sink);
+
+        await lifecycle.OnSessionLockedAsync(cancellationToken);
+        await lifecycle.OnSessionUnlockedAsync(cancellationToken);
+
+        Assert.Equal(1, showCountAtResume);
+        Assert.Equal(true, sinkVisibleAtResume);
+        Assert.True(overlay.IsVisible);
     }
 
     [Fact]

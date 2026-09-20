@@ -610,9 +610,12 @@ authoritative for future changes.
   `reminder-notify`, `reminder-notify-profile` (a transient failure reading
   the profile for name personalization; the notify itself still goes out
   with the neutral copy), `presentation-tick`, `toast-notify`,
+  `reconcile-visibility` (both `AppLifecycleCoordinator.ReconcileVisibilityAsync`
+  and `AppHost`'s wrapper around it report under this one name),
   `presentation-held-load`, `presentation-held-persist`,
-  `presentation-held-remove` (throttled once per kind/exception-type/Sqlite
-  error code, see `PresentationCoordinator.ReportHeldFailureOnce`),
+  `presentation-held-remove`, `presentation-held-mark-toasted` (throttled
+  once per kind/exception-type/Sqlite error code, see
+  `PresentationCoordinator.ReportHeldFailureOnce`),
   `audio-cue-playback`, `startup-chrome-attach`, `partial-startup-*` /
   `partial-runtime-*` / `runtime-*-shutdown` cleanup ops, `shutdown-host`,
   `shutdown-overlay`, `shutdown-tray`. All best-effort/fail-closed behavior

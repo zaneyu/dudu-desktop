@@ -154,15 +154,21 @@ public sealed class PresentationCoordinator :
         _errorReporter = errorReporter;
         _heldPresentations = heldPresentations;
         // Finding B: production must start user-hidden until the lifecycle
-        // coordinator pushes the first real value (its ctor always seeds one
-        // now, and reconcile keeps pushing one every tick) -- otherwise the
-        // startup reminder tick (which still advances the reminder engine
-        // before the events sink / startup visibility gate have run) can
-        // publish a due reminder while this gateway believes the default
-        // "visible" is real, animating it into a window that is not shown
-        // yet and deleting its row on that "successful" presentation. Tests
-        // and the Windows harness, which never push a value at all, keep
-        // their prior behavior (default false) unless they opt in.
+        // coordinator pushes the first real value. Its own ctor also seeds
+        // one (AppLifecycleCoordinator's constructor calls
+        // _presentationEnvironment?.SetUserVisible(_userVisible)), but in
+        // production that seed is a no-op: the coordinator is constructed
+        // before this gateway exists, so the delegating sink's closure over
+        // the (still-null) gateway variable silently drops it. The startup
+        // reminder tick's direct call into the reminder engine (which still
+        // runs even though its own reconcile and release are deferred, see
+        // AppHost.RunReminderTickAsync) can publish a due reminder before
+        // reconcile has run even once -- with the default "visible", that
+        // publish would be evaluated against a pet this gateway wrongly
+        // believes is on screen, animating it into a window that is not
+        // shown yet and deleting its row on that "successful" presentation.
+        // Tests and the Windows harness, which never push a value at all,
+        // keep their prior behavior (default false) unless they opt in.
         _userHidden = initialUserHidden;
         if ((_ambientScheduler is null) != (_localNoteSelector is null))
         {
@@ -240,7 +246,6 @@ public sealed class PresentationCoordinator :
         var key = $"{kind}:{id}";
         lock (_gate)
         {
-            _toastedWhileHeldIds.Remove(key);
             if (_presentingIds.Contains(key))
             {
                 // Finding E: a presentation for this exact key is in flight
@@ -251,7 +256,19 @@ public sealed class PresentationCoordinator :
                 // discarded here -- resurrecting deleted note text or a
                 // reminder already completed elsewhere. RequeueHeldAsync and
                 // TickAsync's decline path both consult this instead.
+                //
+                // Finding 9: leave _toastedWhileHeldIds alone while that
+                // presentation is still in flight -- PresentAsync's own
+                // `alreadyToasted` read races this discard, and clearing the
+                // marker here unconditionally let it see alreadyToasted =
+                // false and show a Windows toast for a reminder she just
+                // completed elsewhere. PresentAsync now also consults
+                // _discardedWhilePresentingIds directly to skip that toast.
                 _discardedWhilePresentingIds.Add(key);
+            }
+            else
+            {
+                _toastedWhileHeldIds.Remove(key);
             }
         }
 
@@ -270,15 +287,21 @@ public sealed class PresentationCoordinator :
         PresentationItemKind kind,
         CancellationToken cancellationToken = default)
     {
-        var removedKeys = _policy.RemoveAllOfKind(kind);
         // Finding E: RemoveAllOfKind only ever sees PresentationPolicy's
         // in-memory queue -- an item of this kind currently being presented
         // has already been dequeued into _presentingIds and would otherwise
         // be missed entirely by a kind-wide discard.
         var presentingPrefix = $"{kind}:";
         List<string>? presentingKeysOfKind = null;
+        IReadOnlyList<string> removedKeys;
         lock (_gate)
         {
+            // Finding 14: RemoveAllOfKind must run under the same _gate as
+            // PublishAsync's Enqueue call, not before it -- calling it ahead
+            // of the lock let a remote note published in the window between
+            // the removal and this lock survive a kind-wide discard entirely
+            // (e.g. forgetting a broken pairing).
+            removedKeys = _policy.RemoveAllOfKind(kind);
             foreach (var key in removedKeys)
             {
                 _toastedWhileHeldIds.Remove(key);
@@ -446,39 +469,90 @@ public sealed class PresentationCoordinator :
         }
 
         bypassSuppression &= !item.IsRoutine;
-        bool shouldPresentNow;
+        var shouldPresentNow = false;
         var toastNow = false;
         var queuedForHold = false;
+        var alreadyQueued = false;
         lock (_gate)
         {
-            if (_presentingIds.Contains(item.Key) || _policy.IsQueued(item))
+            if (_presentingIds.Contains(item.Key))
             {
                 return;
             }
 
             var environment = CaptureEnvironment(now);
-            shouldPresentNow = bypassSuppression || !IsSuppressed(environment);
-            if (!shouldPresentNow)
+            if (_policy.IsQueued(item))
             {
-                queuedForHold = _policy.Enqueue(item);
-                // A Windows toast is independent of whether the overlay is
-                // on screen, unlike the pet animation this item's queueing
-                // already holds back — so when the *only* reason it is held
-                // is that she has hidden Dudu from the tray, the toast
-                // still fires now instead of waiting for un-hide together
-                // with the animation. Marked so the eventual real
-                // PresentAsync (once released) does not show the same
-                // toast a second time.
-                toastNow = queuedForHold && environment.UserHidden && !IsSuppressedExcludingUserHidden(environment);
+                // Finding 12: an earlier occurrence of this same recurring
+                // item (same Kind:Id key) is already held. Silently
+                // dropping every later occurrence used to deny her the
+                // Windows toast too, for as long as the hold lasted (up to
+                // 7 days, across restarts) -- only the pet animation needs
+                // to wait for the original held item to release, not the
+                // notification for a new occurrence arriving in the
+                // meantime. Quiet-hours (and every other suppressor)
+                // coalescing multiple occurrences into the single held row
+                // is unchanged: this only fires when hiding Dudu is the
+                // sole reason anything is held, exactly like toastNow below
+                // (no second queue entry is added either way).
+                alreadyQueued = true;
+                toastNow = environment.UserHidden
+                    && (bypassSuppression || !IsSuppressedExcludingUserHidden(environment));
                 if (toastNow)
                 {
+                    // Same marker the sibling toastNow branch below sets:
+                    // without it, the single held row's eventual release
+                    // would show a second Windows toast for what is really
+                    // just one still-held reminder, since PresentAsync's own
+                    // alreadyToasted check would otherwise read false.
                     _toastedWhileHeldIds.Add(item.Key);
                 }
             }
             else
             {
-                _presentingIds.Add(item.Key);
+                // Finding 11: bypassSuppression alone used to let a
+                // DeliverImmediately reminder animate straight into a
+                // hidden or not-yet-shown overlay (startup with
+                // initialUserHidden, or she hid Dudu from the tray) --
+                // bypass must still respect UserHidden for presenting now.
+                // Its toast (below, alongside the ordinary held-and-hidden
+                // toast) still fires immediately either way.
+                shouldPresentNow = (bypassSuppression && !environment.UserHidden) || !IsSuppressed(environment);
+                if (!shouldPresentNow)
+                {
+                    queuedForHold = _policy.Enqueue(item);
+                    // A Windows toast is independent of whether the overlay is
+                    // on screen, unlike the pet animation this item's queueing
+                    // already holds back — so when the *only* reason it is held
+                    // is that she has hidden Dudu from the tray, the toast
+                    // still fires now instead of waiting for un-hide together
+                    // with the animation. Marked so the eventual real
+                    // PresentAsync (once released) does not show the same
+                    // toast a second time.
+                    toastNow = queuedForHold && environment.UserHidden
+                        && (bypassSuppression || !IsSuppressedExcludingUserHidden(environment));
+                    if (toastNow)
+                    {
+                        _toastedWhileHeldIds.Add(item.Key);
+                    }
+                }
+                else
+                {
+                    _presentingIds.Add(item.Key);
+                }
             }
+        }
+
+        if (alreadyQueued)
+        {
+            if (toastNow)
+            {
+                await ObserveAsync(
+                    () => ShowNotificationAsync(item, cancellationToken),
+                    "presentation-notification");
+            }
+
+            return;
         }
 
         if (queuedForHold)
@@ -798,12 +872,19 @@ public sealed class PresentationCoordinator :
         }
 
         bool alreadyToasted;
+        bool discardedWhilePresenting;
         lock (_gate)
         {
             alreadyToasted = _toastedWhileHeldIds.Contains(item.Key);
+            // Finding 9: this exact attempt was discarded (DiscardHeldAsync
+            // / DiscardHeldByKindAsync) while it was still in flight -- the
+            // reminder/note was already resolved elsewhere. Showing its
+            // Windows toast now would surface a notification for something
+            // she just completed or deleted.
+            discardedWhilePresenting = _discardedWhilePresentingIds.Contains(item.Key);
         }
 
-        if (!alreadyToasted)
+        if (!alreadyToasted && !discardedWhilePresenting)
         {
             // A failed Windows toast does not veto `succeeded`: by this point
             // it already reflects whether the pet animation actually played
@@ -1153,6 +1234,17 @@ public sealed class PresentationCoordinator :
         lock (_gate)
         {
             discardedWhilePresenting = _discardedWhilePresentingIds.Remove(item.Key);
+            if (discardedWhilePresenting)
+            {
+                // Finding 10: PresentAsync's failure path can re-add this
+                // key to _toastedWhileHeldIds (see the "toastShown &&
+                // !succeeded" branch there) after it lost the race with a
+                // discard that landed mid-presentation. Left behind, that
+                // stale marker orphans the key -- for a recurring reminder,
+                // silently swallowing tomorrow's Windows toast even though
+                // today's item was dropped for good just above.
+                _toastedWhileHeldIds.Remove(item.Key);
+            }
         }
 
         if (discardedWhilePresenting)
@@ -1180,6 +1272,14 @@ public sealed class PresentationCoordinator :
         lock (_gate)
         {
             discardedWhilePresenting = _discardedWhilePresentingIds.Remove(item.Key);
+            if (discardedWhilePresenting)
+            {
+                // Finding 10: see the matching comment in RequeueHeldAsync --
+                // without this, a stale toasted-while-held marker left by
+                // PresentAsync's failure path orphans the key and silently
+                // swallows a later occurrence's Windows toast.
+                _toastedWhileHeldIds.Remove(item.Key);
+            }
         }
 
         if (discardedWhilePresenting)
@@ -1217,8 +1317,9 @@ public sealed class PresentationCoordinator :
     }
 
     /// <summary>Reports a held-presentation failure at most once per
-    /// distinct (<paramref name="kind"/> ("load", "persist", or "remove"),
-    /// exception type, Sqlite error code) combination for this process,
+    /// distinct (<paramref name="kind"/> ("load", "persist", "remove", or
+    /// "mark-toasted"), exception type, Sqlite error code) combination for
+    /// this process,
     /// instead of on every occurrence -- so a repeatedly-reported transient
     /// failure (e.g. SQLITE_BUSY) cannot latch out a later, different
     /// failure under the same kind (e.g. SQLITE_CORRUPT).</summary>

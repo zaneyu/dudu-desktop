@@ -28,4 +28,56 @@ public sealed class OverlayCommandRouterTests
             Assert.Equal(OverlayCommandRouter.EquivalentSettingsDestination(action.Action), action.SettingsDestination);
         });
     }
+
+    [Fact]
+    public void Five_minute_break_presents_the_hug_before_applying_the_pause()
+    {
+        // Finding 6: TakeFiveMinuteBreakAsync used to apply the pause first
+        // and present the tiny-hug comfort animation second. Applying the
+        // pause hides the overlay (indirectly, via the lifecycle
+        // coordinator's pause gate -- see AppLifecycleCoordinator's
+        // OnPauseStateChangedAsync), so the hug used to play into a window
+        // that was about to disappear underneath it. The hug must present
+        // first, then the pause. Asserted from source: exercising the real
+        // ordering behaviorally needs a full CompanionFeatureContext, whose
+        // dozen-plus repository/service dependencies are built only by the
+        // off-limits FeatureViewModelTests.cs fixture in this round.
+        var root = FindRepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.App", "Overlay", "OverlayCommandRouter.cs"));
+
+        var methodStart = source.IndexOf(
+            "private async Task TakeFiveMinuteBreakAsync(CancellationToken cancellationToken)",
+            StringComparison.Ordinal);
+        Assert.True(methodStart >= 0, "Expected TakeFiveMinuteBreakAsync to still exist.");
+        var methodEnd = source.IndexOf(
+            "private async Task CloseComfortAsync", methodStart, StringComparison.Ordinal);
+        Assert.True(methodEnd > methodStart, "Expected the next method to bound the body.");
+        var body = source[methodStart..methodEnd];
+
+        var hugCall = body.IndexOf(
+            "await PresentTinyHugAsync(cancellationToken);", StringComparison.Ordinal);
+        var pauseCall = body.IndexOf(
+            "await _context.ApplyPauseAsync(", StringComparison.Ordinal);
+
+        Assert.True(hugCall >= 0, "Expected the hug to still be presented.");
+        Assert.True(pauseCall > hugCall, "Expected the pause to be applied after the hug, not before.");
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "PRODUCT.md")))
+            {
+                return directory.FullName;
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException(
+            "Repository root was not found from the test output path.");
+    }
 }
