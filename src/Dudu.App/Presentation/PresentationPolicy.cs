@@ -274,6 +274,49 @@ public sealed class PresentationPolicy
     }
 
     /// <summary>
+    /// Removes every currently queued item of the given kind, for good,
+    /// without presenting any of them. Used by a kind-wide discard (e.g.
+    /// forgetting a broken pairing deletes every unopened remote note at
+    /// once, unlike <see cref="Remove"/>'s single key). Returns the keys
+    /// actually removed, so a caller tracking per-key state outside the
+    /// queue (the toasted-while-held marker, a persisted row) can clear
+    /// each one too.
+    /// </summary>
+    public IReadOnlyList<string> RemoveAllOfKind(PresentationItemKind kind)
+    {
+        lock (_sync)
+        {
+            if (_queue.Count == 0)
+            {
+                return Array.Empty<string>();
+            }
+
+            List<string>? removed = null;
+            var kept = new Queue<DurableNotification>(_queue.Count);
+            while (_queue.Count > 0)
+            {
+                var candidate = _queue.Dequeue();
+                if (candidate.Kind == kind)
+                {
+                    _queuedIds.Remove(candidate.Key);
+                    (removed ??= new List<string>()).Add(candidate.Key);
+                }
+                else
+                {
+                    kept.Enqueue(candidate);
+                }
+            }
+
+            while (kept.Count > 0)
+            {
+                _queue.Enqueue(kept.Dequeue());
+            }
+
+            return removed ?? (IReadOnlyList<string>)Array.Empty<string>();
+        }
+    }
+
+    /// <summary>
     /// Records that an item was released immediately (not from the queue)
     /// so the minimum silent interval still applies to whatever is released
     /// next from the queue.

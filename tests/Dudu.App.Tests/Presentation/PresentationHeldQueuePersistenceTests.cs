@@ -556,6 +556,132 @@ public sealed class PresentationHeldQueuePersistenceTests
     }
 
     [Fact]
+    public async Task DiscardHeldByKindAsync_removes_every_queued_item_of_that_kind_but_leaves_others()
+    {
+        // Finding 6(b): forgetting a broken pairing deletes every unopened
+        // remote note locally in one pass (RemoteSyncService.ForgetPairingLocallyAsync
+        // -> IRemoteEnvelopeRepository.DeleteAllAsync), so any RemoteNote
+        // still queued or held for later ambient presentation must go with
+        // them -- but a held Reminder must be left completely alone.
+        var repository = new RecordingHeldPresentationRepository();
+        var notifications = new CountingNotificationService();
+        var policy = new PresentationPolicy(TimeSpan.Zero);
+        var coordinator = new PresentationCoordinator(
+            policy,
+            notifications,
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => Task.CompletedTask,
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            heldPresentations: repository);
+        // Held for the same reason as the sibling test above: user-hidden
+        // makes the toast fire immediately while the item still sits queued
+        // and persisted, so both the queue and the repository can be
+        // asserted on afterward.
+        coordinator.SetUserVisible(false);
+
+        await coordinator.PublishAsync(
+            DurableNotification.RemoteNote(Guid.NewGuid().ToString("D")),
+            bypassSuppression: false,
+            CancellationToken.None);
+        await coordinator.PublishAsync(
+            DurableNotification.RemoteNote(Guid.NewGuid().ToString("D")),
+            bypassSuppression: false,
+            CancellationToken.None);
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-1", "Stretch"),
+            bypassSuppression: false,
+            CancellationToken.None);
+        Assert.Equal(3, policy.QueuedCount);
+        Assert.Equal(3, repository.Rows.Count);
+
+        await coordinator.DiscardHeldByKindAsync(PresentationItemKind.RemoteNote, CancellationToken.None);
+
+        Assert.Equal(1, policy.QueuedCount);
+        Assert.Single(repository.Rows);
+        Assert.Equal("Reminder:reminder-1", repository.Rows.Single().Key);
+
+        // If a discarded remote note's queue entry or row survived, un-hiding
+        // and ticking would present it (or requeue-and-repersist it).
+        coordinator.SetUserVisible(true);
+        await coordinator.TickAsync(CancellationToken.None);
+        Assert.Equal(0, notifications.RemoteNoteCalls);
+    }
+
+    [Fact]
+    public async Task DiscardHeldByKindAsync_is_a_no_op_when_nothing_of_that_kind_is_queued()
+    {
+        var repository = new RecordingHeldPresentationRepository();
+        var policy = new PresentationPolicy(TimeSpan.Zero);
+        var coordinator = new PresentationCoordinator(
+            policy,
+            new CountingNotificationService(),
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => Task.CompletedTask,
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            heldPresentations: repository);
+
+        await coordinator.DiscardHeldByKindAsync(PresentationItemKind.RemoteNote, CancellationToken.None);
+
+        Assert.Equal(0, policy.QueuedCount);
+        Assert.Empty(repository.Rows);
+    }
+
+    [Fact]
+    public async Task A_failed_immediate_present_retry_does_not_leave_the_row_behind_after_a_concurrent_discard()
+    {
+        // Finding 7: PublishAsync's failed-immediate-present path holds its
+        // own _presentingIds entry for the whole RequeueHeldAsync/
+        // PersistHeldAsync call (removed only in its `finally`, after this
+        // returns), so the old "still relevant" guard -- which counted ANY
+        // _presentingIds membership, even the caller's own -- could never
+        // actually fire for this path. If a concurrent DiscardHeldAsync
+        // (e.g. she completed the reminder from the Reminders page while
+        // this retry was mid-persist) took the item out of the queue for
+        // good during that window, the guard still saw it as "relevant" and
+        // kept the stale row, which SaveAsync's own delayed write then
+        // recreates anyway -- an orphan that would reload and re-present on
+        // the next launch even though it was already handled.
+        var saveStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseSave = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var repository = new BlockingSaveHeldPresentationRepository(saveStarted, releaseSave.Task);
+        var coordinator = new PresentationCoordinator(
+            new PresentationPolicy(TimeSpan.Zero),
+            new RecordingNotificationService(),
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => Task.FromException(new InvalidOperationException("playback failed")),
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            heldPresentations: repository);
+        var item = DurableNotification.Reminder("reminder-1", "Stretch");
+
+        // The immediate present attempt fails, so PublishAsync requeues and
+        // persists the item; block mid-save.
+        var publish = coordinator.PublishAsync(item, bypassSuppression: false, CancellationToken.None);
+        await saveStarted.Task;
+
+        // While that save is still in flight, the reminder is separately
+        // completed from the Reminders page (never goes through
+        // PresentAsync at all), discarding this same held item for good.
+        await coordinator.DiscardHeldAsync(PresentationItemKind.Reminder, "reminder-1", CancellationToken.None);
+
+        // Let the blocked save land -- it writes unconditionally, so the row
+        // reappears regardless of the discard above; only the post-save
+        // guard decides whether it survives.
+        releaseSave.SetResult();
+        await publish;
+
+        Assert.Empty(repository.Rows);
+    }
+
+    [Fact]
     public void Held_presentation_key_format_matches_the_literal_strings_the_cascading_deletes_rely_on()
     {
         // M3's cascading deletes in LocalNoteRepository/ReminderRepository/
@@ -813,6 +939,7 @@ public sealed class PresentationHeldQueuePersistenceTests
     private sealed class CountingNotificationService : INotificationService
     {
         public int ReminderCalls { get; private set; }
+        public int RemoteNoteCalls { get; private set; }
 
         public Task ShowReminderAsync(string reminderId, string title, CancellationToken cancellationToken)
         {
@@ -820,8 +947,11 @@ public sealed class PresentationHeldQueuePersistenceTests
             return Task.CompletedTask;
         }
 
-        public Task ShowRemoteNoteArrivalAsync(Guid messageId, CancellationToken cancellationToken) =>
-            Task.CompletedTask;
+        public Task ShowRemoteNoteArrivalAsync(Guid messageId, CancellationToken cancellationToken)
+        {
+            RemoteNoteCalls++;
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class RecordingHeldPresentationRepository : IHeldPresentationRepository

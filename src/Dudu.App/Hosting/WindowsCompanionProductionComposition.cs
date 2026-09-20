@@ -828,6 +828,15 @@ public static class WindowsCompanionProductionComposition
                 discardHeldReminderAsync: (reminderId, token) =>
                     presentationGateway?.DiscardHeldAsync(PresentationItemKind.Reminder, reminderId, token)
                         ?? Task.CompletedTask,
+                discardHeldLocalNoteAsync: (noteId, token) =>
+                    presentationGateway?.DiscardHeldAsync(PresentationItemKind.LocalNote, noteId, token)
+                        ?? Task.CompletedTask,
+                discardHeldRemoteNoteAsync: (messageId, token) =>
+                    presentationGateway?.DiscardHeldAsync(PresentationItemKind.RemoteNote, messageId, token)
+                        ?? Task.CompletedTask,
+                discardHeldRemoteNotesAsync: token =>
+                    presentationGateway?.DiscardHeldByKindAsync(PresentationItemKind.RemoteNote, token)
+                        ?? Task.CompletedTask,
                 deleteRemoteDataAsync: async token =>
                 {
                     var result = await services.GetRequiredService<IPairingService>()

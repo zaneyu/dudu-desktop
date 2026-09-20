@@ -214,6 +214,37 @@ public sealed class PresentationCoordinator :
     }
 
     /// <summary>
+    /// Same as <see cref="DiscardHeldAsync"/> but discards every pending item
+    /// of a given kind at once, for a cleanup that is not about one id — e.g.
+    /// forgetting a broken pairing deletes every unopened remote note
+    /// locally in one pass, not one message id at a time. A no-op when
+    /// nothing of that kind is queued or held.
+    /// </summary>
+    public async Task DiscardHeldByKindAsync(
+        PresentationItemKind kind,
+        CancellationToken cancellationToken = default)
+    {
+        var removedKeys = _policy.RemoveAllOfKind(kind);
+        if (removedKeys.Count == 0)
+        {
+            return;
+        }
+
+        lock (_gate)
+        {
+            foreach (var key in removedKeys)
+            {
+                _toastedWhileHeldIds.Remove(key);
+            }
+        }
+
+        foreach (var key in removedKeys)
+        {
+            await RemoveHeldAsync(key, cancellationToken);
+        }
+    }
+
+    /// <summary>
     /// Registers Windows app notifications. A registration failure is
     /// swallowed here: it must never throw out of startup, and durable
     /// events still reach the user through the pet bubble fallback.
@@ -408,12 +439,12 @@ public sealed class PresentationCoordinator :
         {
             if (!await PresentAsync(item, cancellationToken))
             {
-                await RequeueHeldAsync(item, now, cancellationToken);
+                await RequeueHeldAsync(item, now, cancellationToken, callerOwnsPresentingEntry: true);
             }
         }
         catch
         {
-            await RequeueHeldAsync(item, now, cancellationToken);
+            await RequeueHeldAsync(item, now, cancellationToken, callerOwnsPresentingEntry: true);
             throw;
         }
         finally
@@ -895,7 +926,11 @@ public sealed class PresentationCoordinator :
     /// swallowed, matching every other secondary concern in this class (a
     /// toast, audio): it must never fail the presentation it is
     /// tracking.</summary>
-    private async Task PersistHeldAsync(DurableNotification item, DateTimeOffset queuedUtc, CancellationToken cancellationToken)
+    private async Task PersistHeldAsync(
+        DurableNotification item,
+        DateTimeOffset queuedUtc,
+        CancellationToken cancellationToken,
+        bool callerOwnsPresentingEntry = false)
     {
         if (_heldPresentations is null)
         {
@@ -938,10 +973,25 @@ public sealed class PresentationCoordinator :
         // preserve QueuedUtc), relying on this row still being on disk to
         // requeue *from*. Only delete when the item is gone from both --
         // queued nowhere and not being presented either.
+        //
+        // Finding 7: when this call came from PublishAsync's own failed-
+        // immediate-present retry (RequeueHeldAsync with
+        // callerOwnsPresentingEntry: true), item.Key is still in
+        // _presentingIds for the whole call -- it is PublishAsync's own
+        // bookkeeping entry, not yet removed (that happens in its `finally`,
+        // after this call returns), so it says nothing about whether anyone
+        // else still cares. Counting it there made this guard unable to ever
+        // fire for that path: a concurrent DiscardHeldAsync (e.g. the
+        // reminder was completed from the Reminders page while this retry
+        // was mid-flight) could remove the item from the queue for good, yet
+        // the self-reference alone would keep "still relevant" true forever,
+        // leaving a stale row to reload and re-present on the next launch.
+        // Only _presentingIds entries owned by someone else still count.
         bool stillRelevant;
         lock (_gate)
         {
-            stillRelevant = _policy.IsQueued(item) || _presentingIds.Contains(item.Key);
+            stillRelevant = _policy.IsQueued(item)
+                || (!callerOwnsPresentingEntry && _presentingIds.Contains(item.Key));
         }
 
         if (!stillRelevant)
@@ -970,9 +1020,19 @@ public sealed class PresentationCoordinator :
     /// failed retry itself, without touching its already-persisted row) to
     /// PresentationPolicy's durable queue and, only when it actually
     /// re-entered the queue, persists it for the first time with
-    /// <paramref name="queuedUtc"/> as its QueuedUtc.</summary>
-    private Task RequeueHeldAsync(DurableNotification item, DateTimeOffset queuedUtc, CancellationToken cancellationToken) =>
-        _policy.Requeue(item) ? PersistHeldAsync(item, queuedUtc, cancellationToken) : Task.CompletedTask;
+    /// <paramref name="queuedUtc"/> as its QueuedUtc. <paramref
+    /// name="callerOwnsPresentingEntry"/> must be true when the caller (this
+    /// is only ever <see cref="PublishAsync"/>) still holds its own
+    /// <c>_presentingIds</c> entry for this key while this call runs -- see
+    /// the Finding 7 note in <see cref="PersistHeldAsync"/>.</summary>
+    private Task RequeueHeldAsync(
+        DurableNotification item,
+        DateTimeOffset queuedUtc,
+        CancellationToken cancellationToken,
+        bool callerOwnsPresentingEntry = false) =>
+        _policy.Requeue(item)
+            ? PersistHeldAsync(item, queuedUtc, cancellationToken, callerOwnsPresentingEntry)
+            : Task.CompletedTask;
 
     /// <summary>Runs a held-presentation repository call, reporting a
     /// failure (throttled via <see cref="ReportHeldFailureOnce"/>) and

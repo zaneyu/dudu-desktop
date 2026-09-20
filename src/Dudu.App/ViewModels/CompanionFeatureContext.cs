@@ -51,7 +51,10 @@ public sealed class CompanionFeatureContext
         Func<string?, CancellationToken, Task>? applyOutfitAsync = null,
         Func<string, CancellationToken, Task>? setGlobalShortcutAsync = null,
         Func<string, CancellationToken, Task>? dismissReminderNotificationAsync = null,
-        Func<string, CancellationToken, Task>? discardHeldReminderAsync = null)
+        Func<string, CancellationToken, Task>? discardHeldReminderAsync = null,
+        Func<string, CancellationToken, Task>? discardHeldLocalNoteAsync = null,
+        Func<string, CancellationToken, Task>? discardHeldRemoteNoteAsync = null,
+        Func<CancellationToken, Task>? discardHeldRemoteNotesAsync = null)
     {
         Clock = clock ?? throw new ArgumentNullException(nameof(clock));
         PreferenceMutations = preferenceMutations ?? throw new ArgumentNullException(nameof(preferenceMutations));
@@ -124,6 +127,9 @@ public sealed class CompanionFeatureContext
             new NotSupportedException("oh no shortcuts not ready yet")));
         DismissReminderNotificationAsync = dismissReminderNotificationAsync ?? ((_, _) => Task.CompletedTask);
         DiscardHeldReminderAsync = discardHeldReminderAsync ?? ((_, _) => Task.CompletedTask);
+        DiscardHeldLocalNoteAsync = discardHeldLocalNoteAsync ?? ((_, _) => Task.CompletedTask);
+        DiscardHeldRemoteNoteAsync = discardHeldRemoteNoteAsync ?? ((_, _) => Task.CompletedTask);
+        DiscardHeldRemoteNotesAsync = discardHeldRemoteNotesAsync ?? (_ => Task.CompletedTask);
     }
 
     public IClock Clock { get; }
@@ -170,6 +176,22 @@ public sealed class CompanionFeatureContext
     /// after the user completed it directly from the Reminders page, so a
     /// copy that was queued or held back does not surface again later.</summary>
     public Func<string, CancellationToken, Task> DiscardHeldReminderAsync { get; }
+
+    /// <summary>Same as <see cref="DiscardHeldReminderAsync"/> but for a
+    /// local note, keyed by note id, after it was deleted from the note
+    /// jar.</summary>
+    public Func<string, CancellationToken, Task> DiscardHeldLocalNoteAsync { get; }
+
+    /// <summary>Same as <see cref="DiscardHeldReminderAsync"/> but for a
+    /// single remote note, keyed by message id, after it was consumed
+    /// (saved to the jar) or deleted.</summary>
+    public Func<string, CancellationToken, Task> DiscardHeldRemoteNoteAsync { get; }
+
+    /// <summary>Discards every queued/held remote note at once, for the
+    /// forget-pairing path: unlike a single delete or consume, forgetting a
+    /// broken pairing can delete every unopened remote note in one local
+    /// cleanup, not one at a time.</summary>
+    public Func<CancellationToken, Task> DiscardHeldRemoteNotesAsync { get; }
 
     /// <summary>Serializes preference read/modify/write operations across
     /// feature pages. The shared current snapshot changes only after durable
