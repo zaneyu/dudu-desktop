@@ -777,6 +777,47 @@ public sealed class ReminderSchedulerTests
         Assert.Equal(DateTimeOffset.Parse("2026-09-12T09:00:00Z"), actual);
     }
 
+    [Fact]
+    public void Completing_a_daily_reminder_whose_pending_occurrence_is_inside_quiet_hours_advances_to_the_next_day()
+    {
+        // Audit regression: evaluating from max(now, NextDueUtc) landed exactly on
+        // the still-quiet pending instant, so NextOccurrence's own quiet-hours
+        // deferral arm handed back that SAME occurrence merely pushed to the end
+        // of quiet hours -- a completed reminder kept firing. Completion must
+        // consume the pending occurrence (deferred, if it was quiet) and resolve
+        // the *next* one from there.
+        var reminder = ReminderBuilder.AtLocalTime(23, 0)
+            .WithQuietHours(new QuietHours(true, new TimeOnly(22, 0), new TimeOnly(7, 0)))
+            .Build();
+
+        var next = ReminderScheduler.NextOccurrenceAfterCompletion(
+            reminder,
+            DateTimeOffset.Parse("2026-09-11T15:00:00Z"),
+            TimeZoneInfo.Utc);
+
+        // Today's 23:00 occurrence is consumed; tomorrow's 23:00 occurrence is
+        // itself quiet and defers to the following morning.
+        Assert.Equal(DateTimeOffset.Parse("2026-09-13T07:00:00Z"), next);
+    }
+
+    [Fact]
+    public void Completing_a_once_reminder_whose_pending_occurrence_is_inside_quiet_hours_has_no_next_occurrence()
+    {
+        var reminder = new Reminder(
+            "once", "Once", null, true, new RecurrenceRule.Once(), "UTC",
+            QuietHoursBehavior.WaitUntilQuietHoursEnd, MissedOccurrencePolicy.LatestOnly,
+            DateTimeOffset.Parse("2026-09-11T23:00:00Z"),
+            null,
+            new QuietHours(true, new TimeOnly(22, 0), new TimeOnly(7, 0)));
+
+        var next = ReminderScheduler.NextOccurrenceAfterCompletion(
+            reminder,
+            DateTimeOffset.Parse("2026-09-11T15:00:00Z"),
+            TimeZoneInfo.Utc);
+
+        Assert.Null(next);
+    }
+
     private static RecurrenceRule RuleForTest(string rule) => rule switch
     {
         "once" => new RecurrenceRule.Once(),
