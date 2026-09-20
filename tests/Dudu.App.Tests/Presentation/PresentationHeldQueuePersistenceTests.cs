@@ -682,6 +682,86 @@ public sealed class PresentationHeldQueuePersistenceTests
         Assert.Contains(reporter.Reports, r => r.Exception is NotSupportedException);
     }
 
+    [Fact]
+    public async Task StartAsync_drops_and_deletes_an_eight_day_old_held_row_but_keeps_a_six_day_old_one()
+    {
+        // Finding 20 (part 1): MaxHeldAge (7 days) is the only bound on "the
+        // same reminder shown forever" (e.g. from a toast that keeps failing
+        // and requeuing) -- nothing previously exercised the actual
+        // comparison at either side of the boundary.
+        var now = DateTimeOffset.Parse("2026-09-19T08:00:00Z");
+        var repository = new RecordingHeldPresentationRepository();
+        repository.Seed(new HeldPresentation(
+            "Reminder:old", "Reminder", "old", "Stale", null, null, null,
+            now - TimeSpan.FromDays(8), Toasted: false));
+        repository.Seed(new HeldPresentation(
+            "Reminder:fresh", "Reminder", "fresh", "Recent", null, null, null,
+            now - TimeSpan.FromDays(6), Toasted: false));
+        var policy = new PresentationPolicy(TimeSpan.Zero);
+        var coordinator = new PresentationCoordinator(
+            policy,
+            new RecordingNotificationService(),
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => Task.CompletedTask,
+            () => AnimationOptions.Default,
+            isQuietHours: () => true,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            utcNow: () => now,
+            heldPresentations: repository);
+
+        await coordinator.StartAsync(CancellationToken.None);
+
+        Assert.Equal(1, policy.QueuedCount);
+        var remaining = Assert.Single(repository.Rows.Values);
+        Assert.Equal("Reminder:fresh", remaining.Key);
+    }
+
+    [Fact]
+    public async Task A_failed_release_leaves_the_held_rows_QueuedUtc_unchanged()
+    {
+        // Finding 20 (part 2): RequeueHeldAsync is documented as PublishAsync
+        // -only -- TickAsync's own decline path deliberately does not
+        // re-persist a failed retry, so the row's original QueuedUtc is what
+        // MaxHeldAge measures actual age against, not time-since-last-retry.
+        var originalQueuedUtc = DateTimeOffset.Parse("2026-09-19T08:00:00Z");
+        var repository = new RecordingHeldPresentationRepository();
+        var attempt = 0;
+        var quiet = true;
+        var now = originalQueuedUtc;
+        var coordinator = new PresentationCoordinator(
+            new PresentationPolicy(TimeSpan.Zero),
+            new RecordingNotificationService(),
+            PetStateMachine.CreateIdle(),
+            (_, _, _) =>
+            {
+                attempt++;
+                return attempt == 1
+                    ? Task.FromException(new InvalidOperationException("playback failed"))
+                    : Task.CompletedTask;
+            },
+            () => AnimationOptions.Default,
+            isQuietHours: () => quiet,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            utcNow: () => now,
+            heldPresentations: repository);
+
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-1", "Stretch"),
+            bypassSuppression: false,
+            CancellationToken.None);
+        Assert.Equal(originalQueuedUtc, Assert.Single(repository.Rows.Values).QueuedUtc);
+
+        // Time passes, then a released retry fails.
+        now = originalQueuedUtc.AddHours(3);
+        quiet = false;
+        await coordinator.TickAsync(CancellationToken.None);
+
+        var afterFailedRetry = Assert.Single(repository.Rows.Values);
+        Assert.Equal(originalQueuedUtc, afterFailedRetry.QueuedUtc);
+    }
+
     private sealed class RecordingNotificationService : INotificationService
     {
         public Task ShowReminderAsync(string reminderId, string title, CancellationToken cancellationToken) =>
