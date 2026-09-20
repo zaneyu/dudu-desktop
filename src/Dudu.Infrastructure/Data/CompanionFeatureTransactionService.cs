@@ -103,10 +103,28 @@ public sealed class CompanionFeatureTransactionService : ICompanionFeatureTransa
                         // occurrence) genuinely has no next occurrence and
                         // must stay null, not silently resume on Create's
                         // shipped schedule.
+                        //
+                        // The anchor passed to NextOccurrence matters: when
+                        // it is still in the future, NextOccurrence returns
+                        // that UTC instant unchanged (net of quiet hours)
+                        // rather than re-deriving a wall-clock occurrence --
+                        // so anchoring on the OLD due time across a time-zone
+                        // change would keep firing at the old zone's
+                        // wall-clock instant translated literally into the
+                        // new zone. Anchor on now instead whenever the zone
+                        // changed, so the recompute falls through to the
+                        // rule-based arms, which evaluate the next wall-clock
+                        // occurrence in the (new) time zone. Re-enabling with
+                        // the zone unchanged still anchors on the old due
+                        // time, exactly as before.
+                        var anchor = previous.LocalTimeZoneId == reminder.LocalTimeZoneId
+                            || previous.NextDueUtc is null
+                            ? previous.NextDueUtc
+                            : nowUtc.ToUniversalTime();
                         toSave = toSave with
                         {
                             NextDueUtc = ReminderScheduler.NextOccurrence(
-                                toSave with { NextDueUtc = previous.NextDueUtc, SnoozedUntilUtc = null },
+                                toSave with { NextDueUtc = anchor, SnoozedUntilUtc = null },
                                 nowUtc.ToUniversalTime(),
                                 localTimeZone),
                             SnoozedUntilUtc = null,

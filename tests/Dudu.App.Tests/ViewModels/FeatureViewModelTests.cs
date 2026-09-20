@@ -2664,10 +2664,21 @@ public sealed class FeatureViewModelTests
                         // No `?? reminder.NextDueUtc` fallback -- a preserved
                         // rule with no next occurrence (e.g. a completed
                         // Once-edited default) must stay null.
+                        //
+                        // Anchor on now instead of the old due time whenever
+                        // the zone changed: NextOccurrence returns a
+                        // still-future anchor unchanged (net of quiet hours)
+                        // rather than re-deriving a wall-clock occurrence, so
+                        // anchoring on the old due time here would keep the
+                        // old zone's wall-clock instant across the change.
+                        var anchor = previous.LocalTimeZoneId == reminder.LocalTimeZoneId
+                            || previous.NextDueUtc is null
+                            ? previous.NextDueUtc
+                            : nowUtc.ToUniversalTime();
                         toSave = toSave with
                         {
                             NextDueUtc = Dudu.Core.Reminders.ReminderScheduler.NextOccurrence(
-                                toSave with { NextDueUtc = previous.NextDueUtc, SnoozedUntilUtc = null },
+                                toSave with { NextDueUtc = anchor, SnoozedUntilUtc = null },
                                 nowUtc.ToUniversalTime(),
                                 localTimeZone),
                             SnoozedUntilUtc = null,

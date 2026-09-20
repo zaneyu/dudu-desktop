@@ -514,6 +514,61 @@ public sealed class CompanionFeatureTransactionTests
     }
 
     [Fact]
+    public async Task Saving_preferences_with_a_changed_time_zone_recomputes_a_still_future_pending_due_in_the_new_zone()
+    {
+        // Round 4 Opus follow-up 1: unlike the "stale snooze"/"edited
+        // interval" cases above (where the old due time already lay in the
+        // past by the time of the zone-change save and NextOccurrence's
+        // rule-based fallthrough already recomputed correctly), a pending
+        // due time that is STILL IN THE FUTURE hits NextOccurrence's early
+        // return, which passes that UTC instant through unchanged (net of
+        // quiet hours) instead of re-deriving a wall-clock occurrence.
+        // Anchoring the recompute on the old due time would keep firing at
+        // the Singapore wall-clock instant translated literally into
+        // London -- e.g. a still-pending Singapore 10:00 due, moved to
+        // London, must resume on London's own next 10:00, not linger on
+        // Singapore 10:00's raw UTC instant re-read as a London time.
+        await using var fixture = await Fixture.CreateAsync();
+        var preferences = TestPreferences() with { HydrationRemindersEnabled = true };
+        var service = new CompanionFeatureTransactionService(new AppUnitOfWork(fixture.Database));
+        var reminderRepository = new ReminderRepository(fixture.Database);
+        var singapore = TimeZoneInfo.FindSystemTimeZoneById("Asia/Singapore");
+        var london = TimeZoneInfo.FindSystemTimeZoneById("Europe/London");
+
+        // 2026-09-12T00:00:00Z is 08:00 Singapore -- the shipped Daily(10:00)
+        // default lands later the same Singapore day, at 02:00Z.
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            preferences,
+            DateTimeOffset.Parse("2026-09-12T00:00:00Z"),
+            singapore,
+            TestContext.Current.CancellationToken);
+
+        var beforeZoneChange = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == "default-hydration");
+        Assert.Equal(DateTimeOffset.Parse("2026-09-12T02:00:00Z"), beforeZoneChange.NextDueUtc);
+
+        // Change zone to London an hour later -- still an hour before the
+        // pending 02:00Z due time, so it is still in the future.
+        var savedAtUtc = DateTimeOffset.Parse("2026-09-12T01:00:00Z");
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            preferences,
+            savedAtUtc,
+            london,
+            TestContext.Current.CancellationToken);
+
+        var saved = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == "default-hydration");
+        Assert.Equal("Europe/London", saved.LocalTimeZoneId);
+        // London is BST (UTC+1) in September: today's 10:00 local is 09:00Z,
+        // still ahead of savedAtUtc (01:00Z).
+        Assert.Equal(DateTimeOffset.Parse("2026-09-12T09:00:00Z"), saved.NextDueUtc);
+        // The bug this guards against: carrying the old Singapore instant
+        // (02:00Z) through unchanged, which reads as 03:00 local in London
+        // -- neither the shipped 10:00 nor any other sensible local time.
+        Assert.NotEqual(DateTimeOffset.Parse("2026-09-12T02:00:00Z"), saved.NextDueUtc);
+    }
+
+    [Fact]
     public async Task Saving_preferences_recomputes_next_due_from_the_preserved_rule_when_re_enabling()
     {
         // Opus review follow-up B/1(b): Rule/QuietHoursBehavior/MissedPolicy
