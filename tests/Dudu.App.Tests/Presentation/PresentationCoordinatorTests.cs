@@ -65,6 +65,49 @@ public sealed class PresentationCoordinatorTests
     }
 
     [Fact]
+    public async Task A_failed_toast_does_not_veto_a_successful_animations_result()
+    {
+        // Finding 15: PresentAsync used to AND the toast call's result into
+        // `succeeded`, so a toast that failed after the pet animation had
+        // already played turned an otherwise-successful presentation into a
+        // failure -- and both PublishAsync and TickAsync requeue-and-replay
+        // a failed item from the top, so this would replay the animation a
+        // second time later even though it already played fine once. The
+        // toast failure must still be reported, just not flip the
+        // presentation's own outcome.
+        var policy = new PresentationPolicy(TimeSpan.Zero);
+        var reporter = new RecordingErrorReporter();
+        var played = 0;
+        var coordinator = new PresentationCoordinator(
+            policy,
+            new FailingNotificationService(),
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => { played++; return Task.CompletedTask; },
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            errorReporter: reporter);
+
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-1", "Stretch"),
+            bypassSuppression: false,
+            CancellationToken.None);
+
+        Assert.Equal(1, played);
+        // A failed presentation is requeued by PublishAsync's caller; a
+        // successful one is not -- this is the observable proof that the
+        // toast failure did not flip the outcome.
+        Assert.Equal(0, policy.QueuedCount);
+        Assert.Contains(reporter.Reports, r => r.Exception is InvalidOperationException ex
+            && ex.Message == "simulated toast failure");
+
+        // The animation must not replay on a later tick.
+        await coordinator.TickAsync(CancellationToken.None);
+        Assert.Equal(1, played);
+    }
+
+    [Fact]
     public async Task Audio_cue_is_fire_and_forget_and_does_not_delay_notification_delivery()
     {
         // Regression: PresentAsync used to await the audio cue before
@@ -616,5 +659,21 @@ public sealed class PresentationCoordinatorTests
             RemoteNoteCalls++;
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class FailingNotificationService : INotificationService
+    {
+        public Task ShowReminderAsync(string reminderId, string title, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("simulated toast failure");
+
+        public Task ShowRemoteNoteArrivalAsync(Guid messageId, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("simulated toast failure");
+    }
+
+    private sealed class RecordingErrorReporter : IAppHostErrorReporter
+    {
+        public List<(string Operation, Exception Exception)> Reports { get; } = [];
+
+        public void Report(string operation, Exception exception) => Reports.Add((operation, exception));
     }
 }

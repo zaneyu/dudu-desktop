@@ -673,7 +673,17 @@ public sealed class PresentationCoordinator :
 
         if (!alreadyToasted)
         {
-            succeeded &= await ObserveAsync(
+            // A failed Windows toast does not veto `succeeded`: by this point
+            // it already reflects whether the pet animation actually played
+            // (set above at the _playAsync call), and both PublishAsync and
+            // TickAsync requeue-and-replay the whole item from the top when
+            // this method returns false. Letting a toast-only failure flip an
+            // already-successful animation to "failed" would show that
+            // animation a second time later just because the separate,
+            // best-effort OS notification did not land. The failure is still
+            // reported inside ObserveAsync either way -- it just no longer
+            // changes the return value.
+            await ObserveAsync(
                 () => ShowNotificationAsync(item, cancellationToken),
                 "presentation-notification");
         }
