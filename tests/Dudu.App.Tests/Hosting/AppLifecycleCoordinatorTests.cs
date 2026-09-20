@@ -215,7 +215,13 @@ public sealed class AppLifecycleCoordinatorTests
     [Fact]
     public async Task Open_home_dispatch_failure_propagates_and_does_not_show_overlay()
     {
+        // Finding E: the presentation-sink push used to happen right after
+        // the _userVisible write, before awaiting _openHome -- so a faulting
+        // _openHome propagated its exception with the sink already told
+        // "visible" and no overlay ever shown. The push now happens next to
+        // the Show call itself, after _openHome has already succeeded.
         var overlay = new FakeOverlay { IsVisible = false };
+        var sink = new RecordingPresentationEnvironmentSink();
         await using var lifecycle = new AppLifecycleCoordinator(
             new FakeHost(),
             overlay,
@@ -225,13 +231,15 @@ public sealed class AppLifecycleCoordinatorTests
                 new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
                 false, 3, true, false, true, TimeSpan.FromMinutes(15)),
             openHome: _ => Task.FromException(new InvalidOperationException("home dispatch failed")),
-            initialUserVisible: false);
+            initialUserVisible: false,
+            presentationEnvironment: sink);
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             lifecycle.OnHotkeyAsync(TestContext.Current.CancellationToken));
 
         Assert.Equal("home dispatch failed", exception.Message);
         Assert.Equal(0, overlay.ShowCount);
+        Assert.Null(sink.LastUserVisible);
     }
 
     [Fact]

@@ -186,7 +186,6 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
             }
 
             _userVisible = true;
-            _presentationEnvironment?.SetUserVisible(true);
         }
         finally { _gate.Release(); }
 
@@ -204,6 +203,12 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
         // caller happens to touch visibility again. Re-check under the same
         // visibilityGate-then-gate nesting EnsureUserVisibleAsync uses, and
         // skip the show if she has since hidden.
+        //
+        // Finding E: the presentation-sink push moved down here, next to the
+        // Show it describes. Pushing it up above (right after the
+        // _userVisible write) meant that if _openHome throws, the sink is
+        // left saying "visible" with no overlay ever shown -- this method
+        // propagates that exception with nothing to correct the push.
         await _visibilityGate.WaitAsync(cancellationToken);
         try
         {
@@ -218,6 +223,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
             }
             finally { _gate.Release(); }
 
+            _presentationEnvironment?.SetUserVisible(true);
             InvokeSafely(_overlay.Show, "hotkey-show");
         }
         finally { _visibilityGate.Release(); }
