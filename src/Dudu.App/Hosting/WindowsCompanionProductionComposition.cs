@@ -100,14 +100,15 @@ public sealed record CompanionLaunchOptions(bool Background, bool SelfTest = fal
     }
 
     /// <summary>
-    /// LaunchAtSignIn is the persisted policy for a startup/background launch.
-    /// A normal foreground launch always shows the companion; a background
-    /// launch only does so when that persisted policy has been disabled.
+    /// Every launch asks for the companion to be shown, including the
+    /// background launch at sign-in: a desktop pet that is invisible after
+    /// boot reads as broken. Pause, quiet hours, lock and fullscreen still
+    /// veto the show downstream in AppLifecycleCoordinator.TryCanShow.
     /// </summary>
     public bool ShouldShowOverlay(Preferences preferences)
     {
         ArgumentNullException.ThrowIfNull(preferences);
-        return !Background || !preferences.LaunchAtSignIn;
+        return true;
     }
 
     public bool ShouldOpenSettings(Profile? profile) =>

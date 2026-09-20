@@ -20,7 +20,7 @@ public sealed class CompanionCompositionTests
     }
 
     [Fact]
-    public void Background_launch_uses_persisted_startup_policy_for_overlay_visibility()
+    public void Background_sign_in_launch_still_shows_the_overlay()
     {
         var background = CompanionLaunchOptions.Parse("--background");
         var startupEnabled = new Preferences(
@@ -29,7 +29,7 @@ public sealed class CompanionCompositionTests
             false, 3, true, false, true, TimeSpan.FromMinutes(15));
         var startupDisabled = startupEnabled with { LaunchAtSignIn = false };
 
-        Assert.False(background.ShouldShowOverlay(startupEnabled));
+        Assert.True(background.ShouldShowOverlay(startupEnabled));
         Assert.True(background.ShouldShowOverlay(startupDisabled));
         Assert.True(new CompanionLaunchOptions(false).ShouldShowOverlay(startupEnabled));
     }

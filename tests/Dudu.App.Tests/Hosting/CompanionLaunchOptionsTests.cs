@@ -38,7 +38,7 @@ public sealed class CompanionLaunchOptionsTests
     }
 
     [Fact]
-    public void Background_launch_only_shows_overlay_for_a_completed_profile_without_startup_policy()
+    public void Background_launch_shows_overlay_only_for_a_completed_profile()
     {
         var options = CompanionLaunchOptions.Parse("--background");
         var preferences = new Preferences(
@@ -52,7 +52,7 @@ public sealed class CompanionLaunchOptionsTests
             TimeSpan.FromMinutes(15));
 
         Assert.False(options.ShouldShowOverlay(preferences, new Profile("Mia", false)));
-        Assert.False(options.ShouldShowOverlay(preferences, new Profile("Mia", true)));
+        Assert.True(options.ShouldShowOverlay(preferences, new Profile("Mia", true)));
         Assert.True(options.ShouldShowOverlay(
             preferences with { LaunchAtSignIn = false },
             new Profile("Mia", true)));
