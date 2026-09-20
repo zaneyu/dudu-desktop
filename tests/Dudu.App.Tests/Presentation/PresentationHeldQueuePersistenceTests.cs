@@ -1129,7 +1129,12 @@ public sealed class PresentationHeldQueuePersistenceTests
         // this App-layer enum. This is the tripwire: if PresentationItemKind
         // were ever renamed, those SQL literals would silently stop matching
         // and M3's fix would quietly regress with no compile error.
-        Assert.Equal("RemoteNote:msg-1", DurableNotification.RemoteNote("msg-1").Key);
+        // Finding 8 (test bug): RemoteNote's factory requires a protocol-safe
+        // "D"-format GUID and throws on anything else (see
+        // PresentationPolicy.RemoteNote) -- "msg-1" is not one.
+        Assert.Equal(
+            $"RemoteNote:{Guid.Empty:D}",
+            DurableNotification.RemoteNote(Guid.Empty.ToString("D")).Key);
         Assert.Equal("Reminder:reminder-1", DurableNotification.Reminder("reminder-1", "Stretch").Key);
         Assert.Equal(
             "LocalNote:note-1",
