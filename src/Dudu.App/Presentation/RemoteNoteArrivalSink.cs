@@ -44,7 +44,7 @@ public sealed class RemoteNoteArrivalSink : IRemoteNoteArrivalSink
         // before the overlay finishes composing) throws here. The next poll takes the
         // already-processed shortcut and acks the relay copy without ever calling this sink
         // again -- the note itself is never lost (it is already revealable through Love Notes,
-        // CompanionFeatureContext.RemoteEnvelopes), but its popup is not retried. Still true
+        // the feature context's stored remote notes), but its popup is not retried. Still true
         // after P2-B (PresentationCoordinator's held-item persistence, see
         // IHeldPresentationRepository): that fix only durably retries an item PublishAsync was
         // actually handed, and this call never reaches PublishAsync. (Tracked separately; not

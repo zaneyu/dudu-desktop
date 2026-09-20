@@ -94,14 +94,18 @@ public sealed class FieldDiagnosticsContractTests
         var wireMethod = composition.IndexOf(
             "private static void WireDataFailureDiagnostics",
             StringComparison.Ordinal);
+        Assert.True(wireMethod >= 0);
+        // Search from the method onwards: the composition also resolves RemoteSyncService
+        // optionally in earlier members, and those must not satisfy (or fail) this contract.
         var resolvesOptionally = composition.IndexOf(
             "GetService<RemoteSyncService>()",
+            wireMethod,
             StringComparison.Ordinal);
         var wiresReporter = composition.IndexOf(
             "remoteSync.FailureReporter",
+            wireMethod,
             StringComparison.Ordinal);
 
-        Assert.True(wireMethod >= 0);
         Assert.True(resolvesOptionally > wireMethod);
         Assert.True(wiresReporter > resolvesOptionally);
     }
