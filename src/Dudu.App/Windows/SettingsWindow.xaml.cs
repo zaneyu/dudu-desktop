@@ -129,7 +129,22 @@ public sealed partial class SettingsWindow : UserControl
         }
     }
 
-    private void OnUnloaded(object sender, RoutedEventArgs args) => _duduTimer.Stop();
+    private void OnUnloaded(object sender, RoutedEventArgs args)
+    {
+        _duduTimer.Stop();
+
+        // Defense in depth for the same leak TasksFocusPage.Page_Unloaded
+        // already guards against: App builds a fresh SettingsWindow (-> new
+        // page -> new view model) on every open, so a subscription left on
+        // the singleton FocusService.SessionExpired that never gets
+        // detached leaks forever. Page_Unloaded may not fire at all when
+        // the window is closed outright rather than navigated away from;
+        // this Unloaded on the window's own content is a second chance to
+        // detach in that case. Idempotent (DetachFocusExpiry no-ops if
+        // already detached), and safe if feature pages were never created
+        // (e.g. closed mid-onboarding).
+        _tasksFocusPage?.ViewModel.DetachFocusExpiry();
+    }
 
     private async Task EnsureDuduPackAsync()
     {
