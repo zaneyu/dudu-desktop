@@ -146,6 +146,12 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
         {
             ThrowIfDisposed();
             _suspended = true;
+            // Unlike a session lock (which has its own SetSessionLocked
+            // suppression flag on the presentation sink), suspend has no
+            // separate signal -- without this push the gateway keeps
+            // believing the pet is visible for up to 30 s while the overlay
+            // is actually hidden, letting a held item animate into it.
+            _presentationEnvironment?.SetUserVisible(false);
         }
         finally { _gate.Release(); }
 
@@ -223,7 +229,10 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
         bool explicitUserGesture = false,
         bool requireStillDesired = false)
     {
-        var snapshot = await CaptureAsync(cancellationToken);
+        // Throw fast if already disposed before even queuing on the
+        // visibility gate; the authoritative disposed/desired-state check
+        // still happens under _gate below.
+        await CaptureAsync(cancellationToken);
         await _visibilityGate.WaitAsync(cancellationToken);
         try
         {
@@ -231,15 +240,11 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
             try
             {
                 ThrowIfDisposed();
-                // Finding C: a reconcile caller captures its own "still
-                // desired" snapshot before this gate was ever reached -- an
-                // explicit tray/hotkey hide can race in and flip
-                // _userVisible to false in that window. A proactive
-                // reconcile must never resurrect a hide she asked for after
-                // its snapshot was taken, so bail on the field's current
-                // value instead of forcing it back to true below. An
-                // explicit gesture (tray show, hotkey) never sets this flag
-                // and is unaffected.
+                // Finding C: a reconcile caller must never resurrect a hide
+                // she asked for after its snapshot was taken, so bail on the
+                // field's current value instead of forcing it back to true
+                // below. An explicit gesture (tray show, hotkey) never sets
+                // this flag and is unaffected.
                 if (requireStillDesired && !_userVisible)
                 {
                     return;
@@ -256,8 +261,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
                 // hotkey show whenever any window was fullscreen -- TryCanShow
                 // below already applies that preference correctly, so this is
                 // redundant with it and wrong on top of being redundant.
-                if (snapshot.FullscreenHidden
-                    || _fullscreenHidden
+                if (_fullscreenHidden
                     || _locked
                     || _suspended
                     || !TryCanShow(fullscreen, _locked, _suspended, "show-gate", ignoreQuietHours: explicitUserGesture))
@@ -300,31 +304,36 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
     {
         try
         {
-            var snapshot = await CaptureAsync(cancellationToken);
-            if (!snapshot.UserVisible)
+            // Finding A: the overlay being visible always re-asserts true
+            // and desired-hidden always re-asserts false, so a missed push
+            // anywhere self-heals within one tick instead of staying wrong
+            // forever -- reconcile is authoritative in both directions.
+            //
+            // Finding 2: the read of _userVisible, the read of
+            // _overlay.IsVisible, and the push they decide on must happen
+            // as one atomic step under _gate. Reading them separately (the
+            // old CaptureAsync-then-unlocked-IsVisible shape) let an
+            // explicit hide land in between: HideForUserAsync's gate
+            // section (which flips _userVisible and pushes false) is
+            // blocked out entirely while we hold _gate here, so nothing can
+            // race between these two checks and the push that follows them.
+            await _gate.WaitAsync(cancellationToken);
+            try
             {
-                return;
-            }
+                ThrowIfDisposed();
+                if (!_userVisible)
+                {
+                    _presentationEnvironment?.SetUserVisible(false);
+                    return;
+                }
 
-            if (_overlay.IsVisible)
-            {
-                // Finding A: this used to early-return here without telling
-                // the sink anything. SetUserVisible is a one-way latch from
-                // PresentationCoordinator's point of view -- any veto (lock,
-                // fullscreen, suspend, pause, quiet hours) pushes false, but
-                // not every show site that brings the overlay back pushes
-                // true (see the resume-show/fullscreen-restore-show/
-                // pause-state-show sites below). Left alone, a single missed
-                // push stuck the gateway believing the pet was hidden for
-                // the rest of the session -- nothing released, every new
-                // reminder toast-only, its next occurrence silently dropped
-                // by IsQueued. Reconcile is now authoritative in both
-                // directions: the overlay being visible always re-asserts
-                // true, so a missed push anywhere self-heals within one
-                // tick instead of staying wrong forever.
-                _presentationEnvironment?.SetUserVisible(true);
-                return;
+                if (_overlay.IsVisible)
+                {
+                    _presentationEnvironment?.SetUserVisible(true);
+                    return;
+                }
             }
+            finally { _gate.Release(); }
 
             await EnsureUserVisibleAsync(cancellationToken, requireStillDesired: true);
         }
@@ -560,8 +569,6 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
         CancellationToken cancellationToken,
         bool clearLock)
     {
-        await _host.ResumeAsync(cancellationToken);
-
         GateSnapshot snapshot;
         await _gate.WaitAsync(cancellationToken);
         try
@@ -613,6 +620,18 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
             _presentationEnvironment?.SetUserVisible(true);
             await InvokeVisualSafelyAsync(_overlay.Show, "resume-show", cancellationToken);
         }
+
+        // Finding 5: resume the host only after _locked/_suspended are
+        // cleared and the overlay is back up. _host.ResumeAsync can run an
+        // immediate catch-up reminder tick (AppHost.RunResumeTickAsync),
+        // which reconciles visibility and releases the presentation
+        // gateway's queue synchronously. Doing that before the flags above
+        // were cleared used to make the catch-up reconcile see stale
+        // locked/suspended state, veto, and push the gateway back to
+        // user-hidden -- stranding a reminder that became due exactly at
+        // unlock until the next periodic tick (~30 s later) instead of
+        // surfacing it at unlock.
+        await _host.ResumeAsync(cancellationToken);
 
         if (welcome)
         {
