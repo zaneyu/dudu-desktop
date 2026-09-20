@@ -50,9 +50,18 @@ public sealed class WindowsAudioCuePlayer : IAudioCuePlayer, IAudioCuePlayerLife
             completion.TrySetResult(AudioPlaybackState.Failed);
         player.MediaEnded += ended;
         player.MediaFailed += failed;
+        // Finding H: this callback must only ever complete the TCS. The
+        // `using var cancellation` below disposes the registration on every
+        // exit path, and CancellationTokenRegistration.Dispose() blocks
+        // until a currently-running callback returns -- if that callback
+        // touched `player` (Source = null, as it used to) while a hung
+        // native decoder still owned it (see the TimeoutException path
+        // below), disposing the registration -- and therefore this whole
+        // method -- could still stall despite the completion timeout that
+        // exists specifically to prevent that. All player teardown stays in
+        // `finally`, either inline or deferred to its own background task.
         using var cancellation = cancellationToken.Register(() =>
         {
-            try { player.Source = null; } catch { }
             completion.TrySetResult(AudioPlaybackState.Suppressed);
         });
 
@@ -107,7 +116,10 @@ public sealed class WindowsAudioCuePlayer : IAudioCuePlayer, IAudioCuePlayerLife
             else
             {
                 try { player.Source = null; } catch { }
-                player.Dispose();
+                // Finding H: guard this the same way the deferred hung-player
+                // teardown above already does -- Dispose() must never throw
+                // out of this finally block.
+                try { player.Dispose(); } catch { }
             }
         }
     }
