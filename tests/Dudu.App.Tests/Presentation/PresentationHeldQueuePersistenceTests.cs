@@ -279,11 +279,12 @@ public sealed class PresentationHeldQueuePersistenceTests
 
         // Simulate a restart: a fresh coordinator over the same durable
         // repository must not re-toast the reloaded, already-toasted row.
+        var restartedPlayed = 0;
         var restarted = new PresentationCoordinator(
             new PresentationPolicy(TimeSpan.Zero),
             notifications,
             PetStateMachine.CreateIdle(),
-            (_, _, _) => Task.CompletedTask,
+            (_, _, _) => { restartedPlayed++; return Task.CompletedTask; },
             () => AnimationOptions.Default,
             isQuietHours: () => false,
             pauseState: () => PauseState.None,
@@ -296,6 +297,68 @@ public sealed class PresentationHeldQueuePersistenceTests
         await restarted.TickAsync(CancellationToken.None);
 
         Assert.Equal(1, notifications.ReminderCalls);
+        // The reloaded row was actually released and presented (not just
+        // skipped as "already toasted" and left dangling): the pet
+        // animation ran once, and its row is gone from the repository.
+        Assert.Equal(1, restartedPlayed);
+        Assert.Empty(repository.Rows);
+    }
+
+    [Fact]
+    public async Task A_failed_already_queued_toast_is_not_marked_toasted_and_is_retried_on_release()
+    {
+        // Finding: PublishAsync's already-queued + toastNow branch used to
+        // discard ObserveAsync's success result and persist the toasted
+        // marker unconditionally -- a toast that actually failed to show
+        // was still recorded as shown, in memory and on the durable row,
+        // and the real Windows toast was never attempted again once the
+        // held item was finally released.
+        var repository = new RecordingHeldPresentationRepository();
+        var notifications = new ThrowOnFirstCallNotificationService();
+        var quiet = true;
+        var coordinator = new PresentationCoordinator(
+            new PresentationPolicy(TimeSpan.Zero),
+            notifications,
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => Task.CompletedTask,
+            () => AnimationOptions.Default,
+            isQuietHours: () => quiet,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            heldPresentations: repository);
+
+        // Held purely by quiet hours, same setup as the sibling tests.
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-1", "Stretch"),
+            bypassSuppression: false,
+            CancellationToken.None);
+        Assert.False(repository.Rows.Values.Single().Toasted);
+
+        quiet = false;
+        coordinator.SetUserVisible(false);
+
+        // The later-occurrence toast fires, but the notification service
+        // throws -- the persisted row must stay untoasted, not be marked
+        // toasted despite the failure.
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-1", "Stretch"),
+            bypassSuppression: false,
+            CancellationToken.None);
+
+        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.False(
+            repository.Rows.Values.Single().Toasted,
+            "A failed toast must not be persisted as toasted.");
+
+        // She un-hides Dudu, releasing the held item: since the failed
+        // toast was never marked toasted (in memory or persisted), the
+        // release path must attempt the toast again -- not skip it as
+        // already shown.
+        coordinator.SetUserVisible(true);
+        await coordinator.TickAsync(CancellationToken.None);
+
+        Assert.Equal(2, notifications.ReminderCalls);
+        Assert.Empty(repository.Rows);
     }
 
     [Fact]
@@ -1396,6 +1459,25 @@ public sealed class PresentationHeldQueuePersistenceTests
             RemoteNoteCalls++;
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class ThrowOnFirstCallNotificationService : INotificationService
+    {
+        public int ReminderCalls { get; private set; }
+
+        public Task ShowReminderAsync(string reminderId, string title, CancellationToken cancellationToken)
+        {
+            ReminderCalls++;
+            if (ReminderCalls == 1)
+            {
+                throw new InvalidOperationException("simulated toast failure");
+            }
+
+            return Task.CompletedTask;
+        }
+
+        public Task ShowRemoteNoteArrivalAsync(Guid messageId, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
     }
 
     // Finding 17: this fake's Dictionary is mutated from concurrent tasks in

@@ -551,20 +551,34 @@ public sealed class PresentationCoordinator :
         {
             if (toastNow)
             {
-                await ObserveAsync(
+                var toastShown = await ObserveAsync(
                     () => ShowNotificationAsync(item, cancellationToken),
                     "presentation-notification");
 
-                // Finding 6: the in-memory _toastedWhileHeldIds marker set
-                // above is not enough on its own -- a restart before the
-                // held row is ever released would reload it as untoasted
-                // and show this same toast a second time. Persist it the
-                // same way PresentAsync's own toastShown-and-not-succeeded
-                // path does (LocalNote has no durable row to mark, and no
-                // real toast either).
-                if (item.Kind != PresentationItemKind.LocalNote)
+                if (toastShown)
                 {
-                    await MarkToastedAsync(item.Key, cancellationToken);
+                    // Finding 6: the in-memory _toastedWhileHeldIds marker
+                    // set above is not enough on its own -- a restart before
+                    // the held row is ever released would reload it as
+                    // untoasted and show this same toast a second time.
+                    // Persist it the same way PresentAsync's own
+                    // toastShown-and-not-succeeded path does (LocalNote has
+                    // no durable row to mark, and no real toast either).
+                    if (item.Kind != PresentationItemKind.LocalNote)
+                    {
+                        await MarkToastedAsync(item.Key, cancellationToken);
+                    }
+                }
+                else
+                {
+                    // The toast itself failed -- undo the marker set above
+                    // so a retry (the row is still held and will be
+                    // released normally) is free to show it again instead
+                    // of being permanently skipped as "already toasted".
+                    lock (_gate)
+                    {
+                        _toastedWhileHeldIds.Remove(item.Key);
+                    }
                 }
             }
 
