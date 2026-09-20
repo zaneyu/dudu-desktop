@@ -79,6 +79,15 @@ public sealed class PresentationCoordinator :
     private bool _fullscreen;
     private bool _userHidden;
 
+    /// <summary>
+    /// A held row this old on load is presumed abandoned (its retry has been
+    /// failing since before the last restart) rather than durably retried
+    /// forever. See <see cref="RequeueHeldAsync"/> for why a failed retry no
+    /// longer resets <c>QueuedUtc</c>, which is what makes this cutoff mean
+    /// actual age instead of time-since-last-attempt.
+    /// </summary>
+    private static readonly TimeSpan MaxHeldAge = TimeSpan.FromDays(7);
+
     /// <param name="petGate">
     /// The same <see cref="SemaphoreSlim"/> instance given to
     /// <see cref="PetPresentationCoordinator"/> in production, so an
@@ -194,12 +203,13 @@ public sealed class PresentationCoordinator :
     /// <see cref="IHeldPresentationRepository"/> so an item held back by
     /// quiet hours/fullscreen/lock/pause at the moment the app last quit or
     /// crashed is not lost. No-op when no repository was supplied. A row that
-    /// has already expired is dropped (deleted, not enqueued) rather than
-    /// surfaced on this launch; a row this build no longer recognizes (kind,
-    /// or a required field missing) is reported and dropped the same way
-    /// rather than wedging startup. A row marked toasted re-seeds the
-    /// in-memory toasted-while-held marker so its Windows toast is not shown
-    /// a second time once released.
+    /// has already expired, or is older than <see cref="MaxHeldAge"/>, is
+    /// dropped (deleted, not enqueued) rather than surfaced on this launch;
+    /// a row this build no longer recognizes (kind, or a required field
+    /// missing) is reported and dropped the same way rather than wedging
+    /// startup. A row marked toasted re-seeds the in-memory
+    /// toasted-while-held marker so its Windows toast is not shown a second
+    /// time once released.
     /// </summary>
     private async Task LoadHeldItemsAsync(CancellationToken cancellationToken)
     {
@@ -224,13 +234,14 @@ public sealed class PresentationCoordinator :
         }
 
         var now = _utcNow();
+        var cutoff = now - MaxHeldAge;
         foreach (var record in held)
         {
             try
             {
-                if (record.ExpiresUtc is { } expiry && now >= expiry)
+                if ((record.ExpiresUtc is { } expiry && now >= expiry) || record.QueuedUtc < cutoff)
                 {
-                    await _heldPresentations.DeleteAsync(record.Key, cancellationToken);
+                    await RemoveHeldAsync(record.Key, cancellationToken);
                     continue;
                 }
 
@@ -402,11 +413,18 @@ public sealed class PresentationCoordinator :
             }
         }
 
-        // Both a purge (expired while held) and a release (handed off below)
-        // take the item out of PresentationPolicy's in-memory queue, so its
-        // persisted row, if any, must go with it — otherwise it would
-        // reappear on the next restart's load. RequeueHeldAsync below
-        // re-persists a release that fails.
+        // A purge (expired while held) takes the item out of
+        // PresentationPolicy's in-memory queue for good, so its persisted
+        // row, if any, is removed immediately. A release does too, but
+        // toPresent's row is deliberately left in place here: it is only
+        // deleted below once PresentAsync actually succeeds, so a crash
+        // partway through presenting it (e.g. waiting on the pet gate, or
+        // during the animation) leaves the row for the next launch to
+        // reload instead of losing the item silently. Any other released
+        // item is not going to be presented by this tick (defensively —
+        // e.g. it raced with a concurrent PublishAsync and got excluded
+        // from toPresent above) and is removed now like a purge, since
+        // nothing below will act on it.
         foreach (var purgedKey in purgedKeys)
         {
             await RemoveHeldAsync(purgedKey, cancellationToken);
@@ -414,6 +432,11 @@ public sealed class PresentationCoordinator :
 
         foreach (var item in released)
         {
+            if (toPresent is not null && item.Key == toPresent.Key)
+            {
+                continue;
+            }
+
             await RemoveHeldAsync(item.Key, cancellationToken);
         }
 
@@ -421,14 +444,24 @@ public sealed class PresentationCoordinator :
         {
             try
             {
-                if (!await PresentAsync(toPresent, cancellationToken))
+                if (await PresentAsync(toPresent, cancellationToken))
                 {
-                    await RequeueHeldAsync(toPresent, now, cancellationToken);
+                    await RemoveHeldAsync(toPresent.Key, cancellationToken);
+                }
+                else
+                {
+                    // Declined rather than thrown (e.g. suppressed again by
+                    // the time it ran): its row is still there from before
+                    // this tick, so just put it back in the in-memory queue
+                    // without re-persisting -- re-persisting here would
+                    // reset QueuedUtc and defeat the abandoned-item cutoff
+                    // in LoadHeldItemsAsync.
+                    _policy.Requeue(toPresent);
                 }
             }
             catch
             {
-                await RequeueHeldAsync(toPresent, now, cancellationToken);
+                _policy.Requeue(toPresent);
                 throw;
             }
             finally
@@ -794,11 +827,14 @@ public sealed class PresentationCoordinator :
         return ObserveAsync(() => _heldPresentations.DeleteAsync(key, cancellationToken), "presentation-tick");
     }
 
-    /// <summary>Returns a failed/cancelled presentation attempt to
+    /// <summary>Returns a failed/cancelled immediate-presentation attempt
+    /// (<see cref="PublishAsync"/> only -- TickAsync requeues a held item's
+    /// failed retry itself, without touching its already-persisted row) to
     /// PresentationPolicy's durable queue and, only when it actually
-    /// re-entered the queue, persists it again.</summary>
-    private Task RequeueHeldAsync(DurableNotification item, DateTimeOffset now, CancellationToken cancellationToken) =>
-        _policy.Requeue(item) ? PersistHeldAsync(item, now, cancellationToken) : Task.CompletedTask;
+    /// re-entered the queue, persists it for the first time with
+    /// <paramref name="queuedUtc"/> as its QueuedUtc.</summary>
+    private Task RequeueHeldAsync(DurableNotification item, DateTimeOffset queuedUtc, CancellationToken cancellationToken) =>
+        _policy.Requeue(item) ? PersistHeldAsync(item, queuedUtc, cancellationToken) : Task.CompletedTask;
 
     /// <summary>Rebuilds the <see cref="DurableNotification"/> a
     /// <see cref="HeldPresentation"/> row was saved from. Throws for a row
