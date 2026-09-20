@@ -120,6 +120,53 @@ public sealed class PresentationHeldQueuePersistenceTests
     }
 
     [Fact]
+    public async Task A_coordinator_started_user_hidden_holds_an_item_until_shown_then_presents_it_once()
+    {
+        // Finding B: production must start this gateway user-hidden until
+        // the lifecycle coordinator pushes the first real value -- the
+        // startup reminder tick still advances the reminder engine before
+        // the events sink / startup visibility gate have run, so without
+        // this, a due reminder could publish while the coordinator still
+        // believed the unset default ("visible") was real, animating it
+        // into a window that is not shown yet and deleting its row on that
+        // "successful" presentation.
+        var repository = new RecordingHeldPresentationRepository();
+        var notifications = new CountingNotificationService();
+        var played = 0;
+        var coordinator = new PresentationCoordinator(
+            new PresentationPolicy(TimeSpan.Zero),
+            notifications,
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => { played++; return Task.CompletedTask; },
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            heldPresentations: repository,
+            initialUserHidden: true);
+
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-1", "Stretch"),
+            bypassSuppression: false,
+            CancellationToken.None);
+
+        // Held purely because the coordinator started user-hidden -- quiet
+        // hours/fullscreen/lock/pause are all clear. A hold caused only by
+        // user-hidden still toasts immediately (see PublishAsync's toastNow)
+        // and persists the row already marked toasted.
+        Assert.Equal(0, played);
+        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.True(Assert.Single(repository.Rows.Values).Toasted);
+
+        coordinator.SetUserVisible(true);
+        await coordinator.TickAsync(CancellationToken.None);
+
+        Assert.Equal(1, played);
+        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.Empty(repository.Rows);
+    }
+
+    [Fact]
     public async Task A_failed_release_re_persists_the_item_for_a_later_retry()
     {
         var repository = new RecordingHeldPresentationRepository();

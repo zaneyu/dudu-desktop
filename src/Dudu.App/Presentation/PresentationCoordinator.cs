@@ -122,7 +122,8 @@ public sealed class PresentationCoordinator :
         IAppHostErrorReporter? errorReporter = null,
         Func<AudioCueEvent, CancellationToken, Task>? playAudioAsync = null,
         IReadOnlyList<string>? availableStickerKeys = null,
-        IHeldPresentationRepository? heldPresentations = null)
+        IHeldPresentationRepository? heldPresentations = null,
+        bool initialUserHidden = false)
     {
         _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
         _policy = policy ?? throw new ArgumentNullException(nameof(policy));
@@ -140,6 +141,17 @@ public sealed class PresentationCoordinator :
         _isFullscreenNow = isFullscreenNow ?? (() => { lock (_gate) return _fullscreen; });
         _errorReporter = errorReporter;
         _heldPresentations = heldPresentations;
+        // Finding B: production must start user-hidden until the lifecycle
+        // coordinator pushes the first real value (its ctor always seeds one
+        // now, and reconcile keeps pushing one every tick) -- otherwise the
+        // startup reminder tick (which still advances the reminder engine
+        // before the events sink / startup visibility gate have run) can
+        // publish a due reminder while this gateway believes the default
+        // "visible" is real, animating it into a window that is not shown
+        // yet and deleting its row on that "successful" presentation. Tests
+        // and the Windows harness, which never push a value at all, keep
+        // their prior behavior (default false) unless they opt in.
+        _userHidden = initialUserHidden;
         if ((_ambientScheduler is null) != (_localNoteSelector is null))
         {
             throw new ArgumentException(

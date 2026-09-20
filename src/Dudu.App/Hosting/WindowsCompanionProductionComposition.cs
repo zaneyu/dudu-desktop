@@ -629,7 +629,17 @@ public static class WindowsCompanionProductionComposition
                         // P2-B: so an item held by quiet hours/fullscreen/lock/pause
                         // survives a quit or crash instead of only living in
                         // PresentationPolicy's in-memory queue.
-                        heldPresentations: services.GetRequiredService<IHeldPresentationRepository>());
+                        heldPresentations: services.GetRequiredService<IHeldPresentationRepository>(),
+                        // Finding B: the events sink and startup visibility
+                        // gate that push real fullscreen/lock/visibility
+                        // state both run later, after this method returns --
+                        // this gateway must start user-hidden so the
+                        // startup reminder tick (which still advances the
+                        // reminder engine before either has run) cannot
+                        // animate an overdue reminder into a window that is
+                        // not shown yet and delete its row on that
+                        // "successful" presentation.
+                        initialUserHidden: true);
                     _ = StartAnimationPlayback(
                         animationEngine.PlayAsync(
                             pet.Current,
