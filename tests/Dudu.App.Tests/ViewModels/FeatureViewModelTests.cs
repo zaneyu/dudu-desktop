@@ -2537,10 +2537,9 @@ public sealed class FeatureViewModelTests
                     {
                         toSave = toSave with { Title = previous.Title };
                     }
-                    if (previous.Details is { } previousDetails
-                        && !Dudu.Core.Reminders.LocalReminderDefaults.IsKnownDefaultDetails(reminder.Id, previousDetails))
+                    if (!Dudu.Core.Reminders.LocalReminderDefaults.IsKnownDefaultDetails(reminder.Id, previous.Details ?? string.Empty))
                     {
-                        toSave = toSave with { Details = previousDetails };
+                        toSave = toSave with { Details = previous.Details };
                     }
                 }
 

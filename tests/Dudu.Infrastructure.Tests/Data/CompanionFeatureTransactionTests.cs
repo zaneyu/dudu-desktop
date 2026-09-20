@@ -261,6 +261,43 @@ public sealed class CompanionFeatureTransactionTests
     }
 
     [Fact]
+    public async Task Saving_preferences_preserves_a_cleared_default_details_field()
+    {
+        // Opus review follow-up D: the preserve check required a non-null
+        // previous Details (`previous.Details is { } previousDetails`), so
+        // clearing Details to null on the Reminders page was invisible to
+        // it -- the very next preferences save silently regenerated the
+        // shipped default text instead of keeping the clear.
+        await using var fixture = await Fixture.CreateAsync();
+        var preferences = TestPreferences() with { BedtimeRitualEnabled = true };
+        var service = new CompanionFeatureTransactionService(new AppUnitOfWork(fixture.Database));
+        var reminderRepository = new ReminderRepository(fixture.Database);
+
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            preferences,
+            DateTimeOffset.Parse("2026-09-12T10:00:00Z"),
+            TimeZoneInfo.Utc,
+            TestContext.Current.CancellationToken);
+
+        var cleared = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == LocalReminderDefaults.BedtimeId) with
+        {
+            Details = null,
+        };
+        await reminderRepository.SaveAsync(cleared, TestContext.Current.CancellationToken);
+
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            preferences,
+            DateTimeOffset.Parse("2026-09-13T09:00:00Z"),
+            TimeZoneInfo.Utc,
+            TestContext.Current.CancellationToken);
+
+        var saved = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == LocalReminderDefaults.BedtimeId);
+        Assert.Null(saved.Details);
+    }
+
+    [Fact]
     public async Task Saving_preferences_preserves_a_user_edited_rule_and_its_pending_schedule()
     {
         // Audit finding 2: Rule/QuietHoursBehavior/MissedPolicy are a hardcoded

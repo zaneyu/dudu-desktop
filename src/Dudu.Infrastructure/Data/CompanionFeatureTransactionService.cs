@@ -116,10 +116,14 @@ public sealed class CompanionFeatureTransactionService : ICompanionFeatureTransa
                     {
                         toSave = toSave with { Title = previous.Title };
                     }
-                    if (previous.Details is { } previousDetails
-                        && !LocalReminderDefaults.IsKnownDefaultDetails(reminder.Id, previousDetails))
+                    // A null previous Details (she cleared the field) is a user
+                    // edit too, not just a non-null one -- IsKnownDefaultDetails
+                    // never matches string.Empty, so this still regenerates
+                    // Details when the existing row holds the shipped/legacy
+                    // text but preserves an explicit clear.
+                    if (!LocalReminderDefaults.IsKnownDefaultDetails(reminder.Id, previous.Details ?? string.Empty))
                     {
-                        toSave = toSave with { Details = previousDetails };
+                        toSave = toSave with { Details = previous.Details };
                     }
                 }
 
