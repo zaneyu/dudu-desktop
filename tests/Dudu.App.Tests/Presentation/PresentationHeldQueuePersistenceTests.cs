@@ -161,6 +161,45 @@ public sealed class PresentationHeldQueuePersistenceTests
     }
 
     [Fact]
+    public async Task A_repeatedly_failing_animation_does_not_retoast_and_marks_the_held_row_toasted()
+    {
+        // Finding 1: PresentAsync showed the toast successfully but never
+        // recorded that in _toastedWhileHeldIds when the animation itself
+        // kept failing, so the requeued item re-toasted on every later
+        // attempt -- every 30 s tick, and (since the persisted row's Toasted
+        // column stayed false) across a restart too, for up to MaxHeldAge.
+        var repository = new RecordingHeldPresentationRepository();
+        var notifications = new CountingNotificationService();
+        var coordinator = new PresentationCoordinator(
+            new PresentationPolicy(TimeSpan.Zero),
+            notifications,
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => Task.FromException(new InvalidOperationException("playback failed")),
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            heldPresentations: repository);
+
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-1", "Stretch"),
+            bypassSuppression: false,
+            CancellationToken.None);
+
+        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.True(Assert.Single(repository.Rows.Values).Toasted);
+
+        // Every later attempt keeps failing the animation but must not
+        // re-toast.
+        await coordinator.TickAsync(CancellationToken.None);
+        await coordinator.TickAsync(CancellationToken.None);
+        await coordinator.TickAsync(CancellationToken.None);
+
+        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.True(Assert.Single(repository.Rows.Values).Toasted);
+    }
+
+    [Fact]
     public async Task StartAsync_reloads_a_persisted_held_item_into_the_queue()
     {
         // Simulates a restart: the repository already has a row from a

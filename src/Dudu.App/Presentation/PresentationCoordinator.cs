@@ -709,9 +709,30 @@ public sealed class PresentationCoordinator :
             // best-effort OS notification did not land. The failure is still
             // reported inside ObserveAsync either way -- it just no longer
             // changes the return value.
-            await ObserveAsync(
+            var toastShown = await ObserveAsync(
                 () => ShowNotificationAsync(item, cancellationToken),
                 "presentation-notification");
+
+            // The animation can still have already failed by this point
+            // (succeeded is false): without recording that the toast
+            // happened, a retry -- whether the immediate re-present a few
+            // lines up in PublishAsync's catch, or a later 30 s tick -- would
+            // find alreadyToasted still false and show the exact same toast
+            // again, forever, since a failing animation never lets the item
+            // leave the queue. Marking it here makes the requeue (and
+            // whatever persists the row afterward) see toasted=true, the same
+            // as the userHidden-while-held path already does. Only latched
+            // for a failed presentation: a succeeded one is done for good, so
+            // leaving the marker set would just orphan it for a future item
+            // recurring under the same key, exactly like the purge cleanup
+            // above guards against.
+            if (toastShown && !succeeded)
+            {
+                lock (_gate)
+                {
+                    _toastedWhileHeldIds.Add(item.Key);
+                }
+            }
         }
         else if (succeeded)
         {
