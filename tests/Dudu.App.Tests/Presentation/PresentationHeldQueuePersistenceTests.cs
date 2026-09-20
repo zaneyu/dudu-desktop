@@ -533,6 +533,57 @@ public sealed class PresentationHeldQueuePersistenceTests
     }
 
     [Fact]
+    public async Task StartAsync_drops_a_row_whose_decoded_key_collides_with_another_without_leaking_its_toasted_marker()
+    {
+        // Finding 18: HeldPresentationRepository.SaveAsync upserts on its own
+        // primary key, so two rows can never literally share a
+        // presentation_key -- but two rows with DIFFERENT primary keys can
+        // still decode (via ToDurableNotification) to the same Kind:Id
+        // notification key, and PresentationPolicy.Enqueue correctly refuses
+        // the second one as a duplicate. LoadHeldItemsAsync used to ignore
+        // that false return: it still latched the refused row's Toasted flag
+        // into _toastedWhileHeldIds (an orphaned marker nothing will ever
+        // consume) and left its row on disk to fail the same way forever.
+        var queuedUtc = DateTimeOffset.Parse("2026-09-19T08:00:00Z");
+        var first = new HeldPresentation(
+            "Reminder:reminder-1#a", "Reminder", "reminder-1", "Stretch", null, null, null,
+            queuedUtc, Toasted: false);
+        var duplicate = first with { Key = "Reminder:reminder-1#b", Toasted = true };
+        var repository = new RecordingHeldPresentationRepository();
+        repository.Seed(first);
+        repository.Seed(duplicate);
+        var policy = new PresentationPolicy(TimeSpan.Zero);
+        var notifications = new CountingNotificationService();
+        var played = 0;
+        var coordinator = new PresentationCoordinator(
+            policy,
+            notifications,
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => { played++; return Task.CompletedTask; },
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            utcNow: () => queuedUtc.AddMinutes(5),
+            heldPresentations: repository);
+
+        await coordinator.StartAsync(CancellationToken.None);
+
+        Assert.Equal(1, policy.QueuedCount);
+        // Only one of the two colliding rows survives on disk -- the refused
+        // duplicate must have been deleted, not left behind.
+        Assert.Single(repository.Rows);
+
+        await coordinator.TickAsync(CancellationToken.None);
+
+        // If the refused row's Toasted=true marker had leaked into
+        // _toastedWhileHeldIds, this toast would have been silently
+        // swallowed regardless of which row actually survived.
+        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.Equal(1, played);
+    }
+
+    [Fact]
     public async Task ReportHeldFailureOnce_reports_a_second_failure_of_a_different_exception_type_under_the_same_kind()
     {
         // Finding 16: the report-once latch used to key on operation kind

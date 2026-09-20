@@ -289,13 +289,27 @@ public sealed class PresentationCoordinator :
                 }
 
                 var notification = ToDurableNotification(record);
+                bool enqueued;
                 lock (_gate)
                 {
-                    _policy.Enqueue(notification);
-                    if (record.Toasted)
+                    enqueued = _policy.Enqueue(notification);
+                    if (enqueued && record.Toasted)
                     {
                         _toastedWhileHeldIds.Add(notification.Key);
                     }
+                }
+
+                // Enqueue returns false for a duplicate kind+id already sitting
+                // in the in-memory queue (e.g. two persisted rows collided on
+                // the same key) or an Ambient item that should never have been
+                // persisted. Either way this row will never be delivered from
+                // here, so leaving it on disk would just reload and fail to
+                // enqueue it again next launch, and marking it toasted would
+                // orphan that marker forever since nothing downstream will ever
+                // consume it for a key that was never actually queued.
+                if (!enqueued)
+                {
+                    await RemoveHeldAsync(record.Key, cancellationToken);
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
