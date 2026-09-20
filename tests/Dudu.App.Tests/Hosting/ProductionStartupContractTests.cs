@@ -274,6 +274,45 @@ public sealed class ProductionStartupContractTests
         Assert.True(showCall > registerCall);
     }
 
+    [Fact]
+    public void Pause_state_changes_reconcile_the_pause_gate_instead_of_writing_desired_visible()
+    {
+        // Finding 1 (BLOCKER): applyPauseAsync used to call
+        // runtime.SetUserVisibleAsync(state.Mode == PauseMode.None, token),
+        // writing the DESIRED-visible flag directly instead of just
+        // re-evaluating the pause gate. A timed pause (e.g. "take a
+        // five-minute break") set _userVisible to false when it started,
+        // but nothing ever set it back to true when the pause expired --
+        // OnPauseStateChangedAsync (the actual pause-gate reconciler) only
+        // vetoes overlay Show/Hide, it never restores _userVisible for
+        // her -- so the pet stayed permanently hidden once the timer ran
+        // out. Fixed by calling runtime.OnPauseStateChangedAsync instead,
+        // which leaves _userVisible untouched and only re-applies the
+        // pause gate against whatever it currently is.
+        var root = FindRepositoryRoot();
+        var composition = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.App", "Hosting", "WindowsCompanionProductionComposition.cs"));
+        var runtime = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.App", "Hosting", "WindowsCompanionBootstrap.cs"));
+
+        var applyPauseStart = composition.IndexOf(
+            "applyPauseAsync: async (state, token) =>", StringComparison.Ordinal);
+        Assert.True(applyPauseStart >= 0, "Expected an applyPauseAsync composition site.");
+        var applyPauseEnd = composition.IndexOf("},", applyPauseStart, StringComparison.Ordinal);
+        Assert.True(applyPauseEnd > applyPauseStart, "Expected the applyPauseAsync lambda to close.");
+        var applyPauseBody = composition[applyPauseStart..applyPauseEnd];
+
+        Assert.Contains("await runtime.OnPauseStateChangedAsync(token);", applyPauseBody);
+        Assert.DoesNotContain("runtime.SetUserVisibleAsync(", applyPauseBody);
+
+        // The delegating method itself must forward to the lifecycle's
+        // pause-gate reconciler, not to SetUserVisibleAsync.
+        Assert.Contains(
+            "public Task OnPauseStateChangedAsync(CancellationToken cancellationToken = default) =>",
+            runtime);
+        Assert.Contains("_lifecycle.OnPauseStateChangedAsync(cancellationToken);", runtime);
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

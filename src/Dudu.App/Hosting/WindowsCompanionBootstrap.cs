@@ -1146,6 +1146,16 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         CancellationToken cancellationToken = default) =>
         _lifecycle.SetUserVisibleAsync(visible, cancellationToken);
 
+    /// <summary>
+    /// Re-evaluates the pause gate against the current desired-visible
+    /// state without touching that desired state itself. A timed pause
+    /// (e.g. "take a five-minute break") must hide her by vetoing
+    /// <c>TryCanShow</c>, not by writing <c>_userVisible = false</c> --
+    /// the latter leaves nothing to restore her when the pause expires.
+    /// </summary>
+    public Task OnPauseStateChangedAsync(CancellationToken cancellationToken = default) =>
+        _lifecycle.OnPauseStateChangedAsync(cancellationToken);
+
     public bool HandleWindowMessage(uint message, nint wParam, nint lParam)
     {
         return _hotkey.HandleMessage(message, wParam)

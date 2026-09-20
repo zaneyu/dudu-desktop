@@ -634,11 +634,14 @@ public static class WindowsCompanionProductionComposition
                         // gate that push real fullscreen/lock/visibility
                         // state both run later, after this method returns --
                         // this gateway must start user-hidden so the
-                        // startup reminder tick (which still advances the
-                        // reminder engine before either has run) cannot
-                        // animate an overdue reminder into a window that is
-                        // not shown yet and delete its row on that
-                        // "successful" presentation.
+                        // startup reminder tick's direct call into the
+                        // reminder engine (AppHost.RunReminderTickAsync
+                        // still runs that unconditionally; only its
+                        // reconcile and its queue release are deferred via
+                        // releasePresentations: false, see the comment
+                        // there) cannot animate an overdue reminder straight
+                        // into a window that is not shown yet and delete
+                        // its row on that "successful" presentation.
                         initialUserHidden: true);
                     _ = StartAnimationPlayback(
                         animationEngine.PlayAsync(
@@ -755,7 +758,11 @@ public static class WindowsCompanionProductionComposition
                 applyPauseAsync: async (state, token) =>
                 {
                     pause.Set(state);
-                    await runtime.SetUserVisibleAsync(state.Mode == PauseMode.None, token);
+                    // Re-evaluate the pause gate only -- do not write the
+                    // desired-visible flag. Writing it here would make a
+                    // timed pause permanently hide her once it expires,
+                    // since nothing restores _userVisible afterward.
+                    await runtime.OnPauseStateChangedAsync(token);
                 },
                 presentPetAsync: (petEvent, token) =>
                 {
