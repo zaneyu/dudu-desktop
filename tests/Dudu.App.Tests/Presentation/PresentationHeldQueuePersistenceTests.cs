@@ -198,6 +198,45 @@ public sealed class PresentationHeldQueuePersistenceTests
     }
 
     [Fact]
+    public async Task StartAsync_reloads_a_persisted_local_note_held_item_into_the_queue()
+    {
+        // Same restart scenario as the reminder case above, but for a
+        // LocalNote row -- ToDurableNotification's LocalNote branch requires
+        // both Body and AnimationKey, unlike RemoteNote's id-only row.
+        var repository = new RecordingHeldPresentationRepository();
+        repository.Seed(new HeldPresentation(
+            "LocalNote:note-1",
+            "LocalNote",
+            "note-1",
+            "A little note for you",
+            "You are doing great.",
+            "peek",
+            null,
+            DateTimeOffset.Parse("2026-09-19T08:00:00Z"),
+            Toasted: false));
+        var policy = new PresentationPolicy(TimeSpan.Zero);
+        var played = 0;
+        var coordinator = new PresentationCoordinator(
+            policy,
+            new RecordingNotificationService(),
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => { played++; return Task.CompletedTask; },
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            utcNow: () => DateTimeOffset.Parse("2026-09-19T08:05:00Z"),
+            heldPresentations: repository);
+
+        await coordinator.StartAsync(CancellationToken.None);
+        Assert.Equal(1, policy.QueuedCount);
+
+        await coordinator.TickAsync(CancellationToken.None);
+        Assert.Equal(1, played);
+        Assert.Empty(repository.Rows);
+    }
+
+    [Fact]
     public async Task StartAsync_drops_an_expired_persisted_row_without_queuing_it()
     {
         var repository = new RecordingHeldPresentationRepository();
@@ -223,6 +262,43 @@ public sealed class PresentationHeldQueuePersistenceTests
             petGate: new SemaphoreSlim(1, 1),
             // Past the row's ExpiresUtc.
             utcNow: () => DateTimeOffset.Parse("2026-09-19T09:00:00Z"),
+            heldPresentations: repository);
+
+        await coordinator.StartAsync(CancellationToken.None);
+
+        Assert.Equal(0, policy.QueuedCount);
+        Assert.Empty(repository.Rows);
+    }
+
+    [Fact]
+    public async Task StartAsync_drops_and_deletes_a_row_with_an_unrecognized_kind()
+    {
+        // A row this build's PresentationItemKind enum no longer has a case
+        // for (e.g. left over from a newer or since-removed kind) must not
+        // wedge startup -- ToDurableNotification's `_ => throw` fallback is
+        // caught in LoadHeldItemsAsync and the corrupt row is dropped and
+        // deleted rather than queued or retried forever.
+        var repository = new RecordingHeldPresentationRepository();
+        repository.Seed(new HeldPresentation(
+            "Bogus:ghost",
+            "Bogus",
+            "ghost",
+            null,
+            null,
+            null,
+            null,
+            DateTimeOffset.Parse("2026-09-19T08:00:00Z"),
+            Toasted: false));
+        var policy = new PresentationPolicy(TimeSpan.Zero);
+        var coordinator = new PresentationCoordinator(
+            policy,
+            new RecordingNotificationService(),
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => Task.CompletedTask,
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
 
         await coordinator.StartAsync(CancellationToken.None);
@@ -287,6 +363,41 @@ public sealed class PresentationHeldQueuePersistenceTests
     }
 
     [Fact]
+    public async Task A_repository_that_throws_on_every_call_never_breaks_in_memory_presentation()
+    {
+        // L8: persistence is a secondary concern layered on top of
+        // PresentationPolicy's in-memory queue (see PersistHeldAsync's and
+        // RemoveHeldAsync's doc comments) -- a repository that fails on
+        // every single call must never stop StartAsync/PublishAsync/
+        // TickAsync from working, only fail to survive a restart.
+        var repository = new ThrowingHeldPresentationRepository();
+        var played = 0;
+        var quiet = true;
+        var coordinator = new PresentationCoordinator(
+            new PresentationPolicy(TimeSpan.Zero),
+            new RecordingNotificationService(),
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => { played++; return Task.CompletedTask; },
+            () => AnimationOptions.Default,
+            isQuietHours: () => quiet,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            heldPresentations: repository);
+
+        await coordinator.StartAsync(CancellationToken.None);
+
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-1", "Stretch"),
+            bypassSuppression: false,
+            CancellationToken.None);
+
+        quiet = false;
+        await coordinator.TickAsync(CancellationToken.None);
+
+        Assert.Equal(1, played);
+    }
+
+    [Fact]
     public void Held_presentation_key_format_matches_the_literal_strings_the_cascading_deletes_rely_on()
     {
         // M3's cascading deletes in LocalNoteRepository/ReminderRepository/
@@ -345,5 +456,17 @@ public sealed class PresentationHeldQueuePersistenceTests
             Rows.Remove(key);
             return Task.CompletedTask;
         }
+    }
+
+    private sealed class ThrowingHeldPresentationRepository : IHeldPresentationRepository
+    {
+        public Task<IReadOnlyList<HeldPresentation>> ListAsync(CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("simulated repository failure");
+
+        public Task SaveAsync(HeldPresentation item, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("simulated repository failure");
+
+        public Task DeleteAsync(string key, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("simulated repository failure");
     }
 }
