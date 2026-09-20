@@ -1696,7 +1696,9 @@ public sealed class FeatureViewModelTests
         viewModel.AttachFocusExpiry();
 
         var pauseHistory = new TaskCompletionSource<bool>();
+        var listHistoryReturned = new TaskCompletionSource<bool>();
         fixture.FocusSessions.PauseListHistory = pauseHistory;
+        fixture.FocusSessions.ListHistoryReturned = listHistoryReturned;
         fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddMinutes(26);
 
         // CompleteExpiredAsync raises SessionExpired synchronously. The
@@ -1713,14 +1715,12 @@ public sealed class FeatureViewModelTests
         var sessionB = await viewModel.StartFocusOrThrowAsync(TestContext.Current.CancellationToken);
         Assert.Equal(sessionB.Id, viewModel.ActiveFocus?.Id);
 
-        // Let the paused reload run to completion.
+        // Let the paused reload run to completion, then wait for
+        // ListHistoryAsync -- the last fake call before the reload mutates
+        // the view model -- to actually return, instead of polling on a
+        // fixed retry budget.
         pauseHistory.SetResult(true);
-        await pauseHistory.Task;
-        // Give the resumed reload's continuation a chance to run before asserting.
-        for (var i = 0; i < 5 && viewModel.FocusHistory.Count == 0; i++)
-        {
-            await Task.Delay(10, TestContext.Current.CancellationToken);
-        }
+        await listHistoryReturned.Task;
 
         // Session B must survive: the reload was for session A, which is no
         // longer the active session, so it must not have touched ActiveFocus.
@@ -2571,13 +2571,21 @@ public sealed class FeatureViewModelTests
         // GetCurrentAsync snapshot, so a new session can be started before
         // the reload's mutation finally runs.
         public TaskCompletionSource<bool>? PauseListHistory { get; set; }
+        // Round 4b Opus follow-up (Finding D): ListHistoryAsync is the last
+        // fake call in RefreshAfterExpiryAsync's chain before it mutates the
+        // view model -- signalling this once it returns from the pause above
+        // lets a test await the reload deterministically instead of polling
+        // FocusHistory.Count on a fixed retry budget.
+        public TaskCompletionSource<bool>? ListHistoryReturned { get; set; }
         public Task<FocusSession?> GetAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult(_sessions.GetValueOrDefault(id));
         public Task<FocusSession?> GetActiveAsync(CancellationToken cancellationToken) => Task.FromResult(Active);
         public async Task<IReadOnlyList<FocusSession>> ListHistoryAsync(CancellationToken cancellationToken)
         {
             if (ThrowOnListHistory) throw new IOException("injected focus history repository failure");
             if (PauseListHistory is { } pause) await pause.Task;
-            return _sessions.Values.Where(item => item.Status is not (FocusStatus.Running or FocusStatus.Paused)).ToArray();
+            var result = _sessions.Values.Where(item => item.Status is not (FocusStatus.Running or FocusStatus.Paused)).ToArray();
+            ListHistoryReturned?.TrySetResult(true);
+            return result;
         }
         public Task<bool> TryCreateActiveAsync(FocusSession session, CancellationToken cancellationToken)
         {
