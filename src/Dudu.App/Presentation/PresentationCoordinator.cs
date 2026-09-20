@@ -624,7 +624,14 @@ public sealed class PresentationCoordinator :
         if (succeeded && _playAudioAsync is not null
             && AudioCueSelection.ForNotification(item) is { } audioCue)
         {
-            await ObserveAudioAsync(() => _playAudioAsync(audioCue, cancellationToken));
+            // Fire-and-forget: this runs on the 30 s tick, after the pet
+            // gate above is already released, so nothing below depends on
+            // the cue's outcome (succeeded was fixed by the earlier
+            // presentation-playback observe and is not touched by audio).
+            // Awaiting it here would make ShowNotificationAsync below wait
+            // up to the cue's own bound for no reason. ObserveAudioAsync
+            // still observes and reports the cue's exceptions on its own.
+            _ = ObserveAudioAsync(() => _playAudioAsync(audioCue, cancellationToken));
         }
 
         bool alreadyToasted;

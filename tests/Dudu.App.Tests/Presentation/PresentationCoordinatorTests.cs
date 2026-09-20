@@ -36,7 +36,7 @@ public sealed class PresentationCoordinatorTests
     }
 
     [Fact]
-    public async Task Audio_runs_after_visual_and_before_notification_without_blocking_delivery_on_failure()
+    public async Task Audio_runs_after_visual_and_a_failure_does_not_block_notification_delivery()
     {
         var order = new List<string>();
         var notifications = new RecordingNotificationService(order);
@@ -62,6 +62,50 @@ public sealed class PresentationCoordinatorTests
 
         Assert.Equal(["visual", "audio", "notification"], order);
         Assert.Equal(1, notifications.ReminderCalls);
+    }
+
+    [Fact]
+    public async Task Audio_cue_is_fire_and_forget_and_does_not_delay_notification_delivery()
+    {
+        // Regression: PresentAsync used to await the audio cue before
+        // showing the Windows toast on the 30 s tick, so a slow cue delayed
+        // delivery by up to the cue's own bound. The cue must be
+        // fire-and-forget -- the notification goes out once the cue has
+        // started, not once it has finished.
+        var order = new List<string>();
+        var notifications = new RecordingNotificationService(order);
+        var releaseAudio = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var audioFinished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var coordinator = new PresentationCoordinator(
+            new PresentationPolicy(TimeSpan.Zero),
+            notifications,
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => { order.Add("visual"); return Task.CompletedTask; },
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            playAudioAsync: async (_, _) =>
+            {
+                order.Add("audio-started");
+                await releaseAudio.Task;
+                order.Add("audio-finished");
+                audioFinished.TrySetResult();
+            });
+
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-1", "Stretch"),
+            bypassSuppression: false,
+            CancellationToken.None);
+
+        // The cue is still in flight (releaseAudio has not been set), yet
+        // the notification already went out.
+        Assert.Equal(["visual", "audio-started", "notification"], order);
+        Assert.Equal(1, notifications.ReminderCalls);
+
+        releaseAudio.SetResult();
+        await audioFinished.Task.WaitAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(["visual", "audio-started", "notification", "audio-finished"], order);
     }
 
     [Fact]
