@@ -1,4 +1,5 @@
 using Dudu.App.Hosting;
+using Dudu.App.Presentation;
 using Dudu.App.System;
 using Dudu.Core.Models;
 using Dudu.Core.Pet;
@@ -518,6 +519,97 @@ public sealed class AppLifecycleCoordinatorTests
         Assert.True(overlay.IsVisible);
     }
 
+    [Fact]
+    public async Task Vetoed_show_does_not_mark_the_pet_visible_and_reconcile_retries_once_the_veto_ends()
+    {
+        // Findings 3 & 4: EnsureUserVisibleAsync used to push
+        // SetUserVisible(true) to the presentation environment sink before
+        // its own veto check ran, so a sign-in launch during quiet hours told
+        // PresentationCoordinator the pet was visible even though the
+        // overlay was never shown -- a held reminder could then animate into
+        // that still-hidden window once quiet hours ended and have its row
+        // deleted on that "successful" presentation. Nothing previously
+        // re-attempted the show once the veto ended either, so the pet
+        // stayed invisible for the rest of the session.
+        // ReconcileVisibilityAsync (wired into AppHost's 30 s tick) now
+        // retries the show and only then reports the pet visible.
+        var overlay = new FakeOverlay { IsVisible = false };
+        var sink = new RecordingPresentationEnvironmentSink();
+        var quiet = true;
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            isQuietHours: () => quiet,
+            initialUserVisible: false,
+            presentationEnvironment: sink);
+
+        await lifecycle.SetUserVisibleAsync(true, TestContext.Current.CancellationToken);
+
+        Assert.Equal(0, overlay.ShowCount);
+        Assert.False(overlay.IsVisible);
+        Assert.Equal(false, sink.LastUserVisible);
+
+        quiet = false;
+        await lifecycle.ReconcileVisibilityAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, overlay.ShowCount);
+        Assert.True(overlay.IsVisible);
+        Assert.Equal(true, sink.LastUserVisible);
+    }
+
+    [Fact]
+    public async Task Reconcile_never_shows_a_pet_she_explicitly_hid()
+    {
+        // Finding 4: reconcile must only retry a vetoed *desired-visible*
+        // show, never override an explicit hide.
+        var overlay = new FakeOverlay { IsVisible = false };
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            initialUserVisible: false);
+
+        await lifecycle.ReconcileVisibilityAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(0, overlay.ShowCount);
+        Assert.False(overlay.IsVisible);
+    }
+
+    [Fact]
+    public async Task Explicit_show_is_not_vetoed_by_fullscreen_when_the_preference_is_off()
+    {
+        // Finding 5: EnsureUserVisibleAsync's veto used to include a bare
+        // `fullscreen` term that blocked the show whenever any window was
+        // fullscreen, even with HidePetDuringFullscreen off -- which
+        // TryCanShow (evaluated right after) deliberately permits. TryCanShow
+        // alone must decide.
+        var overlay = new FakeOverlay { IsVisible = false };
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, false, TimeSpan.FromMinutes(15)),
+            isFullscreen: () => true,
+            initialUserVisible: false);
+
+        await lifecycle.SetUserVisibleAsync(true, TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, overlay.ShowCount);
+        Assert.True(overlay.IsVisible);
+    }
+
     private sealed class FakeHost : IAppHostLifecycle
     {
         public Task ResumeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -530,9 +622,253 @@ public sealed class AppLifecycleCoordinatorTests
         public int ShowCount { get; private set; }
         public int RestoreCount { get; private set; }
         public bool IsVisible { get; set; } = true;
+
+        /// <summary>
+        /// Finding C test hook: lets a test block a caller mid-RestorePlacement
+        /// (synchronously, on whatever thread invokes it -- consistent with
+        /// the existing pauseState-barrier technique in
+        /// Fullscreen_restore_rechecks_pause_before_showing) so a second,
+        /// concurrent lifecycle call can be driven to race against it while
+        /// this one still holds the coordinator's visibility gate.
+        /// </summary>
+        public Action? OnRestorePlacement { get; set; }
+
         public void Show() { ShowCount++; IsVisible = true; }
         public void Hide() { HideCount++; IsVisible = false; }
-        public void RestorePlacement() => RestoreCount++;
+        public void RestorePlacement() { OnRestorePlacement?.Invoke(); RestoreCount++; }
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class RecordingPresentationEnvironmentSink : IPresentationEnvironmentSink
+    {
+        public List<bool> UserVisiblePushes { get; } = [];
+
+        public bool? LastUserVisible => UserVisiblePushes.Count == 0 ? null : UserVisiblePushes[^1];
+
+        /// <summary>
+        /// Finding C test hook: fires synchronously, inside the coordinator's
+        /// state gate, the instant a push lands -- before the caller that
+        /// triggered it goes on to (possibly) wait on the separate visibility
+        /// gate for the overlay Show/Hide call. Used to observe an explicit
+        /// hide's write deterministically without waiting for its whole
+        /// method call (which can itself be blocked on that other gate) to
+        /// return.
+        /// </summary>
+        public Action<bool>? OnPush { get; set; }
+
+        public void SetSessionLocked(bool locked)
+        {
+        }
+
+        public void SetFullscreen(bool fullscreen)
+        {
+        }
+
+        public void SetUserVisible(bool visible)
+        {
+            UserVisiblePushes.Add(visible);
+            OnPush?.Invoke(visible);
+        }
+    }
+
+    [Fact]
+    public async Task Lock_then_reconcile_then_unlock_ends_with_the_sink_pushed_true()
+    {
+        // Finding A: SetUserVisible is a one-way latch from
+        // PresentationCoordinator's point of view. OnSessionLockedAsync hides
+        // the overlay directly without pushing anything to the sink; the
+        // 30 s ReconcileVisibilityAsync tick is what observes "wants visible
+        // but overlay actually hidden" and pushes false. Unlock must then end
+        // with the sink pushed back to true, or the gateway stays convinced
+        // the pet is hidden for the rest of the session.
+        var overlay = new FakeOverlay { IsVisible = true };
+        var sink = new RecordingPresentationEnvironmentSink();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            initialUserVisible: true,
+            presentationEnvironment: sink);
+
+        await lifecycle.OnSessionLockedAsync(cancellationToken);
+        await lifecycle.ReconcileVisibilityAsync(cancellationToken);
+        Assert.Equal(false, sink.LastUserVisible);
+
+        await lifecycle.OnSessionUnlockedAsync(cancellationToken);
+
+        Assert.Equal(true, sink.LastUserVisible);
+        Assert.True(overlay.IsVisible);
+    }
+
+    [Fact]
+    public async Task Fullscreen_enter_then_exit_ends_with_the_sink_pushed_true()
+    {
+        // Same one-way-latch gap as the lock scenario above, reached through
+        // the fullscreen path instead.
+        var overlay = new FakeOverlay { IsVisible = true };
+        var sink = new RecordingPresentationEnvironmentSink();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            initialUserVisible: true,
+            presentationEnvironment: sink);
+
+        await lifecycle.OnFullscreenChangedAsync(true, cancellationToken);
+        await lifecycle.ReconcileVisibilityAsync(cancellationToken);
+        Assert.Equal(false, sink.LastUserVisible);
+
+        await lifecycle.OnFullscreenChangedAsync(false, cancellationToken);
+
+        Assert.Equal(true, sink.LastUserVisible);
+        Assert.True(overlay.IsVisible);
+    }
+
+    [Fact]
+    public async Task Suspend_then_reconcile_then_resume_ends_with_the_sink_pushed_true()
+    {
+        // Same one-way-latch gap as the lock scenario above, reached through
+        // the suspend/resume path instead.
+        var overlay = new FakeOverlay { IsVisible = true };
+        var sink = new RecordingPresentationEnvironmentSink();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            initialUserVisible: true,
+            presentationEnvironment: sink);
+
+        await lifecycle.OnSuspendAsync(cancellationToken);
+        await lifecycle.ReconcileVisibilityAsync(cancellationToken);
+        Assert.Equal(false, sink.LastUserVisible);
+
+        await lifecycle.OnResumeAsync(cancellationToken);
+
+        Assert.Equal(true, sink.LastUserVisible);
+        Assert.True(overlay.IsVisible);
+    }
+
+    [Fact]
+    public async Task Reconcile_pushes_true_when_the_overlay_is_already_visible()
+    {
+        // Finding A: reconcile used to early-return here without telling the
+        // sink anything once the overlay was already visible -- a missed
+        // push anywhere else (any show site that forgot to push true) then
+        // stayed wrong forever instead of self-healing on the very next
+        // tick. The overlay being visible must always re-assert true.
+        var overlay = new FakeOverlay { IsVisible = true };
+        var sink = new RecordingPresentationEnvironmentSink();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            initialUserVisible: true,
+            presentationEnvironment: sink);
+        var pushesBeforeReconcile = sink.UserVisiblePushes.Count;
+
+        await lifecycle.ReconcileVisibilityAsync(cancellationToken);
+
+        Assert.True(sink.UserVisiblePushes.Count > pushesBeforeReconcile);
+        Assert.Equal(true, sink.LastUserVisible);
+    }
+
+    [Fact]
+    public async Task Reconcile_never_resurrects_an_explicit_hide_that_races_in_mid_flight()
+    {
+        // Finding C: ReconcileVisibilityAsync captures its "still wants
+        // visible" snapshot, then -- before it re-checks under the gate --
+        // an explicit tray/hotkey hide can land in that window. Reconcile
+        // must bail on the field's live value instead of forcing it back to
+        // true and showing an overlay she just asked to be hidden.
+        //
+        // The race is engineered deterministically: RestorePlacement (driven
+        // via OnDisplayChangedAsync) blocks while holding the coordinator's
+        // shared visibility gate, so a concurrent ReconcileVisibilityAsync
+        // call is guaranteed to still be waiting on that same gate inside
+        // EnsureUserVisibleAsync when the explicit hide -- which does not
+        // need that gate for its state write -- lands and flips _userVisible
+        // to false.
+        var overlay = new FakeOverlay { IsVisible = false };
+        var sink = new RecordingPresentationEnvironmentSink();
+        var restoreStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseRestore = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        overlay.OnRestorePlacement = () =>
+        {
+            restoreStarted.TrySetResult();
+            releaseRestore.Task.GetAwaiter().GetResult();
+        };
+        var hidePushed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            initialUserVisible: true,
+            presentationEnvironment: sink);
+        sink.OnPush = visible =>
+        {
+            if (!visible)
+            {
+                hidePushed.TrySetResult();
+            }
+        };
+
+        // Occupy the visibility gate with a blocked RestorePlacement call.
+        var displayChanged = Task.Run(
+            () => lifecycle.OnDisplayChangedAsync(cancellationToken),
+            cancellationToken);
+        await restoreStarted.Task.WaitAsync(cancellationToken);
+
+        // Start the reconcile -- it will get stuck waiting for the same
+        // visibility gate inside EnsureUserVisibleAsync.
+        var reconcile = Task.Run(
+            () => lifecycle.ReconcileVisibilityAsync(cancellationToken),
+            cancellationToken);
+
+        // The explicit hide's own overlay.Hide call also needs the visibility
+        // gate (so this whole call cannot return yet) -- but its
+        // _userVisible write and sink push happen under the separate state
+        // gate first, so waiting on the push alone (via the hook above)
+        // observes that write deterministically without deadlocking here.
+        var hide = Task.Run(
+            () => lifecycle.SetUserVisibleAsync(false, cancellationToken),
+            cancellationToken);
+        await hidePushed.Task.WaitAsync(cancellationToken);
+        Assert.Equal(false, sink.LastUserVisible);
+
+        releaseRestore.SetResult();
+        await displayChanged;
+        await reconcile;
+        await hide;
+
+        // Reconcile must not have resurrected the explicit hide: no show,
+        // and no stray push back to true.
+        Assert.Equal(0, overlay.ShowCount);
+        Assert.False(overlay.IsVisible);
+        Assert.Equal(false, sink.LastUserVisible);
     }
 }

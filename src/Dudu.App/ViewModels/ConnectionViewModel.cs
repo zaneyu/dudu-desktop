@@ -254,6 +254,10 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
         RunAsync(async () =>
         {
             await _context.Pairing.ForgetPairingAsync(cancellationToken);
+            // A broken/unreadable key makes ForgetPairingAsync delete every
+            // local remote-note envelope, not just one -- any remote note
+            // still queued or held for later presentation must go with them.
+            await _context.DiscardHeldRemoteNotesAsync(cancellationToken);
             await MutateAsync(() =>
             {
                 PairingCode = null;

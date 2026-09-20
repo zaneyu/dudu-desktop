@@ -57,6 +57,20 @@ public interface IAppHostRemoteSync : IAsyncDisposable
     Task StartAsync(CancellationToken cancellationToken = default);
 }
 
+/// <summary>
+/// The pet-visibility reconciliation hook as seen by <see cref="AppHost"/>.
+/// Ticked after every successful reminder tick that also releases held
+/// presentations, and before that release runs, so a pet left invisible by
+/// an earlier vetoed show (e.g. quiet hours ending) gets a chance to come
+/// back before a held item can animate into a window that is still hidden.
+/// Attaching one is optional: an <see cref="AppHost"/> with none attached
+/// behaves exactly as before.
+/// </summary>
+public interface IAppHostVisibilityReconciler
+{
+    Task ReconcileVisibilityAsync(CancellationToken cancellationToken = default);
+}
+
 public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
 {
     private static readonly TimeSpan ReminderTickInterval = TimeSpan.FromSeconds(30);
@@ -70,6 +84,7 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
     private readonly TimeSpan _stopTimeout;
     private IAppHostPresentationGateway? _presentationGateway;
     private IAppHostRemoteSync? _remoteSync;
+    private IAppHostVisibilityReconciler? _visibilityReconciler;
     private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
     private readonly SemaphoreSlim _reminderTickGate = new(1, 1);
     private readonly CancellationTokenSource _hostStopSource = new();
@@ -181,6 +196,24 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
         _remoteSync = remoteSync;
     }
 
+    /// <summary>
+    /// Attaches the visibility reconciler ticked before each release of held
+    /// presentations. Optional: production attaches the same
+    /// <c>AppLifecycleCoordinator</c> composed for tray/hotkey/overlay
+    /// lifecycle. Must be called before <see cref="StartAsync"/>.
+    /// </summary>
+    public void AttachVisibilityReconciler(IAppHostVisibilityReconciler reconciler)
+    {
+        ArgumentNullException.ThrowIfNull(reconciler);
+        if (Volatile.Read(ref _started) != 0)
+        {
+            throw new InvalidOperationException(
+                "The visibility reconciler must be attached before the host starts.");
+        }
+
+        _visibilityReconciler = reconciler;
+    }
+
     public Task StartAsync(CancellationToken cancellationToken = default)
     {
         Task startTask;
@@ -235,7 +268,21 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
                 CreateDirectories();
                 await _database.InitializeAsync(operation.CancellationToken);
                 await StartPresentationGatewayAsync(operation.CancellationToken);
-                await RunReminderTickAsync(operation.CancellationToken);
+                // Skip the presentation-release half of this startup tick:
+                // StartPresentationGatewayAsync just reloaded held rows into
+                // the gateway's in-memory queue, but the events sink that
+                // pushes SetFullscreen/SetSessionLocked and the startup
+                // visibility gate that pushes SetUserVisible both run later,
+                // in WindowsCompanionBootstrap, only after this host's
+                // StartAsync returns. Releasing here would see every one of
+                // those flags at its unset default (not fullscreen, not
+                // locked, visible) regardless of reality, animating a held
+                // item into a window that may not even be shown yet and then
+                // deleting its row on success. The reminder engine itself
+                // still ticks as before; only the release is deferred to the
+                // first regularly scheduled 30 s tick, by which point the
+                // events sink and visibility gate have both run.
+                await RunReminderTickAsync(operation.CancellationToken, releasePresentations: false);
 
                 if (!await TryAcquireLifecycleGateAsync(_stopTimeout, operation.CancellationToken))
                 {
@@ -374,13 +421,36 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
         }
     }
 
-    private async Task RunReminderTickAsync(CancellationToken cancellationToken)
+    /// <param name="releasePresentations">
+    /// Whether to also drain the presentation gateway's queue after the
+    /// reminder engine advances. False only for the one startup tick in
+    /// <see cref="RunStartAsync"/>, before the events sink and startup
+    /// visibility gate have pushed real fullscreen/lock/visibility state.
+    /// </param>
+    private async Task RunReminderTickAsync(
+        CancellationToken cancellationToken,
+        bool releasePresentations = true)
     {
         await _reminderTickGate.WaitAsync(cancellationToken);
         try
         {
+            // Finding A(3): reconcile now runs at the START of every tick --
+            // including the startup tick, whose release is deferred -- not
+            // just before the release below. The reminder engine's own
+            // TickAsync can itself publish through the presentation gateway
+            // (a newly-due reminder), so reconciling only right before the
+            // release left that publish evaluated against a pet the sink
+            // may still believe is hidden from an earlier vetoed show that
+            // has since cleared. Give the pet a chance to come back on
+            // screen (e.g. quiet hours that vetoed an earlier explicit show
+            // have now ended) before the reminder engine -- and therefore
+            // any release -- runs at all.
+            await ReconcileVisibilityAsync(cancellationToken);
             await _reminderService.TickAsync(cancellationToken);
-            await TickPresentationGatewayAsync(cancellationToken);
+            if (releasePresentations)
+            {
+                await TickPresentationGatewayAsync(cancellationToken);
+            }
         }
         finally
         {
@@ -407,6 +477,28 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
         catch (Exception exception)
         {
             ReportError("presentation-gateway-start", exception);
+        }
+    }
+
+    private async Task ReconcileVisibilityAsync(CancellationToken cancellationToken)
+    {
+        var reconciler = _visibilityReconciler;
+        if (reconciler is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await reconciler.ReconcileVisibilityAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            ReportError("visibility-reconcile", exception);
         }
     }
 

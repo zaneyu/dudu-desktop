@@ -49,6 +49,67 @@ public sealed class WindowsAudioCuePlayerContractTests
         Assert.Contains("catch (TimeoutException)", source);
     }
 
+    [Fact]
+    public void Timeout_teardown_runs_off_the_calling_task_instead_of_inline()
+    {
+        // Finding 8: on the TimeoutException path, MediaEnded/MediaFailed
+        // never fired -- the decoder may be hung -- so tearing the player
+        // down (Source = null, Dispose) right there in `finally` can block
+        // on the same hung native call, reintroducing the exact stall the
+        // completion timeout exists to avoid (this call sits on the
+        // 30-second reminder tick loop). The timeout path must defer
+        // teardown to its own background Task.Run instead of running it on
+        // this method's own continuation; the normal (non-timeout) path is
+        // unaffected and still tears down inline.
+        var root = FindRepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.App", "Audio", "WindowsAudioCuePlayer.cs"));
+
+        Assert.Contains("timedOut = true;", source);
+        Assert.Contains("if (timedOut)", source);
+        Assert.Contains("Task.Run(", source);
+    }
+
+    [Fact]
+    public void Cancellation_registration_only_completes_the_tcs_and_never_touches_the_player()
+    {
+        // Finding H: the `using var cancellation` registration below is
+        // disposed on every exit path, and CancellationTokenRegistration
+        // .Dispose() blocks until a currently-running callback finishes. If
+        // that callback touched `player` (e.g. Source = null) while a hung
+        // native decoder still owned it, disposing the registration -- and
+        // therefore PlayAsync itself -- could still stall despite the
+        // completion timeout that exists specifically to prevent that. The
+        // callback must only ever complete the completion source; all player
+        // teardown stays in `finally` or the deferred Task.Run.
+        var root = FindRepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.App", "Audio", "WindowsAudioCuePlayer.cs"));
+
+        var registrationStart = source.IndexOf("cancellationToken.Register(", StringComparison.Ordinal);
+        Assert.True(registrationStart >= 0, "Expected a cancellationToken.Register call.");
+        var registrationEnd = source.IndexOf("});", registrationStart, StringComparison.Ordinal);
+        Assert.True(registrationEnd >= 0, "Expected the registration callback to close with `});`.");
+        var callbackBody = source[registrationStart..registrationEnd];
+
+        Assert.DoesNotContain("player.Source", callbackBody);
+        Assert.Contains("completion.TrySetResult(AudioPlaybackState.Suppressed);", callbackBody);
+    }
+
+    [Fact]
+    public void Normal_path_teardown_guards_dispose_so_it_cannot_throw_out_of_the_finally_block()
+    {
+        // Finding H: the timeout path's deferred teardown already guards
+        // both Source = null and Dispose() in their own try/catch; the
+        // normal (non-timeout) path guarded only the former, leaving
+        // Dispose() free to throw out of this method's finally block.
+        var root = FindRepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.App", "Audio", "WindowsAudioCuePlayer.cs"));
+
+        Assert.Contains("try { player.Dispose(); } catch { }", source);
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

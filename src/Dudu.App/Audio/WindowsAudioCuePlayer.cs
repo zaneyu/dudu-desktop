@@ -38,7 +38,10 @@ public sealed class WindowsAudioCuePlayer : IAudioCuePlayer, IAudioCuePlayerLife
             || !File.Exists(path))
             return AudioPlaybackState.Completed;
 
-        using var player = new MediaPlayer { Volume = Math.Clamp(volume, 0.0, 1.0) };
+        // Not a `using`: on the TimeoutException path below, teardown is
+        // deliberately deferred to a background Task.Run instead of running
+        // here, so `player` must survive past this method returning.
+        var player = new MediaPlayer { Volume = Math.Clamp(volume, 0.0, 1.0) };
         var completion = new TaskCompletionSource<AudioPlaybackState>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         TypedEventHandler<MediaPlayer, object> ended = (_, _) =>
@@ -47,9 +50,18 @@ public sealed class WindowsAudioCuePlayer : IAudioCuePlayer, IAudioCuePlayerLife
             completion.TrySetResult(AudioPlaybackState.Failed);
         player.MediaEnded += ended;
         player.MediaFailed += failed;
+        // Finding H: this callback must only ever complete the TCS. The
+        // `using var cancellation` below disposes the registration on every
+        // exit path, and CancellationTokenRegistration.Dispose() blocks
+        // until a currently-running callback returns -- if that callback
+        // touched `player` (Source = null, as it used to) while a hung
+        // native decoder still owned it (see the TimeoutException path
+        // below), disposing the registration -- and therefore this whole
+        // method -- could still stall despite the completion timeout that
+        // exists specifically to prevent that. All player teardown stays in
+        // `finally`, either inline or deferred to its own background task.
         using var cancellation = cancellationToken.Register(() =>
         {
-            try { player.Source = null; } catch { }
             completion.TrySetResult(AudioPlaybackState.Suppressed);
         });
 
@@ -61,6 +73,7 @@ public sealed class WindowsAudioCuePlayer : IAudioCuePlayer, IAudioCuePlayerLife
         var completionTimeout = cue.DurationMs > 0
             ? TimeSpan.FromMilliseconds(cue.DurationMs) + CompletionSlack
             : DefaultCompletionTimeout;
+        var timedOut = false;
         try
         {
             player.Source = MediaSource.CreateFromUri(new Uri(path));
@@ -69,6 +82,7 @@ public sealed class WindowsAudioCuePlayer : IAudioCuePlayer, IAudioCuePlayerLife
         }
         catch (TimeoutException)
         {
+            timedOut = true;
             return AudioPlaybackState.Failed;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -83,7 +97,30 @@ public sealed class WindowsAudioCuePlayer : IAudioCuePlayer, IAudioCuePlayerLife
         {
             player.MediaEnded -= ended;
             player.MediaFailed -= failed;
-            try { player.Source = null; } catch { }
+            if (timedOut)
+            {
+                // The timeout above means the decoder never called back --
+                // it may be hung, and `Source = null`/Dispose() can block on
+                // that same native call. Tearing it down inline here would
+                // reintroduce the exact stall the timeout exists to avoid
+                // (this call sits on the 30-second reminder tick loop), so
+                // it runs on its own background task instead, independent of
+                // this method's caller.
+                var hungPlayer = player;
+                _ = Task.Run(() =>
+                {
+                    try { hungPlayer.Source = null; } catch { }
+                    try { hungPlayer.Dispose(); } catch { }
+                });
+            }
+            else
+            {
+                try { player.Source = null; } catch { }
+                // Finding H: guard this the same way the deferred hung-player
+                // teardown above already does -- Dispose() must never throw
+                // out of this finally block.
+                try { player.Dispose(); } catch { }
+            }
         }
     }
 

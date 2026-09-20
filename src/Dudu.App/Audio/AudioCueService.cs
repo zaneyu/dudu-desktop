@@ -109,10 +109,14 @@ public sealed class AudioCueService : IAsyncDisposable
                 // throwing, so the catch block below never runs and this
                 // failure would otherwise be silent. Report it through the
                 // same seam thrown exceptions already use, and advance the
-                // variant/pack indexes -- but not the cooldown timestamps,
-                // which still gate retries -- so ReserveCue rotates off a
-                // cue or pack that just failed instead of re-picking it
-                // forever.
+                // variant/pack indexes so ReserveCue rotates off a cue or
+                // pack that just failed instead of re-picking it forever.
+                // _lastPlayback/_lastPackPlayback[packId] are deliberately
+                // left untouched: a failed attempt never actually played
+                // anything, so it should not start a fresh cooldown window
+                // -- the next call can retry (a different pack/cue, per the
+                // rotation above) as soon as it likes instead of waiting out
+                // GlobalCooldown/PackCooldown for nothing.
                 ReportPlaybackFailureOnce(packId!, cueEvent);
                 lock (_gate)
                 {

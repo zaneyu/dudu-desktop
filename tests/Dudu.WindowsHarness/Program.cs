@@ -422,7 +422,8 @@ static async Task<int> RunOutageReminderScenarioAsync(string[] args)
         .AddSingleton<IReminderDueSink>(provider => new ReminderDueSink(
             provider.GetRequiredService<IReminderRepository>(),
             () => coordinator
-                ?? throw new InvalidOperationException("Presentation coordinator is not composed yet.")))
+                ?? throw new InvalidOperationException("Presentation coordinator is not composed yet."),
+            profiles: provider.GetRequiredService<IProfileRepository>()))
         .BuildServiceProvider();
 
     var innerNotifications = new AppNotificationService(new WindowsAppNotificationSink());
@@ -437,7 +438,8 @@ static async Task<int> RunOutageReminderScenarioAsync(string[] args)
         () => AnimationOptions.Default,
         isQuietHours: () => false,
         pauseState: () => PauseState.None,
-        petGate: new SemaphoreSlim(1, 1));
+        petGate: new SemaphoreSlim(1, 1),
+        heldPresentations: services.GetRequiredService<IHeldPresentationRepository>());
 
     var appHost = new AppHost(services, AppPaths.ForRoot(workingDirectory));
     appHost.AttachPresentationGateway(coordinator);

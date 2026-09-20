@@ -73,6 +73,18 @@ public sealed class PresentationCoordinator :
     private readonly HashSet<string> _presentingIds = new(StringComparer.Ordinal);
     private readonly HashSet<string> _toastedWhileHeldIds = new(StringComparer.Ordinal);
 
+    /// <summary>Keys discarded (<see cref="DiscardHeldAsync"/> /
+    /// <see cref="DiscardHeldByKindAsync"/>) while still present in
+    /// <see cref="_presentingIds"/> -- i.e. a presentation for that exact key
+    /// was in flight at the moment it was discarded. <see cref="RequeueHeldAsync"/>
+    /// and <see cref="TickAsync"/>'s decline path consult this so a
+    /// presentation that then FAILS drops the item and deletes its row
+    /// instead of requeuing and re-persisting something already discarded
+    /// (e.g. a deleted note's text, or a reminder completed from the
+    /// Reminders page). Cleared once that presentation ends, win or lose, so
+    /// a later item that happens to reuse the same key is unaffected.</summary>
+    private readonly HashSet<string> _discardedWhilePresentingIds = new(StringComparer.Ordinal);
+
     /// <summary>Which held-presentation repository operation kinds ("load",
     /// "persist", "remove"), each paired with the failing exception's type
     /// name and (for a <see cref="SqliteException"/>) its error code, have
@@ -122,7 +134,8 @@ public sealed class PresentationCoordinator :
         IAppHostErrorReporter? errorReporter = null,
         Func<AudioCueEvent, CancellationToken, Task>? playAudioAsync = null,
         IReadOnlyList<string>? availableStickerKeys = null,
-        IHeldPresentationRepository? heldPresentations = null)
+        IHeldPresentationRepository? heldPresentations = null,
+        bool initialUserHidden = false)
     {
         _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
         _policy = policy ?? throw new ArgumentNullException(nameof(policy));
@@ -140,6 +153,17 @@ public sealed class PresentationCoordinator :
         _isFullscreenNow = isFullscreenNow ?? (() => { lock (_gate) return _fullscreen; });
         _errorReporter = errorReporter;
         _heldPresentations = heldPresentations;
+        // Finding B: production must start user-hidden until the lifecycle
+        // coordinator pushes the first real value (its ctor always seeds one
+        // now, and reconcile keeps pushing one every tick) -- otherwise the
+        // startup reminder tick (which still advances the reminder engine
+        // before the events sink / startup visibility gate have run) can
+        // publish a due reminder while this gateway believes the default
+        // "visible" is real, animating it into a window that is not shown
+        // yet and deleting its row on that "successful" presentation. Tests
+        // and the Windows harness, which never push a value at all, keep
+        // their prior behavior (default false) unless they opt in.
+        _userHidden = initialUserHidden;
         if ((_ambientScheduler is null) != (_localNoteSelector is null))
         {
             throw new ArgumentException(
@@ -202,15 +226,88 @@ public sealed class PresentationCoordinator :
         string id,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(id);
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            // Finding F: callers invoke this after their own delete/consume
+            // has already committed (e.g. LoveNotesViewModel deletes the
+            // note, then tells this gateway to drop its held copy) -- a
+            // blank id never had anything held for it anyway, so throwing
+            // here would turn an already-successful user action into a
+            // visible error for no reason.
+            return;
+        }
+
         var key = $"{kind}:{id}";
         lock (_gate)
         {
             _toastedWhileHeldIds.Remove(key);
+            if (_presentingIds.Contains(key))
+            {
+                // Finding E: a presentation for this exact key is in flight
+                // right now. The queue/row removal below still runs (the row
+                // must not outlive this discard), but if that in-flight
+                // presentation then FAILS, the ordinary retry path would
+                // otherwise requeue and re-persist the very item being
+                // discarded here -- resurrecting deleted note text or a
+                // reminder already completed elsewhere. RequeueHeldAsync and
+                // TickAsync's decline path both consult this instead.
+                _discardedWhilePresentingIds.Add(key);
+            }
         }
 
         _policy.Remove(key);
         await RemoveHeldAsync(key, cancellationToken);
+    }
+
+    /// <summary>
+    /// Same as <see cref="DiscardHeldAsync"/> but discards every pending item
+    /// of a given kind at once, for a cleanup that is not about one id — e.g.
+    /// forgetting a broken pairing deletes every unopened remote note
+    /// locally in one pass, not one message id at a time. A no-op when
+    /// nothing of that kind is queued or held.
+    /// </summary>
+    public async Task DiscardHeldByKindAsync(
+        PresentationItemKind kind,
+        CancellationToken cancellationToken = default)
+    {
+        var removedKeys = _policy.RemoveAllOfKind(kind);
+        // Finding E: RemoveAllOfKind only ever sees PresentationPolicy's
+        // in-memory queue -- an item of this kind currently being presented
+        // has already been dequeued into _presentingIds and would otherwise
+        // be missed entirely by a kind-wide discard.
+        var presentingPrefix = $"{kind}:";
+        List<string>? presentingKeysOfKind = null;
+        lock (_gate)
+        {
+            foreach (var key in removedKeys)
+            {
+                _toastedWhileHeldIds.Remove(key);
+            }
+
+            foreach (var presentingKey in _presentingIds)
+            {
+                if (!presentingKey.StartsWith(presentingPrefix, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                _discardedWhilePresentingIds.Add(presentingKey);
+                (presentingKeysOfKind ??= []).Add(presentingKey);
+            }
+        }
+
+        foreach (var key in removedKeys)
+        {
+            await RemoveHeldAsync(key, cancellationToken);
+        }
+
+        if (presentingKeysOfKind is not null)
+        {
+            foreach (var key in presentingKeysOfKind)
+            {
+                await RemoveHeldAsync(key, cancellationToken);
+            }
+        }
     }
 
     /// <summary>
@@ -408,12 +505,12 @@ public sealed class PresentationCoordinator :
         {
             if (!await PresentAsync(item, cancellationToken))
             {
-                await RequeueHeldAsync(item, now, cancellationToken);
+                await RequeueHeldAsync(item, now, cancellationToken, callerOwnsPresentingEntry: true);
             }
         }
         catch
         {
-            await RequeueHeldAsync(item, now, cancellationToken);
+            await RequeueHeldAsync(item, now, cancellationToken, callerOwnsPresentingEntry: true);
             throw;
         }
         finally
@@ -421,6 +518,12 @@ public sealed class PresentationCoordinator :
             lock (_gate)
             {
                 _presentingIds.Remove(item.Key);
+                // Finding E: RequeueHeldAsync above already clears this on
+                // the failure path; also clear it here so a *succeeded*
+                // presentation for a key that was discarded mid-flight does
+                // not leave the marker behind to misfire against some later,
+                // unrelated item recurring under the same key.
+                _discardedWhilePresentingIds.Remove(item.Key);
             }
         }
     }
@@ -518,13 +621,15 @@ public sealed class PresentationCoordinator :
                     // this tick, so just put it back in the in-memory queue
                     // without re-persisting -- re-persisting here would
                     // reset QueuedUtc and defeat the abandoned-item cutoff
-                    // in LoadHeldItemsAsync.
-                    _policy.Requeue(toPresent);
+                    // in LoadHeldItemsAsync. Finding E: unless it was
+                    // discarded while this exact attempt was in flight, in
+                    // which case it must be dropped and deleted instead.
+                    await RequeueOrDropDiscardedAsync(toPresent, cancellationToken);
                 }
             }
             catch
             {
-                _policy.Requeue(toPresent);
+                await RequeueOrDropDiscardedAsync(toPresent, cancellationToken);
                 throw;
             }
             finally
@@ -532,6 +637,7 @@ public sealed class PresentationCoordinator :
                 lock (_gate)
                 {
                     _presentingIds.Remove(toPresent.Key);
+                    _discardedWhilePresentingIds.Remove(toPresent.Key);
                 }
             }
 
@@ -709,9 +815,50 @@ public sealed class PresentationCoordinator :
             // best-effort OS notification did not land. The failure is still
             // reported inside ObserveAsync either way -- it just no longer
             // changes the return value.
-            await ObserveAsync(
+            var toastShown = await ObserveAsync(
                 () => ShowNotificationAsync(item, cancellationToken),
                 "presentation-notification");
+
+            // The animation can still have already failed by this point
+            // (succeeded is false): without recording that the toast
+            // happened, a retry -- whether the immediate re-present a few
+            // lines up in PublishAsync's catch, or a later 30 s tick -- would
+            // find alreadyToasted still false and show the exact same toast
+            // again, forever, since a failing animation never lets the item
+            // leave the queue. Marking it here makes the requeue (and
+            // whatever persists the row afterward) see toasted=true, the same
+            // as the userHidden-while-held path already does. Only latched
+            // for a failed presentation: a succeeded one is done for good, so
+            // leaving the marker set would just orphan it for a future item
+            // recurring under the same key, exactly like the purge cleanup
+            // above guards against.
+            if (toastShown && !succeeded)
+            {
+                lock (_gate)
+                {
+                    _toastedWhileHeldIds.Add(item.Key);
+                }
+
+                if (item.Kind != PresentationItemKind.LocalNote)
+                {
+                    // Finding D: the marker above is memory-only. PersistHeldAsync
+                    // already writes toasted=true into a *new* row (via
+                    // RequeueHeldAsync, PublishAsync's own failure path), but
+                    // TickAsync's decline path deliberately does not re-persist
+                    // an already-held item's row (to preserve QueuedUtc) -- so
+                    // without this, that row's toasted column stays false even
+                    // though _toastedWhileHeldIds already remembers it in
+                    // memory. A restart before the retry finally succeeds would
+                    // then reload the row as untoasted and show the Windows
+                    // toast a second time. A no-op when the row does not exist
+                    // yet -- the fresh persist above already writes the correct
+                    // flag. Skipped for LocalNote: ShowNotificationAsync shows
+                    // no real toast for that kind (see the switch below), so
+                    // toastShown is trivially true for it regardless of
+                    // whether anything was actually shown.
+                    await MarkToastedAsync(item.Key, cancellationToken);
+                }
+            }
         }
         else if (succeeded)
         {
@@ -771,9 +918,14 @@ public sealed class PresentationCoordinator :
     {
         try
         {
-            // Live re-sample: the pushed _fullscreen flag is reconciled with a
-            // current read on every decision so PublishAsync/TickAsync never
-            // act on a stale poll. Any read failure is fail-closed (hidden).
+            // Re-sampled on every decision so PublishAsync/TickAsync never
+            // act on a stale poll -- but only when the constructor was given
+            // a real isFullscreenNow callback; production does not pass one,
+            // so this just reads back the last value SetFullscreen pushed
+            // (see the isFullscreenNow default above), which starts out
+            // false/unset until the events sink pushes a real reading during
+            // WindowsCompanionBootstrap, after this host's own startup tick
+            // has already run once. Any read failure is fail-closed (hidden).
             var liveFullscreen = ReadFullscreenFailClosed();
             bool sessionLocked;
             bool userHidden;
@@ -869,7 +1021,11 @@ public sealed class PresentationCoordinator :
     /// swallowed, matching every other secondary concern in this class (a
     /// toast, audio): it must never fail the presentation it is
     /// tracking.</summary>
-    private async Task PersistHeldAsync(DurableNotification item, DateTimeOffset queuedUtc, CancellationToken cancellationToken)
+    private async Task PersistHeldAsync(
+        DurableNotification item,
+        DateTimeOffset queuedUtc,
+        CancellationToken cancellationToken,
+        bool callerOwnsPresentingEntry = false)
     {
         if (_heldPresentations is null)
         {
@@ -912,10 +1068,25 @@ public sealed class PresentationCoordinator :
         // preserve QueuedUtc), relying on this row still being on disk to
         // requeue *from*. Only delete when the item is gone from both --
         // queued nowhere and not being presented either.
+        //
+        // Finding 7: when this call came from PublishAsync's own failed-
+        // immediate-present retry (RequeueHeldAsync with
+        // callerOwnsPresentingEntry: true), item.Key is still in
+        // _presentingIds for the whole call -- it is PublishAsync's own
+        // bookkeeping entry, not yet removed (that happens in its `finally`,
+        // after this call returns), so it says nothing about whether anyone
+        // else still cares. Counting it there made this guard unable to ever
+        // fire for that path: a concurrent DiscardHeldAsync (e.g. the
+        // reminder was completed from the Reminders page while this retry
+        // was mid-flight) could remove the item from the queue for good, yet
+        // the self-reference alone would keep "still relevant" true forever,
+        // leaving a stale row to reload and re-present on the next launch.
+        // Only _presentingIds entries owned by someone else still count.
         bool stillRelevant;
         lock (_gate)
         {
-            stillRelevant = _policy.IsQueued(item) || _presentingIds.Contains(item.Key);
+            stillRelevant = _policy.IsQueued(item)
+                || (!callerOwnsPresentingEntry && _presentingIds.Contains(item.Key));
         }
 
         if (!stillRelevant)
@@ -939,14 +1110,86 @@ public sealed class PresentationCoordinator :
         return ObserveHeldAsync(() => _heldPresentations.DeleteAsync(key, cancellationToken), "remove");
     }
 
+    /// <summary>Finding D: persists the toasted-while-held marker for a row
+    /// that may already exist on disk, independent of a full
+    /// <see cref="PersistHeldAsync"/> upsert (which would reset QueuedUtc).
+    /// No-op when no repository was supplied, or when the row does not exist
+    /// yet -- the eventual first persist already writes the correct
+    /// flag.</summary>
+    private Task MarkToastedAsync(string key, CancellationToken cancellationToken)
+    {
+        if (_heldPresentations is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        return ObserveHeldAsync(() => _heldPresentations.MarkToastedAsync(key, cancellationToken), "mark-toasted");
+    }
+
     /// <summary>Returns a failed/cancelled immediate-presentation attempt
     /// (<see cref="PublishAsync"/> only -- TickAsync requeues a held item's
     /// failed retry itself, without touching its already-persisted row) to
     /// PresentationPolicy's durable queue and, only when it actually
     /// re-entered the queue, persists it for the first time with
-    /// <paramref name="queuedUtc"/> as its QueuedUtc.</summary>
-    private Task RequeueHeldAsync(DurableNotification item, DateTimeOffset queuedUtc, CancellationToken cancellationToken) =>
-        _policy.Requeue(item) ? PersistHeldAsync(item, queuedUtc, cancellationToken) : Task.CompletedTask;
+    /// <paramref name="queuedUtc"/> as its QueuedUtc. <paramref
+    /// name="callerOwnsPresentingEntry"/> must be true when the caller (this
+    /// is only ever <see cref="PublishAsync"/>) still holds its own
+    /// <c>_presentingIds</c> entry for this key while this call runs -- see
+    /// the Finding 7 note in <see cref="PersistHeldAsync"/>.</summary>
+    private async Task RequeueHeldAsync(
+        DurableNotification item,
+        DateTimeOffset queuedUtc,
+        CancellationToken cancellationToken,
+        bool callerOwnsPresentingEntry = false)
+    {
+        // Finding E: this exact attempt was discarded (DiscardHeldAsync /
+        // DiscardHeldByKindAsync) while it was still in flight -- e.g. the
+        // reminder was completed from the Reminders page, or the note was
+        // deleted, while PublishAsync's immediate-present attempt for it was
+        // still running. Requeuing and re-persisting it now, the ordinary
+        // failure path below, would resurrect something the user already
+        // got rid of. Drop it for good instead.
+        bool discardedWhilePresenting;
+        lock (_gate)
+        {
+            discardedWhilePresenting = _discardedWhilePresentingIds.Remove(item.Key);
+        }
+
+        if (discardedWhilePresenting)
+        {
+            _policy.Remove(item.Key);
+            await RemoveHeldAsync(item.Key, cancellationToken);
+            return;
+        }
+
+        if (_policy.Requeue(item))
+        {
+            await PersistHeldAsync(item, queuedUtc, cancellationToken, callerOwnsPresentingEntry);
+        }
+    }
+
+    /// <summary>Finding E: TickAsync's own requeue-without-repersist path for
+    /// a released item that was declined or whose presentation threw. Drops
+    /// and deletes the row instead of requeuing when <paramref name="item"/>
+    /// was discarded (<see cref="DiscardHeldAsync"/> /
+    /// <see cref="DiscardHeldByKindAsync"/>) while this exact attempt was in
+    /// flight -- see <see cref="_discardedWhilePresentingIds"/>.</summary>
+    private async Task RequeueOrDropDiscardedAsync(DurableNotification item, CancellationToken cancellationToken)
+    {
+        bool discardedWhilePresenting;
+        lock (_gate)
+        {
+            discardedWhilePresenting = _discardedWhilePresentingIds.Remove(item.Key);
+        }
+
+        if (discardedWhilePresenting)
+        {
+            await RemoveHeldAsync(item.Key, cancellationToken);
+            return;
+        }
+
+        _policy.Requeue(item);
+    }
 
     /// <summary>Runs a held-presentation repository call, reporting a
     /// failure (throttled via <see cref="ReportHeldFailureOnce"/>) and

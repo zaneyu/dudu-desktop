@@ -154,6 +154,10 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
         {
             ArgumentNullException.ThrowIfNull(note);
             await _context.LocalNotes.DeleteAsync(note.Id, cancellationToken);
+            // A deleted note may still be sitting queued or held for later
+            // ambient presentation: without this, the pet could still show
+            // it once even though it no longer exists in the jar.
+            await _context.DiscardHeldLocalNoteAsync(note.Id, cancellationToken);
             await MutateAsync(() =>
             {
                 // LocalLoveNote is a record: Remove(note) would use value equality across
@@ -217,6 +221,9 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
                 envelope.MessageId,
                 _context.Clock.UtcNow.ToUniversalTime(),
                 cancellationToken);
+            // The remote note is now consumed into the jar: a queued or held
+            // copy of the same message id must not still surface later.
+            await _context.DiscardHeldRemoteNoteAsync(envelope.MessageId, cancellationToken);
             await MutateAsync(() =>
             {
                 Replace(note);

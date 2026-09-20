@@ -772,6 +772,10 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                 errorReporter: errorReporter,
                 presentOneShotAsync: presentOneShotAsync,
                 presentationEnvironment: presentationEnvironment);
+            // Wired the same way the presentation gateway and remote sync are
+            // attached to the host: before host.StartAsync ever runs (it is
+            // only called later, from WindowsCompanionRuntime.StartAsync).
+            host.AttachVisibilityReconciler(lifecycle);
             if (initializeOverlay is not null)
             {
                 await initializeOverlay(overlay);
