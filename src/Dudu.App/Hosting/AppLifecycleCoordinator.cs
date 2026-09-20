@@ -343,6 +343,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
             // section (which flips _userVisible and pushes false) is
             // blocked out entirely while we hold _gate here, so nothing can
             // race between these two checks and the push that follows them.
+            bool needsHide;
             await _gate.WaitAsync(cancellationToken);
             try
             {
@@ -350,16 +351,31 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
                 if (!_userVisible)
                 {
                     _presentationEnvironment?.SetUserVisible(false);
-                    return;
+                    // Finding 2: authoritative in both directions -- a
+                    // desired-hidden pet whose overlay is still visible
+                    // (e.g. Finding 1's _openHome race, or any other missed
+                    // hide) must actually be hidden here, not just have
+                    // false pushed to the presentation sink while the
+                    // window stays on screen indefinitely.
+                    needsHide = _overlay.IsVisible;
                 }
-
-                if (_overlay.IsVisible)
+                else if (_overlay.IsVisible)
                 {
                     _presentationEnvironment?.SetUserVisible(true);
                     return;
                 }
+                else
+                {
+                    needsHide = false;
+                }
             }
             finally { _gate.Release(); }
+
+            if (needsHide)
+            {
+                await HideIfStillDesiredHiddenAsync(cancellationToken);
+                return;
+            }
 
             await EnsureUserVisibleAsync(cancellationToken, requireStillDesired: true);
         }
@@ -395,6 +411,36 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
         finally { _gate.Release(); }
 
         await InvokeVisualSafelyAsync(_overlay.Hide, "user-hide", cancellationToken);
+    }
+
+    /// <summary>
+    /// Finding 2: hides the overlay when <see cref="ReconcileVisibilityAsync"/>
+    /// finds it still visible despite <see cref="_userVisible"/> already
+    /// being false. Takes <see cref="_visibilityGate"/> then re-checks
+    /// <see cref="_userVisible"/> under <see cref="_gate"/> (same nesting as
+    /// <see cref="EnsureUserVisibleAsync"/>) before hiding, so a show that
+    /// lands between the caller's initial check and this call is never
+    /// undone.
+    /// </summary>
+    private async Task HideIfStillDesiredHiddenAsync(CancellationToken cancellationToken)
+    {
+        await _visibilityGate.WaitAsync(cancellationToken);
+        try
+        {
+            await _gate.WaitAsync(cancellationToken);
+            try
+            {
+                ThrowIfDisposed();
+                if (_userVisible)
+                {
+                    return;
+                }
+            }
+            finally { _gate.Release(); }
+
+            InvokeSafely(_overlay.Hide, "reconcile-hide");
+        }
+        finally { _visibilityGate.Release(); }
     }
 
     public async Task OnDisplayChangedAsync(CancellationToken cancellationToken = default)

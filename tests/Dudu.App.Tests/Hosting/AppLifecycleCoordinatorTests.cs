@@ -629,6 +629,42 @@ public sealed class AppLifecycleCoordinatorTests
     }
 
     [Fact]
+    public async Task Reconcile_hides_an_overlay_left_visible_by_a_missed_hide()
+    {
+        // Finding 2 (same root as Finding 1): ReconcileVisibilityAsync's
+        // !_userVisible branch used to push false to the presentation sink
+        // and return without checking whether the overlay itself was still
+        // visible -- e.g. Finding 1's _openHome race (before that fix), or
+        // any other site that changes _userVisible without successfully
+        // hiding the overlay too. Reconcile is now authoritative in both
+        // directions: a desired-hidden pet whose overlay is still visible
+        // gets hidden right here, not left on screen indefinitely.
+        var overlay = new FakeOverlay { IsVisible = true };
+        var sink = new RecordingPresentationEnvironmentSink();
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            initialUserVisible: false,
+            presentationEnvironment: sink);
+
+        // Simulate a missed hide: _userVisible is already false, but the
+        // overlay itself is still showing -- exactly the state a race like
+        // Finding 1's (before that fix) left behind.
+        overlay.IsVisible = true;
+
+        await lifecycle.ReconcileVisibilityAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, overlay.HideCount);
+        Assert.False(overlay.IsVisible);
+        Assert.Equal(false, sink.LastUserVisible);
+    }
+
+    [Fact]
     public async Task Explicit_show_is_not_vetoed_by_fullscreen_when_the_preference_is_off()
     {
         // Finding 5: EnsureUserVisibleAsync's veto used to include a bare
