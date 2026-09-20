@@ -237,6 +237,11 @@ public sealed class RemindersViewModel : FeatureViewModelBase
     public Task SaveReminderPreferencesAsync(CancellationToken cancellationToken = default) =>
         RunAsync(async () =>
         {
+            var before = (await _context.Reminders.ListAsync(cancellationToken))
+                .Where(item => item.Id is "default-hydration" or "default-break"
+                    or LocalReminderDefaults.EveningCheckInId or LocalReminderDefaults.BedtimeId)
+                .ToDictionary(item => item.Id, StringComparer.Ordinal);
+
             await _context.UpdatePreferencesAndDefaultRemindersAsync(current => current with
             {
                 HydrationRemindersEnabled = HydrationRemindersEnabled,
@@ -251,6 +256,27 @@ public sealed class RemindersViewModel : FeatureViewModelBase
                 .Where(item => item.Id is "default-hydration" or "default-break"
                     or LocalReminderDefaults.EveningCheckInId or LocalReminderDefaults.BedtimeId)
                 .ToArray();
+
+            // The transaction above regenerates every default from scratch, which
+            // would otherwise drop an in-flight due time or snooze for a default
+            // whose own schedule this save did not touch.
+            for (var i = 0; i < defaults.Length; i++)
+            {
+                var reminder = defaults[i];
+                if (before.TryGetValue(reminder.Id, out var previous)
+                    && previous.Enabled == reminder.Enabled
+                    && previous.Rule == reminder.Rule)
+                {
+                    reminder = reminder with
+                    {
+                        NextDueUtc = previous.NextDueUtc,
+                        SnoozedUntilUtc = previous.SnoozedUntilUtc,
+                    };
+                    await _context.ReminderWriter.SaveAsync(reminder, cancellationToken);
+                    defaults[i] = reminder;
+                }
+            }
+
             await MutateAsync(() =>
             {
                 foreach (var reminder in defaults)

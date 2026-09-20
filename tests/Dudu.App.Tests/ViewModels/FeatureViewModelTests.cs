@@ -1324,6 +1324,35 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Saving_reminder_preferences_preserves_next_due_and_snooze_for_an_unchanged_default()
+    {
+        // Audit regression: every save rebuilt all four defaults from scratch via
+        // LocalReminderDefaults.Create, wiping NextDueUtc/SnoozedUntilUtc even for
+        // a default whose own enabled-state and schedule this save never touched.
+        var fixture = FeatureFixture.Create();
+        var previous = fixture.Reminder with
+        {
+            Id = "default-hydration",
+            Enabled = true,
+            Rule = new RecurrenceRule.Daily(new TimeOnly(10, 0)),
+            NextDueUtc = DateTimeOffset.Parse("2026-09-12T11:45:00Z"),
+            SnoozedUntilUtc = DateTimeOffset.Parse("2026-09-12T11:30:00Z"),
+        };
+        fixture.Reminders.Items.Add(previous);
+        var viewModel = new RemindersViewModel(fixture.Context)
+        {
+            HydrationRemindersEnabled = true,
+            BreakRemindersEnabled = true,
+        };
+
+        await viewModel.SaveReminderPreferencesAsync(TestContext.Current.CancellationToken);
+
+        var saved = fixture.Reminders.Items.Single(item => item.Id == "default-hydration");
+        Assert.Equal(previous.NextDueUtc, saved.NextDueUtc);
+        Assert.Equal(previous.SnoozedUntilUtc, saved.SnoozedUntilUtc);
+    }
+
+    [Fact]
     public async Task Reminder_runtime_apply_failure_restores_exact_previous_default_rows()
     {
         var fixture = FeatureFixture.Create();
