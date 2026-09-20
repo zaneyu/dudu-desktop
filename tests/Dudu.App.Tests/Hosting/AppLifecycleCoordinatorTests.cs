@@ -239,7 +239,7 @@ public sealed class AppLifecycleCoordinatorTests
 
         Assert.Equal("home dispatch failed", exception.Message);
         Assert.Equal(0, overlay.ShowCount);
-        Assert.Null(sink.LastUserVisible);
+        Assert.DoesNotContain(true, sink.UserVisiblePushes);
     }
 
     [Fact]
