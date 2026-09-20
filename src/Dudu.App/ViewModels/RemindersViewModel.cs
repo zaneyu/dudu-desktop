@@ -236,16 +236,26 @@ public sealed class RemindersViewModel : FeatureViewModelBase
         return RunAsync(async () =>
         {
             ArgumentNullException.ThrowIfNull(reminder);
-            var snoozed = reminder with { SnoozedUntilUtc = _context.Clock.UtcNow.ToUniversalTime().AddMinutes(15) };
+            var snoozeUntil = _context.Clock.UtcNow.ToUniversalTime().AddMinutes(15);
+            var snoozed = reminder with { SnoozedUntilUtc = snoozeUntil };
             await _context.ReminderWriter.SaveAsync(snoozed, cancellationToken);
             await MutateAsync(() => Replace(snoozed), cancellationToken);
             await _context.DismissReminderNotificationAsync(reminder.Id, cancellationToken);
 
-            // Same reasoning as CompleteAsync: a snooze that was separately
-            // queued or held back (quiet hours, Dudu hidden) would otherwise
-            // still be sitting in that gateway's queue/persisted row and pop
-            // again on a later tick, even though she just pushed it back.
-            await _context.DiscardHeldReminderAsync(reminder.Id, cancellationToken);
+            // Unlike CompleteAsync, this can't unconditionally discard the held
+            // copy. The scheduling engine advances NextDueUtc *before*
+            // notifying, so once an occurrence is held, that held row is the
+            // only record of it. If NextDueUtc is already later than this
+            // snooze resolves, the snooze is "dead" -- SnoozedUntilUtc <
+            // NextDueUtc is ignored by LoadDueAsync/Reconcile -- and discarding
+            // the held copy here would make the reminder vanish instead of
+            // resurfacing once the hold clears. Only discard when the snooze
+            // is "live", i.e. it reaches at least as far as NextDueUtc and so
+            // will actually govern re-delivery on its own.
+            if (reminder.NextDueUtc is { } due && due.ToUniversalTime() <= snoozeUntil)
+            {
+                await _context.DiscardHeldReminderAsync(reminder.Id, cancellationToken);
+            }
         }, "otayyy snoozed for 15 min");
     }
 

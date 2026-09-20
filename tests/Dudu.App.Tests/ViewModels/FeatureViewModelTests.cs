@@ -289,12 +289,15 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
-    public async Task Snoozing_a_reminder_discards_its_held_presentation()
+    public async Task Snoozing_a_reminder_with_a_live_snooze_discards_its_held_presentation()
     {
         // Audit regression: CompleteAsync discards a reminder's held/queued
         // presentation via DiscardHeldReminderAsync, but SnoozeAsync did not
         // -- so a snoozed reminder that was currently held would still pop
-        // on the next unsuppressed tick.
+        // on the next unsuppressed tick. This is the safe case: NextDueUtc
+        // (10:00, the fixture clock's "now") is no later than the 15-minute
+        // snooze (10:15), so the snooze is "live" and will govern re-delivery
+        // on its own -- the held copy is redundant and can be discarded.
         var discarded = new List<string>();
         var fixture = FeatureFixture.Create(discardHeldReminderAsync: (id, _) =>
         {
@@ -308,6 +311,33 @@ public sealed class FeatureViewModelTests
         await viewModel.SnoozeCommand.ExecuteAsync(reminder);
 
         Assert.Equal([reminder.Id], discarded);
+    }
+
+    [Fact]
+    public async Task Snoozing_a_reminder_with_a_dead_snooze_does_not_discard_its_held_presentation()
+    {
+        // Audit regression: the scheduling engine advances NextDueUtc BEFORE
+        // notifying, so once an occurrence is held (e.g. a bedtime reminder
+        // during quiet hours), the held row is the ONLY record of it --
+        // NextDueUtc already points at the occurrence after this one. A
+        // 15-minute snooze that resolves before that later NextDueUtc is
+        // "dead" (SnoozedUntilUtc < NextDueUtc is ignored by
+        // LoadDueAsync/Reconcile), so discarding the held copy here would
+        // make the reminder vanish entirely instead of resurfacing once the
+        // hold clears.
+        var discarded = new List<string>();
+        var fixture = FeatureFixture.Create(discardHeldReminderAsync: (id, _) =>
+        {
+            discarded.Add(id);
+            return Task.CompletedTask;
+        });
+        var reminder = fixture.Reminder with { NextDueUtc = DateTimeOffset.Parse("2026-09-13T10:00:00Z") };
+        fixture.Reminders.Items.Add(reminder);
+        var viewModel = new RemindersViewModel(fixture.Context);
+
+        await viewModel.SnoozeCommand.ExecuteAsync(reminder);
+
+        Assert.Empty(discarded);
     }
 
     [Fact]
