@@ -186,7 +186,13 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
             {
                 var active = ActiveTasks.FirstOrDefault(item => item.Id == task.Id);
                 if (active is not null) ActiveTasks.Remove(active);
-                CompletedTasks.Insert(0, completed);
+                // A background refresh (e.g. the focus-expiry quiet reload)
+                // can race this and already have loaded the same completed
+                // row -- mirror SaveTaskAsync's exists-check instead of
+                // unconditionally inserting, which would duplicate it.
+                var existingCompleted = CompletedTasks.FirstOrDefault(item => item.Id == completed.Id);
+                if (existingCompleted is not null) CompletedTasks[CompletedTasks.IndexOf(existingCompleted)] = completed;
+                else CompletedTasks.Insert(0, completed);
                 if (SelectedTask?.Id == task.Id) SelectedTask = null;
                 if (PendingDeleteTask?.Id == task.Id) PendingDeleteTask = null;
             }, cancellationToken);
