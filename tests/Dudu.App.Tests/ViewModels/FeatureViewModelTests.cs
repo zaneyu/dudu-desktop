@@ -1,3 +1,4 @@
+using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Reflection;
 using Dudu.App.Overlay;
@@ -1696,39 +1697,68 @@ public sealed class FeatureViewModelTests
         viewModel.AttachFocusExpiry();
 
         var pauseHistory = new TaskCompletionSource<bool>();
-        var listHistoryReturned = new TaskCompletionSource<bool>();
         fixture.FocusSessions.PauseListHistory = pauseHistory;
-        fixture.FocusSessions.ListHistoryReturned = listHistoryReturned;
         fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddMinutes(26);
 
-        // CompleteExpiredAsync raises SessionExpired synchronously. The
-        // fire-and-forget reload it starts runs through GetCurrentAsync --
-        // session A just completed, so it captures a null focus -- and then
-        // blocks inside ListHistoryAsync on pauseHistory, so it is
-        // genuinely in flight (not finished) once this await returns.
-        var completed = await fixture.Context.FocusService.CompleteExpiredAsync(
-            sessionA.Id, TestContext.Current.CancellationToken);
-        Assert.True(completed);
+        // RefreshAfterExpiryAsync's reload runs its ActiveFocus/FocusHistory
+        // mutation inside one synchronous MutateAsync callback (no
+        // UiDispatcher is configured in tests, so MutateAsync runs the
+        // callback inline): ActiveFocus is assigned first, then
+        // FocusHistory.Clear()/Add(...). Waiting for FocusHistory's own
+        // CollectionChanged -- specifically the Add that lands the
+        // just-completed session A -- therefore proves the WHOLE callback,
+        // including the earlier ActiveFocus assignment, already ran.
+        // Awaiting a signal fired from inside the fake's ListHistoryAsync
+        // (the previous approach) does not: that fake signals BEFORE
+        // returning control to RefreshAfterExpiryAsync, which still has to
+        // resume and run the MutateAsync callback afterward -- under
+        // xunit's sync context the test could resume first and assert
+        // against pre-mutation state, making the FocusHistory assertion
+        // flake and the ActiveFocus assertions below pass vacuously
+        // (unchanged since before the reload, not because the guard held).
+        var historyMutated = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        void OnHistoryChanged(object? sender, NotifyCollectionChangedEventArgs e)
+        {
+            if (e.Action == NotifyCollectionChangedAction.Add)
+            {
+                historyMutated.TrySetResult(true);
+            }
+        }
+        viewModel.FocusHistory.CollectionChanged += OnHistoryChanged;
+        try
+        {
+            // CompleteExpiredAsync raises SessionExpired synchronously. The
+            // fire-and-forget reload it starts runs through GetCurrentAsync --
+            // session A just completed, so it captures a null focus -- and then
+            // blocks inside ListHistoryAsync on pauseHistory, so it is
+            // genuinely in flight (not finished) once this await returns.
+            var completed = await fixture.Context.FocusService.CompleteExpiredAsync(
+                sessionA.Id, TestContext.Current.CancellationToken);
+            Assert.True(completed);
 
-        // Start a new session while the stale reload for session A is still
-        // paused mid-flight.
-        var sessionB = await viewModel.StartFocusOrThrowAsync(TestContext.Current.CancellationToken);
-        Assert.Equal(sessionB.Id, viewModel.ActiveFocus?.Id);
+            // Start a new session while the stale reload for session A is still
+            // paused mid-flight.
+            var sessionB = await viewModel.StartFocusOrThrowAsync(TestContext.Current.CancellationToken);
+            Assert.Equal(sessionB.Id, viewModel.ActiveFocus?.Id);
 
-        // Let the paused reload run to completion, then wait for
-        // ListHistoryAsync -- the last fake call before the reload mutates
-        // the view model -- to actually return, instead of polling on a
-        // fixed retry budget.
-        pauseHistory.SetResult(true);
-        await listHistoryReturned.Task;
+            // Let the paused reload run to completion, then wait for the
+            // FocusHistory mutation to actually apply, instead of polling on
+            // a fixed retry budget.
+            pauseHistory.SetResult(true);
+            await historyMutated.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
 
-        // Session B must survive: the reload was for session A, which is no
-        // longer the active session, so it must not have touched ActiveFocus.
-        Assert.Equal(sessionB.Id, viewModel.ActiveFocus?.Id);
-        Assert.True(viewModel.IsFocusActive);
-        // History still reloads unconditionally -- session A now shows up
-        // there.
-        Assert.Contains(viewModel.FocusHistory, entry => entry.StatusText == "completed");
+            // Session B must survive: the reload was for session A, which is no
+            // longer the active session, so it must not have touched ActiveFocus.
+            Assert.Equal(sessionB.Id, viewModel.ActiveFocus?.Id);
+            Assert.True(viewModel.IsFocusActive);
+            // History still reloads unconditionally -- session A now shows up
+            // there.
+            Assert.Contains(viewModel.FocusHistory, entry => entry.StatusText == "completed");
+        }
+        finally
+        {
+            viewModel.FocusHistory.CollectionChanged -= OnHistoryChanged;
+        }
     }
 
     [Theory]
@@ -2571,12 +2601,6 @@ public sealed class FeatureViewModelTests
         // GetCurrentAsync snapshot, so a new session can be started before
         // the reload's mutation finally runs.
         public TaskCompletionSource<bool>? PauseListHistory { get; set; }
-        // Round 4b Opus follow-up (Finding D): ListHistoryAsync is the last
-        // fake call in RefreshAfterExpiryAsync's chain before it mutates the
-        // view model -- signalling this once it returns from the pause above
-        // lets a test await the reload deterministically instead of polling
-        // FocusHistory.Count on a fixed retry budget.
-        public TaskCompletionSource<bool>? ListHistoryReturned { get; set; }
         public Task<FocusSession?> GetAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult(_sessions.GetValueOrDefault(id));
         public Task<FocusSession?> GetActiveAsync(CancellationToken cancellationToken) => Task.FromResult(Active);
         public async Task<IReadOnlyList<FocusSession>> ListHistoryAsync(CancellationToken cancellationToken)
@@ -2584,7 +2608,6 @@ public sealed class FeatureViewModelTests
             if (ThrowOnListHistory) throw new IOException("injected focus history repository failure");
             if (PauseListHistory is { } pause) await pause.Task;
             var result = _sessions.Values.Where(item => item.Status is not (FocusStatus.Running or FocusStatus.Paused)).ToArray();
-            ListHistoryReturned?.TrySetResult(true);
             return result;
         }
         public Task<bool> TryCreateActiveAsync(FocusSession session, CancellationToken cancellationToken)
@@ -2728,23 +2751,27 @@ public sealed class FeatureViewModelTests
                         // rule with no next occurrence (e.g. a completed
                         // Once-edited default) must stay null.
                         //
-                        // Re-anchor on a full day before now, but ONLY for a
-                        // wall-clock rule (Daily/SelectedWeekdays) whose zone
-                        // actually changed -- see
+                        // Re-anchor two days before now, but ONLY for a
+                        // wall-clock rule (Daily/SelectedWeekdays) with no old
+                        // due time to anchor on (previous.NextDueUtc is null)
+                        // or whose zone actually changed -- see
                         // CompanionFeatureTransactionService.SavePreferencesAndDefaultRemindersAsync
                         // for the full reasoning: Once must never be
                         // cancelled by a tz change (NextOccurrence has no
                         // fallthrough case for it), Interval must not be
-                        // needlessly pushed by up to one period, and "now"
+                        // needlessly pushed by up to one period, "now"
                         // itself is unsafe as an anchor because a now inside
                         // quiet hours would land on quiet-hours end instead
-                        // of the next wall-clock occurrence.
-                        var reAnchorForZoneChange = previous.NextDueUtc is not null
-                            && previous.LocalTimeZoneId != reminder.LocalTimeZoneId
-                            && toSave.Rule is Dudu.Core.Models.RecurrenceRule.Daily
-                                or Dudu.Core.Models.RecurrenceRule.SelectedWeekdays;
+                        // of the next wall-clock occurrence, and NextOccurrence
+                        // never does catch-up/missed-occurrence delivery (only
+                        // Reconcile does, which this call path doesn't use),
+                        // so a further-back anchor is safe here.
+                        var reAnchorForZoneChange = toSave.Rule is Dudu.Core.Models.RecurrenceRule.Daily
+                                or Dudu.Core.Models.RecurrenceRule.SelectedWeekdays
+                            && (previous.NextDueUtc is null
+                                || previous.LocalTimeZoneId != reminder.LocalTimeZoneId);
                         var anchor = reAnchorForZoneChange
-                            ? nowUtc.ToUniversalTime().AddDays(-1)
+                            ? nowUtc.ToUniversalTime().AddDays(-2)
                             : previous.NextDueUtc;
                         toSave = toSave with
                         {
@@ -2759,8 +2786,20 @@ public sealed class FeatureViewModelTests
                     {
                         // Disabling: carry the real NextDueUtc forward so it
                         // doesn't get poisoned with Create's shipped value,
-                        // which would become the anchor for a later re-enable.
-                        toSave = toSave with { NextDueUtc = previous.NextDueUtc };
+                        // which would become the anchor for a later re-enable
+                        // -- except when the zone ALSO changed on this save,
+                        // for a wall-clock rule: keeping the old due time
+                        // would stamp the NEW LocalTimeZoneId onto an instant
+                        // still anchored to the OLD zone's wall clock. Null
+                        // it instead so the re-enable arm's null-anchor case
+                        // above re-derives it fresh.
+                        var zoneChangedWhileDisabled = previous.LocalTimeZoneId != reminder.LocalTimeZoneId
+                            && toSave.Rule is Dudu.Core.Models.RecurrenceRule.Daily
+                                or Dudu.Core.Models.RecurrenceRule.SelectedWeekdays;
+                        toSave = toSave with
+                        {
+                            NextDueUtc = zoneChangedWhileDisabled ? null : previous.NextDueUtc,
+                        };
                     }
 
                     if (!Dudu.Core.Reminders.LocalReminderDefaults.IsKnownDefaultTitle(reminder.Id, previous.Title))
