@@ -71,6 +71,12 @@ public sealed class PresentationCoordinator :
     private readonly object _gate = new();
     private readonly HashSet<string> _presentingIds = new(StringComparer.Ordinal);
     private readonly HashSet<string> _toastedWhileHeldIds = new(StringComparer.Ordinal);
+
+    /// <summary>Which held-presentation repository operation kinds ("load",
+    /// "persist", "remove") have already had a failure reported this
+    /// process, so <see cref="ReportHeldFailureOnce"/> reports each kind at
+    /// most once instead of on every reminder tick.</summary>
+    private readonly HashSet<string> _reportedHeldFailureKinds = new(StringComparer.Ordinal);
     private readonly Func<bool> _isFullscreenNow;
     private readonly Func<DateTimeOffset> _utcNow;
     private readonly IAppHostErrorReporter? _errorReporter;
@@ -229,7 +235,7 @@ public sealed class PresentationCoordinator :
         }
         catch (Exception exception)
         {
-            ReportFailure("presentation-tick", exception);
+            ReportHeldFailureOnce("load", exception);
             return;
         }
 
@@ -261,7 +267,7 @@ public sealed class PresentationCoordinator :
             }
             catch (Exception exception)
             {
-                ReportFailure("presentation-tick", exception);
+                ReportHeldFailureOnce("load", exception);
                 await RemoveHeldAsync(record.Key, cancellationToken);
             }
         }
@@ -785,8 +791,9 @@ public sealed class PresentationCoordinator :
     }
 
     /// <summary>No-op when no repository was supplied. A save failure is
-    /// reported and swallowed, matching every other secondary concern in this
-    /// class (a toast, audio): it must never fail the presentation it is
+    /// reported (throttled, see <see cref="ReportHeldFailureOnce"/>) and
+    /// swallowed, matching every other secondary concern in this class (a
+    /// toast, audio): it must never fail the presentation it is
     /// tracking.</summary>
     private async Task PersistHeldAsync(DurableNotification item, DateTimeOffset queuedUtc, CancellationToken cancellationToken)
     {
@@ -811,7 +818,7 @@ public sealed class PresentationCoordinator :
             item.ExpiresUtc,
             queuedUtc,
             toasted);
-        await ObserveAsync(() => _heldPresentations.SaveAsync(record, cancellationToken), "presentation-tick");
+        await ObserveHeldAsync(() => _heldPresentations.SaveAsync(record, cancellationToken), "persist");
 
         // H1: PublishAsync/RequeueHeldAsync enqueue the item into
         // PresentationPolicy under _gate, then persist it here afterward (a
@@ -839,7 +846,7 @@ public sealed class PresentationCoordinator :
             return Task.CompletedTask;
         }
 
-        return ObserveAsync(() => _heldPresentations.DeleteAsync(key, cancellationToken), "presentation-tick");
+        return ObserveHeldAsync(() => _heldPresentations.DeleteAsync(key, cancellationToken), "remove");
     }
 
     /// <summary>Returns a failed/cancelled immediate-presentation attempt
@@ -850,6 +857,47 @@ public sealed class PresentationCoordinator :
     /// <paramref name="queuedUtc"/> as its QueuedUtc.</summary>
     private Task RequeueHeldAsync(DurableNotification item, DateTimeOffset queuedUtc, CancellationToken cancellationToken) =>
         _policy.Requeue(item) ? PersistHeldAsync(item, queuedUtc, cancellationToken) : Task.CompletedTask;
+
+    /// <summary>Runs a held-presentation repository call, reporting a
+    /// failure (throttled via <see cref="ReportHeldFailureOnce"/>) and
+    /// swallowing it rather than letting it propagate. Kept separate from
+    /// <see cref="ObserveAsync"/>'s other callers because this one runs on
+    /// every reminder tick (as often as every 30 seconds): an unthrottled
+    /// report would drown out anything else in the log/error reporter for as
+    /// long as a transient DB problem lasts.</summary>
+    private async Task<bool> ObserveHeldAsync(Func<Task> operation, string kind)
+    {
+        try
+        {
+            await operation();
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+        catch (Exception exception)
+        {
+            ReportHeldFailureOnce(kind, exception);
+            return false;
+        }
+    }
+
+    /// <summary>Reports a held-presentation failure at most once per
+    /// <paramref name="kind"/> ("load", "persist", or "remove") for this
+    /// process, instead of on every occurrence.</summary>
+    private void ReportHeldFailureOnce(string kind, Exception exception)
+    {
+        lock (_gate)
+        {
+            if (!_reportedHeldFailureKinds.Add(kind))
+            {
+                return;
+            }
+        }
+
+        ReportFailure($"presentation-held-{kind}", exception);
+    }
 
     /// <summary>Rebuilds the <see cref="DurableNotification"/> a
     /// <see cref="HeldPresentation"/> row was saved from. Throws for a row
