@@ -120,17 +120,52 @@ public sealed class ReminderRepository : SqliteRepository, IReminderRepository, 
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(reminderId);
         await using var connection = await OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
         // M3: a deleted reminder still sitting in PresentationCoordinator's held
         // queue (key "Reminder:<id>", see DurableNotification.Key) would
         // otherwise pop back up on the next restart even though it no longer
         // exists.
-        command.CommandText = """
-            DELETE FROM reminders WHERE id=$id;
-            DELETE FROM held_presentations WHERE presentation_key='Reminder:' || $id;
-            """;
-        Add(command, "$id", reminderId);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        //
+        // Both DELETEs must commit or roll back together, for the same reason
+        // as LocalNoteRepository.DeleteAsync: outside any ambient transaction
+        // Microsoft.Data.Sqlite autocommits each statement in this
+        // multi-statement CommandText separately, so a crash between them
+        // would leave the reminder gone but its held row behind.
+        var ownTransaction = IsTransactionBound ? null : await connection.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            await using var command = connection.CreateCommand();
+            if (ownTransaction is not null)
+            {
+                command.Transaction = ownTransaction;
+            }
+
+            command.CommandText = """
+                DELETE FROM reminders WHERE id=$id;
+                DELETE FROM held_presentations WHERE presentation_key='Reminder:' || $id;
+                """;
+            Add(command, "$id", reminderId);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+            if (ownTransaction is not null)
+            {
+                await ownTransaction.CommitAsync(cancellationToken);
+            }
+        }
+        catch
+        {
+            if (ownTransaction is not null)
+            {
+                await ownTransaction.RollbackAsync(CancellationToken.None);
+            }
+
+            throw;
+        }
+        finally
+        {
+            if (ownTransaction is not null)
+            {
+                await ownTransaction.DisposeAsync();
+            }
+        }
     }
 
     private const string Select = "SELECT id,title,details,enabled,rule_kind,local_time,weekdays_mask,interval_ticks,first_due_utc,local_time_zone_id,quiet_hours_behavior,missed_policy,next_due_utc,snoozed_until_utc,quiet_hours_enabled,quiet_hours_start,quiet_hours_end FROM reminders";

@@ -127,14 +127,48 @@ public sealed class RemoteEnvelopeRepository : SqliteRepository, IRemoteEnvelope
         // the encryption AAD, so it deliberately is not normalized). A
         // sender that formats its GUID upper- or mixed-case would otherwise
         // leave a case-mismatched held row behind after this delete.
+        //
+        // Both DELETEs must commit or roll back together, for the same reason
+        // as LocalNoteRepository.DeleteAsync: outside any ambient transaction
+        // Microsoft.Data.Sqlite autocommits each statement in this
+        // multi-statement CommandText separately.
         await using var connection=await OpenAsync(cancellationToken);
-        await using var command=connection.CreateCommand();
-        command.CommandText = """
-            DELETE FROM remote_envelopes WHERE message_id=$id;
-            DELETE FROM held_presentations WHERE presentation_key='RemoteNote:' || $id COLLATE NOCASE;
-            """;
-        Add(command,"$id",messageId);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        var ownTransaction = IsTransactionBound ? null : await connection.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            await using var command=connection.CreateCommand();
+            if (ownTransaction is not null)
+            {
+                command.Transaction = ownTransaction;
+            }
+
+            command.CommandText = """
+                DELETE FROM remote_envelopes WHERE message_id=$id;
+                DELETE FROM held_presentations WHERE presentation_key='RemoteNote:' || $id COLLATE NOCASE;
+                """;
+            Add(command,"$id",messageId);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+            if (ownTransaction is not null)
+            {
+                await ownTransaction.CommitAsync(cancellationToken);
+            }
+        }
+        catch
+        {
+            if (ownTransaction is not null)
+            {
+                await ownTransaction.RollbackAsync(CancellationToken.None);
+            }
+
+            throw;
+        }
+        finally
+        {
+            if (ownTransaction is not null)
+            {
+                await ownTransaction.DisposeAsync();
+            }
+        }
     }
 
     public async Task<int> DeleteAllAsync(CancellationToken cancellationToken)
@@ -143,22 +177,61 @@ public sealed class RemoteEnvelopeRepository : SqliteRepository, IRemoteEnvelope
         // alone, matching PruneExpiredAsync -- it is dedup state, not user-read state, and keeping
         // it means a since-forgotten message id can never resurrect as "new" if it somehow
         // reappeared on the relay.
+        //
+        // Both deletes below must commit or roll back together, for the same reason as
+        // DeleteAsync above: these are two separate ExecuteNonQueryAsync calls, so outside any
+        // ambient transaction each autocommits on its own.
         await using var connection = await OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = "DELETE FROM remote_envelopes;";
-        var removed = await command.ExecuteNonQueryAsync(cancellationToken);
+        var ownTransaction = IsTransactionBound ? null : await connection.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            await using var command = connection.CreateCommand();
+            if (ownTransaction is not null)
+            {
+                command.Transaction = ownTransaction;
+            }
 
-        // M3: every envelope just deleted above is now permanently gone (this path only
-        // runs when the desktop's ECDH key is unrecoverable, so it was already undecryptable),
-        // so any RemoteNote row still sitting in the held queue for one of them would try to
-        // present a note that no longer exists on the next restart. Kind-wide because the
-        // caller (RemoteSyncService.ForgetPairingLocallyAsync) has no per-message list here --
-        // only remote notes ever use this kind, never a reminder or local note.
-        await using var deleteHeld = connection.CreateCommand();
-        deleteHeld.CommandText = "DELETE FROM held_presentations WHERE kind='RemoteNote';";
-        await deleteHeld.ExecuteNonQueryAsync(cancellationToken);
+            command.CommandText = "DELETE FROM remote_envelopes;";
+            var removed = await command.ExecuteNonQueryAsync(cancellationToken);
 
-        return removed;
+            // M3: every envelope just deleted above is now permanently gone (this path only
+            // runs when the desktop's ECDH key is unrecoverable, so it was already undecryptable),
+            // so any RemoteNote row still sitting in the held queue for one of them would try to
+            // present a note that no longer exists on the next restart. Kind-wide because the
+            // caller (RemoteSyncService.ForgetPairingLocallyAsync) has no per-message list here --
+            // only remote notes ever use this kind, never a reminder or local note.
+            await using var deleteHeld = connection.CreateCommand();
+            if (ownTransaction is not null)
+            {
+                deleteHeld.Transaction = ownTransaction;
+            }
+
+            deleteHeld.CommandText = "DELETE FROM held_presentations WHERE kind='RemoteNote';";
+            await deleteHeld.ExecuteNonQueryAsync(cancellationToken);
+
+            if (ownTransaction is not null)
+            {
+                await ownTransaction.CommitAsync(cancellationToken);
+            }
+
+            return removed;
+        }
+        catch
+        {
+            if (ownTransaction is not null)
+            {
+                await ownTransaction.RollbackAsync(CancellationToken.None);
+            }
+
+            throw;
+        }
+        finally
+        {
+            if (ownTransaction is not null)
+            {
+                await ownTransaction.DisposeAsync();
+            }
+        }
     }
 
     public async Task<int> PruneExpiredAsync(DateTimeOffset utcNow, TimeSpan retention, CancellationToken cancellationToken)

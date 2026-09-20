@@ -522,6 +522,57 @@ public sealed class DatabaseTests
     }
 
     [Fact]
+    public async Task DeleteAsync_rolls_back_the_envelope_delete_when_the_held_row_delete_fails()
+    {
+        // Finding 17: outside an ambient transaction, RemoteEnvelopeRepository.DeleteAsync's two
+        // DELETE statements used to run as a single multi-statement CommandText, which
+        // Microsoft.Data.Sqlite autocommits statement-by-statement -- a crash or failure between
+        // them left remote_envelopes and held_presentations out of sync. Prove the fix by making
+        // the second statement fail (drop held_presentations out from under it) and confirming the
+        // first statement's delete did not survive either.
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var envelopes = new RemoteEnvelopeRepository(fixture.Database);
+        var envelope = new RemoteEnvelope("atomic-delete", [1, 2, 3], DateTimeOffset.Parse("2026-09-12T10:00:00Z"));
+        Assert.True(await envelopes.TryInsertAsync(envelope, cancellationToken));
+
+        await using (var connection = await fixture.Database.CreateConnectionAsync(cancellationToken))
+        await using (var drop = connection.CreateCommand())
+        {
+            drop.CommandText = "DROP TABLE held_presentations;";
+            await drop.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await Assert.ThrowsAsync<SqliteException>(
+            () => envelopes.DeleteAsync(envelope.MessageId, cancellationToken));
+
+        Assert.NotNull(await envelopes.GetAsync(envelope.MessageId, cancellationToken));
+    }
+
+    [Fact]
+    public async Task DeleteAllAsync_rolls_back_the_envelope_deletes_when_the_held_row_delete_fails()
+    {
+        // Same atomicity gap as above (Finding 17), for the ForgetPairingLocallyAsync path.
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var envelopes = new RemoteEnvelopeRepository(fixture.Database);
+        var envelope = new RemoteEnvelope("atomic-wipe", [1, 2, 3], DateTimeOffset.Parse("2026-09-12T10:00:00Z"));
+        Assert.True(await envelopes.TryInsertAsync(envelope, cancellationToken));
+
+        await using (var connection = await fixture.Database.CreateConnectionAsync(cancellationToken))
+        await using (var drop = connection.CreateCommand())
+        {
+            drop.CommandText = "DROP TABLE held_presentations;";
+            await drop.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await Assert.ThrowsAsync<SqliteException>(
+            () => envelopes.DeleteAllAsync(cancellationToken));
+
+        Assert.NotNull(await envelopes.GetAsync(envelope.MessageId, cancellationToken));
+    }
+
+    [Fact]
     public async Task Forget_pairing_wipe_removes_only_remote_note_held_rows()
     {
         // M3: RemoteEnvelopeRepository.DeleteAllAsync backs

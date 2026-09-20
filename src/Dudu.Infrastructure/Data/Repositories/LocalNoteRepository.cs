@@ -1,5 +1,6 @@
 using Dudu.Core.Abstractions;
 using Dudu.Core.Models;
+using Microsoft.Data.Sqlite;
 
 namespace Dudu.Infrastructure.Data.Repositories;
 
@@ -55,17 +56,55 @@ public sealed class LocalNoteRepository : SqliteRepository, ILocalNoteRepository
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(noteId);
         await using var connection = await OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
         // M3: a note deleted while a held_presentations row for it is still
         // sitting in PresentationCoordinator's held queue (key "LocalNote:<id>",
         // see DurableNotification.Key) would otherwise pop back up, full text
         // and all, on the next restart even though the note itself is gone.
-        command.CommandText = """
-            DELETE FROM local_notes WHERE id=$id;
-            DELETE FROM held_presentations WHERE presentation_key='LocalNote:' || $id;
-            """;
-        Add(command, "$id", noteId);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        //
+        // Both DELETEs must commit or roll back together: Microsoft.Data.Sqlite
+        // steps each statement in a multi-statement CommandText separately, so
+        // outside any ambient transaction each one autocommits on its own --
+        // a crash between them would leave the note gone but its held row
+        // behind, reintroducing the "deleted note's text resurfaces" bug this
+        // cascade exists to fix. When already running inside a caller's
+        // transaction (IsTransactionBound), that transaction already covers
+        // both statements and a second one is not started.
+        var ownTransaction = IsTransactionBound ? null : await connection.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            await using var command = connection.CreateCommand();
+            if (ownTransaction is not null)
+            {
+                command.Transaction = ownTransaction;
+            }
+
+            command.CommandText = """
+                DELETE FROM local_notes WHERE id=$id;
+                DELETE FROM held_presentations WHERE presentation_key='LocalNote:' || $id;
+                """;
+            Add(command, "$id", noteId);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+            if (ownTransaction is not null)
+            {
+                await ownTransaction.CommitAsync(cancellationToken);
+            }
+        }
+        catch
+        {
+            if (ownTransaction is not null)
+            {
+                await ownTransaction.RollbackAsync(CancellationToken.None);
+            }
+
+            throw;
+        }
+        finally
+        {
+            if (ownTransaction is not null)
+            {
+                await ownTransaction.DisposeAsync();
+            }
+        }
     }
 
     public async Task<int> CountUnsolicitedShownAsync(DateOnly localDate, CancellationToken cancellationToken)
