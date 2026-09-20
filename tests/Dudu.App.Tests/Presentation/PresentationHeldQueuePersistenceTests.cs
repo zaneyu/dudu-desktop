@@ -232,6 +232,73 @@ public sealed class PresentationHeldQueuePersistenceTests
     }
 
     [Fact]
+    public async Task A_later_occurrence_toast_while_already_queued_is_persisted_and_survives_a_restart()
+    {
+        // Finding 6: PublishAsync's already-queued + toastNow branch (see
+        // the sibling test above) only marked _toastedWhileHeldIds in
+        // memory and never persisted it -- a restart before the held row
+        // was ever released would reload it as untoasted and show the same
+        // Windows toast a second time. Mirrors what PresentAsync's own
+        // toastShown-and-not-succeeded path already does: persist the
+        // toasted flag right after showing the toast.
+        var repository = new RecordingHeldPresentationRepository();
+        var notifications = new CountingNotificationService();
+        var quiet = true;
+        var coordinator = new PresentationCoordinator(
+            new PresentationPolicy(TimeSpan.Zero),
+            notifications,
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => Task.CompletedTask,
+            () => AnimationOptions.Default,
+            isQuietHours: () => quiet,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            heldPresentations: repository);
+
+        // Held purely by quiet hours, same setup as the sibling test.
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-1", "Stretch"),
+            bypassSuppression: false,
+            CancellationToken.None);
+        Assert.False(repository.Rows.Values.Single().Toasted);
+
+        quiet = false;
+        coordinator.SetUserVisible(false);
+
+        // The later-occurrence toast fires (hiding Dudu is now the sole
+        // hold reason) -- the persisted row's Toasted flag must flip to
+        // true right along with it, not just the in-memory marker.
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-1", "Stretch"),
+            bypassSuppression: false,
+            CancellationToken.None);
+
+        Assert.Equal(1, notifications.ReminderCalls);
+        var row = Assert.Single(repository.Rows.Values);
+        Assert.True(row.Toasted, "The already-queued toast must be persisted, not just marked in memory.");
+
+        // Simulate a restart: a fresh coordinator over the same durable
+        // repository must not re-toast the reloaded, already-toasted row.
+        var restarted = new PresentationCoordinator(
+            new PresentationPolicy(TimeSpan.Zero),
+            notifications,
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => Task.CompletedTask,
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            heldPresentations: repository,
+            initialUserHidden: true);
+        await restarted.StartAsync(CancellationToken.None);
+
+        restarted.SetUserVisible(true);
+        await restarted.TickAsync(CancellationToken.None);
+
+        Assert.Equal(1, notifications.ReminderCalls);
+    }
+
+    [Fact]
     public async Task A_failed_release_re_persists_the_item_for_a_later_retry()
     {
         var repository = new RecordingHeldPresentationRepository();

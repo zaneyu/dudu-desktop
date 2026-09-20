@@ -550,6 +550,18 @@ public sealed class PresentationCoordinator :
                 await ObserveAsync(
                     () => ShowNotificationAsync(item, cancellationToken),
                     "presentation-notification");
+
+                // Finding 6: the in-memory _toastedWhileHeldIds marker set
+                // above is not enough on its own -- a restart before the
+                // held row is ever released would reload it as untoasted
+                // and show this same toast a second time. Persist it the
+                // same way PresentAsync's own toastShown-and-not-succeeded
+                // path does (LocalNote has no durable row to mark, and no
+                // real toast either).
+                if (item.Kind != PresentationItemKind.LocalNote)
+                {
+                    await MarkToastedAsync(item.Key, cancellationToken);
+                }
             }
 
             return;
