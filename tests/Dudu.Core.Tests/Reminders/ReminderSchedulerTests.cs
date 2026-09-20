@@ -678,6 +678,56 @@ public sealed class ReminderSchedulerTests
     }
 
     [Fact]
+    public void A_dead_snooze_does_not_swallow_an_off_grid_persisted_deferral()
+    {
+        // Opus review regression on top of finding 1: the base arm that counts a
+        // persisted, off-recurrence-grid NextDueUtc (e.g. a quiet-hours deferral)
+        // was still gated on "snoozedUntilUtc is null", not on isLiveSnooze. A
+        // dead snooze (SnoozedUntilUtc earlier than NextDueUtc) therefore blocked
+        // that base arm even though it does not stand in for NextDueUtc, and the
+        // daily rule arm never finds an off-grid time either -- so the reminder
+        // silently vanished. Scenario: daily 23:00, quiet hours 22:00-07:00
+        // WaitUntilQuietHoursEnd defer NextDueUtc to 07:00; snoozing at 06:00 for
+        // 15 min (SnoozedUntil 06:15 < NextDueUtc 07:00) is a dead snooze. The
+        // window here starts after that dead snooze has already passed, so only
+        // the base arm can still deliver the real 07:00 occurrence.
+        var reminder = ReminderBuilder.AtLocalTime(23, 0)
+            .WithQuietHours(new QuietHours(true, new TimeOnly(22, 0), new TimeOnly(7, 0)))
+            .Build() with
+        {
+            NextDueUtc = DateTimeOffset.Parse("2026-09-12T07:00:00Z"),
+            SnoozedUntilUtc = DateTimeOffset.Parse("2026-09-12T06:15:00Z"),
+        };
+
+        var result = ReminderScheduler.Reconcile(
+            reminder,
+            DateTimeOffset.Parse("2026-09-12T06:20:00Z"),
+            DateTimeOffset.Parse("2026-09-12T07:00:30Z"),
+            TimeZoneInfo.Utc);
+
+        Assert.Equal(DateTimeOffset.Parse("2026-09-12T07:00:00Z"), Assert.Single(result.DueNow).DueUtc);
+    }
+
+    [Fact]
+    public void A_snooze_exactly_at_next_due_is_a_live_snooze_that_fires_once()
+    {
+        // Boundary: SnoozedUntilUtc == NextDueUtc counts as live (isLiveSnooze
+        // uses <=), so it stands in for NextDueUtc and must fire exactly once,
+        // not be double-counted by both the base/snooze arm and the daily arm.
+        var reminder = ReminderBuilder.AtLocalTime(9, 0)
+            .SnoozedUntil(DateTimeOffset.Parse("2026-09-11T09:00:00Z"))
+            .Build();
+
+        var result = ReminderScheduler.Reconcile(
+            reminder,
+            DateTimeOffset.Parse("2026-09-11T08:50:00Z"),
+            DateTimeOffset.Parse("2026-09-11T09:00:00Z"),
+            TimeZoneInfo.Utc);
+
+        Assert.Equal(DateTimeOffset.Parse("2026-09-11T09:00:00Z"), Assert.Single(result.DueNow).DueUtc);
+    }
+
+    [Fact]
     public void Completing_a_not_yet_due_once_reminder_consumes_its_pending_occurrence()
     {
         // Audit regression: completing used to call NextOccurrence with the

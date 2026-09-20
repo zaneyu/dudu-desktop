@@ -220,9 +220,17 @@ public static class ReminderScheduler
         // rule arms below; the count tracks distinct intended instants only.
         var baseCounted = false;
 
+        // A snooze only stands in for nextDueUtc when it postponed an occurrence
+        // that was already due; a snooze set while the reminder was not yet due
+        // (SnoozedUntilUtc earlier than NextDueUtc) fires early instead and must
+        // not suppress the real, still-pending occurrence at NextDueUtc.
+        var isLiveSnooze = snoozedUntilUtc is not null && nextDueUtc <= snoozedUntilUtc.Value;
+
         // NextDueUtc may itself be a persisted quiet-hour deferral rather than
-        // a recurrence boundary. It is still the pending occurrence to deliver.
-        if (snoozedUntilUtc is null
+        // a recurrence boundary. It is still the pending occurrence to deliver,
+        // unless a live snooze already stands in for it -- a dead (not-yet-due)
+        // snooze does not suppress it, so an off-grid deferral is never lost.
+        if (!isLiveSnooze
             && nextDueUtc >= fromUtc
             && nextDueUtc <= throughUtc)
         {
@@ -235,15 +243,9 @@ public static class ReminderScheduler
             && snooze >= fromUtc
             && snooze <= throughUtc)
         {
-            latest = snooze;
+            latest = Max(latest, snooze);
             windowCount++;
         }
-
-        // A snooze only stands in for nextDueUtc when it postponed an occurrence
-        // that was already due; a snooze set while the reminder was not yet due
-        // (SnoozedUntilUtc earlier than NextDueUtc) fires early instead and must
-        // not suppress the real, still-pending occurrence at NextDueUtc.
-        var isLiveSnooze = snoozedUntilUtc is not null && nextDueUtc <= snoozedUntilUtc.Value;
 
         if (reminder.Rule is RecurrenceRule.Once)
         {
