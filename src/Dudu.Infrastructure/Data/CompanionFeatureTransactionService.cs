@@ -54,8 +54,21 @@ public sealed class CompanionFeatureTransactionService : ICompanionFeatureTransa
                 var toSave = reminder;
                 if (existing.TryGetValue(reminder.Id, out var previous))
                 {
+                    // Rule/QuietHoursBehavior/MissedPolicy are a hardcoded per-id
+                    // default in LocalReminderDefaults.Create, never derived from
+                    // Preferences -- so the existing row always wins for them,
+                    // whether it holds the shipped default or an edit made on the
+                    // Reminders page. Only Enabled is preference-driven (the
+                    // hydration/break/bedtime checkboxes own it).
+                    toSave = toSave with
+                    {
+                        Rule = previous.Rule,
+                        QuietHoursBehavior = previous.QuietHoursBehavior,
+                        MissedPolicy = previous.MissedPolicy,
+                    };
+
                     if (previous.Enabled == reminder.Enabled
-                        && previous.Rule == reminder.Rule
+                        && previous.Rule == toSave.Rule
                         && previous.LocalTimeZoneId == reminder.LocalTimeZoneId)
                     {
                         toSave = toSave with

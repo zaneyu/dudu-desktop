@@ -261,8 +261,14 @@ public sealed class CompanionFeatureTransactionTests
     }
 
     [Fact]
-    public async Task Saving_preferences_with_a_changed_rule_discards_the_stale_snooze()
+    public async Task Saving_preferences_preserves_a_user_edited_rule_and_its_pending_schedule()
     {
+        // Audit finding 2: Rule/QuietHoursBehavior/MissedPolicy are a hardcoded
+        // per-id default in LocalReminderDefaults.Create, never derived from
+        // Preferences -- so a schedule edited on the Reminders page (and any
+        // snooze pending against it) must survive an unrelated preferences
+        // save. This used to snap a user-edited "drink water" time back to
+        // the shipped default and discard its snooze.
         await using var fixture = await Fixture.CreateAsync();
         var preferences = TestPreferences() with { HydrationRemindersEnabled = true };
         var service = new CompanionFeatureTransactionService(new AppUnitOfWork(fixture.Database));
@@ -274,16 +280,21 @@ public sealed class CompanionFeatureTransactionTests
             TimeZoneInfo.Utc,
             TestContext.Current.CancellationToken);
 
-        // Tamper with the persisted rule so it no longer matches what
-        // LocalReminderDefaults.Create will produce next time.
-        var tampered = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+        // Simulate the Reminders page moving the default's time to 11:00 and
+        // relaxing its quiet-hours/missed-occurrence behavior, with a snooze
+        // pending against that edited schedule.
+        var edited = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
             .Single(item => item.Id == "default-hydration") with
         {
             Rule = new RecurrenceRule.Daily(new TimeOnly(11, 0)),
+            QuietHoursBehavior = QuietHoursBehavior.DeliverImmediately,
+            MissedPolicy = MissedOccurrencePolicy.Skip,
             SnoozedUntilUtc = DateTimeOffset.Parse("2026-09-12T11:30:00Z"),
         };
-        await reminderRepository.SaveAsync(tampered, TestContext.Current.CancellationToken);
+        await reminderRepository.SaveAsync(edited, TestContext.Current.CancellationToken);
 
+        // An unrelated preferences save (same Enabled flag, same time zone)
+        // must not touch this default's schedule.
         await service.SavePreferencesAndDefaultRemindersAsync(
             preferences,
             DateTimeOffset.Parse("2026-09-13T09:00:00Z"),
@@ -292,8 +303,11 @@ public sealed class CompanionFeatureTransactionTests
 
         var saved = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
             .Single(item => item.Id == "default-hydration");
-        Assert.Equal(new RecurrenceRule.Daily(new TimeOnly(10, 0)), saved.Rule);
-        Assert.Null(saved.SnoozedUntilUtc);
+        Assert.Equal(new RecurrenceRule.Daily(new TimeOnly(11, 0)), saved.Rule);
+        Assert.Equal(QuietHoursBehavior.DeliverImmediately, saved.QuietHoursBehavior);
+        Assert.Equal(MissedOccurrencePolicy.Skip, saved.MissedPolicy);
+        Assert.Equal(edited.NextDueUtc, saved.NextDueUtc);
+        Assert.Equal(edited.SnoozedUntilUtc, saved.SnoozedUntilUtc);
     }
 
     [Fact]
