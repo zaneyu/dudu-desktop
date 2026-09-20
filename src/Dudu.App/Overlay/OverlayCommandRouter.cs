@@ -206,7 +206,24 @@ public sealed class OverlayCommandRouter
         // (indirectly, via the lifecycle coordinator's pause gate), so
         // doing that before the hug animation played it into a window that
         // was about to disappear underneath it.
-        await PresentTinyHugAsync(cancellationToken);
+        //
+        // Finding 5: the pause must not depend on the hug succeeding -- a
+        // faulting hug animation must not mean no break at all. Swallow and
+        // trace it the same way SetComfortPanel's listener failures are
+        // handled just below, then apply the pause regardless.
+        try
+        {
+            await PresentTinyHugAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            global::System.Diagnostics.Trace.TraceError("Dudu tiny-hug presentation failed: {0}", exception);
+        }
+
         await _context.ApplyPauseAsync(
             PausePolicy.ForFiveMinutes(_context.Clock.UtcNow.ToUniversalTime()),
             cancellationToken);
