@@ -14,6 +14,7 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
     private double _petScale;
     private double _loadedPetScale;
     private string _monitorDeviceName;
+    private IReadOnlyList<PetPlacement> _placements = [];
     private string _selectedOutfit = "automatic";
     private bool _automaticSeasonalMode = true;
     private DateTimeOffset? _anniversaryDate;
@@ -79,7 +80,25 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
     }
     public bool ReducedMotion { get => _reducedMotion; set => SetProperty(ref _reducedMotion, value); }
     public double PetScale { get => _petScale; set => SetProperty(ref _petScale, Math.Clamp(value, 0.5, 2)); }
-    public string MonitorDeviceName { get => _monitorDeviceName; set => SetProperty(ref _monitorDeviceName, value); }
+    public string MonitorDeviceName
+    {
+        get => _monitorDeviceName;
+        set
+        {
+            if (!SetProperty(ref _monitorDeviceName, value)) return;
+            // Each monitor can have its own saved pet size. Reload it from
+            // whatever RefreshAsync already loaded into _placements -- no
+            // async work here, and a monitor with no saved placement yet
+            // just keeps the slider where it was.
+            var placement = _placements.FirstOrDefault(item =>
+                string.Equals(item.MonitorDeviceName, value, StringComparison.Ordinal));
+            if (placement is not null)
+            {
+                PetScale = placement.Scale;
+                _loadedPetScale = placement.Scale;
+            }
+        }
+    }
     public string SelectedOutfit
     {
         get => _selectedOutfit;
@@ -167,6 +186,7 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
             // onboarding/defaults write is the single source of truth.
             var preferences = _context.CurrentPreferences;
             var placements = await _context.PetPlacements.ListAsync(ct);
+            _placements = placements;
             await MutateAsync(() =>
             {
                 Theme = preferences.Theme;

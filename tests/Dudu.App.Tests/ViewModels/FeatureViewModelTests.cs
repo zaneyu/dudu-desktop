@@ -833,6 +833,49 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Changing_monitor_reloads_pet_scale_from_that_monitor_saved_placement()
+    {
+        // Regression: switching MonitorDeviceName (e.g. on a multi-monitor
+        // machine) left PetScale showing whichever monitor's scale was
+        // loaded at RefreshAsync time, instead of the newly selected
+        // monitor's own saved scale.
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        await fixture.Placements.SaveAsync(new PetPlacement("current monitor", 0.3, 0.4, 1.0), ct);
+        await fixture.Placements.SaveAsync(new PetPlacement("second monitor", 0.5, 0.5, 1.8), ct);
+        var viewModel = new AppearanceViewModel(fixture.Context);
+        await viewModel.RefreshAsync(ct);
+        Assert.Equal("current monitor", viewModel.MonitorDeviceName);
+        Assert.Equal(1.0, viewModel.PetScale);
+
+        viewModel.MonitorDeviceName = "second monitor";
+
+        Assert.Equal(1.8, viewModel.PetScale);
+
+        viewModel.MonitorDeviceName = "current monitor";
+
+        Assert.Equal(1.0, viewModel.PetScale);
+    }
+
+    [Fact]
+    public async Task Changing_monitor_to_one_with_no_saved_placement_leaves_pet_scale_untouched()
+    {
+        // A monitor with no placement row yet (never used before) must not
+        // reset/zero out whatever scale was showing -- the slider keeps its
+        // current value until the user picks one or saves a new placement.
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        await fixture.Placements.SaveAsync(new PetPlacement("current monitor", 0.3, 0.4, 1.0), ct);
+        var viewModel = new AppearanceViewModel(fixture.Context);
+        await viewModel.RefreshAsync(ct);
+        Assert.Equal(1.0, viewModel.PetScale);
+
+        viewModel.MonitorDeviceName = "brand new monitor";
+
+        Assert.Equal(1.0, viewModel.PetScale);
+    }
+
+    [Fact]
     public async Task Appearance_saves_sound_preferences_through_the_mutation_coordinator()
     {
         var fixture = FeatureFixture.Create();
