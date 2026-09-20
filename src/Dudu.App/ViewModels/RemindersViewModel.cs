@@ -240,6 +240,12 @@ public sealed class RemindersViewModel : FeatureViewModelBase
             await _context.ReminderWriter.SaveAsync(snoozed, cancellationToken);
             await MutateAsync(() => Replace(snoozed), cancellationToken);
             await _context.DismissReminderNotificationAsync(reminder.Id, cancellationToken);
+
+            // Same reasoning as CompleteAsync: a snooze that was separately
+            // queued or held back (quiet hours, Dudu hidden) would otherwise
+            // still be sitting in that gateway's queue/persisted row and pop
+            // again on a later tick, even though she just pushed it back.
+            await _context.DiscardHeldReminderAsync(reminder.Id, cancellationToken);
         }, "otayyy snoozed for 15 min");
     }
 

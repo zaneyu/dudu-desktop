@@ -289,6 +289,28 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Snoozing_a_reminder_discards_its_held_presentation()
+    {
+        // Audit regression: CompleteAsync discards a reminder's held/queued
+        // presentation via DiscardHeldReminderAsync, but SnoozeAsync did not
+        // -- so a snoozed reminder that was currently held would still pop
+        // on the next unsuppressed tick.
+        var discarded = new List<string>();
+        var fixture = FeatureFixture.Create(discardHeldReminderAsync: (id, _) =>
+        {
+            discarded.Add(id);
+            return Task.CompletedTask;
+        });
+        var reminder = fixture.Reminder;
+        fixture.Reminders.Items.Add(reminder);
+        var viewModel = new RemindersViewModel(fixture.Context);
+
+        await viewModel.SnoozeCommand.ExecuteAsync(reminder);
+
+        Assert.Equal([reminder.Id], discarded);
+    }
+
+    [Fact]
     public async Task Saving_a_note_clears_the_editor_so_fresh_text_creates_a_new_note()
     {
         var fixture = FeatureFixture.Create();
@@ -2044,7 +2066,8 @@ public sealed class FeatureViewModelTests
             Func<CancellationToken, Task>? deleteLocalDataAsync = null,
             Func<CancellationToken, Task>? deleteRemoteDataAsync = null,
             Func<RemoteEnvelope, CancellationToken, Task<RevealedRemoteNote>>? revealRemoteNoteAsync = null,
-            IPairingService? pairing = null)
+            IPairingService? pairing = null,
+            Func<string, CancellationToken, Task>? discardHeldReminderAsync = null)
         {
             var clock = new FakeClock("2026-09-12T10:00:00Z");
             var events = new List<string>();
@@ -2129,7 +2152,8 @@ public sealed class FeatureViewModelTests
                     ?? ((_, _) => Task.FromResult(new RevealedRemoteNote("You can do it", "none"))),
                 restoreAsync: restoreAsync,
                 deleteLocalDataAsync: deleteLocalDataAsync,
-                deleteRemoteDataAsync: deleteRemoteDataAsync);
+                deleteRemoteDataAsync: deleteRemoteDataAsync,
+                discardHeldReminderAsync: discardHeldReminderAsync);
             return new FeatureFixture(
                 clock,
                 reminders,
