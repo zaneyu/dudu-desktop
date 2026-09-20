@@ -68,7 +68,7 @@ public sealed class SettingsNavigationTests
             Find(window, "FocusEnd").AsButton().Invoke();
             WaitForText(window, "TasksStatusMessage", "good job rest rest abit");
             WaitForText(window, "FocusCurrent", "ended early");
-            Assert.NotNull(Find(window, "FocusHistoryList").FindFirstDescendant(cf => cf.ByName("EndedEarly")));
+            Assert.NotNull(Find(window, "FocusHistoryList").FindFirstDescendant(cf => cf.ByName("ended early")));
 
             Navigate(window, "NavHome", "HomePageTitle");
             Find(window, "HomeCheckInNote").AsTextBox().Enter($"check-in-{marker}");

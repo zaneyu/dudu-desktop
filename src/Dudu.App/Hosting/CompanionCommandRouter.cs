@@ -134,6 +134,15 @@ public sealed class StartupSettingsService
 
     public bool DesiredLaunchAtSignIn => _reconciliationDesiredState ?? Current.LaunchAtSignIn;
 
+    /// <summary>The last applied state, as opposed to <see cref="Current"/>.LaunchAtSignIn
+    /// which records what the user asked for even while that request is still unreconciled. A
+    /// toggle that failed to apply must revert to this, not to the desired preference -- but on
+    /// a packaged (MSIX) install the underlying registration has no confirmed reading yet until
+    /// a write has actually succeeded (<see cref="StartupRegistrationService.IsEnabledKnown"/>),
+    /// so until then this falls back to the desired/persisted value instead of confidently
+    /// reporting "off" while Windows might still have the task registered.</summary>
+    public bool ActualLaunchAtSignIn => _startup.IsEnabledKnown ? _startup.IsEnabled : DesiredLaunchAtSignIn;
+
     public async Task SetLaunchAtSignInAsync(
         bool enabled,
         CancellationToken cancellationToken = default)

@@ -9,6 +9,7 @@ namespace Dudu.App.Pages;
 public sealed partial class HomePage : Page
 {
     private readonly OverlayCommandRouter? _overlayCommands;
+    private bool _suppressStartupToggle;
 
     public HomePage(
         HomeViewModel viewModel,
@@ -153,6 +154,7 @@ public sealed partial class HomePage : Page
 
     private async void StartupToggle_Changed(object sender, RoutedEventArgs args)
     {
+        if (_suppressStartupToggle) return;
         if (sender is not CheckBox toggle || toggle.IsChecked is not bool enabled) return;
         try
         {
@@ -160,9 +162,24 @@ public sealed partial class HomePage : Page
         }
         catch (Exception exception)
         {
-            toggle.IsChecked = Startup.Current.LaunchAtSignIn;
+            // Current.LaunchAtSignIn already records the desired (failed) state, so
+            // reverting to it would be a no-op. Fall back to what the OS actually has
+            // registered, and suppress this handler first so setting IsChecked here
+            // does not re-enter it through the Checked/Unchecked events.
+            _suppressStartupToggle = true;
+            try
+            {
+                toggle.IsChecked = Startup.ActualLaunchAtSignIn;
+            }
+            finally
+            {
+                _suppressStartupToggle = false;
+            }
+
             global::System.Diagnostics.Trace.TraceError("Dudu startup setting failed: {0}", exception);
         }
+
+        RefreshStartupRecovery();
     }
 
 }

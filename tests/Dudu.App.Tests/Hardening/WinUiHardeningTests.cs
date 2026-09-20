@@ -146,6 +146,80 @@ public sealed class WinUiHardeningTests
     }
 
     [Fact]
+    public async Task Startup_failure_leaves_the_actual_state_false_even_though_the_preference_flipped()
+    {
+        // Regression: SetLaunchAtSignInAsync persists the desired preference before it tries the
+        // OS write, so Current.LaunchAtSignIn already reports the new (failed) value once the OS
+        // write throws. A toggle reverting to Current.LaunchAtSignIn on failure was therefore a
+        // no-op. ActualLaunchAtSignIn must keep reporting what the OS actually has registered.
+        await using var startup = new StartupRegistrationService(
+            "/opt/Dudu.exe", "/tmp/startup-" + Guid.NewGuid().ToString("N"), new FailingWriter());
+        var repository = new StubPrefsRepository();
+        var preferences = new Preferences(
+            AppTheme.System, new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+            false, 3, false, false, true, TimeSpan.FromMinutes(15));
+        var settings = new StartupSettingsService(
+            startup, new PreferenceMutationCoordinator(preferences, repository));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            settings.SetLaunchAtSignInAsync(true, TestContext.Current.CancellationToken));
+
+        Assert.True(settings.Current.LaunchAtSignIn);
+        Assert.False(settings.ActualLaunchAtSignIn);
+    }
+
+    [Fact]
+    public async Task Startup_actual_state_falls_back_to_desired_on_a_packaged_install_until_confirmed()
+    {
+        // Regression: on a packaged (MSIX) install, StartupRegistrationService never queries the
+        // Windows StartupTask in its constructor, so IsEnabled starts seeded to false -- reading
+        // it directly (as ActualLaunchAtSignIn used to) made a failed boot reconcile plus a
+        // failed toggle un-check confidently report "off" even if Windows still had the task
+        // registered. Until a write actually succeeds, it must fall back to the desired value.
+        var packagedTask = new FakePackagedStartupTask((_, _) =>
+            throw new InvalidOperationException("packaged task not queried yet"));
+        await using var startup = new StartupRegistrationService(
+            null, "/tmp/startup-" + Guid.NewGuid().ToString("N"), new StubWriter(), packagedTask);
+        var repository = new StubPrefsRepository();
+        var preferences = new Preferences(
+            AppTheme.System, new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+            false, 3, false, false, true, TimeSpan.FromMinutes(15));
+        var settings = new StartupSettingsService(
+            startup, new PreferenceMutationCoordinator(preferences, repository));
+
+        Assert.False(startup.IsEnabledKnown);
+        Assert.Equal(settings.Current.LaunchAtSignIn, settings.ActualLaunchAtSignIn);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            settings.SetLaunchAtSignInAsync(true, TestContext.Current.CancellationToken));
+
+        // Still unconfirmed after a failed attempt -- must not collapse to the stale seeded
+        // "false" read; it should keep tracking what the user asked for.
+        Assert.False(startup.IsEnabledKnown);
+        Assert.True(settings.Current.LaunchAtSignIn);
+        Assert.True(settings.ActualLaunchAtSignIn);
+    }
+
+    [Fact]
+    public async Task Startup_actual_state_reports_the_real_value_once_the_packaged_task_confirms()
+    {
+        var packagedTask = new FakePackagedStartupTask((enabled, _) => Task.FromResult(enabled));
+        await using var startup = new StartupRegistrationService(
+            null, "/tmp/startup-" + Guid.NewGuid().ToString("N"), new StubWriter(), packagedTask);
+        var repository = new StubPrefsRepository();
+        var preferences = new Preferences(
+            AppTheme.System, new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+            false, 3, false, false, true, TimeSpan.FromMinutes(15));
+        var settings = new StartupSettingsService(
+            startup, new PreferenceMutationCoordinator(preferences, repository));
+
+        await settings.SetLaunchAtSignInAsync(true, TestContext.Current.CancellationToken);
+
+        Assert.True(startup.IsEnabledKnown);
+        Assert.True(settings.ActualLaunchAtSignIn);
+    }
+
+    [Fact]
     public async Task Owner_queue_invocation_times_out_without_drain()
     {
         using var queue = new OwnerActionQueue(() => false, () => null);
@@ -191,6 +265,13 @@ public sealed class WinUiHardeningTests
         public Preferences? LastSaved { get; private set; }
         public Task<Preferences?> GetAsync(CancellationToken ct) => Task.FromResult(LastSaved);
         public Task SaveAsync(Preferences p, CancellationToken ct) { LastSaved = p; return Task.CompletedTask; }
+    }
+
+    private sealed class FakePackagedStartupTask(Func<bool, CancellationToken, Task<bool>> setEnabled)
+        : IPackagedStartupTaskRegistration
+    {
+        public Task<bool> SetEnabledAsync(bool enabled, CancellationToken cancellationToken) =>
+            setEnabled(enabled, cancellationToken);
     }
 
 }

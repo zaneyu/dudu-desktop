@@ -33,6 +33,7 @@ public sealed class StartupRegistrationService : IAsyncDisposable
     private readonly bool _available;
     private readonly string? _initializationError;
     private bool _enabled;
+    private bool _enabledKnown;
     private bool _disposed;
     private Task? _disposeTask;
 
@@ -91,6 +92,13 @@ public sealed class StartupRegistrationService : IAsyncDisposable
         _writer = writer ?? new WindowsStartupLinkWriter();
         _available = available;
         _initializationError = error;
+        // Unpackaged: the shortcut-file check just below is a real read of the current OS
+        // state, so IsEnabled is trustworthy immediately. Packaged: Windows StartupTask state
+        // is not queried here (only on a successful SetEnabledAsync below), so _enabled starts
+        // as an unconfirmed guess (false) rather than a known value -- callers that need to
+        // tell "known off" from "not yet asked" apart (e.g. reverting a failed toggle) must
+        // check IsEnabledKnown, not just IsEnabled.
+        _enabledKnown = _packagedStartupTask is null;
         if (available)
         {
             try
@@ -117,6 +125,13 @@ public sealed class StartupRegistrationService : IAsyncDisposable
     public string? InitializationError => _initializationError;
 
     public bool IsEnabled => Volatile.Read(ref _enabled);
+
+    /// <summary>Whether <see cref="IsEnabled"/> is a real read of the current OS state rather
+    /// than an unconfirmed guess. Always true for the unpackaged (shortcut-file) registration;
+    /// for a packaged (MSIX) install it is false until the first successful
+    /// <see cref="SetEnabledAsync"/> call, since the constructor never queries the Windows
+    /// StartupTask.</summary>
+    public bool IsEnabledKnown => Volatile.Read(ref _enabledKnown);
 
     public async Task SetEnabledAsync(bool enabled, CancellationToken cancellationToken = default)
     {
@@ -145,6 +160,7 @@ public sealed class StartupRegistrationService : IAsyncDisposable
                 }
 
                 Volatile.Write(ref _enabled, applied);
+                Volatile.Write(ref _enabledKnown, true);
                 return;
             }
             if (enabled)

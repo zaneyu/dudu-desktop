@@ -1,3 +1,4 @@
+using System.Reflection;
 using Dudu.App.Overlay;
 using Dudu.App.Hosting;
 using Dudu.App.Presentation;
@@ -127,6 +128,59 @@ public sealed class FeatureViewModelTests
         Assert.Equal("select one first", tasks.ErrorMessage);
         await tasks.DeleteTaskCommand.ExecuteAsync(null);
         Assert.Equal("select one first", tasks.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task ArgumentException_error_text_strips_the_framework_parameter_suffix()
+    {
+        // Regression: ArgumentException.Message appends " (Parameter 'GlobalShortcut')" from
+        // ParamName. That framework wording leaked straight into the user-visible error text.
+        var fixture = FeatureFixture.Create();
+        var viewModel = new AppearanceViewModel(fixture.Context) { GlobalShortcut = "   " };
+
+        await viewModel.SaveShortcutAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal("wait type a shortcut first", viewModel.ErrorMessage);
+        Assert.DoesNotContain("Parameter", viewModel.ErrorMessage);
+    }
+
+    [Fact]
+    public void ArgumentOutOfRangeException_error_text_strips_the_suffix_and_the_trailing_actual_value_line()
+    {
+        // Regression: the old strip only matched an EndsWith on " (Parameter 'name')".
+        // ArgumentOutOfRangeException appends "Actual value was X." AFTER that suffix, so the
+        // whole framework tail (suffix and actual-value line) leaked straight through untouched.
+        var exception = new ArgumentOutOfRangeException("count", 5, "must be between 1 and 3");
+
+        var message = InvokeToUserMessage(exception);
+
+        Assert.Equal("must be between 1 and 3", message);
+        Assert.DoesNotContain("Parameter", message);
+        Assert.DoesNotContain("Actual value", message);
+    }
+
+    [Fact]
+    public void ArgumentException_with_a_blank_message_falls_back_to_the_generic_copy_instead_of_going_blank()
+    {
+        // Regression: stripping "" + " (Parameter 'p')" produced an empty string, which would
+        // hide the whole error panel instead of telling the user anything went wrong at all.
+        var exception = new ArgumentException(string.Empty, "shortcut");
+
+        var message = InvokeToUserMessage(exception);
+
+        Assert.Equal("cannot finish that try again", message);
+    }
+
+    /// <summary>ToUserMessage is `protected static` on FeatureViewModelBase with no reachable
+    /// call site that throws ArgumentOutOfRangeException or a blank-message ArgumentException,
+    /// so these two edge cases are exercised directly via reflection (the same non-public-member
+    /// access pattern already used in WinUiHardeningTests for TrayIconService's private fields).</summary>
+    private static string InvokeToUserMessage(Exception exception)
+    {
+        var method = typeof(FeatureViewModelBase).GetMethod(
+            "ToUserMessage", BindingFlags.NonPublic | BindingFlags.Static, [typeof(Exception)])
+            ?? throw new InvalidOperationException("FeatureViewModelBase.ToUserMessage was not found.");
+        return (string)method.Invoke(null, [exception])!;
     }
 
     [Fact]
@@ -537,6 +591,73 @@ public sealed class FeatureViewModelTests
         viewModel.Theme = AppTheme.Light;
         await viewModel.SaveAsync(TestContext.Current.CancellationToken);
         Assert.Equal([AppTheme.Dark], applied);
+    }
+
+    [Fact]
+    public async Task Appearance_save_commits_a_changed_pet_scale_to_the_existing_placement_row()
+    {
+        // Regression: "save appearance" used to only persist Theme/ReducedMotion/etc and
+        // silently drop whatever the user had just set on the pet-size slider -- only the
+        // separate "save pet placement" button (SavePlacementCommand) committed PetScale.
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        await fixture.Placements.SaveAsync(new PetPlacement("current monitor", 0.3, 0.4, 1.0), ct);
+        fixture.Placements.SaveHistory.Clear(); // ignore the setup write above
+        var viewModel = new AppearanceViewModel(fixture.Context) { PetScale = 1.5 };
+
+        await viewModel.SaveAsync(ct);
+
+        var saved = Assert.Single(fixture.Placements.SaveHistory);
+        Assert.Equal("current monitor", saved.MonitorDeviceName);
+        Assert.Equal(1.5, saved.Scale);
+        Assert.Equal(0.3, saved.NormalizedX);
+        Assert.Equal(0.4, saved.NormalizedY);
+    }
+
+    [Fact]
+    public async Task Appearance_save_does_not_rewrite_the_placement_when_the_scale_slider_was_not_touched()
+    {
+        // Regression: "save appearance" re-applied PetScale on every save regardless of whether
+        // the user had touched the slider, silently re-moving/resizing the live pet on an
+        // unrelated theme/preferences save.
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        await fixture.Placements.SaveAsync(new PetPlacement("current monitor", 0.3, 0.4, 1.0), ct);
+        fixture.Placements.SaveHistory.Clear();
+        var viewModel = new AppearanceViewModel(fixture.Context); // PetScale left at its ctor default
+
+        await viewModel.SaveAsync(ct);
+
+        Assert.Empty(fixture.Placements.SaveHistory);
+    }
+
+    [Fact]
+    public async Task Appearance_save_does_not_create_a_placement_row_for_an_unregistered_monitor()
+    {
+        // Regression: when no placement row matched MonitorDeviceName, "save appearance" used to
+        // create a phantom row at the default (0.8, 0.8) and teleport the pet there. Only the
+        // explicit "save pet placement" button may create a new row.
+        var fixture = FeatureFixture.Create();
+        var viewModel = new AppearanceViewModel(fixture.Context) { PetScale = 1.5 };
+
+        await viewModel.SaveAsync(TestContext.Current.CancellationToken);
+
+        Assert.Empty(fixture.Placements.SaveHistory);
+    }
+
+    [Fact]
+    public async Task Save_placement_button_still_creates_a_new_row_for_an_unregistered_monitor()
+    {
+        // The explicit "save pet placement" button (as opposed to "save appearance") is the one
+        // allowed to create a placement row from scratch -- that behaviour must not change.
+        var fixture = FeatureFixture.Create();
+        var viewModel = new AppearanceViewModel(fixture.Context) { PetScale = 1.5 };
+
+        await viewModel.SavePlacementAsync(TestContext.Current.CancellationToken);
+
+        var saved = Assert.Single(fixture.Placements.SaveHistory);
+        Assert.Equal("current monitor", saved.MonitorDeviceName);
+        Assert.Equal(1.5, saved.Scale);
     }
 
     [Fact]
@@ -1046,6 +1167,26 @@ public sealed class FeatureViewModelTests
         Assert.Equal(FocusStatus.EndedEarly, viewModel.ActiveFocus!.Status);
     }
 
+    [Fact]
+    public async Task Focus_history_shows_friendly_status_text_and_local_time()
+    {
+        // Regression: the history list used to bind straight to the raw FocusSession, showing
+        // the bare enum name (e.g. "EndedEarly") and an unconverted UTC timestamp.
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        var startedUtc = DateTimeOffset.Parse("2026-09-12T10:30:00Z");
+        var session = new FocusSession(
+            Guid.NewGuid(), null, startedUtc, null, TimeSpan.Zero, FocusStatus.EndedEarly, startedUtc);
+        await fixture.FocusSessions.SaveAsync(session, ct);
+        var viewModel = new TasksFocusViewModel(fixture.Context);
+
+        await viewModel.RefreshAsync(ct);
+
+        var entry = Assert.Single(viewModel.FocusHistory);
+        Assert.Equal("ended early", entry.StatusText);
+        Assert.Equal(startedUtc.ToLocalTime().ToString("g"), entry.StartedText);
+    }
+
     [Theory]
     [InlineData(true, false, "another focus session is active")]
     [InlineData(false, true, "injected focus repository failure")]
@@ -1543,6 +1684,7 @@ public sealed class FeatureViewModelTests
             FakeLocalNoteRepository localNotes,
             FakeRemoteEnvelopeRepository remoteNotes,
             FakePreferencesRepository preferences,
+            FakePlacementRepository placements,
             FakeTaskRepository tasks,
             FakeFocusRepository focusSessions,
             FakeCountdownRepository countdowns,
@@ -1557,6 +1699,7 @@ public sealed class FeatureViewModelTests
             LocalNotes = localNotes;
             RemoteNotes = remoteNotes;
             Preferences = preferences;
+            Placements = placements;
             Tasks = tasks;
             FocusSessions = focusSessions;
             Countdowns = countdowns;
@@ -1572,6 +1715,7 @@ public sealed class FeatureViewModelTests
         public FakeLocalNoteRepository LocalNotes { get; }
         public FakeRemoteEnvelopeRepository RemoteNotes { get; }
         public FakePreferencesRepository Preferences { get; }
+        public FakePlacementRepository Placements { get; }
         public FakeTaskRepository Tasks { get; }
         public FakeFocusRepository FocusSessions { get; }
         public FakeCountdownRepository Countdowns { get; }
@@ -1688,6 +1832,7 @@ public sealed class FeatureViewModelTests
                 localNotes,
                 remoteNotes,
                 preferenceRepository,
+                placementRepository,
                 tasks,
                 focusSessions,
                 countdowns,
@@ -1797,10 +1942,17 @@ public sealed class FeatureViewModelTests
 
     private sealed class FakePlacementRepository : IPetPlacementRepository
     {
-        public Task<PetPlacement?> GetAsync(string monitorDeviceName, CancellationToken cancellationToken) => Task.FromResult<PetPlacement?>(null);
-        public Task<IReadOnlyList<PetPlacement>> ListAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<PetPlacement>>([]);
-        public Task SaveAsync(PetPlacement placement, CancellationToken cancellationToken) => Task.CompletedTask;
-        public Task DeleteAsync(string monitorDeviceName, CancellationToken cancellationToken) => Task.CompletedTask;
+        private readonly Dictionary<string, PetPlacement> _items = [];
+        public List<PetPlacement> SaveHistory { get; } = [];
+        public Task<PetPlacement?> GetAsync(string monitorDeviceName, CancellationToken cancellationToken) => Task.FromResult(_items.GetValueOrDefault(monitorDeviceName));
+        public Task<IReadOnlyList<PetPlacement>> ListAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<PetPlacement>>(_items.Values.ToArray());
+        public Task SaveAsync(PetPlacement placement, CancellationToken cancellationToken)
+        {
+            _items[placement.MonitorDeviceName] = placement;
+            SaveHistory.Add(placement);
+            return Task.CompletedTask;
+        }
+        public Task DeleteAsync(string monitorDeviceName, CancellationToken cancellationToken) { _items.Remove(monitorDeviceName); return Task.CompletedTask; }
     }
 
     private sealed class FakeTaskRepository : ITaskRepository

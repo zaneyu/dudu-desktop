@@ -12,6 +12,7 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
     private AppTheme _theme;
     private bool _reducedMotion;
     private double _petScale;
+    private double _loadedPetScale;
     private string _monitorDeviceName;
     private string _selectedOutfit = "automatic";
     private bool _automaticSeasonalMode = true;
@@ -38,6 +39,7 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
         _soundsEnabled = preferences.SoundsEnabled;
         _soundVolume = Preferences.ClampSoundVolume(preferences.SoundVolume);
         _petScale = 1;
+        _loadedPetScale = _petScale;
         _monitorDeviceName = "current monitor";
         OutfitOptions = new ObservableCollection<string>(
             ["automatic", ..(availableOutfitKeys ?? ["base"])
@@ -188,7 +190,11 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
                     string.Equals(item.MonitorDeviceName, MonitorDeviceName, StringComparison.Ordinal))
                     ?? placements.FirstOrDefault();
                 MonitorDeviceName = selectedPlacement?.MonitorDeviceName ?? MonitorOptions[0];
-                if (selectedPlacement is not null) PetScale = selectedPlacement.Scale;
+                if (selectedPlacement is not null)
+                {
+                    PetScale = selectedPlacement.Scale;
+                    _loadedPetScale = selectedPlacement.Scale;
+                }
             }, ct);
         }, cancellationToken);
     }
@@ -210,17 +216,46 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
                 Birthday = ToMonthDay(BirthdayDate),
             }, cancellationToken);
             _applyShellTheme(Theme);
+            // "save appearance" shares the same pet-size slider as "save pet
+            // placement" (Scroll-to-resize on the pet itself commits through
+            // the same PetPlacements path), so a scale the user just picked
+            // is never silently dropped. It must not create a placement row
+            // from scratch (that would teleport the pet onto a monitor it
+            // has no saved position on) or re-apply/move the pet when the
+            // slider was not touched -- only the explicit "save pet
+            // placement" button does either of those.
+            await SavePlacementCoreAsync(cancellationToken, createIfMissing: false);
         }, "oki appearance saved");
 
     public Task SavePlacementAsync(CancellationToken cancellationToken = default) =>
-        RunAsync(async () =>
+        RunAsync(() => SavePlacementCoreAsync(cancellationToken, createIfMissing: true), "okkk pet placement saved");
+
+    /// <summary>Scale changes smaller than this are treated as "the user did not touch the
+    /// slider" rather than a real edit, to absorb floating-point round-trip noise.</summary>
+    private const double PetScaleEpsilon = 0.001;
+
+    private async Task SavePlacementCoreAsync(CancellationToken cancellationToken, bool createIfMissing)
+    {
+        var existing = (await _context.PetPlacements.ListAsync(cancellationToken))
+            .FirstOrDefault(item => string.Equals(item.MonitorDeviceName, MonitorDeviceName, StringComparison.Ordinal));
+
+        if (existing is null)
         {
-            var existing = (await _context.PetPlacements.ListAsync(cancellationToken))
-                .FirstOrDefault(item => string.Equals(item.MonitorDeviceName, MonitorDeviceName, StringComparison.Ordinal));
-            var current = (existing ?? new PetPlacement(MonitorDeviceName, 0.8, 0.8, PetScale)) with { Scale = PetScale };
-            await _context.PetPlacements.SaveAsync(current, cancellationToken);
-            await _context.ApplyPlacementAsync(current, cancellationToken);
-        }, "okkk pet placement saved");
+            if (!createIfMissing) return;
+            existing = new PetPlacement(MonitorDeviceName, 0.8, 0.8, PetScale);
+        }
+        else if (!createIfMissing
+            && (Math.Abs(PetScale - _loadedPetScale) < PetScaleEpsilon
+                || Math.Abs(existing.Scale - PetScale) < PetScaleEpsilon))
+        {
+            return;
+        }
+
+        var current = existing with { Scale = PetScale };
+        await _context.PetPlacements.SaveAsync(current, cancellationToken);
+        await _context.ApplyPlacementAsync(current, cancellationToken);
+        _loadedPetScale = PetScale;
+    }
 
     public Task ApplyOutfitAsync(CancellationToken cancellationToken = default) =>
         RunAsync(async () =>

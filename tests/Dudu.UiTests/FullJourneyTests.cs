@@ -83,7 +83,7 @@ public sealed class FullJourneyTests
             Find(window, "FocusStart").AsButton().Invoke();
             WaitForText(window, "FocusCurrent", "Focus is running");
             WaitUntil(
-                () => Find(window, "FocusHistoryList").FindFirstDescendant(cf => cf.ByName("Completed")) is not null,
+                () => Find(window, "FocusHistoryList").FindFirstDescendant(cf => cf.ByName("completed")) is not null,
                 TimeSpan.FromSeconds(90));
 
             Navigate(window, "NavHome", "HomePageTitle");
@@ -123,7 +123,7 @@ public sealed class FullJourneyTests
 
             Navigate(windowAfterRestart, "NavTasksFocus", "TasksPageTitle");
             Assert.NotNull(Find(windowAfterRestart, "TasksCompletedList").FindFirstDescendant(cf => cf.ByName(taskTitle)));
-            Assert.NotNull(Find(windowAfterRestart, "FocusHistoryList").FindFirstDescendant(cf => cf.ByName("Completed")));
+            Assert.NotNull(Find(windowAfterRestart, "FocusHistoryList").FindFirstDescendant(cf => cf.ByName("completed")));
 
             Navigate(windowAfterRestart, "NavHome", "HomePageTitle");
             Assert.NotNull(Find(windowAfterRestart, "HomeCheckInHistory").FindFirstDescendant(

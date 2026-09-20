@@ -3,6 +3,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:models="using:Dudu.Core.Models"
+    xmlns:viewModels="using:Dudu.App.ViewModels"
     Background="{ThemeResource WindowSurfaceBrush}">
     <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
         <StackPanel MaxWidth="880" Margin="32" Spacing="24">
@@ -81,10 +82,10 @@
                 <TextBlock Text="focus history" Style="{StaticResource SectionHeadingStyle}" />
                 <ItemsControl ItemsSource="{x:Bind ViewModel.FocusHistory, Mode=OneWay}" AutomationProperties.AutomationId="FocusHistoryList" AutomationProperties.Name="focus history list">
                     <ItemsControl.ItemTemplate>
-                        <DataTemplate x:DataType="models:FocusSession">
+                        <DataTemplate x:DataType="viewModels:FocusHistoryEntry">
                             <StackPanel Margin="4" Spacing="2">
-                                <TextBlock Text="{x:Bind Status}" />
-                                <TextBlock Text="{x:Bind StartedUtc}" Foreground="{ThemeResource TextSecondaryBrush}" />
+                                <TextBlock Text="{x:Bind StatusText}" />
+                                <TextBlock Text="{x:Bind StartedText}" Foreground="{ThemeResource TextSecondaryBrush}" />
                             </StackPanel>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
