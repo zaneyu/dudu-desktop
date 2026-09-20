@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Dudu.App.Animation;
 using Dudu.App.Audio;
 using Dudu.Core.Models;
@@ -79,6 +80,49 @@ public sealed class PetPresentationCoordinatorTests
 
         await restored.Task;
         Assert.Equal(PetState.Idle, pet.Current.State);
+    }
+
+    [Fact]
+    public async Task One_shot_audio_cue_failure_is_reported_even_when_the_ambient_restore_call_throws()
+    {
+        // Regression: audioTask used to be a bare (unwrapped) task, only
+        // handed to ObserveAudioAsync after the gate was released. If the
+        // finally block above the release threw (e.g. the ambient-restore
+        // call itself), that exception propagated straight out of
+        // PresentOneShotAsync, skipping "await ObserveAudioAsync(audioTask)"
+        // entirely -- a faulted audio task went unobserved and unreported.
+        // The observer must be attached eagerly, under the gate, so the cue
+        // failure is still reported no matter what happens afterward.
+        var pet = PetStateMachine.CreateIdle();
+        var invocation = 0;
+        var coordinator = new PetPresentationCoordinator(
+            pet,
+            (_, _, _) =>
+            {
+                invocation++;
+                if (invocation > 1) throw new InvalidOperationException("ambient restore failed");
+                return Task.CompletedTask;
+            },
+            playAudioAsync: (_, _) => throw new InvalidOperationException("audio cue failed"));
+
+        var listener = new RecordingTraceListener();
+        Trace.Listeners.Add(listener);
+        try
+        {
+            var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => coordinator.PresentOneShotAsync(
+                new PetEvent.AmbientRequested("greeting"),
+                "greeting",
+                TestContext.Current.CancellationToken));
+            Assert.Equal("ambient restore failed", thrown.Message);
+
+            var reported = await listener.Recorded.Task.WaitAsync(
+                TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+            Assert.Contains("audio cue playback failed", reported, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            Trace.Listeners.Remove(listener);
+        }
     }
 
     [Fact]
@@ -194,5 +238,20 @@ public sealed class PetPresentationCoordinatorTests
         Assert.Equal(PetState.WelcomeBack, pet.Current.State);
         Assert.Equal(PetState.WelcomeBack, presentations[^1].State);
         Assert.Equal(PetState.Idle, pet.Handle(new PetEvent.WelcomeBackDismissed()).State);
+    }
+
+    private sealed class RecordingTraceListener : TraceListener
+    {
+        public TaskCompletionSource<string> Recorded { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override void Write(string? message)
+        {
+        }
+
+        public override void WriteLine(string? message)
+        {
+            if (message is not null) Recorded.TrySetResult(message);
+        }
     }
 }

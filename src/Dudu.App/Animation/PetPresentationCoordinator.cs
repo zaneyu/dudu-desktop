@@ -76,7 +76,16 @@ public sealed class PetPresentationCoordinator
                     await playback;
                     if (_playAudioAsync is not null)
                     {
-                        audioTask = InvokeAudioAsync(() => _playAudioAsync(oneShot, cancellationToken));
+                        // Wrapped in ObserveAudioAsync eagerly, right here
+                        // under the gate, so it starts observing (and, on
+                        // failure, reporting) the cue immediately. If the
+                        // finally block below throws, the exception skips
+                        // straight past the "await audioTask" further down,
+                        // and an audioTask still bare at that point would go
+                        // unobserved; a task already wrapped keeps consuming
+                        // its own exception regardless.
+                        audioTask = ObserveAudioAsync(
+                            InvokeAudioAsync(() => _playAudioAsync(oneShot, cancellationToken)));
                     }
                 }
                 else
@@ -103,7 +112,9 @@ public sealed class PetPresentationCoordinator
 
         if (audioTask is not null)
         {
-            await ObserveAudioAsync(audioTask);
+            // Already wrapped in ObserveAudioAsync above; awaiting it here
+            // never throws.
+            await audioTask;
         }
     }
 
@@ -113,6 +124,10 @@ public sealed class PetPresentationCoordinator
     /// here -- the caller invokes this under the shared gate but awaits the
     /// result afterward, so a synchronous exception must not propagate
     /// before the gate's own cleanup (acknowledgement, ambient restore) runs.
+    /// That cleanup does not wait for the cue: the acknowledgement and
+    /// ambient restore run concurrently with it rather than after it. That
+    /// is accepted behaviour, not a bug -- the cue is bounded and observed
+    /// independently (see <see cref="ObserveAudioAsync"/>).
     /// </summary>
     private static Task InvokeAudioAsync(Func<Task> operation)
     {
