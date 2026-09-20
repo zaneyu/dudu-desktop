@@ -16,5 +16,6 @@ CREATE TABLE IF NOT EXISTS held_presentations (
     body TEXT NULL,
     animation_key TEXT NULL,
     expires_utc TEXT NULL,
-    queued_utc TEXT NOT NULL
+    queued_utc TEXT NOT NULL,
+    toasted INTEGER NOT NULL DEFAULT 0
 );

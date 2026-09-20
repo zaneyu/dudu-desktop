@@ -14,7 +14,7 @@ public sealed class HeldPresentationRepository : SqliteRepository, IHeldPresenta
         var result = new List<HeldPresentation>();
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT presentation_key,kind,item_id,title,body,animation_key,expires_utc,queued_utc FROM held_presentations ORDER BY queued_utc;";
+        command.CommandText = "SELECT presentation_key,kind,item_id,title,body,animation_key,expires_utc,queued_utc,toasted FROM held_presentations ORDER BY queued_utc;";
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken)) result.Add(Read(reader));
         return result;
@@ -27,8 +27,8 @@ public sealed class HeldPresentationRepository : SqliteRepository, IHeldPresenta
         await using var command = connection.CreateCommand();
         command.CommandText = """
             INSERT INTO held_presentations
-                (presentation_key,kind,item_id,title,body,animation_key,expires_utc,queued_utc)
-            VALUES ($key,$kind,$id,$title,$body,$animationKey,$expires,$queued)
+                (presentation_key,kind,item_id,title,body,animation_key,expires_utc,queued_utc,toasted)
+            VALUES ($key,$kind,$id,$title,$body,$animationKey,$expires,$queued,$toasted)
             ON CONFLICT(presentation_key) DO UPDATE SET
                 kind=excluded.kind,
                 item_id=excluded.item_id,
@@ -36,7 +36,8 @@ public sealed class HeldPresentationRepository : SqliteRepository, IHeldPresenta
                 body=excluded.body,
                 animation_key=excluded.animation_key,
                 expires_utc=excluded.expires_utc,
-                queued_utc=excluded.queued_utc;
+                queued_utc=excluded.queued_utc,
+                toasted=excluded.toasted;
             """;
         Add(command, "$key", item.Key);
         Add(command, "$kind", item.Kind);
@@ -46,6 +47,7 @@ public sealed class HeldPresentationRepository : SqliteRepository, IHeldPresenta
         Add(command, "$animationKey", item.AnimationKey);
         Add(command, "$expires", Utc(item.ExpiresUtc));
         Add(command, "$queued", Utc(item.QueuedUtc));
+        Add(command, "$toasted", item.Toasted ? 1 : 0);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
@@ -67,5 +69,6 @@ public sealed class HeldPresentationRepository : SqliteRepository, IHeldPresenta
         ReadString(r, 4),
         ReadString(r, 5),
         r.IsDBNull(6) ? null : ReadUtc(r.GetString(6)),
-        ReadUtc(r.GetString(7)));
+        ReadUtc(r.GetString(7)),
+        r.GetInt32(8) != 0);
 }

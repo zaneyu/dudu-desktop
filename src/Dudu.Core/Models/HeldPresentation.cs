@@ -8,6 +8,9 @@ namespace Dudu.Core.Models;
 /// <see cref="Kind"/> is the item's presentation kind rendered as text (e.g.
 /// "Reminder"); this layer treats it as opaque data, since the enum it names
 /// belongs to the App layer, which is the only reader of these rows.
+/// <see cref="Toasted"/> mirrors <c>PresentationCoordinator</c>'s in-memory
+/// toasted-while-held marker, so a restart does not show the Windows toast a
+/// second time for an item that already toasted once before the quit/crash.
 /// </summary>
 public sealed record HeldPresentation(
     string Key,
@@ -17,4 +20,5 @@ public sealed record HeldPresentation(
     string? Body,
     string? AnimationKey,
     DateTimeOffset? ExpiresUtc,
-    DateTimeOffset QueuedUtc);
+    DateTimeOffset QueuedUtc,
+    bool Toasted);

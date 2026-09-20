@@ -173,7 +173,8 @@ public sealed class PresentationHeldQueuePersistenceTests
             null,
             null,
             null,
-            DateTimeOffset.Parse("2026-09-19T08:00:00Z")));
+            DateTimeOffset.Parse("2026-09-19T08:00:00Z"),
+            Toasted: false));
         var policy = new PresentationPolicy(TimeSpan.Zero);
         var played = 0;
         var coordinator = new PresentationCoordinator(
@@ -208,7 +209,8 @@ public sealed class PresentationHeldQueuePersistenceTests
             null,
             null,
             DateTimeOffset.Parse("2026-09-19T00:00:00Z"),
-            DateTimeOffset.Parse("2026-09-18T20:00:00Z")));
+            DateTimeOffset.Parse("2026-09-18T20:00:00Z"),
+            Toasted: false));
         var policy = new PresentationPolicy(TimeSpan.Zero);
         var coordinator = new PresentationCoordinator(
             policy,
@@ -229,10 +231,79 @@ public sealed class PresentationHeldQueuePersistenceTests
         Assert.Empty(repository.Rows);
     }
 
+    [Fact]
+    public async Task A_toast_shown_while_held_is_not_shown_again_after_a_restart_reload()
+    {
+        // H2: _toastedWhileHeldIds used to live only in memory, so a
+        // reminder toasted once while Dudu was hidden in the tray would
+        // toast a second time once a restart reloaded the same row from
+        // disk. The persisted `toasted` column must survive that restart
+        // and suppress the duplicate.
+        var repository = new RecordingHeldPresentationRepository();
+        var notifications = new CountingNotificationService();
+        var firstRun = new PresentationCoordinator(
+            new PresentationPolicy(TimeSpan.Zero),
+            notifications,
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => Task.CompletedTask,
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            heldPresentations: repository);
+        // The only suppression reason is Dudu being hidden from the tray,
+        // which is exactly the case that toasts immediately while holding
+        // the animation back (see PublishAsync's toastNow).
+        firstRun.SetUserVisible(false);
+
+        await firstRun.PublishAsync(
+            DurableNotification.Reminder("reminder-1", "Stretch"),
+            bypassSuppression: false,
+            CancellationToken.None);
+
+        Assert.Equal(1, notifications.ReminderCalls);
+        var saved = Assert.Single(repository.Rows.Values);
+        Assert.True(saved.Toasted);
+
+        // Simulate a restart: a fresh coordinator instance sharing only the
+        // repository's rows, nothing carried over in memory.
+        var secondRun = new PresentationCoordinator(
+            new PresentationPolicy(TimeSpan.Zero),
+            notifications,
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => Task.CompletedTask,
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            heldPresentations: repository);
+        await secondRun.StartAsync(CancellationToken.None);
+        secondRun.SetUserVisible(true);
+
+        await secondRun.TickAsync(CancellationToken.None);
+
+        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.Empty(repository.Rows);
+    }
+
     private sealed class RecordingNotificationService : INotificationService
     {
         public Task ShowReminderAsync(string reminderId, string title, CancellationToken cancellationToken) =>
             Task.CompletedTask;
+
+        public Task ShowRemoteNoteArrivalAsync(Guid messageId, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+    }
+
+    private sealed class CountingNotificationService : INotificationService
+    {
+        public int ReminderCalls { get; private set; }
+
+        public Task ShowReminderAsync(string reminderId, string title, CancellationToken cancellationToken)
+        {
+            ReminderCalls++;
+            return Task.CompletedTask;
+        }
 
         public Task ShowRemoteNoteArrivalAsync(Guid messageId, CancellationToken cancellationToken) =>
             Task.CompletedTask;

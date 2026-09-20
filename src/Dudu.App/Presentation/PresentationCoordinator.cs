@@ -197,7 +197,9 @@ public sealed class PresentationCoordinator :
     /// has already expired is dropped (deleted, not enqueued) rather than
     /// surfaced on this launch; a row this build no longer recognizes (kind,
     /// or a required field missing) is reported and dropped the same way
-    /// rather than wedging startup.
+    /// rather than wedging startup. A row marked toasted re-seeds the
+    /// in-memory toasted-while-held marker so its Windows toast is not shown
+    /// a second time once released.
     /// </summary>
     private async Task LoadHeldItemsAsync(CancellationToken cancellationToken)
     {
@@ -232,7 +234,15 @@ public sealed class PresentationCoordinator :
                     continue;
                 }
 
-                _policy.Enqueue(ToDurableNotification(record));
+                var notification = ToDurableNotification(record);
+                lock (_gate)
+                {
+                    _policy.Enqueue(notification);
+                    if (record.Toasted)
+                    {
+                        _toastedWhileHeldIds.Add(notification.Key);
+                    }
+                }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -752,6 +762,12 @@ public sealed class PresentationCoordinator :
             return Task.CompletedTask;
         }
 
+        bool toasted;
+        lock (_gate)
+        {
+            toasted = _toastedWhileHeldIds.Contains(item.Key);
+        }
+
         var record = new HeldPresentation(
             item.Key,
             item.Kind.ToString(),
@@ -760,7 +776,8 @@ public sealed class PresentationCoordinator :
             item.Body,
             item.AnimationKey,
             item.ExpiresUtc,
-            queuedUtc);
+            queuedUtc,
+            toasted);
         return ObserveAsync(() => _heldPresentations.SaveAsync(record, cancellationToken), "presentation-tick");
     }
 

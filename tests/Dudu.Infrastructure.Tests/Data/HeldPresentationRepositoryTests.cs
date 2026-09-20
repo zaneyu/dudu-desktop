@@ -36,7 +36,8 @@ public sealed class HeldPresentationRepositoryTests
                 "time for bed",
                 "sleep",
                 expiresUtc,
-                queuedUtc);
+                queuedUtc,
+                Toasted: true);
 
             await repository.SaveAsync(item, cancellationToken);
             var loaded = Assert.Single(await repository.ListAsync(cancellationToken));
@@ -63,20 +64,21 @@ public sealed class HeldPresentationRepositoryTests
             var repository = new HeldPresentationRepository(database);
             var queuedUtc = DateTimeOffset.Parse("2026-09-18T20:00:00Z");
             await repository.SaveAsync(
-                new HeldPresentation("Reminder:bedtime", "Reminder", "bedtime", "Goodnight", null, null, null, queuedUtc),
+                new HeldPresentation("Reminder:bedtime", "Reminder", "bedtime", "Goodnight", null, null, null, queuedUtc, Toasted: false),
                 cancellationToken);
 
             // A failed presentation attempt requeues the same key -- this must
             // replace the row (e.g. a later queuedUtc), never duplicate it.
             var requeuedUtc = queuedUtc.AddMinutes(5);
             await repository.SaveAsync(
-                new HeldPresentation("Reminder:bedtime", "Reminder", "bedtime", "Goodnight", "retry", "sleep", null, requeuedUtc),
+                new HeldPresentation("Reminder:bedtime", "Reminder", "bedtime", "Goodnight", "retry", "sleep", null, requeuedUtc, Toasted: true),
                 cancellationToken);
 
             var loaded = Assert.Single(await repository.ListAsync(cancellationToken));
             Assert.Equal("retry", loaded.Body);
             Assert.Equal("sleep", loaded.AnimationKey);
             Assert.Equal(requeuedUtc, loaded.QueuedUtc);
+            Assert.True(loaded.Toasted);
         }
         finally
         {
@@ -104,7 +106,8 @@ public sealed class HeldPresentationRepositoryTests
                 null,
                 null,
                 null,
-                DateTimeOffset.Parse("2026-09-18T20:00:00Z"));
+                DateTimeOffset.Parse("2026-09-18T20:00:00Z"),
+                Toasted: false);
             await repository.SaveAsync(item, cancellationToken);
 
             await repository.DeleteAsync("does-not-exist", cancellationToken);
@@ -134,10 +137,10 @@ public sealed class HeldPresentationRepositoryTests
             var older = DateTimeOffset.Parse("2026-09-18T18:00:00Z");
             var newer = DateTimeOffset.Parse("2026-09-18T20:00:00Z");
             await repository.SaveAsync(
-                new HeldPresentation("Reminder:second", "Reminder", "second", "Hydrate", null, null, null, newer),
+                new HeldPresentation("Reminder:second", "Reminder", "second", "Hydrate", null, null, null, newer, Toasted: false),
                 cancellationToken);
             await repository.SaveAsync(
-                new HeldPresentation("Reminder:first", "Reminder", "first", "Stretch", null, null, null, older),
+                new HeldPresentation("Reminder:first", "Reminder", "first", "Stretch", null, null, null, older, Toasted: false),
                 cancellationToken);
 
             var loaded = await repository.ListAsync(cancellationToken);
@@ -173,7 +176,8 @@ public sealed class HeldPresentationRepositoryTests
             null,
             "sleep",
             null,
-            DateTimeOffset.Parse("2026-09-18T20:00:00Z"));
+            DateTimeOffset.Parse("2026-09-18T20:00:00Z"),
+            Toasted: false);
         await repository.SaveAsync(item, cancellationToken);
 
         Assert.Equal(item, Assert.Single(await repository.ListAsync(cancellationToken)));
