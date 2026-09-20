@@ -93,6 +93,13 @@ public sealed class ConnectionViewModelForgetPairingTests
         // failure of the forget itself -- it must not turn a committed
         // forget into a reported error, and must not skip the page's UI
         // state update (Availability/IsPaired going back to unpaired).
+        //
+        // Round 4b Opus follow-up (Finding C): every value this test used
+        // to assert was already the VM's default (Offline/not paired) even
+        // before ForgetPairingAsync ran, so it could pass with the
+        // production code deleted. Drive the VM into a genuinely paired
+        // state first via RefreshAsync, then confirm the forget actually
+        // clears it.
         var remoteEnvelopes = new FakeRemoteEnvelopeRepository { ThrowOnListPending = true };
         var discardCalls = 0;
         var context = BuildContext(
@@ -101,14 +108,22 @@ public sealed class ConnectionViewModelForgetPairingTests
             {
                 discardCalls++;
                 return Task.CompletedTask;
-            });
+            },
+            availabilityToReport: PairingAvailability.Available,
+            sessionCountToReport: 2);
         var vm = new ConnectionViewModel(context);
+
+        await vm.RefreshAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(PairingAvailability.Available, vm.Availability);
+        Assert.Equal(2, vm.SessionCount);
+        Assert.True(vm.IsPaired);
 
         vm.RequestForgetPairingCommand.Execute(null);
         await vm.ConfirmCommand.ExecuteAsync(null);
 
         Assert.Null(vm.ErrorMessage);
         Assert.Equal(PairingAvailability.Offline, vm.Availability);
+        Assert.Equal(0, vm.SessionCount);
         Assert.False(vm.IsPaired);
         // Fails closed: the check couldn't confirm envelopes are gone, so it
         // assumes they remain and leaves the (possibly stale) held note
@@ -124,7 +139,9 @@ public sealed class ConnectionViewModelForgetPairingTests
     private static CompanionFeatureContext BuildContext(
         FakeRemoteEnvelopeRepository remoteEnvelopes,
         Func<CancellationToken, Task> discardHeldRemoteNotesAsync,
-        bool wipesEnvelopesOnForget = false)
+        bool wipesEnvelopesOnForget = false,
+        PairingAvailability availabilityToReport = PairingAvailability.Offline,
+        int sessionCountToReport = 0)
     {
         var clock = new FakeClock();
         var preferences = new Preferences(
@@ -155,7 +172,7 @@ public sealed class ConnectionViewModelForgetPairingTests
             new TaskService(tasks, clock),
             new FocusService(focusSessions, clock, tasks),
             new LocalNoteSelector(localNotes, clock, new FixedRandom(), preferences),
-            new FakePairing(remoteEnvelopes, wipesEnvelopesOnForget),
+            new FakePairing(remoteEnvelopes, wipesEnvelopesOnForget, availabilityToReport, sessionCountToReport),
             new ThrowingFeatureTransactions(),
             PetStateMachine.CreateIdle(),
             discardHeldRemoteNotesAsync: discardHeldRemoteNotesAsync);
@@ -312,11 +329,19 @@ public sealed class ConnectionViewModelForgetPairingTests
 
     private sealed class FakePairing(
         FakeRemoteEnvelopeRepository? remoteEnvelopes = null,
-        bool wipesEnvelopesOnForget = false) : IPairingService
+        bool wipesEnvelopesOnForget = false,
+        PairingAvailability availabilityToReport = PairingAvailability.Offline,
+        int sessionCountToReport = 0) : IPairingService
     {
         public int ForgetPairingCallCount { get; private set; }
         public Task<PairingAvailability> GetStateAsync(CancellationToken cancellationToken = default) =>
-            Task.FromResult(PairingAvailability.Offline);
+            Task.FromResult(availabilityToReport);
+        // RefreshAsync tries ListSessionsAsync first and falls back to this on
+        // NotSupportedException (the interface's default for both). Overriding
+        // only this one keeps that fallback path exercised, same as a real
+        // pairing service without per-session listing.
+        public Task<int> GetSessionCountAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(sessionCountToReport);
         public Task<PairingCodeResult> CreateCodeAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(PairingCodeResult.Offline);
         public Task DisconnectSenderSessionsAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
