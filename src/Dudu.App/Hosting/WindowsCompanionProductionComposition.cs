@@ -102,8 +102,9 @@ public sealed record CompanionLaunchOptions(bool Background, bool SelfTest = fal
     /// <summary>
     /// Every launch asks for the companion to be shown, including the
     /// background launch at sign-in: a desktop pet that is invisible after
-    /// boot reads as broken. Pause, quiet hours, lock and fullscreen still
-    /// veto the show downstream in AppLifecycleCoordinator.TryCanShow.
+    /// boot reads as broken. Pause, lock and fullscreen still veto the show
+    /// downstream in AppLifecycleCoordinator.TryCanShow -- quiet hours gates
+    /// proactive presentation only, never the overlay's own visibility.
     /// </summary>
     public bool ShouldShowOverlay(Preferences preferences)
     {

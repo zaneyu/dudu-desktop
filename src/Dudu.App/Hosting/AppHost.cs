@@ -61,7 +61,7 @@ public interface IAppHostRemoteSync : IAsyncDisposable
 /// The pet-visibility reconciliation hook as seen by <see cref="AppHost"/>.
 /// Ticked after every successful reminder tick that also releases held
 /// presentations, and before that release runs, so a pet left invisible by
-/// an earlier vetoed show (e.g. quiet hours ending) gets a chance to come
+/// an earlier vetoed show (e.g. a pause ending) gets a chance to come
 /// back before a held item can animate into a window that is still hidden.
 /// Attaching one is optional: an <see cref="AppHost"/> with none attached
 /// behaves exactly as before.
@@ -451,8 +451,8 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
                 // before the release left that publish evaluated against a
                 // pet the sink may still believe is hidden from an earlier
                 // vetoed show that has since cleared. Give the pet a chance
-                // to come back on screen (e.g. quiet hours that vetoed an
-                // earlier explicit show have now ended) before the reminder
+                // to come back on screen (e.g. a pause that vetoed an
+                // earlier explicit show has now ended) before the reminder
                 // engine -- and therefore any release -- runs at all.
                 await ReconcileVisibilityAsync(cancellationToken);
             }

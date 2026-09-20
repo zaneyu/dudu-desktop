@@ -954,7 +954,9 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                 // visible, so forceVisible alone would fire here on every
                 // ordinary successful start too. The forced show above still
                 // goes through SetUserVisibleAsync's normal TryCanShow gate
-                // (quiet hours/pause/lock/suspend/fullscreen), so a failed
+                // (pause/lock/suspend/fullscreen -- quiet hours gates
+                // proactive presentation only, never the overlay's own
+                // visibility), so a failed
                 // tray attach can still leave a launch with neither a tray
                 // icon nor a visible overlay — no exit surface at all.
                 // _overlay.IsVisible reflects whether Show() actually ran
