@@ -349,6 +349,17 @@ public static class ReminderScheduleSummary
             return minutes == 1 ? "1 minute" : $"{minutes} minutes";
         }
 
+        if (period.TotalMinutes % 1440 == 0)
+        {
+            var days = (int)period.TotalDays;
+            return days switch
+            {
+                1 => "day",
+                7 => "week",
+                _ => $"{days} days",
+            };
+        }
+
         var hours = (int)period.TotalHours;
         return hours == 1 ? "1 hour" : $"{hours} hours";
     }

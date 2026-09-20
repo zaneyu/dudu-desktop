@@ -42,6 +42,22 @@ public sealed class ReminderScheduleSummaryTests
     }
 
     [Fact]
+    public void Interval_rule_formats_whole_days_as_day_week_or_n_days()
+    {
+        // Opus review follow-up: whole-day intervals read as "every 1440
+        // minutes" instead of a sensible day/week phrasing.
+        Assert.Equal(
+            "every day",
+            ReminderScheduleSummary.Describe(new RecurrenceRule.Interval(TimeSpan.FromDays(1))));
+        Assert.Equal(
+            "every week",
+            ReminderScheduleSummary.Describe(new RecurrenceRule.Interval(TimeSpan.FromDays(7))));
+        Assert.Equal(
+            "every 3 days",
+            ReminderScheduleSummary.Describe(new RecurrenceRule.Interval(TimeSpan.FromDays(3))));
+    }
+
+    [Fact]
     public void Once_rule_formats_as_once()
     {
         Assert.Equal("once", ReminderScheduleSummary.Describe(new RecurrenceRule.Once()));
