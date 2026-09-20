@@ -533,6 +533,68 @@ public sealed class PresentationHeldQueuePersistenceTests
     }
 
     [Fact]
+    public async Task TickAsync_requeues_a_released_item_already_presenting_elsewhere_instead_of_dropping_it()
+    {
+        // Finding 19: Decide() releases at most one item per call. If that
+        // item's key is already in _presentingIds (a concurrent presenter
+        // has it in flight), TickAsync excludes it from toPresent -- but it
+        // has already been dequeued from PresentationPolicy by Decide(), so
+        // it used to just vanish: not requeued, and its row separately
+        // deleted by the old purge-style handling. It must be put back in
+        // the queue instead, to be reconsidered on a later tick.
+        var policy = new PresentationPolicy(TimeSpan.Zero);
+        var repository = new RecordingHeldPresentationRepository();
+        var playbackGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var playCount = 0;
+        var coordinator = new PresentationCoordinator(
+            policy,
+            new RecordingNotificationService(),
+            PetStateMachine.CreateIdle(),
+            async (_, _, _) =>
+            {
+                Interlocked.Increment(ref playCount);
+                await playbackGate.Task;
+            },
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            heldPresentations: repository);
+        var item = DurableNotification.Reminder("reminder-1", "Stretch");
+        policy.Enqueue(item);
+        await repository.SaveAsync(
+            new HeldPresentation(
+                item.Key, "Reminder", "reminder-1", "Stretch", null, null, null,
+                DateTimeOffset.Parse("2026-09-19T08:00:00Z"), Toasted: false),
+            CancellationToken.None);
+
+        // First tick dequeues the item and starts presenting it (blocked, so
+        // it stays "currently presenting" -- its key is in _presentingIds).
+        var firstTick = coordinator.TickAsync(CancellationToken.None);
+        Assert.Equal(0, policy.QueuedCount);
+
+        // Simulate the race this fix guards: the item ends up back in the
+        // in-memory queue (as a failed concurrent presenter's own requeue
+        // would do) while its key is still marked "presenting" by the
+        // still-in-flight first tick above.
+        policy.Requeue(item);
+
+        // A second tick's Decide() dequeues this same item again and must
+        // find its key already in _presentingIds.
+        await coordinator.TickAsync(CancellationToken.None);
+
+        // Requeued, not dropped: back in the queue for a later tick, and its
+        // persisted row was left alone (not deleted).
+        Assert.Equal(1, policy.QueuedCount);
+        Assert.Single(repository.Rows);
+
+        // Let the original in-flight presentation finish successfully.
+        playbackGate.SetResult();
+        await firstTick;
+        Assert.Equal(1, playCount);
+    }
+
+    [Fact]
     public async Task StartAsync_drops_a_row_whose_decoded_key_collides_with_another_without_leaking_its_toasted_marker()
     {
         // Finding 18: HeldPresentationRepository.SaveAsync upserts on its own

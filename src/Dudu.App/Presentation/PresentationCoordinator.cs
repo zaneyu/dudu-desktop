@@ -435,7 +435,6 @@ public sealed class PresentationCoordinator :
         DurableNotification? toPresent;
         SuppressionSnapshot environment;
         IReadOnlyList<string> purgedKeys;
-        IReadOnlyList<DurableNotification> released;
         lock (_gate)
         {
             environment = CaptureEnvironment(now);
@@ -449,7 +448,6 @@ public sealed class PresentationCoordinator :
                 recordRelease: false,
                 userHidden: environment.UserHidden);
             purgedKeys = decision.PurgedKeys;
-            released = decision.ToPresent;
 
             // An item purged here was queued while held (and already toasted
             // for that hold) but expired before ever reaching PresentAsync,
@@ -468,33 +466,41 @@ public sealed class PresentationCoordinator :
             {
                 _presentingIds.Add(toPresent.Key);
             }
+
+            // Any other released item is excluded from toPresent because its
+            // key is already in _presentingIds -- a concurrent caller (e.g.
+            // an immediate PublishAsync, or another in-flight tick) is
+            // presenting it right now. Decide() already dequeued it from
+            // PresentationPolicy, so put it straight back rather than
+            // dropping it: it is reconsidered on a later tick once that
+            // concurrent presentation finishes and clears _presentingIds.
+            foreach (var item in decision.ToPresent)
+            {
+                if (toPresent is not null && item.Key == toPresent.Key)
+                {
+                    continue;
+                }
+
+                _policy.Requeue(item);
+            }
         }
 
         // A purge (expired while held) takes the item out of
         // PresentationPolicy's in-memory queue for good, so its persisted
-        // row, if any, is removed immediately. A release does too, but
-        // toPresent's row is deliberately left in place here: it is only
-        // deleted below once PresentAsync actually succeeds, so a crash
-        // partway through presenting it (e.g. waiting on the pet gate, or
-        // during the animation) leaves the row for the next launch to
-        // reload instead of losing the item silently. Any other released
-        // item is not going to be presented by this tick (defensively —
-        // e.g. it raced with a concurrent PublishAsync and got excluded
-        // from toPresent above) and is removed now like a purge, since
-        // nothing below will act on it.
+        // row, if any, is removed immediately. toPresent's row is
+        // deliberately left in place here too: it is only deleted below once
+        // PresentAsync actually succeeds, so a crash partway through
+        // presenting it (e.g. waiting on the pet gate, or during the
+        // animation) leaves the row for the next launch to reload instead of
+        // losing the item silently. A released-but-presenting-elsewhere item
+        // was just requeued above (not removed): its row must stay too, for
+        // the same reason -- a failed concurrent presentation may requeue-
+        // and-repersist it and needs the row's original QueuedUtc to still
+        // be meaningful, and if that concurrent attempt crashes instead, the
+        // row is still there to reload on the next launch.
         foreach (var purgedKey in purgedKeys)
         {
             await RemoveHeldAsync(purgedKey, cancellationToken);
-        }
-
-        foreach (var item in released)
-        {
-            if (toPresent is not null && item.Key == toPresent.Key)
-            {
-                continue;
-            }
-
-            await RemoveHeldAsync(item.Key, cancellationToken);
         }
 
         if (toPresent is not null)
