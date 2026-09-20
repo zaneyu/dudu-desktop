@@ -2418,7 +2418,10 @@ public sealed class FeatureViewModelTests
 
             // Mirrors CompanionFeatureTransactionService.SavePreferencesAndDefaultRemindersAsync:
             // carry NextDueUtc/SnoozedUntilUtc over from the existing row when
-            // nothing that determines the schedule actually changed.
+            // nothing that determines the schedule actually changed, keep
+            // Rule/QuietHoursBehavior/MissedPolicy from the existing row (they
+            // are a hardcoded per-id default in Create, never derived from
+            // Preferences), and preserve a user-edited Title/Details.
             var existing = (await reminders.ListAsync(cancellationToken))
                 .ToDictionary(item => item.Id, StringComparer.Ordinal);
             foreach (var reminder in Dudu.Core.Reminders.LocalReminderDefaults.Create(
@@ -2427,16 +2430,35 @@ public sealed class FeatureViewModelTests
                 localTimeZone))
             {
                 var toSave = reminder;
-                if (existing.TryGetValue(reminder.Id, out var previous)
-                    && previous.Enabled == reminder.Enabled
-                    && previous.Rule == reminder.Rule
-                    && previous.LocalTimeZoneId == reminder.LocalTimeZoneId)
+                if (existing.TryGetValue(reminder.Id, out var previous))
                 {
-                    toSave = reminder with
+                    toSave = toSave with
                     {
-                        NextDueUtc = previous.NextDueUtc,
-                        SnoozedUntilUtc = previous.SnoozedUntilUtc,
+                        Rule = previous.Rule,
+                        QuietHoursBehavior = previous.QuietHoursBehavior,
+                        MissedPolicy = previous.MissedPolicy,
                     };
+
+                    if (previous.Enabled == reminder.Enabled
+                        && previous.Rule == toSave.Rule
+                        && previous.LocalTimeZoneId == reminder.LocalTimeZoneId)
+                    {
+                        toSave = toSave with
+                        {
+                            NextDueUtc = previous.NextDueUtc,
+                            SnoozedUntilUtc = previous.SnoozedUntilUtc,
+                        };
+                    }
+
+                    if (!Dudu.Core.Reminders.LocalReminderDefaults.IsKnownDefaultTitle(reminder.Id, previous.Title))
+                    {
+                        toSave = toSave with { Title = previous.Title };
+                    }
+                    if (previous.Details is { } previousDetails
+                        && !Dudu.Core.Reminders.LocalReminderDefaults.IsKnownDefaultDetails(reminder.Id, previousDetails))
+                    {
+                        toSave = toSave with { Details = previousDetails };
+                    }
                 }
 
                 await reminders.SaveAsync(toSave, cancellationToken);
