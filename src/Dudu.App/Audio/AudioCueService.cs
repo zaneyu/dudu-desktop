@@ -22,6 +22,7 @@ public sealed class AudioCueService : IAsyncDisposable
     private readonly Dictionary<string, DateTimeOffset> _lastPackPlayback = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _variantIndexes = new(StringComparer.Ordinal);
     private readonly Dictionary<AudioCueEvent, int> _packIndexes = new();
+    private readonly HashSet<(string PackId, AudioCueEvent CueEvent)> _reportedFailures = new();
     private readonly int _seed;
     private readonly CancellationTokenSource _shutdown = new();
     private DateTimeOffset? _lastPlayback;
@@ -112,10 +113,7 @@ public sealed class AudioCueService : IAsyncDisposable
                 // which still gate retries -- so ReserveCue rotates off a
                 // cue or pack that just failed instead of re-picking it
                 // forever.
-                _errorReporter?.Report(
-                    "audio-cue-playback",
-                    new InvalidOperationException(
-                        $"Audio cue playback failed for pack '{packId}', event '{cueEvent}'."));
+                ReportPlaybackFailureOnce(packId!, cueEvent);
                 lock (_gate)
                 {
                     _variantIndexes[packId!] = cueIndex + 1;
@@ -165,6 +163,26 @@ public sealed class AudioCueService : IAsyncDisposable
         {
             _shutdown.Dispose();
         }
+    }
+
+    /// <summary>Reports an audio cue playback failure at most once per
+    /// (packId, cueEvent) for this process, instead of flooding the bounded
+    /// diagnostics log every tick a permanently broken audio device keeps
+    /// failing the same cue.</summary>
+    private void ReportPlaybackFailureOnce(string packId, AudioCueEvent cueEvent)
+    {
+        lock (_gate)
+        {
+            if (!_reportedFailures.Add((packId, cueEvent)))
+            {
+                return;
+            }
+        }
+
+        _errorReporter?.Report(
+            "audio-cue-playback",
+            new InvalidOperationException(
+                $"Audio cue playback failed for pack '{packId}', event '{cueEvent}'."));
     }
 
     private bool IsSuppressed()

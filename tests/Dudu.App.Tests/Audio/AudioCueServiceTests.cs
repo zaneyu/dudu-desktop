@@ -89,6 +89,28 @@ public sealed class AudioCueServiceTests
     }
 
     [Fact]
+    public async Task Failed_playback_is_reported_at_most_once_per_pack_and_event()
+    {
+        // A permanently broken audio device fails every cue forever. Without
+        // a throttle, that floods the bounded diagnostics log -- one report
+        // per failed tick. Greeting rotates between exactly two packs
+        // (tata-lala, dudu-lalala); with seed 0 the third attempt lands back
+        // on the same pack as the first, so it must not report again.
+        var reporter = new RecordingErrorReporter();
+        var player = new RecordingPlayer { AlwaysFail = true };
+        var service = CreateService(player, catalog: CreateCatalogWithVariants(), errorReporter: reporter);
+
+        Assert.Equal(AudioPlaybackStatus.Failed, (await PlayAsync(service, AudioCueEvent.Greeting)).Status);
+        Assert.Equal(AudioPlaybackStatus.Failed, (await PlayAsync(service, AudioCueEvent.Greeting)).Status);
+        Assert.Equal(AudioPlaybackStatus.Failed, (await PlayAsync(service, AudioCueEvent.Greeting)).Status);
+
+        // Same pack (tata-lala) again on the third attempt, just a different
+        // variant within it -- the throttle key is the pack, not the file.
+        Assert.Equal(["tata-lala/one.wav", "dudu-lalala/one.wav", "tata-lala/two.wav"], player.Played);
+        Assert.Equal(2, reporter.Reports.Count);
+    }
+
+    [Fact]
     public async Task Cancelled_playback_does_not_consume_cooldown()
     {
         var player = new RecordingPlayer { BlockFirstCall = true };
@@ -276,6 +298,7 @@ public sealed class AudioCueServiceTests
         public int CallCount => Volatile.Read(ref _callCount);
         public bool BlockFirstCall { get; init; }
         public bool FailFirstCall { get; init; }
+        public bool AlwaysFail { get; init; }
         public TaskCompletionSource<bool> FirstCallStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource<bool> _release =
@@ -291,6 +314,7 @@ public sealed class AudioCueServiceTests
                 if (BlockFirstCall) await _release.Task.WaitAsync(cancellationToken);
                 if (FailFirstCall) return AudioPlaybackState.Failed;
             }
+            if (AlwaysFail) return AudioPlaybackState.Failed;
             return AudioPlaybackState.Completed;
         }
 
