@@ -398,6 +398,76 @@ public sealed class PresentationHeldQueuePersistenceTests
     }
 
     [Fact]
+    public async Task A_persist_that_races_a_concurrent_presenter_does_not_delete_the_row_before_it_finishes()
+    {
+        // Finding 12: PersistHeldAsync's post-save guard used to delete the
+        // row whenever the item was no longer sitting in PresentationPolicy's
+        // queue -- but a concurrent TickAsync dequeues an item into
+        // _presentingIds (not the queue) while it presents, which is exactly
+        // as "not queued" as gone for good. If that concurrent presentation
+        // then fails, TickAsync's decline path requeues from memory without
+        // re-persisting (by design, to preserve QueuedUtc), relying on the
+        // row PersistHeldAsync just deleted. The guard must also check
+        // _presentingIds before deleting.
+        var saveStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseSave = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var repository = new BlockingSaveHeldPresentationRepository(saveStarted, releaseSave.Task);
+        var playbackStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releasePlayback = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var quiet = true;
+        var playbackAttempt = 0;
+        var coordinator = new PresentationCoordinator(
+            new PresentationPolicy(TimeSpan.Zero),
+            new RecordingNotificationService(),
+            PetStateMachine.CreateIdle(),
+            async (_, _, _) =>
+            {
+                playbackAttempt++;
+                if (playbackAttempt == 1)
+                {
+                    playbackStarted.TrySetResult();
+                    await releasePlayback.Task;
+                    throw new InvalidOperationException("playback failed");
+                }
+            },
+            () => AnimationOptions.Default,
+            isQuietHours: () => quiet,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            heldPresentations: repository);
+        var item = DurableNotification.Reminder("reminder-1", "Stretch");
+
+        // PublishAsync enqueues item and starts persisting it; block mid-save.
+        var publish = coordinator.PublishAsync(item, bypassSuppression: false, CancellationToken.None);
+        await saveStarted.Task;
+
+        // A concurrent tick dequeues the same item for presentation while the
+        // save above is still in flight.
+        quiet = false;
+        var tick = coordinator.TickAsync(CancellationToken.None);
+        await playbackStarted.Task;
+
+        // Let the save finish: the item is no longer in the queue (the tick
+        // dequeued it), but it IS in _presentingIds, so the row must survive.
+        releaseSave.SetResult();
+        await publish;
+
+        var saved = Assert.Single(repository.Rows.Values);
+        Assert.Equal(item.Key, saved.Key);
+
+        // The presentation then fails and TickAsync requeues without
+        // re-persisting -- the row from above is what makes that safe.
+        releasePlayback.SetResult();
+        await tick;
+        Assert.Single(repository.Rows);
+
+        // A later, successful tick clears it.
+        quiet = false;
+        await coordinator.TickAsync(CancellationToken.None);
+        Assert.Empty(repository.Rows);
+    }
+
+    [Fact]
     public void Held_presentation_key_format_matches_the_literal_strings_the_cascading_deletes_rely_on()
     {
         // M3's cascading deletes in LocalNoteRepository/ReminderRepository/
@@ -468,5 +538,32 @@ public sealed class PresentationHeldQueuePersistenceTests
 
         public Task DeleteAsync(string key, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("simulated repository failure");
+    }
+
+    /// <summary>A fake whose <see cref="SaveAsync"/> signals <paramref
+    /// name="started"/> then blocks on <paramref name="release"/> before
+    /// actually storing the row, so a test can control the exact window
+    /// during which a save is in flight.</summary>
+    private sealed class BlockingSaveHeldPresentationRepository(
+        TaskCompletionSource started,
+        Task release) : IHeldPresentationRepository
+    {
+        public Dictionary<string, HeldPresentation> Rows { get; } = [];
+
+        public Task<IReadOnlyList<HeldPresentation>> ListAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<HeldPresentation>>(Rows.Values.ToArray());
+
+        public async Task SaveAsync(HeldPresentation item, CancellationToken cancellationToken)
+        {
+            started.TrySetResult();
+            await release;
+            Rows[item.Key] = item;
+        }
+
+        public Task DeleteAsync(string key, CancellationToken cancellationToken)
+        {
+            Rows.Remove(key);
+            return Task.CompletedTask;
+        }
     }
 }

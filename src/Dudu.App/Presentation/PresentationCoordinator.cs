@@ -830,12 +830,28 @@ public sealed class PresentationCoordinator :
         // H1: PublishAsync/RequeueHeldAsync enqueue the item into
         // PresentationPolicy under _gate, then persist it here afterward (a
         // DB call must not run under a lock) — so a concurrent TickAsync can
-        // dequeue-and-delete this row before this write lands, orphaning it
-        // (and duplicating the popup on the next restart, which would reload
-        // and re-present something already shown). Re-checking membership
-        // right after the write, and deleting if it lost that race, closes
-        // the window.
-        if (!_policy.IsQueued(item))
+        // dequeue this row (moving it into _presentingIds/toPresent) before
+        // this write lands, orphaning it (and duplicating the popup on the
+        // next restart, which would reload and re-present something already
+        // shown). Re-checking membership right after the write, and deleting
+        // if it lost that race, closes the window.
+        //
+        // But a dequeue for *presentation* is not the same as a dequeue for
+        // good: while toPresent is being presented it is tracked in
+        // _presentingIds, not _policy, so IsQueued alone reads false for it.
+        // Deleting the row in that window loses the item for real if the
+        // presentation then fails: TickAsync's failure path calls
+        // _policy.Requeue(toPresent) without re-persisting (deliberately, to
+        // preserve QueuedUtc), relying on this row still being on disk to
+        // requeue *from*. Only delete when the item is gone from both --
+        // queued nowhere and not being presented either.
+        bool stillRelevant;
+        lock (_gate)
+        {
+            stillRelevant = _policy.IsQueued(item) || _presentingIds.Contains(item.Key);
+        }
+
+        if (!stillRelevant)
         {
             await RemoveHeldAsync(item.Key, cancellationToken);
         }
