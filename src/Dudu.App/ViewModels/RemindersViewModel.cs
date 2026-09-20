@@ -333,3 +333,45 @@ public sealed class RemindersViewModel : FeatureViewModelBase
         { return TimeZoneInfo.Utc; }
     }
 }
+
+/// <summary>Turns a reminder's recurrence rule into a short, lowercase, local-time
+/// summary for the reminders list (e.g. "every day at 9:30 pm"). LocalTime and
+/// Period are already the reminder's own local wall-clock values, so no time
+/// zone conversion is needed here.</summary>
+public static class ReminderScheduleSummary
+{
+    private static readonly DayOfWeek[] WeekOrder =
+    [
+        DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday,
+        DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday,
+    ];
+
+    public static string Describe(RecurrenceRule rule) => rule switch
+    {
+        RecurrenceRule.Daily daily => $"every day at {FormatTime(daily.LocalTime)}",
+        RecurrenceRule.SelectedWeekdays weekdays =>
+            $"on {FormatDays(weekdays.Days)} at {FormatTime(weekdays.LocalTime)}",
+        RecurrenceRule.Interval interval => $"every {FormatPeriod(interval.Period)}",
+        _ => "once",
+    };
+
+    private static string FormatTime(TimeOnly localTime) =>
+        localTime.ToString("h:mm tt", global::System.Globalization.CultureInfo.InvariantCulture)
+            .ToLowerInvariant();
+
+    private static string FormatDays(IReadOnlySet<DayOfWeek> days) => string.Join(
+        ", ",
+        WeekOrder.Where(days.Contains).Select(day => day.ToString()[..3].ToLowerInvariant()));
+
+    private static string FormatPeriod(TimeSpan period)
+    {
+        if (period.TotalMinutes < 60 || period.TotalMinutes % 60 != 0)
+        {
+            var minutes = Math.Max(1, (int)period.TotalMinutes);
+            return minutes == 1 ? "1 minute" : $"{minutes} minutes";
+        }
+
+        var hours = (int)period.TotalHours;
+        return hours == 1 ? "1 hour" : $"{hours} hours";
+    }
+}
