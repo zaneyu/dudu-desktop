@@ -63,6 +63,27 @@ public static class LocalReminderDefaults
         return storedText;
     }
 
+    /// <summary>True when <paramref name="storedText"/> is <paramref name="reminderId"/>'s
+    /// shipped neutral default title or its pre-personalisation "ada" legacy title -- i.e.
+    /// text a save may safely regenerate. False for anything else, including a title the
+    /// user has renamed on the Reminders page, which a save must then leave alone.</summary>
+    public static bool IsKnownDefaultTitle(string reminderId, string storedText) =>
+        reminderId switch
+        {
+            EveningCheckInId => storedText is EveningCheckInDefaultTitle or EveningCheckInLegacyTitle,
+            BedtimeId => storedText is BedtimeDefaultTitle or BedtimeLegacyTitle,
+            _ => false,
+        };
+
+    /// <summary>The details counterpart of <see cref="IsKnownDefaultTitle"/>. Only the
+    /// bedtime default has tracked neutral/legacy details text today.</summary>
+    public static bool IsKnownDefaultDetails(string reminderId, string storedText) =>
+        reminderId switch
+        {
+            BedtimeId => storedText is BedtimeDefaultDetails or BedtimeLegacyDetails,
+            _ => false,
+        };
+
     public static IReadOnlyList<Reminder> Create(
         Preferences preferences,
         DateTimeOffset nowUtc,

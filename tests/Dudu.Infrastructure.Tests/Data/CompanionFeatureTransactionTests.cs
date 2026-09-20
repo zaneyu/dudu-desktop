@@ -184,6 +184,83 @@ public sealed class CompanionFeatureTransactionTests
     }
 
     [Fact]
+    public async Task Saving_preferences_again_preserves_a_user_renamed_default_title_and_details()
+    {
+        // Opus review finding 8: the Reminders page edits a default
+        // reminder's Title/Details two-way. LocalReminderDefaults.Create
+        // rebuilds every default from scratch on every preferences save,
+        // which used to silently discard that rename on the very next save
+        // -- even when nothing about the default's own schedule changed.
+        await using var fixture = await Fixture.CreateAsync();
+        var preferences = TestPreferences() with { BedtimeRitualEnabled = true };
+        var service = new CompanionFeatureTransactionService(new AppUnitOfWork(fixture.Database));
+        var reminderRepository = new ReminderRepository(fixture.Database);
+
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            preferences,
+            DateTimeOffset.Parse("2026-09-12T10:00:00Z"),
+            TimeZoneInfo.Utc,
+            TestContext.Current.CancellationToken);
+
+        var renamed = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == LocalReminderDefaults.BedtimeId) with
+        {
+            Title = "go to sleep already",
+            Details = "phone down, lights off.",
+        };
+        await reminderRepository.SaveAsync(renamed, TestContext.Current.CancellationToken);
+
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            preferences,
+            DateTimeOffset.Parse("2026-09-13T09:00:00Z"),
+            TimeZoneInfo.Utc,
+            TestContext.Current.CancellationToken);
+
+        var saved = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == LocalReminderDefaults.BedtimeId);
+        Assert.Equal("go to sleep already", saved.Title);
+        Assert.Equal("phone down, lights off.", saved.Details);
+    }
+
+    [Fact]
+    public async Task Saving_preferences_still_migrates_a_legacy_default_title_to_the_neutral_text()
+    {
+        // A row saved by an older install has the pre-personalisation "ada"
+        // text baked in verbatim. That is a recognized default text (not a
+        // user rename), so it must keep upgrading to the neutral title --
+        // the preserve fix above must not freeze legacy rows in place.
+        await using var fixture = await Fixture.CreateAsync();
+        var preferences = TestPreferences() with { BedtimeRitualEnabled = true };
+        var service = new CompanionFeatureTransactionService(new AppUnitOfWork(fixture.Database));
+        var reminderRepository = new ReminderRepository(fixture.Database);
+
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            preferences,
+            DateTimeOffset.Parse("2026-09-12T10:00:00Z"),
+            TimeZoneInfo.Utc,
+            TestContext.Current.CancellationToken);
+
+        var legacy = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == LocalReminderDefaults.BedtimeId) with
+        {
+            Title = LocalReminderDefaults.BedtimeLegacyTitle,
+            Details = LocalReminderDefaults.BedtimeLegacyDetails,
+        };
+        await reminderRepository.SaveAsync(legacy, TestContext.Current.CancellationToken);
+
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            preferences,
+            DateTimeOffset.Parse("2026-09-13T09:00:00Z"),
+            TimeZoneInfo.Utc,
+            TestContext.Current.CancellationToken);
+
+        var saved = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == LocalReminderDefaults.BedtimeId);
+        Assert.Equal(LocalReminderDefaults.BedtimeDefaultTitle, saved.Title);
+        Assert.Equal(LocalReminderDefaults.BedtimeDefaultDetails, saved.Details);
+    }
+
+    [Fact]
     public async Task Saving_preferences_with_a_changed_rule_discards_the_stale_snooze()
     {
         await using var fixture = await Fixture.CreateAsync();

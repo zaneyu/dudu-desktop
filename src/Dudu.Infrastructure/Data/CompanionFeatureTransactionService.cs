@@ -52,16 +52,35 @@ public sealed class CompanionFeatureTransactionService : ICompanionFeatureTransa
                 localTimeZone))
             {
                 var toSave = reminder;
-                if (existing.TryGetValue(reminder.Id, out var previous)
-                    && previous.Enabled == reminder.Enabled
-                    && previous.Rule == reminder.Rule
-                    && previous.LocalTimeZoneId == reminder.LocalTimeZoneId)
+                if (existing.TryGetValue(reminder.Id, out var previous))
                 {
-                    toSave = reminder with
+                    if (previous.Enabled == reminder.Enabled
+                        && previous.Rule == reminder.Rule
+                        && previous.LocalTimeZoneId == reminder.LocalTimeZoneId)
                     {
-                        NextDueUtc = previous.NextDueUtc,
-                        SnoozedUntilUtc = previous.SnoozedUntilUtc,
-                    };
+                        toSave = toSave with
+                        {
+                            NextDueUtc = previous.NextDueUtc,
+                            SnoozedUntilUtc = previous.SnoozedUntilUtc,
+                        };
+                    }
+
+                    // The Reminders page edits Title/Details on a default
+                    // reminder two-way. Only regenerate them here when the
+                    // existing row still holds a recognized neutral/legacy
+                    // default text for this id -- otherwise this save (which
+                    // runs on every preferences change, whether or not this
+                    // default's own schedule changed) would silently discard
+                    // her rename.
+                    if (!LocalReminderDefaults.IsKnownDefaultTitle(reminder.Id, previous.Title))
+                    {
+                        toSave = toSave with { Title = previous.Title };
+                    }
+                    if (previous.Details is { } previousDetails
+                        && !LocalReminderDefaults.IsKnownDefaultDetails(reminder.Id, previousDetails))
+                    {
+                        toSave = toSave with { Details = previousDetails };
+                    }
                 }
 
                 await writer.SaveAsync(toSave, token);
