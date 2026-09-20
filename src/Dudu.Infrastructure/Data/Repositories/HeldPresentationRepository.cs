@@ -61,6 +61,16 @@ public sealed class HeldPresentationRepository : SqliteRepository, IHeldPresenta
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    public async Task MarkToastedAsync(string key, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(key);
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE held_presentations SET toasted=1 WHERE presentation_key=$key;";
+        Add(command, "$key", key);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     private static HeldPresentation Read(SqliteDataReader r) => new(
         r.GetString(0),
         r.GetString(1),

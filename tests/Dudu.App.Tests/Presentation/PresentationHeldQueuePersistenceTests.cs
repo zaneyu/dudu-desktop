@@ -247,6 +247,82 @@ public sealed class PresentationHeldQueuePersistenceTests
     }
 
     [Fact]
+    public async Task A_failed_release_of_a_previously_held_item_persists_the_toasted_flag_immediately()
+    {
+        // Finding D: the marker PresentAsync sets in _toastedWhileHeldIds is
+        // memory-only on TickAsync's decline path -- that path deliberately
+        // does not re-persist the whole row (to preserve QueuedUtc). Without
+        // MarkToastedAsync, a restart before the retry finally succeeds
+        // would reload the row as untoasted and show the Windows toast a
+        // second time.
+        var repository = new RecordingHeldPresentationRepository();
+        var notifications = new CountingNotificationService();
+        var quiet = true;
+        var coordinator = new PresentationCoordinator(
+            new PresentationPolicy(TimeSpan.Zero),
+            notifications,
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => Task.FromException(new InvalidOperationException("playback failed")),
+            () => AnimationOptions.Default,
+            isQuietHours: () => quiet,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            heldPresentations: repository);
+
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-1", "Stretch"),
+            bypassSuppression: false,
+            CancellationToken.None);
+
+        // Held by quiet hours (not user-hidden), so PublishAsync's own
+        // toastNow shortcut never fires -- the row persists untoasted.
+        Assert.Equal(0, notifications.ReminderCalls);
+        Assert.False(Assert.Single(repository.Rows.Values).Toasted);
+
+        // Quiet hours end: TickAsync releases it, the toast fires for the
+        // first time inside PresentAsync, but the animation keeps failing
+        // so the item is requeued via TickAsync's decline path -- which
+        // does not re-persist the row wholesale.
+        quiet = false;
+        await coordinator.TickAsync(CancellationToken.None);
+
+        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.True(Assert.Single(repository.Rows.Values).Toasted);
+    }
+
+    [Fact]
+    public async Task A_failed_release_of_a_previously_held_local_note_does_not_persist_a_toasted_flag()
+    {
+        // Finding D: ShowNotificationAsync shows no real toast for LocalNote
+        // (it falls through to Task.CompletedTask), so persisting the
+        // toasted flag for it would be recording something that never
+        // actually happened.
+        var repository = new RecordingHeldPresentationRepository();
+        var quiet = true;
+        var coordinator = new PresentationCoordinator(
+            new PresentationPolicy(TimeSpan.Zero),
+            new CountingNotificationService(),
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => Task.FromException(new InvalidOperationException("playback failed")),
+            () => AnimationOptions.Default,
+            isQuietHours: () => quiet,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            heldPresentations: repository);
+
+        await coordinator.PublishAsync(
+            DurableNotification.LocalNote(new LocalLoveNote("note-1", "Hi"), "wave"),
+            bypassSuppression: false,
+            CancellationToken.None);
+        Assert.False(Assert.Single(repository.Rows.Values).Toasted);
+
+        quiet = false;
+        await coordinator.TickAsync(CancellationToken.None);
+
+        Assert.False(Assert.Single(repository.Rows.Values).Toasted);
+    }
+
+    [Fact]
     public async Task StartAsync_reloads_a_persisted_held_item_into_the_queue()
     {
         // Simulates a restart: the repository already has a row from a
@@ -1021,6 +1097,16 @@ public sealed class PresentationHeldQueuePersistenceTests
             Rows.Remove(key);
             return Task.CompletedTask;
         }
+
+        public Task MarkToastedAsync(string key, CancellationToken cancellationToken)
+        {
+            if (Rows.TryGetValue(key, out var existing))
+            {
+                Rows[key] = existing with { Toasted = true };
+            }
+
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class ThrowingHeldPresentationRepository : IHeldPresentationRepository
@@ -1032,6 +1118,9 @@ public sealed class PresentationHeldQueuePersistenceTests
             throw new InvalidOperationException("simulated repository failure");
 
         public Task DeleteAsync(string key, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("simulated repository failure");
+
+        public Task MarkToastedAsync(string key, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("simulated repository failure");
     }
 
@@ -1060,6 +1149,16 @@ public sealed class PresentationHeldQueuePersistenceTests
             Rows.Remove(key);
             return Task.CompletedTask;
         }
+
+        public Task MarkToastedAsync(string key, CancellationToken cancellationToken)
+        {
+            if (Rows.TryGetValue(key, out var existing))
+            {
+                Rows[key] = existing with { Toasted = true };
+            }
+
+            return Task.CompletedTask;
+        }
     }
 
     /// <summary>A fake whose <see cref="SaveAsync"/> throws a different
@@ -1081,6 +1180,8 @@ public sealed class PresentationHeldQueuePersistenceTests
         }
 
         public Task DeleteAsync(string key, CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public Task MarkToastedAsync(string key, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private sealed class RecordingErrorReporter : IAppHostErrorReporter

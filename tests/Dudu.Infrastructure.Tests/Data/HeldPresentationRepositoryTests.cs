@@ -155,6 +155,72 @@ public sealed class HeldPresentationRepositoryTests
     }
 
     [Fact]
+    public async Task MarkToastedAsync_sets_the_flag_without_touching_any_other_column()
+    {
+        // Finding D: PresentationCoordinator.PresentAsync's in-memory
+        // toasted-while-held marker is otherwise lost on TickAsync's decline
+        // path, which deliberately does not re-persist the whole row (that
+        // would reset QueuedUtc). MarkToastedAsync must update only the flag.
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var root = Path.Combine(Path.GetTempPath(), "dudu-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var options = new DatabaseOptions(Path.Combine(root, "dudu.db"), Path.Combine(root, "backups"));
+            await using var database = await Database.OpenAsync(options, cancellationToken);
+            var repository = new HeldPresentationRepository(database);
+            var queuedUtc = DateTimeOffset.Parse("2026-09-18T20:00:00Z");
+            var item = new HeldPresentation(
+                "Reminder:bedtime",
+                "Reminder",
+                "bedtime",
+                "Goodnight",
+                "time for bed",
+                "sleep",
+                null,
+                queuedUtc,
+                Toasted: false);
+            await repository.SaveAsync(item, cancellationToken);
+
+            await repository.MarkToastedAsync(item.Key, cancellationToken);
+
+            var loaded = Assert.Single(await repository.ListAsync(cancellationToken));
+            Assert.True(loaded.Toasted);
+            Assert.Equal(queuedUtc, loaded.QueuedUtc);
+            Assert.Equal(item.Body, loaded.Body);
+            Assert.Equal(item.Title, loaded.Title);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
+    public async Task MarkToastedAsync_is_a_no_op_for_a_key_with_no_row()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var root = Path.Combine(Path.GetTempPath(), "dudu-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var options = new DatabaseOptions(Path.Combine(root, "dudu.db"), Path.Combine(root, "backups"));
+            await using var database = await Database.OpenAsync(options, cancellationToken);
+            var repository = new HeldPresentationRepository(database);
+
+            await repository.MarkToastedAsync("Reminder:does-not-exist", cancellationToken);
+
+            Assert.Empty(await repository.ListAsync(cancellationToken));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
     public async Task Held_presentations_table_exists_after_upgrading_from_schema_three()
     {
         // Regression coverage for the 0011 migration: a real install still on

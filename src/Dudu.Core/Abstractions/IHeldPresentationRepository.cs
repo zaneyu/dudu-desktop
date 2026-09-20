@@ -18,4 +18,9 @@ public interface IHeldPresentationRepository
     Task SaveAsync(HeldPresentation item, CancellationToken cancellationToken);
 
     Task DeleteAsync(string key, CancellationToken cancellationToken);
+
+    /// <summary>Sets the Toasted flag on the row keyed by <paramref name="key"/>
+    /// without touching any other column (in particular QueuedUtc). A no-op
+    /// when no row exists for the key.</summary>
+    Task MarkToastedAsync(string key, CancellationToken cancellationToken);
 }

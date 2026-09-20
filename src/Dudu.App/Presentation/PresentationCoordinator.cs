@@ -775,6 +775,26 @@ public sealed class PresentationCoordinator :
                 {
                     _toastedWhileHeldIds.Add(item.Key);
                 }
+
+                if (item.Kind != PresentationItemKind.LocalNote)
+                {
+                    // Finding D: the marker above is memory-only. PersistHeldAsync
+                    // already writes toasted=true into a *new* row (via
+                    // RequeueHeldAsync, PublishAsync's own failure path), but
+                    // TickAsync's decline path deliberately does not re-persist
+                    // an already-held item's row (to preserve QueuedUtc) -- so
+                    // without this, that row's toasted column stays false even
+                    // though _toastedWhileHeldIds already remembers it in
+                    // memory. A restart before the retry finally succeeds would
+                    // then reload the row as untoasted and show the Windows
+                    // toast a second time. A no-op when the row does not exist
+                    // yet -- the fresh persist above already writes the correct
+                    // flag. Skipped for LocalNote: ShowNotificationAsync shows
+                    // no real toast for that kind (see the switch below), so
+                    // toastShown is trivially true for it regardless of
+                    // whether anything was actually shown.
+                    await MarkToastedAsync(item.Key, cancellationToken);
+                }
             }
         }
         else if (succeeded)
@@ -1025,6 +1045,22 @@ public sealed class PresentationCoordinator :
         }
 
         return ObserveHeldAsync(() => _heldPresentations.DeleteAsync(key, cancellationToken), "remove");
+    }
+
+    /// <summary>Finding D: persists the toasted-while-held marker for a row
+    /// that may already exist on disk, independent of a full
+    /// <see cref="PersistHeldAsync"/> upsert (which would reset QueuedUtc).
+    /// No-op when no repository was supplied, or when the row does not exist
+    /// yet -- the eventual first persist already writes the correct
+    /// flag.</summary>
+    private Task MarkToastedAsync(string key, CancellationToken cancellationToken)
+    {
+        if (_heldPresentations is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        return ObserveHeldAsync(() => _heldPresentations.MarkToastedAsync(key, cancellationToken), "mark-toasted");
     }
 
     /// <summary>Returns a failed/cancelled immediate-presentation attempt
