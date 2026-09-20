@@ -434,15 +434,21 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
         await _reminderTickGate.WaitAsync(cancellationToken);
         try
         {
+            // Finding A(3): reconcile now runs at the START of every tick --
+            // including the startup tick, whose release is deferred -- not
+            // just before the release below. The reminder engine's own
+            // TickAsync can itself publish through the presentation gateway
+            // (a newly-due reminder), so reconciling only right before the
+            // release left that publish evaluated against a pet the sink
+            // may still believe is hidden from an earlier vetoed show that
+            // has since cleared. Give the pet a chance to come back on
+            // screen (e.g. quiet hours that vetoed an earlier explicit show
+            // have now ended) before the reminder engine -- and therefore
+            // any release -- runs at all.
+            await ReconcileVisibilityAsync(cancellationToken);
             await _reminderService.TickAsync(cancellationToken);
             if (releasePresentations)
             {
-                // Give the pet a chance to come back on screen (e.g. quiet
-                // hours that vetoed an earlier explicit show have now ended)
-                // before releasing any held item -- otherwise a released
-                // item could still animate into a window that is invisible
-                // for an unrelated, already-over reason.
-                await ReconcileVisibilityAsync(cancellationToken);
                 await TickPresentationGatewayAsync(cancellationToken);
             }
         }

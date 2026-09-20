@@ -220,7 +220,8 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
 
     private async Task EnsureUserVisibleAsync(
         CancellationToken cancellationToken,
-        bool explicitUserGesture = false)
+        bool explicitUserGesture = false,
+        bool requireStillDesired = false)
     {
         var snapshot = await CaptureAsync(cancellationToken);
         await _visibilityGate.WaitAsync(cancellationToken);
@@ -230,6 +231,20 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
             try
             {
                 ThrowIfDisposed();
+                // Finding C: a reconcile caller captures its own "still
+                // desired" snapshot before this gate was ever reached -- an
+                // explicit tray/hotkey hide can race in and flip
+                // _userVisible to false in that window. A proactive
+                // reconcile must never resurrect a hide she asked for after
+                // its snapshot was taken, so bail on the field's current
+                // value instead of forcing it back to true below. An
+                // explicit gesture (tray show, hotkey) never sets this flag
+                // and is unaffected.
+                if (requireStillDesired && !_userVisible)
+                {
+                    return;
+                }
+
                 // This is desired state, not permission to bypass a gate.
                 // Keeping it true lets fullscreen/pause/session transitions
                 // restore the pet after suppression ends.
@@ -286,15 +301,49 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
         try
         {
             var snapshot = await CaptureAsync(cancellationToken);
-            if (!snapshot.UserVisible || _overlay.IsVisible)
+            if (!snapshot.UserVisible)
             {
                 return;
             }
 
-            await EnsureUserVisibleAsync(cancellationToken);
+            if (_overlay.IsVisible)
+            {
+                // Finding A: this used to early-return here without telling
+                // the sink anything. SetUserVisible is a one-way latch from
+                // PresentationCoordinator's point of view -- any veto (lock,
+                // fullscreen, suspend, pause, quiet hours) pushes false, but
+                // not every show site that brings the overlay back pushes
+                // true (see the resume-show/fullscreen-restore-show/
+                // pause-state-show sites below). Left alone, a single missed
+                // push stuck the gateway believing the pet was hidden for
+                // the rest of the session -- nothing released, every new
+                // reminder toast-only, its next occurrence silently dropped
+                // by IsQueued. Reconcile is now authoritative in both
+                // directions: the overlay being visible always re-asserts
+                // true, so a missed push anywhere self-heals within one
+                // tick instead of staying wrong forever.
+                _presentationEnvironment?.SetUserVisible(true);
+                return;
+            }
+
+            await EnsureUserVisibleAsync(cancellationToken, requireStillDesired: true);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (ObjectDisposedException)
+        {
+            // Finding G: shutdown already disposed this coordinator (or the
+            // overlay/host it wraps) between the timer firing and this tick
+            // running -- there is nothing left to reconcile, and reporting
+            // it would just flood the error sink with the same failure on
+            // every tick for as long as shutdown takes.
         }
         catch (Exception exception)
         {
+            // Finding G: everything else (a real fault) is still reported,
+            // never silently swallowed.
             ReportFailure("reconcile-visibility", exception);
         }
     }
@@ -404,6 +453,10 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
                 return;
             }
 
+            // Finding A(2): matches the veto push in EnsureUserVisibleAsync
+            // (see the "resume-show" site above for why this must not be
+            // left to the next reconcile tick alone).
+            _presentationEnvironment?.SetUserVisible(true);
             InvokeSafely(_overlay.Show, "fullscreen-restore-show");
         }
         finally { _visibilityGate.Release(); }
@@ -431,6 +484,9 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
                 "pause-state-gate");
             if (snapshot.UserVisible && canShow && !snapshot.FullscreenHidden)
             {
+                // Finding A(2): matches the veto push in
+                // EnsureUserVisibleAsync (see the "resume-show" site above).
+                _presentationEnvironment?.SetUserVisible(true);
                 InvokeSafely(_overlay.Show, "pause-state-show");
             }
             else if (!canShow)
@@ -549,6 +605,12 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
         // and dismissed against a still-hidden overlay.
         if (show)
         {
+            // Finding A(2): the veto path (EnsureUserVisibleAsync) already
+            // pushes SetUserVisible(false); this show site never pushed the
+            // matching true back, leaving PresentationCoordinator believing
+            // the pet was hidden until the next 30 s reconcile tick caught
+            // up (or, before Finding A(1), possibly never).
+            _presentationEnvironment?.SetUserVisible(true);
             await InvokeVisualSafelyAsync(_overlay.Show, "resume-show", cancellationToken);
         }
 
