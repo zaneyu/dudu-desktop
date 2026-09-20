@@ -321,8 +321,11 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
 
     // Raised from the background reminder tick thread, not the UI thread -- and
     // FocusService.CompleteExpiredAsync must never see an exception escape this handler,
-    // since that would break the tick for every other subscriber (e.g. the pet). Fire and
-    // forget: RefreshAsync marshals its own mutations through MutateAsync/UiDispatcher.
+    // since that would break the tick for every other subscriber (e.g. the pet). Fire
+    // and forget: the reload's mutations go through MutateAsync, which marshals to the
+    // UI thread when UiDispatcher is set (SettingsWindow wires it to the window's
+    // DispatcherQueue for this view model) and otherwise runs inline on whatever thread
+    // raised this event.
     private void OnFocusSessionExpired(Guid focusId) => _ = RefreshAfterExpiryAsync();
 
     private async Task RefreshAfterExpiryAsync()

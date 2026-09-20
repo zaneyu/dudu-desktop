@@ -1,6 +1,7 @@
 using Dudu.App.Animation;
 using Dudu.App.Hosting;
 using Dudu.App.Pages;
+using Dudu.App.System;
 using Dudu.App.ViewModels;
 using Dudu.Core.Assets;
 using Dudu.Core.Models;
@@ -313,7 +314,19 @@ public sealed partial class SettingsWindow : UserControl
             _context.StartupSettings,
             _context.OverlayCommands);
         _remindersPage = new RemindersPage(new RemindersViewModel(features));
-        _tasksFocusPage = new TasksFocusPage(new TasksFocusViewModel(features));
+        _tasksFocusPage = new TasksFocusPage(new TasksFocusViewModel(features)
+        {
+            // FocusService.SessionExpired (a naturally-expired session, see
+            // TasksFocusViewModel.OnFocusSessionExpired) is raised from the
+            // background reminder tick thread, not guaranteed to be the UI
+            // thread. Without this, MutateAsync runs that reload's mutations
+            // inline on whichever thread raised the event. AwaitableUiDispatcher
+            // runs inline when already on the UI thread (HasThreadAccess), so
+            // this only adds real marshalling for the off-thread case.
+            UiDispatcher = new AwaitableUiDispatcher(
+                () => DispatcherQueue.HasThreadAccess,
+                callback => DispatcherQueue.TryEnqueue(() => callback())).InvokeAsync,
+        });
         _loveNotesPage = new LoveNotesPage(new LoveNotesViewModel(features));
         _appearancePage = new AppearancePage(new AppearanceViewModel(
             features,
