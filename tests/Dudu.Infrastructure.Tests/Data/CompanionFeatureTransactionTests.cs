@@ -569,6 +569,152 @@ public sealed class CompanionFeatureTransactionTests
     }
 
     [Fact]
+    public async Task Saving_preferences_with_a_changed_time_zone_keeps_a_pending_once_reminders_future_due()
+    {
+        // Round 4b Opus follow-up (Finding A): re-anchoring a wall-clock
+        // rule's recompute on "now" during a time-zone change is correct
+        // for Daily/SelectedWeekdays, but NextOccurrence's rule switch has
+        // no case for Once -- forcing the same re-anchor for a Once rule
+        // falls through to `_ => null` and silently cancels a still
+        // pending, edited-to-Once reminder that has a FUTURE due time. A
+        // time-zone change alone must never cancel it; only
+        // Daily/SelectedWeekdays re-anchor.
+        await using var fixture = await Fixture.CreateAsync();
+        var preferences = TestPreferences() with { HydrationRemindersEnabled = true };
+        var service = new CompanionFeatureTransactionService(new AppUnitOfWork(fixture.Database));
+        var reminderRepository = new ReminderRepository(fixture.Database);
+        var singapore = TimeZoneInfo.FindSystemTimeZoneById("Asia/Singapore");
+        var london = TimeZoneInfo.FindSystemTimeZoneById("Europe/London");
+
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            preferences,
+            DateTimeOffset.Parse("2026-09-12T00:00:00Z"),
+            singapore,
+            TestContext.Current.CancellationToken);
+
+        var futureDueUtc = DateTimeOffset.Parse("2026-09-15T03:30:00Z");
+        var editedOnce = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == "default-hydration") with
+        {
+            Rule = new RecurrenceRule.Once(),
+            NextDueUtc = futureDueUtc,
+        };
+        await reminderRepository.SaveAsync(editedOnce, TestContext.Current.CancellationToken);
+
+        // Zone change an hour later -- still well before the pending Once due.
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            preferences,
+            DateTimeOffset.Parse("2026-09-12T01:00:00Z"),
+            london,
+            TestContext.Current.CancellationToken);
+
+        var saved = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == "default-hydration");
+        Assert.Equal("Europe/London", saved.LocalTimeZoneId);
+        Assert.Equal(new RecurrenceRule.Once(), saved.Rule);
+        Assert.Equal(futureDueUtc, saved.NextDueUtc);
+    }
+
+    [Fact]
+    public async Task Saving_preferences_with_a_changed_time_zone_keeps_a_pending_intervals_future_due()
+    {
+        // Round 4b Opus follow-up (Finding A): an Interval rule's cadence
+        // is anchored on its own due time, not wall-clock time --
+        // re-anchoring it on "now" during a time-zone change needlessly
+        // pushes a still-pending, still-future due out by up to one period
+        // for no reason connected to the zone change. Only
+        // Daily/SelectedWeekdays re-anchor.
+        await using var fixture = await Fixture.CreateAsync();
+        var preferences = TestPreferences() with { HydrationRemindersEnabled = true };
+        var service = new CompanionFeatureTransactionService(new AppUnitOfWork(fixture.Database));
+        var reminderRepository = new ReminderRepository(fixture.Database);
+        var singapore = TimeZoneInfo.FindSystemTimeZoneById("Asia/Singapore");
+        var london = TimeZoneInfo.FindSystemTimeZoneById("Europe/London");
+
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            preferences,
+            DateTimeOffset.Parse("2026-09-12T00:00:00Z"),
+            singapore,
+            TestContext.Current.CancellationToken);
+
+        var savedAtUtc = DateTimeOffset.Parse("2026-09-12T01:00:00Z");
+        var futureDueUtc = savedAtUtc.AddHours(2);
+        var editedInterval = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == "default-hydration") with
+        {
+            Rule = new RecurrenceRule.Interval(TimeSpan.FromMinutes(30)),
+            NextDueUtc = futureDueUtc,
+        };
+        await reminderRepository.SaveAsync(editedInterval, TestContext.Current.CancellationToken);
+
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            preferences,
+            savedAtUtc,
+            london,
+            TestContext.Current.CancellationToken);
+
+        var saved = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == "default-hydration");
+        Assert.Equal("Europe/London", saved.LocalTimeZoneId);
+        Assert.Equal(new RecurrenceRule.Interval(TimeSpan.FromMinutes(30)), saved.Rule);
+        Assert.Equal(futureDueUtc, saved.NextDueUtc);
+    }
+
+    [Fact]
+    public async Task Saving_preferences_with_a_changed_time_zone_inside_quiet_hours_recomputes_the_rules_wall_clock_time()
+    {
+        // Round 4b Opus follow-up (Finding B): re-anchoring a wall-clock
+        // rule on "now" during a time-zone change is right, but anchoring
+        // on the LITERAL now, when now falls inside quiet hours, hits
+        // NextOccurrence's "due occurrence deferred by quiet hours" branch
+        // and returns quiet-hours END (07:00) instead of the rule's actual
+        // next wall-clock occurrence (10:00). Anchoring a day back instead
+        // defers to an already-past quiet-hours end, so the recompute
+        // reaches the rule-based arm and derives 10:00 in the new zone --
+        // which itself still isn't quiet, so it comes back unchanged.
+        await using var fixture = await Fixture.CreateAsync();
+        var preferences = TestPreferences() with
+        {
+            HydrationRemindersEnabled = true,
+            QuietHours = new QuietHours(true, new TimeOnly(21, 0), new TimeOnly(7, 0)),
+        };
+        var service = new CompanionFeatureTransactionService(new AppUnitOfWork(fixture.Database));
+        var reminderRepository = new ReminderRepository(fixture.Database);
+        var singapore = TimeZoneInfo.FindSystemTimeZoneById("Asia/Singapore");
+        var london = TimeZoneInfo.FindSystemTimeZoneById("Europe/London");
+
+        // 2026-09-12T00:00:00Z is 08:00 Singapore (not quiet) -- the
+        // shipped Daily(10:00) default lands the same Singapore day, at
+        // 02:00Z, also outside quiet hours.
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            preferences,
+            DateTimeOffset.Parse("2026-09-12T00:00:00Z"),
+            singapore,
+            TestContext.Current.CancellationToken);
+
+        var beforeZoneChange = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == "default-hydration");
+        Assert.Equal(DateTimeOffset.Parse("2026-09-12T02:00:00Z"), beforeZoneChange.NextDueUtc);
+
+        // Change zone to London a day later, at 2026-09-13T01:00:00Z --
+        // 02:00 BST local, inside the 21:00-07:00 quiet window.
+        var savedAtUtc = DateTimeOffset.Parse("2026-09-13T01:00:00Z");
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            preferences,
+            savedAtUtc,
+            london,
+            TestContext.Current.CancellationToken);
+
+        var saved = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == "default-hydration");
+        Assert.Equal("Europe/London", saved.LocalTimeZoneId);
+        // The rule's own wall-clock time (10:00 BST = 09:00Z), not
+        // quiet-hours end (07:00 BST = 06:00Z).
+        Assert.Equal(DateTimeOffset.Parse("2026-09-13T09:00:00Z"), saved.NextDueUtc);
+        Assert.NotEqual(DateTimeOffset.Parse("2026-09-13T06:00:00Z"), saved.NextDueUtc);
+    }
+
+    [Fact]
     public async Task Saving_preferences_recomputes_next_due_from_the_preserved_rule_when_re_enabling()
     {
         // Opus review follow-up B/1(b): Rule/QuietHoursBehavior/MissedPolicy

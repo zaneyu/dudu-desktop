@@ -2720,16 +2720,24 @@ public sealed class FeatureViewModelTests
                         // rule with no next occurrence (e.g. a completed
                         // Once-edited default) must stay null.
                         //
-                        // Anchor on now instead of the old due time whenever
-                        // the zone changed: NextOccurrence returns a
-                        // still-future anchor unchanged (net of quiet hours)
-                        // rather than re-deriving a wall-clock occurrence, so
-                        // anchoring on the old due time here would keep the
-                        // old zone's wall-clock instant across the change.
-                        var anchor = previous.LocalTimeZoneId == reminder.LocalTimeZoneId
-                            || previous.NextDueUtc is null
-                            ? previous.NextDueUtc
-                            : nowUtc.ToUniversalTime();
+                        // Re-anchor on a full day before now, but ONLY for a
+                        // wall-clock rule (Daily/SelectedWeekdays) whose zone
+                        // actually changed -- see
+                        // CompanionFeatureTransactionService.SavePreferencesAndDefaultRemindersAsync
+                        // for the full reasoning: Once must never be
+                        // cancelled by a tz change (NextOccurrence has no
+                        // fallthrough case for it), Interval must not be
+                        // needlessly pushed by up to one period, and "now"
+                        // itself is unsafe as an anchor because a now inside
+                        // quiet hours would land on quiet-hours end instead
+                        // of the next wall-clock occurrence.
+                        var reAnchorForZoneChange = previous.NextDueUtc is not null
+                            && previous.LocalTimeZoneId != reminder.LocalTimeZoneId
+                            && toSave.Rule is Dudu.Core.Models.RecurrenceRule.Daily
+                                or Dudu.Core.Models.RecurrenceRule.SelectedWeekdays;
+                        var anchor = reAnchorForZoneChange
+                            ? nowUtc.ToUniversalTime().AddDays(-1)
+                            : previous.NextDueUtc;
                         toSave = toSave with
                         {
                             NextDueUtc = Dudu.Core.Reminders.ReminderScheduler.NextOccurrence(

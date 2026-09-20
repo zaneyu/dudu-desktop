@@ -104,23 +104,52 @@ public sealed class CompanionFeatureTransactionService : ICompanionFeatureTransa
                         // must stay null, not silently resume on Create's
                         // shipped schedule.
                         //
-                        // The anchor passed to NextOccurrence matters: when
-                        // it is still in the future, NextOccurrence returns
-                        // that UTC instant unchanged (net of quiet hours)
-                        // rather than re-deriving a wall-clock occurrence --
-                        // so anchoring on the OLD due time across a time-zone
-                        // change would keep firing at the old zone's
-                        // wall-clock instant translated literally into the
-                        // new zone. Anchor on now instead whenever the zone
-                        // changed, so the recompute falls through to the
-                        // rule-based arms, which evaluate the next wall-clock
-                        // occurrence in the (new) time zone. Re-enabling with
-                        // the zone unchanged still anchors on the old due
-                        // time, exactly as before.
-                        var anchor = previous.LocalTimeZoneId == reminder.LocalTimeZoneId
-                            || previous.NextDueUtc is null
-                            ? previous.NextDueUtc
-                            : nowUtc.ToUniversalTime();
+                        // The anchor passed to NextOccurrence matters, but
+                        // only for a WALL-CLOCK rule (Daily/SelectedWeekdays):
+                        // when it is still in the future, NextOccurrence
+                        // returns that UTC instant unchanged (net of quiet
+                        // hours) rather than re-deriving a wall-clock
+                        // occurrence -- so anchoring on the OLD due time
+                        // across a time-zone change would keep firing at the
+                        // old zone's wall-clock instant translated literally
+                        // into the new zone. Re-anchoring forces the
+                        // recompute to fall through to the rule-based arms,
+                        // which evaluate the next occurrence in the new zone.
+                        //
+                        // A Once or Interval rule must NOT be re-anchored.
+                        // NextOccurrence's rule switch has no case for Once,
+                        // so forcing the fallthrough would write NextDueUtc
+                        // = null and silently cancel a still-pending Once --
+                        // a time-zone change alone must never cancel it. An
+                        // Interval rule's cadence is anchored on its own due
+                        // time, not wall-clock time, so re-anchoring it on
+                        // now would needlessly push it out by up to one
+                        // period for no reason connected to the zone change.
+                        // Both keep anchoring on the old due time, same as
+                        // an unchanged zone.
+                        //
+                        // The re-anchor value can't just be "now": if now
+                        // falls inside quiet hours, NextOccurrence's "due
+                        // occurrence deferred by quiet hours" branch would
+                        // return quiet-hours END rather than the next
+                        // wall-clock occurrence (e.g. 07:00 instead of
+                        // 10:00). Anchoring a full day back instead defers
+                        // to a quiet-hours end that is already in the past
+                        // -- quiet windows are always under 24h (see
+                        // QuietHoursPolicy.NextAllowedUtc: it returns the end
+                        // of the CURRENT/upcoming window, at most one
+                        // window's length after the anchor), so that
+                        // deferred instant is always < now, both of
+                        // NextOccurrence's early returns are skipped, and it
+                        // reaches NextLocalTime, which derives the correct
+                        // occurrence for "now" in the new zone -- honoring
+                        // quiet hours itself, for that candidate.
+                        var reAnchorForZoneChange = previous.NextDueUtc is not null
+                            && previous.LocalTimeZoneId != reminder.LocalTimeZoneId
+                            && toSave.Rule is RecurrenceRule.Daily or RecurrenceRule.SelectedWeekdays;
+                        var anchor = reAnchorForZoneChange
+                            ? nowUtc.ToUniversalTime().AddDays(-1)
+                            : previous.NextDueUtc;
                         toSave = toSave with
                         {
                             NextDueUtc = ReminderScheduler.NextOccurrence(
