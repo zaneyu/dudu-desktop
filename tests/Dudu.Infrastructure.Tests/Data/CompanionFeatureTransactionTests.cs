@@ -784,6 +784,142 @@ public sealed class CompanionFeatureTransactionTests
     }
 
     [Fact]
+    public async Task Saving_preferences_re_enabled_after_a_zone_change_while_disabled_uses_the_new_zones_local_time()
+    {
+        // Finding 1: disabling while the zone also changes used to keep the
+        // OLD zone's stale future due time in NextDueUtc, with the NEW
+        // LocalTimeZoneId already stamped on the row. A later re-enable with
+        // no further zone change then saw no delta against that row, so it
+        // anchored on -- and passed straight through as-is -- the stale
+        // instant, firing at the wrong wall-clock time. The fix nulls
+        // NextDueUtc when disabling alongside a zone change for a
+        // wall-clock rule, so the re-enable recomputes fresh.
+        await using var fixture = await Fixture.CreateAsync();
+        var enabled = TestPreferences() with { HydrationRemindersEnabled = true };
+        var disabled = TestPreferences() with { HydrationRemindersEnabled = false };
+        var service = new CompanionFeatureTransactionService(new AppUnitOfWork(fixture.Database));
+        var reminderRepository = new ReminderRepository(fixture.Database);
+        var singapore = TimeZoneInfo.FindSystemTimeZoneById("Asia/Singapore");
+        var london = TimeZoneInfo.FindSystemTimeZoneById("Europe/London");
+
+        // 2026-09-12T10:00:00Z is 18:00 Singapore -- the shipped Daily(10:00)
+        // default lands tomorrow at 02:00Z (10:00 SGT).
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            enabled,
+            DateTimeOffset.Parse("2026-09-12T10:00:00Z"),
+            singapore,
+            TestContext.Current.CancellationToken);
+
+        var staleDueUtc = DateTimeOffset.Parse("2026-09-13T02:00:00Z");
+        var afterEnable = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == "default-hydration");
+        Assert.Equal(staleDueUtc, afterEnable.NextDueUtc);
+
+        // Disable while still in Singapore -- zone unchanged, so the pending
+        // due time carries forward untouched.
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            disabled,
+            DateTimeOffset.Parse("2026-09-12T11:00:00Z"),
+            singapore,
+            TestContext.Current.CancellationToken);
+
+        var afterFirstDisable = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == "default-hydration");
+        Assert.False(afterFirstDisable.Enabled);
+        Assert.Equal(staleDueUtc, afterFirstDisable.NextDueUtc);
+
+        // Move to London while STILL disabled, well before the stale due
+        // time -- the fix must null NextDueUtc here rather than stamping
+        // "Europe/London" onto the Singapore-anchored instant.
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            disabled,
+            DateTimeOffset.Parse("2026-09-12T12:00:00Z"),
+            london,
+            TestContext.Current.CancellationToken);
+
+        var afterZoneChangeWhileDisabled = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == "default-hydration");
+        Assert.False(afterZoneChangeWhileDisabled.Enabled);
+        Assert.Equal("Europe/London", afterZoneChangeWhileDisabled.LocalTimeZoneId);
+        Assert.Null(afterZoneChangeWhileDisabled.NextDueUtc);
+
+        // Re-enable in London -- still well before the stale Singapore due
+        // time, so the old bug (anchoring on it and passing it through
+        // NextOccurrence's "still in the future" early return unchanged)
+        // would be directly observable here.
+        var reEnabledAtUtc = DateTimeOffset.Parse("2026-09-12T13:00:00Z");
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            enabled,
+            reEnabledAtUtc,
+            london,
+            TestContext.Current.CancellationToken);
+
+        var saved = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == "default-hydration");
+        Assert.True(saved.Enabled);
+        Assert.Equal("Europe/London", saved.LocalTimeZoneId);
+        Assert.NotNull(saved.NextDueUtc);
+        Assert.True(
+            saved.NextDueUtc > reEnabledAtUtc,
+            $"expected a future NextDueUtc after {reEnabledAtUtc:O}, got {saved.NextDueUtc:O}");
+        // The rule's own next London wall-clock occurrence (10:00 BST
+        // tomorrow = 09:00Z), not the stale Singapore instant (which would
+        // read as 03:00 BST -- neither the shipped nor the edited time).
+        Assert.Equal(DateTimeOffset.Parse("2026-09-13T09:00:00Z"), saved.NextDueUtc);
+        Assert.NotEqual(staleDueUtc, saved.NextDueUtc);
+    }
+
+    [Fact]
+    public async Task Saving_preferences_re_enabled_with_a_null_next_due_and_no_zone_change_uses_the_preserved_rule()
+    {
+        // Finding 1(b): a Daily default that ends up disabled with a null
+        // NextDueUtc (e.g. zeroed by the zone-change-while-disabled fix
+        // above, or by any other path) must still recompute from its own
+        // preserved (possibly edited) rule on re-enable, even when the zone
+        // never changes -- not silently fall back to Create's shipped
+        // Daily(10:00) via the insurance line at the end of the loop.
+        await using var fixture = await Fixture.CreateAsync();
+        var enabled = TestPreferences() with { HydrationRemindersEnabled = true };
+        var service = new CompanionFeatureTransactionService(new AppUnitOfWork(fixture.Database));
+        var reminderRepository = new ReminderRepository(fixture.Database);
+
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            enabled,
+            DateTimeOffset.Parse("2026-09-12T08:00:00Z"),
+            TimeZoneInfo.Utc,
+            TestContext.Current.CancellationToken);
+
+        // Simulate a disabled row whose schedule was edited to 11:00 (not
+        // the shipped 10:00) and whose NextDueUtc is null, same zone
+        // throughout.
+        var disabledWithNullDue = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == "default-hydration") with
+        {
+            Enabled = false,
+            Rule = new RecurrenceRule.Daily(new TimeOnly(11, 0)),
+            NextDueUtc = null,
+            SnoozedUntilUtc = null,
+        };
+        await reminderRepository.SaveAsync(disabledWithNullDue, TestContext.Current.CancellationToken);
+
+        var reEnabledAtUtc = DateTimeOffset.Parse("2026-09-13T08:00:00Z");
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            enabled,
+            reEnabledAtUtc,
+            TimeZoneInfo.Utc,
+            TestContext.Current.CancellationToken);
+
+        var saved = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == "default-hydration");
+        Assert.True(saved.Enabled);
+        Assert.Equal(new RecurrenceRule.Daily(new TimeOnly(11, 0)), saved.Rule);
+        // The rule's own next occurrence today at 11:00Z (08:00Z is still
+        // before it), not Create's shipped Daily(10:00) fallback (10:00Z).
+        Assert.Equal(DateTimeOffset.Parse("2026-09-13T11:00:00Z"), saved.NextDueUtc);
+        Assert.NotEqual(DateTimeOffset.Parse("2026-09-13T10:00:00Z"), saved.NextDueUtc);
+    }
+
+    [Fact]
     public async Task Remote_note_and_consumed_envelope_roll_back_together()
     {
         await using var fixture = await Fixture.CreateAsync();

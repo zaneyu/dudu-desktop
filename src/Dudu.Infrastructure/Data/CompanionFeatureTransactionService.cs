@@ -115,6 +115,16 @@ public sealed class CompanionFeatureTransactionService : ICompanionFeatureTransa
                         // into the new zone. Re-anchoring forces the
                         // recompute to fall through to the rule-based arms,
                         // which evaluate the next occurrence in the new zone.
+                        // The same re-anchor is needed when there is no old
+                        // due time to anchor on at all (previous.NextDueUtc
+                        // is null, e.g. this default was disabled through a
+                        // zone change below, or its schedule was cleared some
+                        // other way) -- without it, NextOccurrence's
+                        // "NextDueUtc is null" early return fires and the
+                        // insurance fallback a few lines down would silently
+                        // resume on Create's shipped time instead of this
+                        // preserved (possibly edited) rule's own next
+                        // occurrence.
                         //
                         // A Once or Interval rule must NOT be re-anchored.
                         // NextOccurrence's rule switch has no case for Once,
@@ -144,9 +154,9 @@ public sealed class CompanionFeatureTransactionService : ICompanionFeatureTransa
                         // reaches NextLocalTime, which derives the correct
                         // occurrence for "now" in the new zone -- honoring
                         // quiet hours itself, for that candidate.
-                        var reAnchorForZoneChange = previous.NextDueUtc is not null
-                            && previous.LocalTimeZoneId != reminder.LocalTimeZoneId
-                            && toSave.Rule is RecurrenceRule.Daily or RecurrenceRule.SelectedWeekdays;
+                        var reAnchorForZoneChange = toSave.Rule is RecurrenceRule.Daily or RecurrenceRule.SelectedWeekdays
+                            && (previous.NextDueUtc is null
+                                || previous.LocalTimeZoneId != reminder.LocalTimeZoneId);
                         var anchor = reAnchorForZoneChange
                             ? nowUtc.ToUniversalTime().AddDays(-1)
                             : previous.NextDueUtc;
@@ -167,7 +177,25 @@ public sealed class CompanionFeatureTransactionService : ICompanionFeatureTransa
                         // later become the anchor for the re-enable recompute
                         // above, poisoning it the same way this finding's
                         // fall-through bug did.
-                        toSave = toSave with { NextDueUtc = previous.NextDueUtc };
+                        //
+                        // Except when the zone ALSO changed on this save, for
+                        // a wall-clock rule (Daily/SelectedWeekdays): keeping
+                        // the old due time here would stamp the NEW
+                        // LocalTimeZoneId onto an instant still anchored to
+                        // the OLD zone's wall clock. A later re-enable with
+                        // no further zone change sees no delta against this
+                        // row and would carry that stale instant straight
+                        // through NextOccurrence's "still in the future"
+                        // early return, firing at the wrong wall-clock time.
+                        // Null it instead -- ValidateForSave allows a null
+                        // NextDueUtc while disabled -- so the re-enable arm's
+                        // null-anchor case (above) re-derives it fresh.
+                        var zoneChangedWhileDisabled = previous.LocalTimeZoneId != reminder.LocalTimeZoneId
+                            && toSave.Rule is RecurrenceRule.Daily or RecurrenceRule.SelectedWeekdays;
+                        toSave = toSave with
+                        {
+                            NextDueUtc = zoneChangedWhileDisabled ? null : previous.NextDueUtc,
+                        };
                     }
 
                     // The Reminders page edits Title/Details on a default

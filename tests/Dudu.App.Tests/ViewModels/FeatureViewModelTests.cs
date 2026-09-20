@@ -2728,9 +2728,10 @@ public sealed class FeatureViewModelTests
                         // rule with no next occurrence (e.g. a completed
                         // Once-edited default) must stay null.
                         //
-                        // Re-anchor on a full day before now, but ONLY for a
-                        // wall-clock rule (Daily/SelectedWeekdays) whose zone
-                        // actually changed -- see
+                        // Re-anchor a full day before now, but ONLY for a
+                        // wall-clock rule (Daily/SelectedWeekdays) with no old
+                        // due time to anchor on (previous.NextDueUtc is null)
+                        // or whose zone actually changed -- see
                         // CompanionFeatureTransactionService.SavePreferencesAndDefaultRemindersAsync
                         // for the full reasoning: Once must never be
                         // cancelled by a tz change (NextOccurrence has no
@@ -2739,10 +2740,10 @@ public sealed class FeatureViewModelTests
                         // itself is unsafe as an anchor because a now inside
                         // quiet hours would land on quiet-hours end instead
                         // of the next wall-clock occurrence.
-                        var reAnchorForZoneChange = previous.NextDueUtc is not null
-                            && previous.LocalTimeZoneId != reminder.LocalTimeZoneId
-                            && toSave.Rule is Dudu.Core.Models.RecurrenceRule.Daily
-                                or Dudu.Core.Models.RecurrenceRule.SelectedWeekdays;
+                        var reAnchorForZoneChange = toSave.Rule is Dudu.Core.Models.RecurrenceRule.Daily
+                                or Dudu.Core.Models.RecurrenceRule.SelectedWeekdays
+                            && (previous.NextDueUtc is null
+                                || previous.LocalTimeZoneId != reminder.LocalTimeZoneId);
                         var anchor = reAnchorForZoneChange
                             ? nowUtc.ToUniversalTime().AddDays(-1)
                             : previous.NextDueUtc;
@@ -2759,8 +2760,20 @@ public sealed class FeatureViewModelTests
                     {
                         // Disabling: carry the real NextDueUtc forward so it
                         // doesn't get poisoned with Create's shipped value,
-                        // which would become the anchor for a later re-enable.
-                        toSave = toSave with { NextDueUtc = previous.NextDueUtc };
+                        // which would become the anchor for a later re-enable
+                        // -- except when the zone ALSO changed on this save,
+                        // for a wall-clock rule: keeping the old due time
+                        // would stamp the NEW LocalTimeZoneId onto an instant
+                        // still anchored to the OLD zone's wall clock. Null
+                        // it instead so the re-enable arm's null-anchor case
+                        // above re-derives it fresh.
+                        var zoneChangedWhileDisabled = previous.LocalTimeZoneId != reminder.LocalTimeZoneId
+                            && toSave.Rule is Dudu.Core.Models.RecurrenceRule.Daily
+                                or Dudu.Core.Models.RecurrenceRule.SelectedWeekdays;
+                        toSave = toSave with
+                        {
+                            NextDueUtc = zoneChangedWhileDisabled ? null : previous.NextDueUtc,
+                        };
                     }
 
                     if (!Dudu.Core.Reminders.LocalReminderDefaults.IsKnownDefaultTitle(reminder.Id, previous.Title))
