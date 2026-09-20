@@ -2492,7 +2492,8 @@ public sealed class FeatureViewModelTests
             // nothing that determines the schedule actually changed, keep
             // Rule/QuietHoursBehavior/MissedPolicy from the existing row (they
             // are a hardcoded per-id default in Create, never derived from
-            // Preferences), and preserve a user-edited Title/Details.
+            // Preferences), recompute NextDueUtc from that preserved rule when
+            // re-enabling, and preserve a user-edited (or cleared) Title/Details.
             var existing = (await reminders.ListAsync(cancellationToken))
                 .ToDictionary(item => item.Id, StringComparer.Ordinal);
             foreach (var reminder in Dudu.Core.Reminders.LocalReminderDefaults.Create(
@@ -2511,13 +2512,24 @@ public sealed class FeatureViewModelTests
                     };
 
                     if (previous.Enabled == reminder.Enabled
-                        && previous.Rule == toSave.Rule
                         && previous.LocalTimeZoneId == reminder.LocalTimeZoneId)
                     {
                         toSave = toSave with
                         {
                             NextDueUtc = previous.NextDueUtc,
                             SnoozedUntilUtc = previous.SnoozedUntilUtc,
+                        };
+                    }
+                    else if (!previous.Enabled && reminder.Enabled)
+                    {
+                        var recomputed = Dudu.Core.Reminders.ReminderScheduler.NextOccurrence(
+                            toSave with { NextDueUtc = previous.NextDueUtc, SnoozedUntilUtc = null },
+                            nowUtc.ToUniversalTime(),
+                            localTimeZone);
+                        toSave = toSave with
+                        {
+                            NextDueUtc = recomputed ?? reminder.NextDueUtc,
+                            SnoozedUntilUtc = null,
                         };
                     }
 

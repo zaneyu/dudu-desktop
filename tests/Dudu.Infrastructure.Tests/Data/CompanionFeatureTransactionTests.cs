@@ -382,6 +382,61 @@ public sealed class CompanionFeatureTransactionTests
     }
 
     [Fact]
+    public async Task Saving_preferences_recomputes_next_due_from_the_preserved_rule_when_re_enabling()
+    {
+        // Opus review follow-up B: Rule/QuietHoursBehavior/MissedPolicy are
+        // preserved from the existing row, but NextDueUtc still came from
+        // LocalReminderDefaults.Create's own SHIPPED Daily(10:00) rule
+        // whenever Enabled changed -- inconsistent with an edited rule
+        // restored a few lines above it. Re-enabling an Interval(15m)-edited
+        // default must resume on that interval, not jump back to the
+        // shipped daily 10:00.
+        await using var fixture = await Fixture.CreateAsync();
+        var enabled = TestPreferences() with { HydrationRemindersEnabled = true };
+        var disabled = TestPreferences() with { HydrationRemindersEnabled = false };
+        var service = new CompanionFeatureTransactionService(new AppUnitOfWork(fixture.Database));
+        var reminderRepository = new ReminderRepository(fixture.Database);
+
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            enabled,
+            DateTimeOffset.Parse("2026-09-12T10:00:00Z"),
+            TimeZoneInfo.Utc,
+            TestContext.Current.CancellationToken);
+
+        // Edit the schedule to a 15-minute interval, as the Reminders page would.
+        var edited = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == "default-hydration") with
+        {
+            Rule = new RecurrenceRule.Interval(TimeSpan.FromMinutes(15)),
+        };
+        await reminderRepository.SaveAsync(edited, TestContext.Current.CancellationToken);
+
+        // Disable, then re-enable on a later preferences save.
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            disabled,
+            DateTimeOffset.Parse("2026-09-13T09:00:00Z"),
+            TimeZoneInfo.Utc,
+            TestContext.Current.CancellationToken);
+
+        var reEnabledAtUtc = DateTimeOffset.Parse("2026-09-14T09:00:00Z");
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            enabled,
+            reEnabledAtUtc,
+            TimeZoneInfo.Utc,
+            TestContext.Current.CancellationToken);
+
+        var saved = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == "default-hydration");
+        Assert.True(saved.Enabled);
+        Assert.Equal(new RecurrenceRule.Interval(TimeSpan.FromMinutes(15)), saved.Rule);
+        Assert.Null(saved.SnoozedUntilUtc);
+        Assert.NotNull(saved.NextDueUtc);
+        Assert.True(
+            saved.NextDueUtc > reEnabledAtUtc && saved.NextDueUtc <= reEnabledAtUtc.AddMinutes(15),
+            $"expected NextDueUtc within one 15-minute interval of {reEnabledAtUtc:O} (not the shipped daily 10:00), got {saved.NextDueUtc:O}");
+    }
+
+    [Fact]
     public async Task Remote_note_and_consumed_envelope_roll_back_together()
     {
         await using var fixture = await Fixture.CreateAsync();

@@ -68,13 +68,40 @@ public sealed class CompanionFeatureTransactionService : ICompanionFeatureTransa
                     };
 
                     if (previous.Enabled == reminder.Enabled
-                        && previous.Rule == toSave.Rule
                         && previous.LocalTimeZoneId == reminder.LocalTimeZoneId)
                     {
+                        // Nothing that determines the schedule changed: keep the
+                        // existing due time and any in-flight snooze exactly as
+                        // they were.
                         toSave = toSave with
                         {
                             NextDueUtc = previous.NextDueUtc,
                             SnoozedUntilUtc = previous.SnoozedUntilUtc,
+                        };
+                    }
+                    else if (!previous.Enabled && reminder.Enabled)
+                    {
+                        // Re-enabling: `reminder.NextDueUtc` above was computed by
+                        // Create() for its own SHIPPED Daily rule, not the
+                        // preserved (possibly edited) Rule just restored a few
+                        // lines up -- e.g. an edited Interval(15m) rule must not
+                        // resume at tomorrow's shipped 10:00, and a
+                        // SelectedWeekdays rule must not fire on a day she never
+                        // selected. Recompute from the preserved rule instead,
+                        // anchored on the row's last known due time and using the
+                        // same nowUtc/localTimeZone Create used above; a stale
+                        // snooze from before the reminder was disabled must not
+                        // carry forward either. Falls back to Create's shipped
+                        // value only if that anchor yields nothing (e.g. the
+                        // existing row never had a due time).
+                        var recomputed = ReminderScheduler.NextOccurrence(
+                            toSave with { NextDueUtc = previous.NextDueUtc, SnoozedUntilUtc = null },
+                            nowUtc.ToUniversalTime(),
+                            localTimeZone);
+                        toSave = toSave with
+                        {
+                            NextDueUtc = recomputed ?? reminder.NextDueUtc,
+                            SnoozedUntilUtc = null,
                         };
                     }
 
