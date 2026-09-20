@@ -474,6 +474,54 @@ public sealed class DatabaseTests
     }
 
     [Fact]
+    public async Task Deleting_a_remote_envelope_removes_a_held_presentation_row_with_different_key_casing()
+    {
+        // Finding 14: DurableNotification.RemoteNote always lower-cases its GUID
+        // (ToString("D")), but remote_envelopes.message_id is stored verbatim --
+        // it is bound into the encryption AAD, so it is never normalized. A
+        // sender that formats its message id with different casing must still
+        // have its held row cleaned up on delete (COLLATE NOCASE).
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var envelopes = new RemoteEnvelopeRepository(fixture.Database);
+        var held = new HeldPresentationRepository(fixture.Database);
+        var envelope = new RemoteEnvelope("Held-ENVELOPE-Mixed", [1, 2, 3], DateTimeOffset.Parse("2026-09-12T10:00:00Z"));
+        Assert.True(await envelopes.TryInsertAsync(envelope, cancellationToken));
+        await held.SaveAsync(
+            new HeldPresentation(
+                "RemoteNote:held-envelope-mixed", "RemoteNote", "held-envelope-mixed", null, null, null, null,
+                DateTimeOffset.Parse("2026-09-19T08:00:00Z"), Toasted: false),
+            cancellationToken);
+
+        await envelopes.DeleteAsync(envelope.MessageId, cancellationToken);
+
+        Assert.Empty(await held.ListAsync(cancellationToken));
+    }
+
+    [Fact]
+    public async Task Consuming_a_remote_envelope_removes_a_held_presentation_row_with_different_key_casing()
+    {
+        // Same casing gap as above, exercised through the ConsumeAsync path
+        // (RevealAsync-style consume), which carries its own COLLATE NOCASE fix.
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var envelopes = new RemoteEnvelopeRepository(fixture.Database);
+        var held = new HeldPresentationRepository(fixture.Database);
+        var envelope = new RemoteEnvelope("Consume-HELD-Mixed", [1, 2, 3], DateTimeOffset.Parse("2026-09-12T10:00:00Z"));
+        Assert.True(await envelopes.TryInsertAsync(envelope, cancellationToken));
+        await held.SaveAsync(
+            new HeldPresentation(
+                "RemoteNote:consume-held-mixed", "RemoteNote", "consume-held-mixed", null, null, null, null,
+                DateTimeOffset.Parse("2026-09-19T08:00:00Z"), Toasted: false),
+            cancellationToken);
+
+        Assert.True(await envelopes.TryConsumeAsync(
+            envelope.MessageId, DateTimeOffset.Parse("2026-09-12T10:01:00Z"), cancellationToken));
+
+        Assert.Empty(await held.ListAsync(cancellationToken));
+    }
+
+    [Fact]
     public async Task Forget_pairing_wipe_removes_only_remote_note_held_rows()
     {
         // M3: RemoteEnvelopeRepository.DeleteAllAsync backs

@@ -120,11 +120,18 @@ public sealed class RemoteEnvelopeRepository : SqliteRepository, IRemoteEnvelope
         // otherwise try to present a note that no longer exists on the next
         // restart. RemoteNote rows never carry more than the message id, so
         // this is a dangling-reference fix, not a plaintext-leak one.
+        //
+        // COLLATE NOCASE: DurableNotification.RemoteNote requires a GUID and
+        // stores it via ToString("D"), which .NET always lower-cases -- but
+        // remote_envelopes.message_id is stored verbatim (it is bound into
+        // the encryption AAD, so it deliberately is not normalized). A
+        // sender that formats its GUID upper- or mixed-case would otherwise
+        // leave a case-mismatched held row behind after this delete.
         await using var connection=await OpenAsync(cancellationToken);
         await using var command=connection.CreateCommand();
         command.CommandText = """
             DELETE FROM remote_envelopes WHERE message_id=$id;
-            DELETE FROM held_presentations WHERE presentation_key='RemoteNote:' || $id;
+            DELETE FROM held_presentations WHERE presentation_key='RemoteNote:' || $id COLLATE NOCASE;
             """;
         Add(command,"$id",messageId);
         await command.ExecuteNonQueryAsync(cancellationToken);
@@ -278,9 +285,13 @@ public sealed class RemoteEnvelopeRepository : SqliteRepository, IRemoteEnvelope
             // (revealing/saving) a note removes its envelope the same way. A separate command,
             // not appended to the delete above, because that command's own affected-row count is
             // this method's correctness check (== 1) and must not become this row's count instead.
+            //
+            // COLLATE NOCASE for the same reason as DeleteAsync: the held key is derived from
+            // ToString("D") (always lower-case), while `messageId` here is whatever casing the
+            // caller passed in, which need not match a verbatim-stored, differently-cased id.
             await using var deleteHeld = connection.CreateCommand();
             if (transaction is not null) deleteHeld.Transaction = transaction;
-            deleteHeld.CommandText = "DELETE FROM held_presentations WHERE presentation_key=$key;";
+            deleteHeld.CommandText = "DELETE FROM held_presentations WHERE presentation_key=$key COLLATE NOCASE;";
             Add(deleteHeld, "$key", "RemoteNote:" + messageId);
             await deleteHeld.ExecuteNonQueryAsync(cancellationToken);
         }
