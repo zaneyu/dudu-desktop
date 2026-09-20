@@ -341,6 +341,58 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Completing_a_reminder_still_reports_success_when_the_notification_dismiss_fails()
+    {
+        // Opus review follow-up 6: after the completion is durably saved,
+        // a throw from a best-effort cleanup call (notification dismiss)
+        // must not surface as a failure for a completion that already
+        // succeeded, and must not skip the other best-effort cleanup (the
+        // held-copy discard) that follows it.
+        var discarded = new List<string>();
+        var fixture = FeatureFixture.Create(
+            dismissReminderNotificationAsync: (_, _) => throw new InvalidOperationException("dismiss boom"),
+            discardHeldReminderAsync: (id, _) =>
+            {
+                discarded.Add(id);
+                return Task.CompletedTask;
+            });
+        var reminder = fixture.Reminder;
+        fixture.Reminders.Items.Add(reminder);
+        var viewModel = new RemindersViewModel(fixture.Context);
+
+        await viewModel.CompleteCommand.ExecuteAsync(reminder);
+
+        Assert.Null(viewModel.ErrorMessage);
+        Assert.Equal("yayyy done le good job", viewModel.StatusMessage);
+        Assert.Equal([reminder.Id], discarded);
+    }
+
+    [Fact]
+    public async Task Snoozing_a_reminder_still_reports_success_when_the_notification_dismiss_fails()
+    {
+        // Opus review follow-up 6: same as completion -- a dismiss failure
+        // after the snooze is durably saved must not report a failure,
+        // and must not skip the held-copy discard check that follows it.
+        var discarded = new List<string>();
+        var fixture = FeatureFixture.Create(
+            dismissReminderNotificationAsync: (_, _) => throw new InvalidOperationException("dismiss boom"),
+            discardHeldReminderAsync: (id, _) =>
+            {
+                discarded.Add(id);
+                return Task.CompletedTask;
+            });
+        var reminder = fixture.Reminder; // NextDueUtc (10:00) <= snoozeUntil (10:15): a live snooze.
+        fixture.Reminders.Items.Add(reminder);
+        var viewModel = new RemindersViewModel(fixture.Context);
+
+        await viewModel.SnoozeCommand.ExecuteAsync(reminder);
+
+        Assert.Null(viewModel.ErrorMessage);
+        Assert.Equal("otayyy snoozed for 15 min", viewModel.StatusMessage);
+        Assert.Equal([reminder.Id], discarded);
+    }
+
+    [Fact]
     public async Task Saving_a_note_clears_the_editor_so_fresh_text_creates_a_new_note()
     {
         var fixture = FeatureFixture.Create();
@@ -2194,7 +2246,8 @@ public sealed class FeatureViewModelTests
             Func<CancellationToken, Task>? deleteRemoteDataAsync = null,
             Func<RemoteEnvelope, CancellationToken, Task<RevealedRemoteNote>>? revealRemoteNoteAsync = null,
             IPairingService? pairing = null,
-            Func<string, CancellationToken, Task>? discardHeldReminderAsync = null)
+            Func<string, CancellationToken, Task>? discardHeldReminderAsync = null,
+            Func<string, CancellationToken, Task>? dismissReminderNotificationAsync = null)
         {
             var clock = new FakeClock("2026-09-12T10:00:00Z");
             var events = new List<string>();
@@ -2280,7 +2333,8 @@ public sealed class FeatureViewModelTests
                 restoreAsync: restoreAsync,
                 deleteLocalDataAsync: deleteLocalDataAsync,
                 deleteRemoteDataAsync: deleteRemoteDataAsync,
-                discardHeldReminderAsync: discardHeldReminderAsync);
+                discardHeldReminderAsync: discardHeldReminderAsync,
+                dismissReminderNotificationAsync: dismissReminderNotificationAsync);
             return new FeatureFixture(
                 clock,
                 reminders,
