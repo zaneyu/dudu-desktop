@@ -1,6 +1,7 @@
 using Dudu.App.Animation;
 using Dudu.App.Hosting;
 using Dudu.App.Pages;
+using Dudu.App.System;
 using Dudu.App.ViewModels;
 using Dudu.Core.Assets;
 using Dudu.Core.Models;
@@ -128,7 +129,22 @@ public sealed partial class SettingsWindow : UserControl
         }
     }
 
-    private void OnUnloaded(object sender, RoutedEventArgs args) => _duduTimer.Stop();
+    private void OnUnloaded(object sender, RoutedEventArgs args)
+    {
+        _duduTimer.Stop();
+
+        // Defense in depth for the same leak TasksFocusPage.Page_Unloaded
+        // already guards against: App builds a fresh SettingsWindow (-> new
+        // page -> new view model) on every open, so a subscription left on
+        // the singleton FocusService.SessionExpired that never gets
+        // detached leaks forever. Page_Unloaded may not fire at all when
+        // the window is closed outright rather than navigated away from;
+        // this Unloaded on the window's own content is a second chance to
+        // detach in that case. Idempotent (DetachFocusExpiry no-ops if
+        // already detached), and safe if feature pages were never created
+        // (e.g. closed mid-onboarding).
+        _tasksFocusPage?.ViewModel.DetachFocusExpiry();
+    }
 
     private async Task EnsureDuduPackAsync()
     {
@@ -313,7 +329,19 @@ public sealed partial class SettingsWindow : UserControl
             _context.StartupSettings,
             _context.OverlayCommands);
         _remindersPage = new RemindersPage(new RemindersViewModel(features));
-        _tasksFocusPage = new TasksFocusPage(new TasksFocusViewModel(features));
+        _tasksFocusPage = new TasksFocusPage(new TasksFocusViewModel(features)
+        {
+            // FocusService.SessionExpired (a naturally-expired session, see
+            // TasksFocusViewModel.OnFocusSessionExpired) is raised from the
+            // background reminder tick thread, not guaranteed to be the UI
+            // thread. Without this, MutateAsync runs that reload's mutations
+            // inline on whichever thread raised the event. AwaitableUiDispatcher
+            // runs inline when already on the UI thread (HasThreadAccess), so
+            // this only adds real marshalling for the off-thread case.
+            UiDispatcher = new AwaitableUiDispatcher(
+                () => DispatcherQueue.HasThreadAccess,
+                callback => DispatcherQueue.TryEnqueue(() => callback())).InvokeAsync,
+        });
         _loveNotesPage = new LoveNotesPage(new LoveNotesViewModel(features));
         _appearancePage = new AppearancePage(new AppearanceViewModel(
             features,

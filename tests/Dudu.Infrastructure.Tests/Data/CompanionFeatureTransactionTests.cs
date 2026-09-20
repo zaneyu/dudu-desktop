@@ -416,18 +416,116 @@ public sealed class CompanionFeatureTransactionTests
             .Single(item => item.Id == "default-hydration");
         Assert.Equal("Europe/London", saved.LocalTimeZoneId);
         Assert.Null(saved.SnoozedUntilUtc);
+        // Opus review follow-up 1(a): staying enabled across a time-zone
+        // change fell through both preserve/recompute arms and kept
+        // Create's shipped-time NextDueUtc from the OLD zone's save,
+        // instead of recomputing the Daily(10:00) rule in the new zone --
+        // 10:00 local is exactly "now" in London, so it must land on
+        // tomorrow 10:00 BST, not linger on the stale Singapore instant.
+        Assert.Equal(DateTimeOffset.Parse("2026-09-14T09:00:00Z"), saved.NextDueUtc);
+    }
+
+    [Fact]
+    public async Task Saving_preferences_with_a_changed_time_zone_recomputes_an_edited_interval_rule()
+    {
+        // Opus review follow-up 1(a): an edited Interval(15m) default that
+        // stays enabled across a time-zone change must resume its own
+        // cadence from "now" in the new zone, not go silent for up to a
+        // day on Create's shipped Daily(10:00) value.
+        await using var fixture = await Fixture.CreateAsync();
+        var preferences = TestPreferences() with { HydrationRemindersEnabled = true };
+        var service = new CompanionFeatureTransactionService(new AppUnitOfWork(fixture.Database));
+        var reminderRepository = new ReminderRepository(fixture.Database);
+        var singapore = TimeZoneInfo.FindSystemTimeZoneById("Asia/Singapore");
+        var london = TimeZoneInfo.FindSystemTimeZoneById("Europe/London");
+
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            preferences,
+            DateTimeOffset.Parse("2026-09-12T10:00:00Z"),
+            singapore,
+            TestContext.Current.CancellationToken);
+
+        var edited = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == "default-hydration") with
+        {
+            Rule = new RecurrenceRule.Interval(TimeSpan.FromMinutes(15)),
+        };
+        await reminderRepository.SaveAsync(edited, TestContext.Current.CancellationToken);
+
+        var savedAtUtc = DateTimeOffset.Parse("2026-09-13T09:00:00Z");
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            preferences,
+            savedAtUtc,
+            london,
+            TestContext.Current.CancellationToken);
+
+        var saved = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == "default-hydration");
+        Assert.Equal("Europe/London", saved.LocalTimeZoneId);
+        Assert.Equal(new RecurrenceRule.Interval(TimeSpan.FromMinutes(15)), saved.Rule);
+        Assert.Null(saved.SnoozedUntilUtc);
+        Assert.NotNull(saved.NextDueUtc);
+        Assert.True(
+            saved.NextDueUtc > savedAtUtc && saved.NextDueUtc <= savedAtUtc.AddMinutes(15),
+            $"expected NextDueUtc within one 15-minute interval of {savedAtUtc:O} (not the shipped daily 10:00), got {saved.NextDueUtc:O}");
+    }
+
+    [Fact]
+    public async Task Saving_preferences_with_a_changed_time_zone_keeps_a_completed_once_reminder_silent()
+    {
+        // Opus review follow-up 1(a): a completed Once-edited default has a
+        // null NextDueUtc, and NextOccurrence legitimately returns null for
+        // it -- a time-zone change while it stays enabled must not
+        // silently backfill Create's shipped Daily(10:00) and make a
+        // reminder she already finished fire again.
+        await using var fixture = await Fixture.CreateAsync();
+        var preferences = TestPreferences() with { HydrationRemindersEnabled = true };
+        var service = new CompanionFeatureTransactionService(new AppUnitOfWork(fixture.Database));
+        var reminderRepository = new ReminderRepository(fixture.Database);
+        var singapore = TimeZoneInfo.FindSystemTimeZoneById("Asia/Singapore");
+        var london = TimeZoneInfo.FindSystemTimeZoneById("Europe/London");
+
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            preferences,
+            DateTimeOffset.Parse("2026-09-12T10:00:00Z"),
+            singapore,
+            TestContext.Current.CancellationToken);
+
+        var completedOnce = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == "default-hydration") with
+        {
+            Rule = new RecurrenceRule.Once(),
+            NextDueUtc = null,
+        };
+        await reminderRepository.SaveAsync(completedOnce, TestContext.Current.CancellationToken);
+
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            preferences,
+            DateTimeOffset.Parse("2026-09-13T09:00:00Z"),
+            london,
+            TestContext.Current.CancellationToken);
+
+        var saved = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == "default-hydration");
+        Assert.Equal("Europe/London", saved.LocalTimeZoneId);
+        Assert.Equal(new RecurrenceRule.Once(), saved.Rule);
+        Assert.Null(saved.NextDueUtc);
+        Assert.Null(saved.SnoozedUntilUtc);
     }
 
     [Fact]
     public async Task Saving_preferences_recomputes_next_due_from_the_preserved_rule_when_re_enabling()
     {
-        // Opus review follow-up B: Rule/QuietHoursBehavior/MissedPolicy are
-        // preserved from the existing row, but NextDueUtc still came from
-        // LocalReminderDefaults.Create's own SHIPPED Daily(10:00) rule
+        // Opus review follow-up B/1(b): Rule/QuietHoursBehavior/MissedPolicy
+        // are preserved from the existing row, but NextDueUtc still came
+        // from LocalReminderDefaults.Create's own SHIPPED Daily(10:00) rule
         // whenever Enabled changed -- inconsistent with an edited rule
         // restored a few lines above it. Re-enabling an Interval(15m)-edited
         // default must resume on that interval, not jump back to the
-        // shipped daily 10:00.
+        // shipped daily 10:00. Disabling itself must also carry the real
+        // NextDueUtc forward rather than poisoning it with the shipped
+        // value, since a poisoned row becomes the anchor for the re-enable
+        // recompute above.
         await using var fixture = await Fixture.CreateAsync();
         var enabled = TestPreferences() with { HydrationRemindersEnabled = true };
         var disabled = TestPreferences() with { HydrationRemindersEnabled = false };
@@ -440,11 +538,15 @@ public sealed class CompanionFeatureTransactionTests
             TimeZoneInfo.Utc,
             TestContext.Current.CancellationToken);
 
-        // Edit the schedule to a 15-minute interval, as the Reminders page would.
+        // Edit the schedule to a 15-minute interval with its own distinct
+        // due time, as if it had already fired and advanced a few times --
+        // clearly different from the shipped Daily(10:00) value, so a
+        // disable step that silently overwrote it would be observable.
         var edited = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
             .Single(item => item.Id == "default-hydration") with
         {
             Rule = new RecurrenceRule.Interval(TimeSpan.FromMinutes(15)),
+            NextDueUtc = DateTimeOffset.Parse("2026-09-12T11:47:00Z"),
         };
         await reminderRepository.SaveAsync(edited, TestContext.Current.CancellationToken);
 
@@ -454,6 +556,13 @@ public sealed class CompanionFeatureTransactionTests
             DateTimeOffset.Parse("2026-09-13T09:00:00Z"),
             TimeZoneInfo.Utc,
             TestContext.Current.CancellationToken);
+
+        var afterDisable = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == "default-hydration");
+        Assert.False(afterDisable.Enabled);
+        // The real due time must survive the disable untouched -- not
+        // silently replaced by Create's shipped daily 10:00 value.
+        Assert.Equal(DateTimeOffset.Parse("2026-09-12T11:47:00Z"), afterDisable.NextDueUtc);
 
         var reEnabledAtUtc = DateTimeOffset.Parse("2026-09-14T09:00:00Z");
         await service.SavePreferencesAndDefaultRemindersAsync(

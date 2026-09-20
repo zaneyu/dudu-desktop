@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Reflection;
 using Dudu.App.Overlay;
 using Dudu.App.Hosting;
@@ -338,6 +339,58 @@ public sealed class FeatureViewModelTests
         await viewModel.SnoozeCommand.ExecuteAsync(reminder);
 
         Assert.Empty(discarded);
+    }
+
+    [Fact]
+    public async Task Completing_a_reminder_still_reports_success_when_the_notification_dismiss_fails()
+    {
+        // Opus review follow-up 6: after the completion is durably saved,
+        // a throw from a best-effort cleanup call (notification dismiss)
+        // must not surface as a failure for a completion that already
+        // succeeded, and must not skip the other best-effort cleanup (the
+        // held-copy discard) that follows it.
+        var discarded = new List<string>();
+        var fixture = FeatureFixture.Create(
+            dismissReminderNotificationAsync: (_, _) => throw new InvalidOperationException("dismiss boom"),
+            discardHeldReminderAsync: (id, _) =>
+            {
+                discarded.Add(id);
+                return Task.CompletedTask;
+            });
+        var reminder = fixture.Reminder;
+        fixture.Reminders.Items.Add(reminder);
+        var viewModel = new RemindersViewModel(fixture.Context);
+
+        await viewModel.CompleteCommand.ExecuteAsync(reminder);
+
+        Assert.Null(viewModel.ErrorMessage);
+        Assert.Equal("yayyy done le good job", viewModel.StatusMessage);
+        Assert.Equal([reminder.Id], discarded);
+    }
+
+    [Fact]
+    public async Task Snoozing_a_reminder_still_reports_success_when_the_notification_dismiss_fails()
+    {
+        // Opus review follow-up 6: same as completion -- a dismiss failure
+        // after the snooze is durably saved must not report a failure,
+        // and must not skip the held-copy discard check that follows it.
+        var discarded = new List<string>();
+        var fixture = FeatureFixture.Create(
+            dismissReminderNotificationAsync: (_, _) => throw new InvalidOperationException("dismiss boom"),
+            discardHeldReminderAsync: (id, _) =>
+            {
+                discarded.Add(id);
+                return Task.CompletedTask;
+            });
+        var reminder = fixture.Reminder; // NextDueUtc (10:00) <= snoozeUntil (10:15): a live snooze.
+        fixture.Reminders.Items.Add(reminder);
+        var viewModel = new RemindersViewModel(fixture.Context);
+
+        await viewModel.SnoozeCommand.ExecuteAsync(reminder);
+
+        Assert.Null(viewModel.ErrorMessage);
+        Assert.Equal("otayyy snoozed for 15 min", viewModel.StatusMessage);
+        Assert.Equal([reminder.Id], discarded);
     }
 
     [Fact]
@@ -1555,12 +1608,26 @@ public sealed class FeatureViewModelTests
         // routed to the pet. If the Tasks & Focus page was open it kept showing the
         // session as running and its history list stayed stale until she navigated
         // away and back.
+        //
+        // Opus review follow-up 2: this reload must not clobber shared page state
+        // with no user action behind it -- it must not clear an error banner she
+        // is currently reading, and must not toggle IsBusy while a real user
+        // command might be running. Only ActiveFocus/FocusHistory should move.
         var fixture = FeatureFixture.Create();
         var viewModel = new TasksFocusViewModel(fixture.Context);
         var started = await viewModel.StartFocusOrThrowAsync(TestContext.Current.CancellationToken);
         viewModel.AttachFocusExpiry();
-        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddMinutes(26);
 
+        // An error banner she is currently reading, unrelated to focus.
+        viewModel.RequestDeleteTaskCommand.Execute(null);
+        Assert.Equal("select one first", viewModel.ErrorMessage);
+        var busyChanged = false;
+        viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(TasksFocusViewModel.IsBusy)) busyChanged = true;
+        };
+
+        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddMinutes(26);
         var completed = await fixture.Context.FocusService.CompleteExpiredAsync(
             started.Id, TestContext.Current.CancellationToken);
 
@@ -1568,6 +1635,9 @@ public sealed class FeatureViewModelTests
         Assert.False(viewModel.IsFocusActive);
         var entry = Assert.Single(viewModel.FocusHistory);
         Assert.Equal("completed", entry.StatusText);
+        Assert.False(viewModel.IsBusy);
+        Assert.False(busyChanged);
+        Assert.Equal("select one first", viewModel.ErrorMessage);
     }
 
     [Fact]
@@ -1606,6 +1676,10 @@ public sealed class FeatureViewModelTests
             started.Id, TestContext.Current.CancellationToken);
 
         Assert.True(completed);
+        // Opus review follow-up 2: the quiet reload never goes through
+        // RunAsync, so a failure here must stay silent -- not surface as an
+        // ErrorMessage the user never asked for.
+        Assert.Null(viewModel.ErrorMessage);
     }
 
     [Theory]
@@ -2194,7 +2268,8 @@ public sealed class FeatureViewModelTests
             Func<CancellationToken, Task>? deleteRemoteDataAsync = null,
             Func<RemoteEnvelope, CancellationToken, Task<RevealedRemoteNote>>? revealRemoteNoteAsync = null,
             IPairingService? pairing = null,
-            Func<string, CancellationToken, Task>? discardHeldReminderAsync = null)
+            Func<string, CancellationToken, Task>? discardHeldReminderAsync = null,
+            Func<string, CancellationToken, Task>? dismissReminderNotificationAsync = null)
         {
             var clock = new FakeClock("2026-09-12T10:00:00Z");
             var events = new List<string>();
@@ -2280,7 +2355,8 @@ public sealed class FeatureViewModelTests
                 restoreAsync: restoreAsync,
                 deleteLocalDataAsync: deleteLocalDataAsync,
                 deleteRemoteDataAsync: deleteRemoteDataAsync,
-                discardHeldReminderAsync: discardHeldReminderAsync);
+                discardHeldReminderAsync: discardHeldReminderAsync,
+                dismissReminderNotificationAsync: dismissReminderNotificationAsync);
             return new FeatureFixture(
                 clock,
                 reminders,
@@ -2581,17 +2657,28 @@ public sealed class FeatureViewModelTests
                             SnoozedUntilUtc = previous.SnoozedUntilUtc,
                         };
                     }
-                    else if (!previous.Enabled && reminder.Enabled)
+                    else if (reminder.Enabled)
                     {
-                        var recomputed = Dudu.Core.Reminders.ReminderScheduler.NextOccurrence(
-                            toSave with { NextDueUtc = previous.NextDueUtc, SnoozedUntilUtc = null },
-                            nowUtc.ToUniversalTime(),
-                            localTimeZone);
+                        // Re-enabling, or staying enabled with a changed
+                        // LocalTimeZoneId: recompute from the preserved rule.
+                        // No `?? reminder.NextDueUtc` fallback -- a preserved
+                        // rule with no next occurrence (e.g. a completed
+                        // Once-edited default) must stay null.
                         toSave = toSave with
                         {
-                            NextDueUtc = recomputed ?? reminder.NextDueUtc,
+                            NextDueUtc = Dudu.Core.Reminders.ReminderScheduler.NextOccurrence(
+                                toSave with { NextDueUtc = previous.NextDueUtc, SnoozedUntilUtc = null },
+                                nowUtc.ToUniversalTime(),
+                                localTimeZone),
                             SnoozedUntilUtc = null,
                         };
+                    }
+                    else
+                    {
+                        // Disabling: carry the real NextDueUtc forward so it
+                        // doesn't get poisoned with Create's shipped value,
+                        // which would become the anchor for a later re-enable.
+                        toSave = toSave with { NextDueUtc = previous.NextDueUtc };
                     }
 
                     if (!Dudu.Core.Reminders.LocalReminderDefaults.IsKnownDefaultTitle(reminder.Id, previous.Title))

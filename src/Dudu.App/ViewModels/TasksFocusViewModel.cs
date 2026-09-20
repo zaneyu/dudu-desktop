@@ -17,6 +17,7 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
     private int _selectedDurationMinutes = 25;
     private int _customDurationMinutes = 30;
     private bool _focusExpirySubscribed;
+    private readonly SemaphoreSlim _expiryReloadGate = new(1, 1);
 
     public TasksFocusViewModel(CompanionFeatureContext context)
     {
@@ -186,7 +187,13 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
             {
                 var active = ActiveTasks.FirstOrDefault(item => item.Id == task.Id);
                 if (active is not null) ActiveTasks.Remove(active);
-                CompletedTasks.Insert(0, completed);
+                // A background refresh (e.g. the focus-expiry quiet reload)
+                // can race this and already have loaded the same completed
+                // row -- mirror SaveTaskAsync's exists-check instead of
+                // unconditionally inserting, which would duplicate it.
+                var existingCompleted = CompletedTasks.FirstOrDefault(item => item.Id == completed.Id);
+                if (existingCompleted is not null) CompletedTasks[CompletedTasks.IndexOf(existingCompleted)] = completed;
+                else CompletedTasks.Insert(0, completed);
                 if (SelectedTask?.Id == task.Id) SelectedTask = null;
                 if (PendingDeleteTask?.Id == task.Id) PendingDeleteTask = null;
             }, cancellationToken);
@@ -314,15 +321,44 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
 
     // Raised from the background reminder tick thread, not the UI thread -- and
     // FocusService.CompleteExpiredAsync must never see an exception escape this handler,
-    // since that would break the tick for every other subscriber (e.g. the pet). Fire and
-    // forget: RefreshAsync marshals its own mutations through MutateAsync/UiDispatcher.
+    // since that would break the tick for every other subscriber (e.g. the pet). Fire
+    // and forget: the reload's mutations go through MutateAsync, which marshals to the
+    // UI thread when UiDispatcher is set (SettingsWindow wires it to the window's
+    // DispatcherQueue for this view model) and otherwise runs inline on whatever thread
+    // raised this event.
     private void OnFocusSessionExpired(Guid focusId) => _ = RefreshAfterExpiryAsync();
 
     private async Task RefreshAfterExpiryAsync()
     {
         try
         {
-            await RefreshAsync();
+            // This must not reuse the full RefreshAsync: that clears
+            // ErrorMessage/StatusMessage and toggles IsBusy, which are shared
+            // page state a user action may be relying on right now (an error
+            // banner she is reading, a command she is mid-run on) -- none of
+            // which this unattended background reload should touch. Only
+            // ActiveFocus/FocusHistory -- what actually changes when a
+            // session expires -- get reloaded, serialized against a
+            // dedicated gate so overlapping expiry events don't race each
+            // other (RunRefreshAsync's own _refreshGate is private to the
+            // base class and not reusable here).
+            await _expiryReloadGate.WaitAsync();
+            try
+            {
+                var focus = await _context.FocusService.GetCurrentAsync(CancellationToken.None);
+                var history = await _context.FocusSessions.ListHistoryAsync(CancellationToken.None);
+                await MutateAsync(() =>
+                {
+                    ActiveFocus = focus;
+                    FocusHistory.Clear();
+                    foreach (var session in history) FocusHistory.Add(ToHistoryEntry(session));
+                    OnPropertyChanged(nameof(IsFocusActive));
+                }, CancellationToken.None);
+            }
+            finally
+            {
+                _expiryReloadGate.Release();
+            }
         }
         catch (Exception exception)
         {

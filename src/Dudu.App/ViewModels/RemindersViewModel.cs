@@ -215,19 +215,49 @@ public sealed class RemindersViewModel : FeatureViewModelBase
             {
                 throw new InvalidOperationException("oh no reminder changed before saving");
             }
-            await _context.PresentPetAsync(new Dudu.Core.Pet.PetEvent.Dismissed(reminder.Id), cancellationToken);
+            // The reminder is already durably completed above -- everything
+            // from here on is best-effort cleanup of other subsystems'
+            // notion of this reminder, and must not turn a completion that
+            // already succeeded into a reported failure.
+            try
+            {
+                await _context.PresentPetAsync(new Dudu.Core.Pet.PetEvent.Dismissed(reminder.Id), cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception exception)
+            {
+                global::System.Diagnostics.Trace.TraceError("Dudu reminder-complete pet present failed: {0}", exception);
+            }
+
             var updated = reminder with { NextDueUtc = next, SnoozedUntilUtc = null };
             await MutateAsync(() => Replace(updated), cancellationToken);
-            await _context.DismissReminderNotificationAsync(reminder.Id, cancellationToken);
 
-            // Completing here is a direct advance of the reminder row, not a
-            // PresentationCoordinator.PresentAsync call -- so a copy that was
-            // separately queued or held back (e.g. it became due while she
-            // had Dudu hidden, or during quiet hours) would otherwise still
-            // be sitting in that gateway's queue/persisted row and surface
-            // again on a later tick or the next app launch, even though it
-            // was just completed here.
-            await _context.DiscardHeldReminderAsync(reminder.Id, cancellationToken);
+            try
+            {
+                await _context.DismissReminderNotificationAsync(reminder.Id, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception exception)
+            {
+                global::System.Diagnostics.Trace.TraceError("Dudu reminder-complete notification dismiss failed: {0}", exception);
+            }
+
+            try
+            {
+                // Completing here is a direct advance of the reminder row, not a
+                // PresentationCoordinator.PresentAsync call -- so a copy that was
+                // separately queued or held back (e.g. it became due while she
+                // had Dudu hidden, or during quiet hours) would otherwise still
+                // be sitting in that gateway's queue/persisted row and surface
+                // again on a later tick or the next app launch, even though it
+                // was just completed here.
+                await _context.DiscardHeldReminderAsync(reminder.Id, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception exception)
+            {
+                global::System.Diagnostics.Trace.TraceError("Dudu reminder-complete held-copy discard failed: {0}", exception);
+            }
         }, "yayyy done le good job");
     }
 
@@ -240,7 +270,21 @@ public sealed class RemindersViewModel : FeatureViewModelBase
             var snoozed = reminder with { SnoozedUntilUtc = snoozeUntil };
             await _context.ReminderWriter.SaveAsync(snoozed, cancellationToken);
             await MutateAsync(() => Replace(snoozed), cancellationToken);
-            await _context.DismissReminderNotificationAsync(reminder.Id, cancellationToken);
+
+            // The snooze is already durably saved above -- everything from
+            // here on is best-effort cleanup of other subsystems' notion of
+            // this reminder, and must not turn a snooze that already
+            // succeeded into a reported failure (and a dismiss failure must
+            // not skip the discard check below).
+            try
+            {
+                await _context.DismissReminderNotificationAsync(reminder.Id, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception exception)
+            {
+                global::System.Diagnostics.Trace.TraceError("Dudu reminder-snooze notification dismiss failed: {0}", exception);
+            }
 
             // Unlike CompleteAsync, this can't unconditionally discard the held
             // copy. The scheduling engine advances NextDueUtc *before*
@@ -254,7 +298,15 @@ public sealed class RemindersViewModel : FeatureViewModelBase
             // will actually govern re-delivery on its own.
             if (reminder.NextDueUtc is { } due && due.ToUniversalTime() <= snoozeUntil)
             {
-                await _context.DiscardHeldReminderAsync(reminder.Id, cancellationToken);
+                try
+                {
+                    await _context.DiscardHeldReminderAsync(reminder.Id, cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+                catch (Exception exception)
+                {
+                    global::System.Diagnostics.Trace.TraceError("Dudu reminder-snooze held-copy discard failed: {0}", exception);
+                }
             }
         }, "otayyy snoozed for 15 min");
     }
