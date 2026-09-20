@@ -80,6 +80,7 @@ public sealed class LocalDataMaintenanceService
                 command.Transaction = transaction;
                 command.CommandText = """
                     DELETE FROM local_note_history;
+                    DELETE FROM held_presentations;
                     DELETE FROM reminder_occurrences;
                     DELETE FROM focus_sessions;
                     DELETE FROM reminders;

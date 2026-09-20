@@ -56,7 +56,14 @@ public sealed class LocalNoteRepository : SqliteRepository, ILocalNoteRepository
         ArgumentException.ThrowIfNullOrWhiteSpace(noteId);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "DELETE FROM local_notes WHERE id=$id;";
+        // M3: a note deleted while a held_presentations row for it is still
+        // sitting in PresentationCoordinator's held queue (key "LocalNote:<id>",
+        // see DurableNotification.Key) would otherwise pop back up, full text
+        // and all, on the next restart even though the note itself is gone.
+        command.CommandText = """
+            DELETE FROM local_notes WHERE id=$id;
+            DELETE FROM held_presentations WHERE presentation_key='LocalNote:' || $id;
+            """;
         Add(command, "$id", noteId);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }

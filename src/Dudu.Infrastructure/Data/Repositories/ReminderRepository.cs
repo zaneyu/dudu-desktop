@@ -121,7 +121,14 @@ public sealed class ReminderRepository : SqliteRepository, IReminderRepository, 
         ArgumentException.ThrowIfNullOrWhiteSpace(reminderId);
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "DELETE FROM reminders WHERE id=$id;";
+        // M3: a deleted reminder still sitting in PresentationCoordinator's held
+        // queue (key "Reminder:<id>", see DurableNotification.Key) would
+        // otherwise pop back up on the next restart even though it no longer
+        // exists.
+        command.CommandText = """
+            DELETE FROM reminders WHERE id=$id;
+            DELETE FROM held_presentations WHERE presentation_key='Reminder:' || $id;
+            """;
         Add(command, "$id", reminderId);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }

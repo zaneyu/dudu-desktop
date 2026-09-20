@@ -29,13 +29,13 @@ public sealed class DatabaseTests
         await using var fixture = await DatabaseFixture.CreateAsync();
         await using var connection = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken);
         var runner = new MigrationRunner(fixture.Options);
-        // Versions 8-10 are now real migrations; inject the failure at the
+        // Versions 8-11 are now real migrations; inject the failure at the
         // next version so this test continues to exercise rollback rather
         // than replacing production schema.
-        runner.AddMigration(11, "CREATE TABLE broken(;" );
+        runner.AddMigration(12, "CREATE TABLE broken(;" );
 
         await Assert.ThrowsAsync<SqliteException>(() => runner.RunAsync(connection, TestContext.Current.CancellationToken));
-        Assert.Equal(10, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(11, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
         Assert.True(File.Exists(fixture.Options.DatabasePath));
     }
 
@@ -167,7 +167,7 @@ public sealed class DatabaseTests
         var result = await fixture.Backups.TryRestoreAsync(
             backup!, TestContext.Current.CancellationToken);
         Assert.True(result.Restored);
-        Assert.Equal(10, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(11, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -379,6 +379,127 @@ public sealed class DatabaseTests
         Assert.True(await repository.TryConsumeAsync(envelope.MessageId, DateTimeOffset.Parse("2026-09-12T10:01:00Z"), cancellationToken));
         Assert.Empty(await repository.ListPendingAsync(cancellationToken));
         Assert.True(await repository.IsProcessedAsync(envelope.MessageId, cancellationToken));
+    }
+
+    [Fact]
+    public async Task Deleting_a_local_note_removes_its_held_presentation_row()
+    {
+        // M3: a note deleted while a held_presentations row for it still sits in
+        // PresentationCoordinator's held queue (key "LocalNote:<id>") would otherwise pop back
+        // up, full text and all, on the next restart even though the note itself is gone.
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var notes = new LocalNoteRepository(fixture.Database);
+        var held = new HeldPresentationRepository(fixture.Database);
+        var note = new LocalLoveNote("held-note", "You are doing great.", Enabled: true);
+        await notes.SaveToJarAsync(note, cancellationToken);
+        await held.SaveAsync(
+            new HeldPresentation(
+                "LocalNote:held-note", "LocalNote", "held-note", "A little note for you", note.Text, "peek",
+                null, DateTimeOffset.Parse("2026-09-19T08:00:00Z"), Toasted: false),
+            cancellationToken);
+
+        await notes.DeleteAsync(note.Id, cancellationToken);
+
+        Assert.Empty(await held.ListAsync(cancellationToken));
+    }
+
+    [Fact]
+    public async Task Deleting_a_reminder_removes_its_held_presentation_row()
+    {
+        // M3: same dangling-reference concern as the local-note delete above, keyed
+        // "Reminder:<id>".
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var reminders = new ReminderRepository(fixture.Database);
+        var held = new HeldPresentationRepository(fixture.Database);
+        var reminder = new Reminder("held-reminder", "Stretch", null, true, new RecurrenceRule.Once(), "UTC",
+            QuietHoursBehavior.DeliverImmediately, MissedOccurrencePolicy.LatestOnly,
+            DateTimeOffset.Parse("2026-09-12T09:00:00Z"));
+        await reminders.SaveAsync(reminder, cancellationToken);
+        await held.SaveAsync(
+            new HeldPresentation(
+                "Reminder:held-reminder", "Reminder", "held-reminder", "Stretch", null, null, null,
+                DateTimeOffset.Parse("2026-09-19T08:00:00Z"), Toasted: false),
+            cancellationToken);
+
+        await reminders.DeleteAsync(reminder.Id, cancellationToken);
+
+        Assert.Empty(await held.ListAsync(cancellationToken));
+    }
+
+    [Fact]
+    public async Task Deleting_a_remote_envelope_removes_its_held_presentation_row()
+    {
+        // M3: a deleted envelope still sitting in the held queue (key "RemoteNote:<id>") would
+        // otherwise try to present a note that no longer exists on the next restart.
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var envelopes = new RemoteEnvelopeRepository(fixture.Database);
+        var held = new HeldPresentationRepository(fixture.Database);
+        var envelope = new RemoteEnvelope("held-envelope", [1, 2, 3], DateTimeOffset.Parse("2026-09-12T10:00:00Z"));
+        Assert.True(await envelopes.TryInsertAsync(envelope, cancellationToken));
+        await held.SaveAsync(
+            new HeldPresentation(
+                "RemoteNote:held-envelope", "RemoteNote", "held-envelope", null, null, null, null,
+                DateTimeOffset.Parse("2026-09-19T08:00:00Z"), Toasted: false),
+            cancellationToken);
+
+        await envelopes.DeleteAsync(envelope.MessageId, cancellationToken);
+
+        Assert.Empty(await held.ListAsync(cancellationToken));
+    }
+
+    [Fact]
+    public async Task Consuming_a_remote_envelope_removes_its_held_presentation_row()
+    {
+        // M3: consuming (revealing/saving) a note removes its envelope the same way a plain
+        // delete does, so its held row must not survive either.
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var envelopes = new RemoteEnvelopeRepository(fixture.Database);
+        var held = new HeldPresentationRepository(fixture.Database);
+        var envelope = new RemoteEnvelope("consume-held", [1, 2, 3], DateTimeOffset.Parse("2026-09-12T10:00:00Z"));
+        Assert.True(await envelopes.TryInsertAsync(envelope, cancellationToken));
+        await held.SaveAsync(
+            new HeldPresentation(
+                "RemoteNote:consume-held", "RemoteNote", "consume-held", null, null, null, null,
+                DateTimeOffset.Parse("2026-09-19T08:00:00Z"), Toasted: false),
+            cancellationToken);
+
+        Assert.True(await envelopes.TryConsumeAsync(
+            envelope.MessageId, DateTimeOffset.Parse("2026-09-12T10:01:00Z"), cancellationToken));
+
+        Assert.Empty(await held.ListAsync(cancellationToken));
+    }
+
+    [Fact]
+    public async Task Forget_pairing_wipe_removes_only_remote_note_held_rows()
+    {
+        // M3: RemoteEnvelopeRepository.DeleteAllAsync backs
+        // RemoteSyncService.ForgetPairingLocallyAsync -- every envelope it just wiped is now
+        // permanently undecryptable, so any RemoteNote row still held for one of them must go
+        // too. Kind-wide, since the caller has no per-message list; a Reminder/LocalNote row
+        // must survive untouched.
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var envelopes = new RemoteEnvelopeRepository(fixture.Database);
+        var held = new HeldPresentationRepository(fixture.Database);
+        var envelope = new RemoteEnvelope("wiped-envelope", [1, 2, 3], DateTimeOffset.Parse("2026-09-12T10:00:00Z"));
+        Assert.True(await envelopes.TryInsertAsync(envelope, cancellationToken));
+        var remoteRow = new HeldPresentation(
+            "RemoteNote:wiped-envelope", "RemoteNote", "wiped-envelope", null, null, null, null,
+            DateTimeOffset.Parse("2026-09-19T08:00:00Z"), Toasted: false);
+        var reminderRow = new HeldPresentation(
+            "Reminder:untouched", "Reminder", "untouched", "Stretch", null, null, null,
+            DateTimeOffset.Parse("2026-09-19T08:00:00Z"), Toasted: false);
+        await held.SaveAsync(remoteRow, cancellationToken);
+        await held.SaveAsync(reminderRow, cancellationToken);
+
+        var removed = await envelopes.DeleteAllAsync(cancellationToken);
+
+        Assert.Equal(1, removed);
+        Assert.Equal([reminderRow], await held.ListAsync(cancellationToken));
     }
 
     [Fact]
@@ -760,11 +881,11 @@ public sealed class DatabaseTests
         Assert.True(result.Restored, result.ToString());
 
         var preferencesRepository = new PreferencesRepository(fixture.Database);
-        Assert.Equal(10, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(11, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
         _ = await preferencesRepository.GetAsync(TestContext.Current.CancellationToken);
 
         await using var freshDatabase = await Database.OpenAsync(fixture.Options, TestContext.Current.CancellationToken);
-        Assert.Equal(10, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(11, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
         var freshPreferences = new PreferencesRepository(freshDatabase);
         _ = await freshPreferences.GetAsync(TestContext.Current.CancellationToken);
     }
@@ -1385,7 +1506,7 @@ public sealed class DatabaseTests
         await fixture.Database.InitializeAsync(TestContext.Current.CancellationToken);
         Assert.Equal(runsBefore + 1, fixture.Database.InitializationRunCount);
         Assert.Equal("Current", (await profiles.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
-        Assert.Equal(10, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(11, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -1596,7 +1717,7 @@ public sealed class DatabaseTests
         fixture.Database.InvalidateInitialization();
         await fixture.Database.InitializeAsync(TestContext.Current.CancellationToken);
 
-        Assert.Equal(10, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(11, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]

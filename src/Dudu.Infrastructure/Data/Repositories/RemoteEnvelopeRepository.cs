@@ -114,7 +114,21 @@ public sealed class RemoteEnvelopeRepository : SqliteRepository, IRemoteEnvelope
     }
 
     public async Task DeleteAsync(string messageId, CancellationToken cancellationToken)
-    { await using var connection=await OpenAsync(cancellationToken); await using var command=connection.CreateCommand(); command.CommandText="DELETE FROM remote_envelopes WHERE message_id=$id;"; Add(command,"$id",messageId); await command.ExecuteNonQueryAsync(cancellationToken); }
+    {
+        // M3: a deleted envelope still sitting in PresentationCoordinator's held
+        // queue (key "RemoteNote:<id>", see DurableNotification.Key) would
+        // otherwise try to present a note that no longer exists on the next
+        // restart. RemoteNote rows never carry more than the message id, so
+        // this is a dangling-reference fix, not a plaintext-leak one.
+        await using var connection=await OpenAsync(cancellationToken);
+        await using var command=connection.CreateCommand();
+        command.CommandText = """
+            DELETE FROM remote_envelopes WHERE message_id=$id;
+            DELETE FROM held_presentations WHERE presentation_key='RemoteNote:' || $id;
+            """;
+        Add(command,"$id",messageId);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
 
     public async Task<int> DeleteAllAsync(CancellationToken cancellationToken)
     {
@@ -125,7 +139,19 @@ public sealed class RemoteEnvelopeRepository : SqliteRepository, IRemoteEnvelope
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = "DELETE FROM remote_envelopes;";
-        return await command.ExecuteNonQueryAsync(cancellationToken);
+        var removed = await command.ExecuteNonQueryAsync(cancellationToken);
+
+        // M3: every envelope just deleted above is now permanently gone (this path only
+        // runs when the desktop's ECDH key is unrecoverable, so it was already undecryptable),
+        // so any RemoteNote row still sitting in the held queue for one of them would try to
+        // present a note that no longer exists on the next restart. Kind-wide because the
+        // caller (RemoteSyncService.ForgetPairingLocallyAsync) has no per-message list here --
+        // only remote notes ever use this kind, never a reminder or local note.
+        await using var deleteHeld = connection.CreateCommand();
+        deleteHeld.CommandText = "DELETE FROM held_presentations WHERE kind='RemoteNote';";
+        await deleteHeld.ExecuteNonQueryAsync(cancellationToken);
+
+        return removed;
     }
 
     public async Task<int> PruneExpiredAsync(DateTimeOffset utcNow, TimeSpan retention, CancellationToken cancellationToken)
@@ -244,6 +270,21 @@ public sealed class RemoteEnvelopeRepository : SqliteRepository, IRemoteEnvelope
         if (transaction is not null) delete.Transaction = transaction;
         delete.CommandText = "DELETE FROM remote_envelopes WHERE message_id=$id;";
         Add(delete, "$id", messageId);
-        return await delete.ExecuteNonQueryAsync(cancellationToken) == 1;
+        var deleted = await delete.ExecuteNonQueryAsync(cancellationToken) == 1;
+
+        if (deleted)
+        {
+            // M3: same dangling-reference concern as the plain DeleteAsync above -- consuming
+            // (revealing/saving) a note removes its envelope the same way. A separate command,
+            // not appended to the delete above, because that command's own affected-row count is
+            // this method's correctness check (== 1) and must not become this row's count instead.
+            await using var deleteHeld = connection.CreateCommand();
+            if (transaction is not null) deleteHeld.Transaction = transaction;
+            deleteHeld.CommandText = "DELETE FROM held_presentations WHERE presentation_key=$key;";
+            Add(deleteHeld, "$key", "RemoteNote:" + messageId);
+            await deleteHeld.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        return deleted;
     }
 }

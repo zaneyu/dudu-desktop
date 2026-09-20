@@ -625,7 +625,11 @@ public static class WindowsCompanionProductionComposition
                             ? baseOutfit.Animations.Keys
                                 .Where(AssetManifestContract.IsStickerAnimationKey)
                                 .ToArray()
-                            : null);
+                            : null,
+                        // P2-B: so an item held by quiet hours/fullscreen/lock/pause
+                        // survives a quit or crash instead of only living in
+                        // PresentationPolicy's in-memory queue.
+                        heldPresentations: services.GetRequiredService<IHeldPresentationRepository>());
                     _ = StartAnimationPlayback(
                         animationEngine.PlayAsync(
                             pet.Current,

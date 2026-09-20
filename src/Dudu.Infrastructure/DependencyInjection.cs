@@ -35,6 +35,7 @@ public static class DependencyInjection
         RegisterRepository<CheckInRepository, ICheckInRepository>(services);
         RegisterRepository<CountdownRepository, ICountdownRepository>(services);
         RegisterRepository<FocusSessionRepository, IFocusSessionRepository>(services);
+        RegisterRepository<HeldPresentationRepository, IHeldPresentationRepository>(services);
         RegisterRepository<LocalNoteRepository, ILocalNoteRepository>(services);
         RegisterRepository<PetPlacementRepository, IPetPlacementRepository>(services);
         RegisterRepository<PreferencesRepository, IPreferencesRepository>(services);

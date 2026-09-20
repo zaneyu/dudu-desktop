@@ -44,8 +44,11 @@ public sealed class RemoteNoteArrivalSink : IRemoteNoteArrivalSink
         // before the overlay finishes composing) throws here. The next poll takes the
         // already-processed shortcut and acks the relay copy without ever calling this sink
         // again -- the note itself is never lost (it is already revealable through Love Notes,
-        // CompanionFeatureContext.RemoteEnvelopes), but its popup is not retried. (Tracked
-        // separately; not fixed by this comment change.)
+        // CompanionFeatureContext.RemoteEnvelopes), but its popup is not retried. Still true
+        // after P2-B (PresentationCoordinator's held-item persistence, see
+        // IHeldPresentationRepository): that fix only durably retries an item PublishAsync was
+        // actually handed, and this call never reaches PublishAsync. (Tracked separately; not
+        // fixed here.)
         var gateway = _gateway();
         try
         {
@@ -62,7 +65,11 @@ public sealed class RemoteNoteArrivalSink : IRemoteNoteArrivalSink
             // is swallowed: the note is already durably stored and revealable as above, and a
             // failure here must never roll that back or break the poll loop. It now leaves
             // an operation-named diagnostic carrying the exception type only — the
-            // message id itself is never logged.
+            // message id itself is never logged. Unlike the not-ready-gateway case above, this
+            // is now retried without help from this sink: an exception thrown from inside
+            // PublishAsync after the item was queued or requeued is caught there, persisted via
+            // IHeldPresentationRepository, and released again on the next TickAsync -- durably,
+            // across a restart, since P2-B.
             ReportFailure("remote-note-notify", exception);
         }
     }
