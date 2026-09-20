@@ -194,7 +194,13 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
     public async Task OnUserShowOrHideAsync(CancellationToken cancellationToken = default)
     {
         var snapshot = await CaptureAsync(cancellationToken);
-        if (snapshot.UserVisible)
+        // Keyed on the overlay's real visibility, not just the desired
+        // _userVisible flag: quiet hours (TryCanShow) or a pause-state hide
+        // can leave _userVisible true while the overlay itself never came
+        // up or was hidden again. Branching on desired state alone made the
+        // first tray click a no-op in exactly that case -- it took the HIDE
+        // branch against an overlay that was already hidden.
+        if (snapshot.UserVisible && _overlay.IsVisible)
         {
             await SetUserVisibleAsync(false, cancellationToken);
             return;

@@ -210,6 +210,14 @@ public sealed class AppLifecycleCoordinatorTests
         // Owner decision 1: the tray "show dudu" command is an explicit
         // user gesture and must always show the pet, unlike a proactive
         // release (welcome-back, fullscreen/pause restore).
+        //
+        // This is the real-world shape of the bug the coordinator flagged:
+        // on a normal launch during quiet hours, _userVisible starts true
+        // (the app WANTS her visible) but TryCanShow vetoed the actual
+        // Show(), so the overlay itself never came up. OnUserShowOrHideAsync
+        // must key off real overlay visibility, not the desired-state flag,
+        // or the first tray click reads this as "already shown" and hides
+        // instead.
         var overlay = new FakeOverlay { IsVisible = false };
         await using var lifecycle = new AppLifecycleCoordinator(
             new FakeHost(),
@@ -220,8 +228,43 @@ public sealed class AppLifecycleCoordinatorTests
                 new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
                 false, 3, true, false, true, TimeSpan.FromMinutes(15)),
             isQuietHours: () => true,
-            initialUserVisible: false);
+            initialUserVisible: true);
 
+        await lifecycle.OnUserShowOrHideAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, overlay.ShowCount);
+        Assert.Equal(0, overlay.HideCount);
+        Assert.True(overlay.IsVisible);
+    }
+
+    [Fact]
+    public async Task Tray_show_dudu_shows_the_pet_after_a_pause_state_hide_leaves_it_hidden()
+    {
+        // Same inversion as above, reached through a different path: a
+        // pause-state change hides the overlay (OnPauseStateChangedAsync)
+        // while leaving _userVisible true, because hiding for pause is not
+        // the user asking to be hidden. A tray click right after that must
+        // still show the pet, not treat "desired visible but actually
+        // hidden" as a request to hide.
+        var overlay = new FakeOverlay { IsVisible = true };
+        var flags = new PauseFlags();
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            pauseState: () => flags.State,
+            initialUserVisible: true);
+
+        flags.State = PausePolicy.ForOneHour(DateTimeOffset.UtcNow);
+        await lifecycle.OnPauseStateChangedAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(1, overlay.HideCount);
+        Assert.False(overlay.IsVisible);
+
+        flags.State = PauseState.None;
         await lifecycle.OnUserShowOrHideAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(1, overlay.ShowCount);
@@ -237,12 +280,8 @@ public sealed class AppLifecycleCoordinatorTests
         var overlay = new FakeOverlay { IsVisible = false };
         var now = new DateTimeOffset(2026, 9, 11, 10, 0, 0, TimeSpan.Zero);
         await using var lifecycle = new AppLifecycleCoordinator(
-            new FakeHost(),
-            overlay,
-            PetStateMachine.CreateIdle(),
-            new Preferences(
-                AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+            new FakeHost(), overlay, PetStateMachine.CreateIdle(),
+            new Preferences(AppTheme.System, new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
                 false, 3, true, false, true, TimeSpan.FromMinutes(15)),
             pauseState: () => PausePolicy.ForOneHour(now),
             clock: () => now,
@@ -252,6 +291,11 @@ public sealed class AppLifecycleCoordinatorTests
 
         Assert.Equal(0, overlay.ShowCount);
         Assert.False(overlay.IsVisible);
+    }
+
+    private sealed class PauseFlags
+    {
+        public PauseState State { get; set; } = PauseState.None;
     }
 
     [Fact]
