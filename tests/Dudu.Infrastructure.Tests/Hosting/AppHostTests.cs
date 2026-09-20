@@ -213,6 +213,63 @@ public sealed class AppHostTests
     }
 
     [Fact]
+    public async Task Presentation_gateway_release_also_fires_from_the_schedulers_own_timer_signal()
+    {
+        // Finding I: the existing coverage above for a presentation-gateway
+        // release only ever drove it through ResumeAsync, which calls
+        // RunReminderTickAsync directly -- never through the scheduler's own
+        // 30 s timer signal, which is how production actually reaches that
+        // same code on an ordinary tick (see TestTimer / TimerFactory.Timer
+        // below). Assert the same release behavior when reached that way.
+        using var fixture = new AppHostFixture();
+        var gateway = new TestPresentationGateway(
+            () => fixture.Database.Initialized,
+            () => fixture.Reminder.TickCount);
+        fixture.Host.AttachPresentationGateway(gateway);
+
+        await fixture.Host.StartAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(0, gateway.TickCount);
+
+        fixture.TimerFactory.Timer.Signal();
+        await gateway.Ticked.Task.WaitAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, gateway.TickCount);
+        // The startup tick (deferred release) plus this signaled tick.
+        Assert.Equal(2, gateway.ReminderTickCountAtFirstGatewayTick);
+
+        await fixture.Host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task Reconcile_runs_before_the_reminder_engine_ticks_not_after()
+    {
+        // Finding A(3): ReconcileVisibilityAsync must run at the START of
+        // every RunReminderTickAsync call -- including the startup tick,
+        // whose presentation release is deliberately deferred -- not just
+        // right before that release. The reminder engine's own TickAsync can
+        // itself publish through the presentation gateway (a newly-due
+        // reminder), so reconciling only right before the release left that
+        // publish evaluated against a pet the sink might still believe is
+        // hidden from an earlier vetoed show that has since cleared.
+        //
+        // Assert the ordering directly: at the moment reconcile observes the
+        // reminder tick count, it must not yet reflect the tick that is
+        // about to happen.
+        using var fixture = new AppHostFixture();
+        var reconciler = new TestVisibilityReconciler(() => fixture.Reminder.TickCount);
+        fixture.Host.AttachVisibilityReconciler(reconciler);
+
+        await fixture.Host.StartAsync(TestContext.Current.CancellationToken);
+        await fixture.Host.ResumeAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, reconciler.Calls);
+        Assert.Equal([0, 1], reconciler.ReminderTickCountAtEachReconcile);
+        Assert.Equal(2, fixture.Reminder.TickCount);
+
+        await fixture.Host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
     public async Task Remote_sync_starts_only_when_attached_and_is_disposed_on_stop()
     {
         // Relay configured: the fake stands in for a RemoteSyncService wrapper;
@@ -273,6 +330,13 @@ public sealed class AppHostTests
         public int ReminderTickCountAtFirstGatewayTick { get; private set; } = -1;
         public int ReminderTickCountAtLastGatewayTick { get; private set; }
 
+        /// <summary>
+        /// Finding I: lets a test wait deterministically for a release
+        /// reached through the scheduler's own timer signal instead of the
+        /// synchronous ResumeAsync path, which the other tests above use.
+        /// </summary>
+        public TaskCompletionSource<bool> Ticked { get; } = NewSource();
+
         public Task StartAsync(CancellationToken cancellationToken = default)
         {
             StartCount++;
@@ -291,6 +355,7 @@ public sealed class AppHostTests
             }
 
             ReminderTickCountAtLastGatewayTick = count;
+            Ticked.TrySetResult(true);
             return Task.CompletedTask;
         }
 
@@ -298,6 +363,19 @@ public sealed class AppHostTests
         {
             DisposeCount++;
             return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class TestVisibilityReconciler(Func<int> reminderTickCount) : IAppHostVisibilityReconciler
+    {
+        public int Calls { get; private set; }
+        public List<int> ReminderTickCountAtEachReconcile { get; } = [];
+
+        public Task ReconcileVisibilityAsync(CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            ReminderTickCountAtEachReconcile.Add(reminderTickCount());
+            return Task.CompletedTask;
         }
     }
 
