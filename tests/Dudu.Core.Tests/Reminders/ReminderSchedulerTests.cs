@@ -711,9 +711,13 @@ public sealed class ReminderSchedulerTests
     [Fact]
     public void A_snooze_exactly_at_next_due_is_a_live_snooze_that_fires_once()
     {
-        // Boundary: SnoozedUntilUtc == NextDueUtc counts as live (isLiveSnooze
-        // uses <=), so it stands in for NextDueUtc and must fire exactly once,
-        // not be double-counted by both the base/snooze arm and the daily arm.
+        // Boundary: SnoozedUntilUtc == NextDueUtc makes isLiveSnooze true
+        // (nextDueUtc <= snoozedUntilUtc), which suppresses the base arm
+        // entirely -- so it is the snooze arm, not the base arm, that supplies
+        // this occurrence. It must still fire exactly once: the daily arm's
+        // own guards (skipping candidate == nextDueUtc under a live snooze,
+        // and candidate == snoozeCounted regardless) must stop it from being
+        // double-counted against that same 09:00 instant.
         var reminder = ReminderBuilder.AtLocalTime(9, 0)
             .SnoozedUntil(DateTimeOffset.Parse("2026-09-11T09:00:00Z"))
             .Build();
