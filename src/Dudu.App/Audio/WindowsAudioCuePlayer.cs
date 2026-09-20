@@ -95,8 +95,6 @@ public sealed class WindowsAudioCuePlayer : IAudioCuePlayer, IAudioCuePlayerLife
         }
         finally
         {
-            player.MediaEnded -= ended;
-            player.MediaFailed -= failed;
             if (timedOut)
             {
                 // The timeout above means the decoder never called back --
@@ -105,16 +103,24 @@ public sealed class WindowsAudioCuePlayer : IAudioCuePlayer, IAudioCuePlayerLife
                 // reintroduce the exact stall the timeout exists to avoid
                 // (this call sits on the 30-second reminder tick loop), so
                 // it runs on its own background task instead, independent of
-                // this method's caller.
+                // this method's caller. The event unsubscribes are exactly
+                // as likely to block against a hung native decoder as
+                // Source/Dispose are -- Finding 15: they used to still run
+                // inline here even on this branch, so they moved into the
+                // same deferred task instead of only the teardown calls.
                 var hungPlayer = player;
                 _ = Task.Run(() =>
                 {
+                    try { hungPlayer.MediaEnded -= ended; } catch { }
+                    try { hungPlayer.MediaFailed -= failed; } catch { }
                     try { hungPlayer.Source = null; } catch { }
                     try { hungPlayer.Dispose(); } catch { }
                 });
             }
             else
             {
+                player.MediaEnded -= ended;
+                player.MediaFailed -= failed;
                 try { player.Source = null; } catch { }
                 // Finding H: guard this the same way the deferred hung-player
                 // teardown above already does -- Dispose() must never throw
