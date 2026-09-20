@@ -286,6 +286,22 @@ public sealed class PresentationHeldQueuePersistenceTests
         Assert.Empty(repository.Rows);
     }
 
+    [Fact]
+    public void Held_presentation_key_format_matches_the_literal_strings_the_cascading_deletes_rely_on()
+    {
+        // M3's cascading deletes in LocalNoteRepository/ReminderRepository/
+        // RemoteEnvelopeRepository match a held row's key by literal string
+        // ('LocalNote:' || $id, etc.) since Infrastructure cannot reference
+        // this App-layer enum. This is the tripwire: if PresentationItemKind
+        // were ever renamed, those SQL literals would silently stop matching
+        // and M3's fix would quietly regress with no compile error.
+        Assert.Equal("RemoteNote:msg-1", DurableNotification.RemoteNote("msg-1").Key);
+        Assert.Equal("Reminder:reminder-1", DurableNotification.Reminder("reminder-1", "Stretch").Key);
+        Assert.Equal(
+            "LocalNote:note-1",
+            DurableNotification.LocalNote(new LocalLoveNote("note-1", "Hi"), "wave").Key);
+    }
+
     private sealed class RecordingNotificationService : INotificationService
     {
         public Task ShowReminderAsync(string reminderId, string title, CancellationToken cancellationToken) =>

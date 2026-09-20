@@ -382,6 +382,127 @@ public sealed class DatabaseTests
     }
 
     [Fact]
+    public async Task Deleting_a_local_note_removes_its_held_presentation_row()
+    {
+        // M3: a note deleted while a held_presentations row for it still sits in
+        // PresentationCoordinator's held queue (key "LocalNote:<id>") would otherwise pop back
+        // up, full text and all, on the next restart even though the note itself is gone.
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var notes = new LocalNoteRepository(fixture.Database);
+        var held = new HeldPresentationRepository(fixture.Database);
+        var note = new LocalLoveNote("held-note", "You are doing great.", Enabled: true);
+        await notes.SaveToJarAsync(note, cancellationToken);
+        await held.SaveAsync(
+            new HeldPresentation(
+                "LocalNote:held-note", "LocalNote", "held-note", "A little note for you", note.Text, "peek",
+                null, DateTimeOffset.Parse("2026-09-19T08:00:00Z"), Toasted: false),
+            cancellationToken);
+
+        await notes.DeleteAsync(note.Id, cancellationToken);
+
+        Assert.Empty(await held.ListAsync(cancellationToken));
+    }
+
+    [Fact]
+    public async Task Deleting_a_reminder_removes_its_held_presentation_row()
+    {
+        // M3: same dangling-reference concern as the local-note delete above, keyed
+        // "Reminder:<id>".
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var reminders = new ReminderRepository(fixture.Database);
+        var held = new HeldPresentationRepository(fixture.Database);
+        var reminder = new Reminder("held-reminder", "Stretch", null, true, new RecurrenceRule.Once(), "UTC",
+            QuietHoursBehavior.DeliverImmediately, MissedOccurrencePolicy.LatestOnly,
+            DateTimeOffset.Parse("2026-09-12T09:00:00Z"));
+        await reminders.SaveAsync(reminder, cancellationToken);
+        await held.SaveAsync(
+            new HeldPresentation(
+                "Reminder:held-reminder", "Reminder", "held-reminder", "Stretch", null, null, null,
+                DateTimeOffset.Parse("2026-09-19T08:00:00Z"), Toasted: false),
+            cancellationToken);
+
+        await reminders.DeleteAsync(reminder.Id, cancellationToken);
+
+        Assert.Empty(await held.ListAsync(cancellationToken));
+    }
+
+    [Fact]
+    public async Task Deleting_a_remote_envelope_removes_its_held_presentation_row()
+    {
+        // M3: a deleted envelope still sitting in the held queue (key "RemoteNote:<id>") would
+        // otherwise try to present a note that no longer exists on the next restart.
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var envelopes = new RemoteEnvelopeRepository(fixture.Database);
+        var held = new HeldPresentationRepository(fixture.Database);
+        var envelope = new RemoteEnvelope("held-envelope", [1, 2, 3], DateTimeOffset.Parse("2026-09-12T10:00:00Z"));
+        Assert.True(await envelopes.TryInsertAsync(envelope, cancellationToken));
+        await held.SaveAsync(
+            new HeldPresentation(
+                "RemoteNote:held-envelope", "RemoteNote", "held-envelope", null, null, null, null,
+                DateTimeOffset.Parse("2026-09-19T08:00:00Z"), Toasted: false),
+            cancellationToken);
+
+        await envelopes.DeleteAsync(envelope.MessageId, cancellationToken);
+
+        Assert.Empty(await held.ListAsync(cancellationToken));
+    }
+
+    [Fact]
+    public async Task Consuming_a_remote_envelope_removes_its_held_presentation_row()
+    {
+        // M3: consuming (revealing/saving) a note removes its envelope the same way a plain
+        // delete does, so its held row must not survive either.
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var envelopes = new RemoteEnvelopeRepository(fixture.Database);
+        var held = new HeldPresentationRepository(fixture.Database);
+        var envelope = new RemoteEnvelope("consume-held", [1, 2, 3], DateTimeOffset.Parse("2026-09-12T10:00:00Z"));
+        Assert.True(await envelopes.TryInsertAsync(envelope, cancellationToken));
+        await held.SaveAsync(
+            new HeldPresentation(
+                "RemoteNote:consume-held", "RemoteNote", "consume-held", null, null, null, null,
+                DateTimeOffset.Parse("2026-09-19T08:00:00Z"), Toasted: false),
+            cancellationToken);
+
+        Assert.True(await envelopes.TryConsumeAsync(
+            envelope.MessageId, DateTimeOffset.Parse("2026-09-12T10:01:00Z"), cancellationToken));
+
+        Assert.Empty(await held.ListAsync(cancellationToken));
+    }
+
+    [Fact]
+    public async Task Forget_pairing_wipe_removes_only_remote_note_held_rows()
+    {
+        // M3: RemoteEnvelopeRepository.DeleteAllAsync backs
+        // RemoteSyncService.ForgetPairingLocallyAsync -- every envelope it just wiped is now
+        // permanently undecryptable, so any RemoteNote row still held for one of them must go
+        // too. Kind-wide, since the caller has no per-message list; a Reminder/LocalNote row
+        // must survive untouched.
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var envelopes = new RemoteEnvelopeRepository(fixture.Database);
+        var held = new HeldPresentationRepository(fixture.Database);
+        var envelope = new RemoteEnvelope("wiped-envelope", [1, 2, 3], DateTimeOffset.Parse("2026-09-12T10:00:00Z"));
+        Assert.True(await envelopes.TryInsertAsync(envelope, cancellationToken));
+        var remoteRow = new HeldPresentation(
+            "RemoteNote:wiped-envelope", "RemoteNote", "wiped-envelope", null, null, null, null,
+            DateTimeOffset.Parse("2026-09-19T08:00:00Z"), Toasted: false);
+        var reminderRow = new HeldPresentation(
+            "Reminder:untouched", "Reminder", "untouched", "Stretch", null, null, null,
+            DateTimeOffset.Parse("2026-09-19T08:00:00Z"), Toasted: false);
+        await held.SaveAsync(remoteRow, cancellationToken);
+        await held.SaveAsync(reminderRow, cancellationToken);
+
+        var removed = await envelopes.DeleteAllAsync(cancellationToken);
+
+        Assert.Equal(1, removed);
+        Assert.Equal([reminderRow], await held.ListAsync(cancellationToken));
+    }
+
+    [Fact]
     public async Task Repositories_round_trip_utc_and_optional_values()
     {
         await using var fixture = await DatabaseFixture.CreateAsync();
