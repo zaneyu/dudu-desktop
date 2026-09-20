@@ -143,22 +143,37 @@ public sealed class CompanionFeatureTransactionService : ICompanionFeatureTransa
                         // occurrence deferred by quiet hours" branch would
                         // return quiet-hours END rather than the next
                         // wall-clock occurrence (e.g. 07:00 instead of
-                        // 10:00). Anchoring a full day back instead defers
-                        // to a quiet-hours end that is already in the past
-                        // -- quiet windows are always under 24h (see
-                        // QuietHoursPolicy.NextAllowedUtc: it returns the end
-                        // of the CURRENT/upcoming window, at most one
-                        // window's length after the anchor), so that
-                        // deferred instant is always < now, both of
-                        // NextOccurrence's early returns are skipped, and it
-                        // reaches NextLocalTime, which derives the correct
-                        // occurrence for "now" in the new zone -- honoring
-                        // quiet hours itself, for that candidate.
+                        // 10:00). Anchoring two days back instead defers to a
+                        // quiet-hours end that is already in the past. This
+                        // does NOT rely on a caller-supplied QuietHours
+                        // config never spanning 24h: QuietHoursPolicy.NextAllowedUtc
+                        // can only push its candidate forward by at most one
+                        // window's length, and Start/End are same-day
+                        // TimeOnly values, so even the invariant-only case a
+                        // reviewer might worry about (a wrap-around window
+                        // like 22:00-06:00) spans under 24h by construction
+                        // -- there is no representable QuietHours value that
+                        // defers by 24h or more. Two days of headroom is
+                        // therefore not load-bearing against that; it is
+                        // slack against a DST-boundary anomaly in
+                        // ResolveLocalBoundary (ambiguous/invalid local
+                        // time resolved with up to a ~1h adjustment), which
+                        // one day of margin already comfortably covers too.
+                        // Either way, the deferred instant stays well under
+                        // "now", both of NextOccurrence's early returns are
+                        // skipped, and it reaches NextLocalTime, which
+                        // derives the correct occurrence for "now" in the
+                        // new zone from scratch -- honoring quiet hours
+                        // itself, for that candidate. NextOccurrence itself
+                        // never does catch-up/missed-occurrence delivery
+                        // (that logic lives only in Reconcile, which this
+                        // call path does not use), so a further-back anchor
+                        // cannot trigger any of that here.
                         var reAnchorForZoneChange = toSave.Rule is RecurrenceRule.Daily or RecurrenceRule.SelectedWeekdays
                             && (previous.NextDueUtc is null
                                 || previous.LocalTimeZoneId != reminder.LocalTimeZoneId);
                         var anchor = reAnchorForZoneChange
-                            ? nowUtc.ToUniversalTime().AddDays(-1)
+                            ? nowUtc.ToUniversalTime().AddDays(-2)
                             : previous.NextDueUtc;
                         toSave = toSave with
                         {

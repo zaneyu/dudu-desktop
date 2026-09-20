@@ -2728,7 +2728,7 @@ public sealed class FeatureViewModelTests
                         // rule with no next occurrence (e.g. a completed
                         // Once-edited default) must stay null.
                         //
-                        // Re-anchor a full day before now, but ONLY for a
+                        // Re-anchor two days before now, but ONLY for a
                         // wall-clock rule (Daily/SelectedWeekdays) with no old
                         // due time to anchor on (previous.NextDueUtc is null)
                         // or whose zone actually changed -- see
@@ -2736,16 +2736,19 @@ public sealed class FeatureViewModelTests
                         // for the full reasoning: Once must never be
                         // cancelled by a tz change (NextOccurrence has no
                         // fallthrough case for it), Interval must not be
-                        // needlessly pushed by up to one period, and "now"
+                        // needlessly pushed by up to one period, "now"
                         // itself is unsafe as an anchor because a now inside
                         // quiet hours would land on quiet-hours end instead
-                        // of the next wall-clock occurrence.
+                        // of the next wall-clock occurrence, and NextOccurrence
+                        // never does catch-up/missed-occurrence delivery (only
+                        // Reconcile does, which this call path doesn't use),
+                        // so a further-back anchor is safe here.
                         var reAnchorForZoneChange = toSave.Rule is Dudu.Core.Models.RecurrenceRule.Daily
                                 or Dudu.Core.Models.RecurrenceRule.SelectedWeekdays
                             && (previous.NextDueUtc is null
                                 || previous.LocalTimeZoneId != reminder.LocalTimeZoneId);
                         var anchor = reAnchorForZoneChange
-                            ? nowUtc.ToUniversalTime().AddDays(-1)
+                            ? nowUtc.ToUniversalTime().AddDays(-2)
                             : previous.NextDueUtc;
                         toSave = toSave with
                         {
