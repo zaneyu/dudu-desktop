@@ -163,6 +163,19 @@ public sealed class CompanionFeatureTransactionService : ICompanionFeatureTransa
                     }
                 }
 
+                // A recompute above (re-enable / tz-change) can legitimately
+                // return null for a Once rule -- its occurrence was already
+                // consumed. For any other rule, a null NextDueUtc here means
+                // NextOccurrence could not find a next candidate from the
+                // given anchor; ValidateForSave rejects a null NextDueUtc on
+                // an enabled non-Once reminder, which would fail this save
+                // (and every preferences save after it) permanently. Fall
+                // back to Create's freshly computed due time instead.
+                if (toSave.Enabled && toSave.NextDueUtc is null && toSave.Rule is not RecurrenceRule.Once)
+                {
+                    toSave = toSave with { NextDueUtc = reminder.NextDueUtc };
+                }
+
                 await writer.SaveAsync(toSave, token);
             }
             await InjectFaultAsync("after-default-reminders", token);

@@ -2702,6 +2702,14 @@ public sealed class FeatureViewModelTests
                     }
                 }
 
+                // See CompanionFeatureTransactionService.SavePreferencesAndDefaultRemindersAsync:
+                // insurance against a recompute above returning null for a
+                // non-Once rule, which would otherwise trip ValidateForSave.
+                if (toSave.Enabled && toSave.NextDueUtc is null && toSave.Rule is not Dudu.Core.Models.RecurrenceRule.Once)
+                {
+                    toSave = toSave with { NextDueUtc = reminder.NextDueUtc };
+                }
+
                 await reminders.SaveAsync(toSave, cancellationToken);
             }
         }
