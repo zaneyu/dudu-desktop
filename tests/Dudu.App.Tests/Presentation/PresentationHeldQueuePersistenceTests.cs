@@ -756,6 +756,34 @@ public sealed class PresentationHeldQueuePersistenceTests
     }
 
     [Fact]
+    public async Task DiscardHeldAsync_is_a_no_op_for_a_null_or_blank_id()
+    {
+        // Finding F: DiscardHeldAsync's caller has already committed its own
+        // delete/consume by the time this runs (e.g. LoveNotesViewModel
+        // deletes the note, then tells this gateway to drop its held copy).
+        // Throwing for a blank id would turn an already-successful user
+        // action into a visible error, for an id that never had anything
+        // held for it anyway.
+        var repository = new RecordingHeldPresentationRepository();
+        var coordinator = new PresentationCoordinator(
+            new PresentationPolicy(TimeSpan.Zero),
+            new CountingNotificationService(),
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => Task.CompletedTask,
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            heldPresentations: repository);
+
+        await coordinator.DiscardHeldAsync(PresentationItemKind.Reminder, null!, CancellationToken.None);
+        await coordinator.DiscardHeldAsync(PresentationItemKind.Reminder, "", CancellationToken.None);
+        await coordinator.DiscardHeldAsync(PresentationItemKind.Reminder, "   ", CancellationToken.None);
+
+        Assert.Empty(repository.Rows);
+    }
+
+    [Fact]
     public async Task A_failed_immediate_present_retry_does_not_leave_the_row_behind_after_a_concurrent_discard()
     {
         // Finding 7: PublishAsync's failed-immediate-present path holds its

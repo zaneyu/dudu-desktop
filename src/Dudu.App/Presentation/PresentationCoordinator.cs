@@ -214,7 +214,17 @@ public sealed class PresentationCoordinator :
         string id,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(id);
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            // Finding F: callers invoke this after their own delete/consume
+            // has already committed (e.g. LoveNotesViewModel deletes the
+            // note, then tells this gateway to drop its held copy) -- a
+            // blank id never had anything held for it anyway, so throwing
+            // here would turn an already-successful user action into a
+            // visible error for no reason.
+            return;
+        }
+
         var key = $"{kind}:{id}";
         lock (_gate)
         {
