@@ -26,6 +26,9 @@ public static class LocalReminderDefaults
 
     public const string BedtimeLegacyDetails = "time to wind down. goodnight, ada.";
 
+    public const string EveningCheckInDefaultDetails =
+        "a little space to reflect. your check-in stays on this device.";
+
     /// <summary>
     /// Personalises a reminder's stored title or details text for display (toast,
     /// Home summary) without ever rewriting what is persisted. Returns the
@@ -80,6 +83,7 @@ public static class LocalReminderDefaults
     public static bool IsKnownDefaultDetails(string reminderId, string storedText) =>
         reminderId switch
         {
+            EveningCheckInId => storedText is EveningCheckInDefaultDetails,
             BedtimeId => storedText is BedtimeDefaultDetails or BedtimeLegacyDetails,
             _ => false,
         };
@@ -119,7 +123,7 @@ public static class LocalReminderDefaults
                 null,
                 nowUtc,
                 timeZone,
-                "a little space to reflect. your check-in stays on this device.",
+                EveningCheckInDefaultDetails,
                 MissedOccurrencePolicy.Skip),
             CreateReminder(
                 BedtimeId,
