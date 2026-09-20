@@ -62,4 +62,30 @@ public sealed class ReminderScheduleSummaryTests
     {
         Assert.Equal("once", ReminderScheduleSummary.Describe(new RecurrenceRule.Once()));
     }
+
+    [Fact]
+    public void Selected_weekdays_rule_with_an_empty_day_set_falls_back_to_time_only_copy()
+    {
+        // Audit regression: an empty weekday set rendered "on  at 9:00 am"
+        // (a blank day list) instead of copy consistent with the rest of
+        // this summary.
+        Assert.Equal(
+            "every week at 9:00 am",
+            ReminderScheduleSummary.Describe(new RecurrenceRule.SelectedWeekdays(
+                new HashSet<DayOfWeek>(),
+                new TimeOnly(9, 0))));
+    }
+
+    [Fact]
+    public void Selected_weekdays_rule_with_a_null_day_set_does_not_throw()
+    {
+        // Audit regression: this runs inside an x:Bind function binding
+        // during ListView item realization, where a throw crashes the page
+        // -- corrupt/old data with a null weekday set must not crash it.
+        Assert.Equal(
+            "every week at 9:00 am",
+            ReminderScheduleSummary.Describe(new RecurrenceRule.SelectedWeekdays(
+                (IReadOnlySet<DayOfWeek>)null!,
+                new TimeOnly(9, 0))));
+    }
 }

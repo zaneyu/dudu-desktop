@@ -342,19 +342,30 @@ public static class ReminderScheduleSummary
     public static string Describe(RecurrenceRule rule) => rule switch
     {
         RecurrenceRule.Daily daily => $"every day at {FormatTime(daily.LocalTime)}",
-        RecurrenceRule.SelectedWeekdays weekdays =>
-            $"on {FormatDays(weekdays.Days)} at {FormatTime(weekdays.LocalTime)}",
+        RecurrenceRule.SelectedWeekdays weekdays => DescribeWeekdays(weekdays),
         RecurrenceRule.Interval interval => $"every {FormatPeriod(interval.Period)}",
         _ => "once",
     };
+
+    // Runs inside an x:Bind function binding during ListView item
+    // realization, where a throw crashes the page -- a null or empty
+    // weekday set (e.g. corrupt/old data) must fall back to plain copy
+    // instead.
+    private static string DescribeWeekdays(RecurrenceRule.SelectedWeekdays weekdays)
+    {
+        var days = FormatDays(weekdays.Days);
+        return days.Length == 0
+            ? $"every week at {FormatTime(weekdays.LocalTime)}"
+            : $"on {days} at {FormatTime(weekdays.LocalTime)}";
+    }
 
     private static string FormatTime(TimeOnly localTime) =>
         localTime.ToString("h:mm tt", global::System.Globalization.CultureInfo.InvariantCulture)
             .ToLowerInvariant();
 
-    private static string FormatDays(IReadOnlySet<DayOfWeek> days) => string.Join(
-        ", ",
-        WeekOrder.Where(days.Contains).Select(day => day.ToString()[..3].ToLowerInvariant()));
+    private static string FormatDays(IReadOnlySet<DayOfWeek>? days) => days is null || days.Count == 0
+        ? string.Empty
+        : string.Join(", ", WeekOrder.Where(days.Contains).Select(day => day.ToString()[..3].ToLowerInvariant()));
 
     private static string FormatPeriod(TimeSpan period)
     {
