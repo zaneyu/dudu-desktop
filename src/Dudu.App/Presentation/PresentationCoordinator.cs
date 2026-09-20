@@ -246,6 +246,11 @@ public sealed class PresentationCoordinator :
         var key = $"{kind}:{id}";
         lock (_gate)
         {
+            // Finding 7: run under the same _gate as DiscardHeldByKindAsync's
+            // own RemoveAllOfKind call, not after releasing it -- an item
+            // published in the window between an unlocked Remove and this
+            // lock would otherwise survive the discard entirely.
+            _policy.Remove(key);
             if (_presentingIds.Contains(key))
             {
                 // Finding E: a presentation for this exact key is in flight
@@ -272,7 +277,6 @@ public sealed class PresentationCoordinator :
             }
         }
 
-        _policy.Remove(key);
         await RemoveHeldAsync(key, cancellationToken);
     }
 
