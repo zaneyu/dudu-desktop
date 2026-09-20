@@ -252,6 +252,16 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
                 "focus-end",
                 cancellationToken);
             OnPropertyChanged(nameof(IsFocusActive));
+
+            // FocusHistory is otherwise only populated by RefreshAsync (on
+            // Page_Loaded), so ending a session here would leave the
+            // on-screen history stale until she navigates away and back.
+            var history = await _context.FocusSessions.ListHistoryAsync(cancellationToken);
+            await MutateAsync(() =>
+            {
+                FocusHistory.Clear();
+                foreach (var session in history) FocusHistory.Add(ToHistoryEntry(session));
+            }, cancellationToken);
         }, "good job rest rest abit");
 
     private Task RunFocusTransitionAsync(

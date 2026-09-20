@@ -1462,6 +1462,22 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Ending_a_focus_session_refreshes_the_on_screen_history_without_navigating_away()
+    {
+        // Audit regression: FocusHistory was only ever populated by
+        // RefreshAsync (Page_Loaded), so ending a session here left the
+        // on-screen history stale until she navigated away and back.
+        var fixture = FeatureFixture.Create();
+        var viewModel = new TasksFocusViewModel(fixture.Context);
+        await viewModel.StartFocusOrThrowAsync(TestContext.Current.CancellationToken);
+
+        await viewModel.EndFocusAsync(TestContext.Current.CancellationToken);
+
+        var entry = Assert.Single(viewModel.FocusHistory);
+        Assert.Equal("ended early", entry.StatusText);
+    }
+
+    [Fact]
     public async Task Focus_history_shows_friendly_status_text_and_local_time()
     {
         // Regression: the history list used to bind straight to the raw FocusSession, showing
