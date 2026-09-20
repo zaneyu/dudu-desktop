@@ -200,33 +200,24 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
         // via HideForUserAsync's own gate section. Showing the overlay
         // unconditionally here would leave it visible with _userVisible
         // false and false already pushed -- out of sync until some other
-        // caller happens to touch visibility again. Re-check under the same
-        // visibilityGate-then-gate nesting EnsureUserVisibleAsync uses, and
-        // skip the show if she has since hidden.
+        // caller happens to touch visibility again.
         //
-        // Finding E: the presentation-sink push moved down here, next to the
-        // Show it describes. Pushing it up above (right after the
-        // _userVisible write) meant that if _openHome throws, the sink is
-        // left saying "visible" with no overlay ever shown -- this method
-        // propagates that exception with nothing to correct the push.
-        await _visibilityGate.WaitAsync(cancellationToken);
-        try
-        {
-            await _gate.WaitAsync(cancellationToken);
-            try
-            {
-                ThrowIfDisposed();
-                if (!_userVisible)
-                {
-                    return;
-                }
-            }
-            finally { _gate.Release(); }
-
-            _presentationEnvironment?.SetUserVisible(true);
-            InvokeSafely(_overlay.Show, "hotkey-show");
-        }
-        finally { _visibilityGate.Release(); }
+        // Finding B: a fullscreen/lock/suspend/pause veto that started while
+        // _openHome was running is just as real as a hide landing during it
+        // -- the checks above only ever looked at a snapshot taken before
+        // _openHome started. Route through EnsureUserVisibleAsync itself
+        // (requireStillDesired: true, so a hide that landed meanwhile still
+        // wins) instead of re-deriving its gate-then-veto-then-show sequence
+        // here, so this always re-reads the current _fullscreenHidden/
+        // _locked/_suspended state and applies the same TryCanShow veto
+        // every other show site uses. This method does not hold
+        // _visibilityGate itself, so calling in is not re-entrant.
+        //
+        // Finding E: the presentation-sink push happens inside
+        // EnsureUserVisibleAsync, next to the Show call itself and still
+        // under _gate -- never before _openHome, and never released to a
+        // concurrent hide in the gap between the push and the Show.
+        await EnsureUserVisibleAsync(cancellationToken, requireStillDesired: true);
     }
 
     public async Task OnUserShowOrHideAsync(CancellationToken cancellationToken = default)

@@ -287,6 +287,52 @@ public sealed class AppLifecycleCoordinatorTests
     }
 
     [Fact]
+    public async Task Hotkey_skips_its_post_open_home_show_if_fullscreen_began_while_it_ran()
+    {
+        // Finding B: a fullscreen veto that starts while _openHome is
+        // running is just as real as the hide landing in the sibling test
+        // above. The pre-_openHome gate check only ever looked at a
+        // snapshot taken before _openHome started, so a fullscreen session
+        // (with HidePetDuringFullscreen on, per the shared preferences
+        // below) beginning after that snapshot used to slip through
+        // unchecked and get shown anyway once _openHome returned.
+        var overlay = new FakeOverlay { IsVisible = false };
+        var sink = new RecordingPresentationEnvironmentSink();
+        var openHomeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseOpenHome = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            initialUserVisible: false,
+            presentationEnvironment: sink,
+            openHome: async _ =>
+            {
+                openHomeStarted.TrySetResult();
+                await releaseOpenHome.Task;
+            });
+
+        var hotkey = Task.Run(() => lifecycle.OnHotkeyAsync(cancellationToken), cancellationToken);
+        await openHomeStarted.Task.WaitAsync(cancellationToken);
+
+        // Fullscreen begins while _openHome is still running -- it needs no
+        // gate the hotkey call is still holding, so it completes freely.
+        await lifecycle.OnFullscreenChangedAsync(true, cancellationToken);
+
+        releaseOpenHome.SetResult();
+        await hotkey;
+
+        Assert.Equal(0, overlay.ShowCount);
+        Assert.False(overlay.IsVisible);
+        Assert.DoesNotContain(true, sink.UserVisiblePushes);
+    }
+
+    [Fact]
     public async Task Hotkey_shows_the_pet_even_during_quiet_hours()
     {
         // Owner decision 1: quiet hours suppress proactive presentation
