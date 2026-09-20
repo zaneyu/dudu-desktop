@@ -73,6 +73,18 @@ public sealed class PresentationCoordinator :
     private readonly HashSet<string> _presentingIds = new(StringComparer.Ordinal);
     private readonly HashSet<string> _toastedWhileHeldIds = new(StringComparer.Ordinal);
 
+    /// <summary>Keys discarded (<see cref="DiscardHeldAsync"/> /
+    /// <see cref="DiscardHeldByKindAsync"/>) while still present in
+    /// <see cref="_presentingIds"/> -- i.e. a presentation for that exact key
+    /// was in flight at the moment it was discarded. <see cref="RequeueHeldAsync"/>
+    /// and <see cref="TickAsync"/>'s decline path consult this so a
+    /// presentation that then FAILS drops the item and deletes its row
+    /// instead of requeuing and re-persisting something already discarded
+    /// (e.g. a deleted note's text, or a reminder completed from the
+    /// Reminders page). Cleared once that presentation ends, win or lose, so
+    /// a later item that happens to reuse the same key is unaffected.</summary>
+    private readonly HashSet<string> _discardedWhilePresentingIds = new(StringComparer.Ordinal);
+
     /// <summary>Which held-presentation repository operation kinds ("load",
     /// "persist", "remove"), each paired with the failing exception's type
     /// name and (for a <see cref="SqliteException"/>) its error code, have
@@ -229,6 +241,18 @@ public sealed class PresentationCoordinator :
         lock (_gate)
         {
             _toastedWhileHeldIds.Remove(key);
+            if (_presentingIds.Contains(key))
+            {
+                // Finding E: a presentation for this exact key is in flight
+                // right now. The queue/row removal below still runs (the row
+                // must not outlive this discard), but if that in-flight
+                // presentation then FAILS, the ordinary retry path would
+                // otherwise requeue and re-persist the very item being
+                // discarded here -- resurrecting deleted note text or a
+                // reminder already completed elsewhere. RequeueHeldAsync and
+                // TickAsync's decline path both consult this instead.
+                _discardedWhilePresentingIds.Add(key);
+            }
         }
 
         _policy.Remove(key);
@@ -247,22 +271,42 @@ public sealed class PresentationCoordinator :
         CancellationToken cancellationToken = default)
     {
         var removedKeys = _policy.RemoveAllOfKind(kind);
-        if (removedKeys.Count == 0)
-        {
-            return;
-        }
-
+        // Finding E: RemoveAllOfKind only ever sees PresentationPolicy's
+        // in-memory queue -- an item of this kind currently being presented
+        // has already been dequeued into _presentingIds and would otherwise
+        // be missed entirely by a kind-wide discard.
+        var presentingPrefix = $"{kind}:";
+        List<string>? presentingKeysOfKind = null;
         lock (_gate)
         {
             foreach (var key in removedKeys)
             {
                 _toastedWhileHeldIds.Remove(key);
             }
+
+            foreach (var presentingKey in _presentingIds)
+            {
+                if (!presentingKey.StartsWith(presentingPrefix, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                _discardedWhilePresentingIds.Add(presentingKey);
+                (presentingKeysOfKind ??= []).Add(presentingKey);
+            }
         }
 
         foreach (var key in removedKeys)
         {
             await RemoveHeldAsync(key, cancellationToken);
+        }
+
+        if (presentingKeysOfKind is not null)
+        {
+            foreach (var key in presentingKeysOfKind)
+            {
+                await RemoveHeldAsync(key, cancellationToken);
+            }
         }
     }
 
@@ -474,6 +518,12 @@ public sealed class PresentationCoordinator :
             lock (_gate)
             {
                 _presentingIds.Remove(item.Key);
+                // Finding E: RequeueHeldAsync above already clears this on
+                // the failure path; also clear it here so a *succeeded*
+                // presentation for a key that was discarded mid-flight does
+                // not leave the marker behind to misfire against some later,
+                // unrelated item recurring under the same key.
+                _discardedWhilePresentingIds.Remove(item.Key);
             }
         }
     }
@@ -571,13 +621,15 @@ public sealed class PresentationCoordinator :
                     // this tick, so just put it back in the in-memory queue
                     // without re-persisting -- re-persisting here would
                     // reset QueuedUtc and defeat the abandoned-item cutoff
-                    // in LoadHeldItemsAsync.
-                    _policy.Requeue(toPresent);
+                    // in LoadHeldItemsAsync. Finding E: unless it was
+                    // discarded while this exact attempt was in flight, in
+                    // which case it must be dropped and deleted instead.
+                    await RequeueOrDropDiscardedAsync(toPresent, cancellationToken);
                 }
             }
             catch
             {
-                _policy.Requeue(toPresent);
+                await RequeueOrDropDiscardedAsync(toPresent, cancellationToken);
                 throw;
             }
             finally
@@ -585,6 +637,7 @@ public sealed class PresentationCoordinator :
                 lock (_gate)
                 {
                     _presentingIds.Remove(toPresent.Key);
+                    _discardedWhilePresentingIds.Remove(toPresent.Key);
                 }
             }
 
@@ -1083,14 +1136,60 @@ public sealed class PresentationCoordinator :
     /// is only ever <see cref="PublishAsync"/>) still holds its own
     /// <c>_presentingIds</c> entry for this key while this call runs -- see
     /// the Finding 7 note in <see cref="PersistHeldAsync"/>.</summary>
-    private Task RequeueHeldAsync(
+    private async Task RequeueHeldAsync(
         DurableNotification item,
         DateTimeOffset queuedUtc,
         CancellationToken cancellationToken,
-        bool callerOwnsPresentingEntry = false) =>
-        _policy.Requeue(item)
-            ? PersistHeldAsync(item, queuedUtc, cancellationToken, callerOwnsPresentingEntry)
-            : Task.CompletedTask;
+        bool callerOwnsPresentingEntry = false)
+    {
+        // Finding E: this exact attempt was discarded (DiscardHeldAsync /
+        // DiscardHeldByKindAsync) while it was still in flight -- e.g. the
+        // reminder was completed from the Reminders page, or the note was
+        // deleted, while PublishAsync's immediate-present attempt for it was
+        // still running. Requeuing and re-persisting it now, the ordinary
+        // failure path below, would resurrect something the user already
+        // got rid of. Drop it for good instead.
+        bool discardedWhilePresenting;
+        lock (_gate)
+        {
+            discardedWhilePresenting = _discardedWhilePresentingIds.Remove(item.Key);
+        }
+
+        if (discardedWhilePresenting)
+        {
+            _policy.Remove(item.Key);
+            await RemoveHeldAsync(item.Key, cancellationToken);
+            return;
+        }
+
+        if (_policy.Requeue(item))
+        {
+            await PersistHeldAsync(item, queuedUtc, cancellationToken, callerOwnsPresentingEntry);
+        }
+    }
+
+    /// <summary>Finding E: TickAsync's own requeue-without-repersist path for
+    /// a released item that was declined or whose presentation threw. Drops
+    /// and deletes the row instead of requeuing when <paramref name="item"/>
+    /// was discarded (<see cref="DiscardHeldAsync"/> /
+    /// <see cref="DiscardHeldByKindAsync"/>) while this exact attempt was in
+    /// flight -- see <see cref="_discardedWhilePresentingIds"/>.</summary>
+    private async Task RequeueOrDropDiscardedAsync(DurableNotification item, CancellationToken cancellationToken)
+    {
+        bool discardedWhilePresenting;
+        lock (_gate)
+        {
+            discardedWhilePresenting = _discardedWhilePresentingIds.Remove(item.Key);
+        }
+
+        if (discardedWhilePresenting)
+        {
+            await RemoveHeldAsync(item.Key, cancellationToken);
+            return;
+        }
+
+        _policy.Requeue(item);
+    }
 
     /// <summary>Runs a held-presentation repository call, reporting a
     /// failure (throttled via <see cref="ReportHeldFailureOnce"/>) and
