@@ -326,9 +326,9 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
     // UI thread when UiDispatcher is set (SettingsWindow wires it to the window's
     // DispatcherQueue for this view model) and otherwise runs inline on whatever thread
     // raised this event.
-    private void OnFocusSessionExpired(Guid focusId) => _ = RefreshAfterExpiryAsync();
+    private void OnFocusSessionExpired(Guid focusId) => _ = RefreshAfterExpiryAsync(focusId);
 
-    private async Task RefreshAfterExpiryAsync()
+    private async Task RefreshAfterExpiryAsync(Guid focusId)
     {
         try
         {
@@ -349,7 +349,15 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
                 var history = await _context.FocusSessions.ListHistoryAsync(CancellationToken.None);
                 await MutateAsync(() =>
                 {
-                    ActiveFocus = focus;
+                    // This reload was queued for the session that just
+                    // expired (focusId). By the time the gate lets it
+                    // through, a new session may already have been started
+                    // and be sitting in ActiveFocus -- assigning
+                    // unconditionally here would stomp that newer session
+                    // with a stale reload meant for the old one. Only apply
+                    // when there is nothing to protect, or when it is still
+                    // the same session this reload was for.
+                    ActiveFocus = ActiveFocus is null || ActiveFocus.Id == focusId ? focus : ActiveFocus;
                     FocusHistory.Clear();
                     foreach (var session in history) FocusHistory.Add(ToHistoryEntry(session));
                     OnPropertyChanged(nameof(IsFocusActive));

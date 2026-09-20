@@ -1682,6 +1682,55 @@ public sealed class FeatureViewModelTests
         Assert.Null(viewModel.ErrorMessage);
     }
 
+    [Fact]
+    public async Task Focus_expiry_reload_in_flight_does_not_clobber_a_session_started_meanwhile()
+    {
+        // Round 4 Opus follow-up 4: OnFocusSessionExpired used to ignore which
+        // session expired, so a reload it queued for the OLD session could
+        // still land after a NEW session was started in the meantime and wipe
+        // it out with a stale (or null) snapshot fetched before the new
+        // session existed.
+        var fixture = FeatureFixture.Create();
+        var viewModel = new TasksFocusViewModel(fixture.Context);
+        var sessionA = await viewModel.StartFocusOrThrowAsync(TestContext.Current.CancellationToken);
+        viewModel.AttachFocusExpiry();
+
+        var pauseHistory = new TaskCompletionSource<bool>();
+        fixture.FocusSessions.PauseListHistory = pauseHistory;
+        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddMinutes(26);
+
+        // CompleteExpiredAsync raises SessionExpired synchronously. The
+        // fire-and-forget reload it starts runs through GetCurrentAsync --
+        // session A just completed, so it captures a null focus -- and then
+        // blocks inside ListHistoryAsync on pauseHistory, so it is
+        // genuinely in flight (not finished) once this await returns.
+        var completed = await fixture.Context.FocusService.CompleteExpiredAsync(
+            sessionA.Id, TestContext.Current.CancellationToken);
+        Assert.True(completed);
+
+        // Start a new session while the stale reload for session A is still
+        // paused mid-flight.
+        var sessionB = await viewModel.StartFocusOrThrowAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(sessionB.Id, viewModel.ActiveFocus?.Id);
+
+        // Let the paused reload run to completion.
+        pauseHistory.SetResult(true);
+        await pauseHistory.Task;
+        // Give the resumed reload's continuation a chance to run before asserting.
+        for (var i = 0; i < 5 && viewModel.FocusHistory.Count == 0; i++)
+        {
+            await Task.Delay(10, TestContext.Current.CancellationToken);
+        }
+
+        // Session B must survive: the reload was for session A, which is no
+        // longer the active session, so it must not have touched ActiveFocus.
+        Assert.Equal(sessionB.Id, viewModel.ActiveFocus?.Id);
+        Assert.True(viewModel.IsFocusActive);
+        // History still reloads unconditionally -- session A now shows up
+        // there.
+        Assert.Contains(viewModel.FocusHistory, entry => entry.StatusText == "completed");
+    }
+
     [Theory]
     [InlineData(true, false, "another focus session is active")]
     [InlineData(false, true, "injected focus repository failure")]
@@ -2517,12 +2566,18 @@ public sealed class FeatureViewModelTests
         public bool RejectCreate { get; set; }
         public bool ThrowOnCreate { get; set; }
         public bool ThrowOnListHistory { get; set; }
+        // Round 4 Opus follow-up 4: lets a test suspend an in-flight expiry
+        // reload right after it has already captured its (possibly stale)
+        // GetCurrentAsync snapshot, so a new session can be started before
+        // the reload's mutation finally runs.
+        public TaskCompletionSource<bool>? PauseListHistory { get; set; }
         public Task<FocusSession?> GetAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult(_sessions.GetValueOrDefault(id));
         public Task<FocusSession?> GetActiveAsync(CancellationToken cancellationToken) => Task.FromResult(Active);
-        public Task<IReadOnlyList<FocusSession>> ListHistoryAsync(CancellationToken cancellationToken)
+        public async Task<IReadOnlyList<FocusSession>> ListHistoryAsync(CancellationToken cancellationToken)
         {
             if (ThrowOnListHistory) throw new IOException("injected focus history repository failure");
-            return Task.FromResult<IReadOnlyList<FocusSession>>(_sessions.Values.Where(item => item.Status is not (FocusStatus.Running or FocusStatus.Paused)).ToArray());
+            if (PauseListHistory is { } pause) await pause.Task;
+            return _sessions.Values.Where(item => item.Status is not (FocusStatus.Running or FocusStatus.Paused)).ToArray();
         }
         public Task<bool> TryCreateActiveAsync(FocusSession session, CancellationToken cancellationToken)
         {
