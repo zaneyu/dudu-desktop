@@ -202,10 +202,14 @@ public sealed class OverlayCommandRouter
 
     private async Task TakeFiveMinuteBreakAsync(CancellationToken cancellationToken)
     {
+        // Present the hug first: applying the pause hides the overlay
+        // (indirectly, via the lifecycle coordinator's pause gate), so
+        // doing that before the hug animation played it into a window that
+        // was about to disappear underneath it.
+        await PresentTinyHugAsync(cancellationToken);
         await _context.ApplyPauseAsync(
             PausePolicy.ForFiveMinutes(_context.Clock.UtcNow.ToUniversalTime()),
             cancellationToken);
-        await PresentTinyHugAsync(cancellationToken);
     }
 
     private async Task CloseComfortAsync(CancellationToken cancellationToken)
