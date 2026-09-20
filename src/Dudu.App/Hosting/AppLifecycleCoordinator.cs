@@ -351,12 +351,14 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
             // section (which flips _userVisible and pushes false) is
             // blocked out entirely while we hold _gate here, so nothing can
             // race between these two checks and the push that follows them.
-            bool needsHide;
+            bool userVisible;
+            bool needsHide = false;
             await _gate.WaitAsync(cancellationToken);
             try
             {
                 ThrowIfDisposed();
-                if (!_userVisible)
+                userVisible = _userVisible;
+                if (!userVisible)
                 {
                     _presentationEnvironment?.SetUserVisible(false);
                     // Finding 2: authoritative in both directions -- a
@@ -372,16 +374,20 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
                     _presentationEnvironment?.SetUserVisible(true);
                     return;
                 }
-                else
-                {
-                    needsHide = false;
-                }
             }
             finally { _gate.Release(); }
 
-            if (needsHide)
+            // The restore attempt (EnsureUserVisibleAsync) is only ever
+            // valid on the desired-visible path below -- a desired-hidden
+            // pet must stop here once it has been hidden (or was already
+            // hidden), never fall through into a show attempt.
+            if (!userVisible)
             {
-                await HideIfStillDesiredHiddenAsync(cancellationToken);
+                if (needsHide)
+                {
+                    await HideIfStillDesiredHiddenAsync(cancellationToken);
+                }
+
                 return;
             }
 
