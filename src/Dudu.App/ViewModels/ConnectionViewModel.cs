@@ -265,9 +265,37 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
             // any held note referencing them is already orphaned and must
             // go too; any envelope still pending means it is still
             // revealable, so its held note must be left alone.
-            if ((await _context.RemoteEnvelopes.ListPendingAsync(cancellationToken)).Count == 0)
+            //
+            // The forget above already committed -- this check (and the
+            // discard it may trigger) is best-effort cleanup of another
+            // subsystem's state, and a throw here must not turn an
+            // already-committed forget into a reported failure or skip the
+            // UI state update below. Fail closed on a throw: assume
+            // envelopes remain, so a (possibly stale) held note is left
+            // alone rather than risk discarding one that is still
+            // revealable.
+            var envelopesRemain = true;
+            try
             {
-                await _context.DiscardHeldRemoteNotesAsync(cancellationToken);
+                envelopesRemain = (await _context.RemoteEnvelopes.ListPendingAsync(cancellationToken)).Count > 0;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception exception)
+            {
+                global::System.Diagnostics.Trace.TraceError("Dudu forget-pairing envelope check failed: {0}", exception);
+            }
+
+            if (!envelopesRemain)
+            {
+                try
+                {
+                    await _context.DiscardHeldRemoteNotesAsync(cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+                catch (Exception exception)
+                {
+                    global::System.Diagnostics.Trace.TraceError("Dudu forget-pairing held-note discard failed: {0}", exception);
+                }
             }
             await MutateAsync(() =>
             {

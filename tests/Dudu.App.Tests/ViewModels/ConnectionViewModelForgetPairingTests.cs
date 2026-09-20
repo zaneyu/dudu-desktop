@@ -58,8 +58,42 @@ public sealed class ConnectionViewModelForgetPairingTests
         // ForgetPairingLocallyAsync already wiped every envelope by the time
         // Pairing.ForgetPairingAsync returns, so the remote-envelope
         // repository is left empty -- any held note referencing one of them
-        // is now orphaned and must be discarded too.
+        // is now orphaned and must be discarded too. FakePairing models
+        // that causal order directly: it starts with a pending envelope and
+        // clears the repository itself when ForgetPairingAsync runs, so the
+        // later ListPendingAsync check genuinely observes the post-forget
+        // state instead of an environment that was simply empty from the
+        // start.
         var remoteEnvelopes = new FakeRemoteEnvelopeRepository();
+        remoteEnvelopes.Pending.Add(MakeEnvelope("wiped-on-forget"));
+        var discardCalls = 0;
+        var context = BuildContext(
+            remoteEnvelopes,
+            discardHeldRemoteNotesAsync: _ =>
+            {
+                discardCalls++;
+                return Task.CompletedTask;
+            },
+            wipesEnvelopesOnForget: true);
+        var vm = new ConnectionViewModel(context);
+
+        vm.RequestForgetPairingCommand.Execute(null);
+        await vm.ConfirmCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, discardCalls);
+        Assert.Null(vm.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task Forget_pairing_still_succeeds_and_updates_state_when_the_envelope_check_throws()
+    {
+        // Round 4 Opus follow-up 3: Pairing.ForgetPairingAsync has already
+        // committed the forget by the time the ListPendingAsync check runs.
+        // A throw from that check is best-effort cleanup gone wrong, not a
+        // failure of the forget itself -- it must not turn a committed
+        // forget into a reported error, and must not skip the page's UI
+        // state update (Availability/IsPaired going back to unpaired).
+        var remoteEnvelopes = new FakeRemoteEnvelopeRepository { ThrowOnListPending = true };
         var discardCalls = 0;
         var context = BuildContext(
             remoteEnvelopes,
@@ -73,8 +107,13 @@ public sealed class ConnectionViewModelForgetPairingTests
         vm.RequestForgetPairingCommand.Execute(null);
         await vm.ConfirmCommand.ExecuteAsync(null);
 
-        Assert.Equal(1, discardCalls);
         Assert.Null(vm.ErrorMessage);
+        Assert.Equal(PairingAvailability.Offline, vm.Availability);
+        Assert.False(vm.IsPaired);
+        // Fails closed: the check couldn't confirm envelopes are gone, so it
+        // assumes they remain and leaves the (possibly stale) held note
+        // alone rather than risk discarding one that is still revealable.
+        Assert.Equal(0, discardCalls);
     }
 
     private static RemoteEnvelope MakeEnvelope(string messageId) => new(
@@ -84,7 +123,8 @@ public sealed class ConnectionViewModelForgetPairingTests
 
     private static CompanionFeatureContext BuildContext(
         FakeRemoteEnvelopeRepository remoteEnvelopes,
-        Func<CancellationToken, Task> discardHeldRemoteNotesAsync)
+        Func<CancellationToken, Task> discardHeldRemoteNotesAsync,
+        bool wipesEnvelopesOnForget = false)
     {
         var clock = new FakeClock();
         var preferences = new Preferences(
@@ -115,7 +155,7 @@ public sealed class ConnectionViewModelForgetPairingTests
             new TaskService(tasks, clock),
             new FocusService(focusSessions, clock, tasks),
             new LocalNoteSelector(localNotes, clock, new FixedRandom(), preferences),
-            new FakePairing(),
+            new FakePairing(remoteEnvelopes, wipesEnvelopesOnForget),
             new ThrowingFeatureTransactions(),
             PetStateMachine.CreateIdle(),
             discardHeldRemoteNotesAsync: discardHeldRemoteNotesAsync);
@@ -135,12 +175,20 @@ public sealed class ConnectionViewModelForgetPairingTests
     private sealed class FakeRemoteEnvelopeRepository : IRemoteEnvelopeRepository
     {
         public List<RemoteEnvelope> Pending { get; } = [];
+        public bool ThrowOnListPending { get; init; }
 
         public Task<RemoteEnvelope?> GetAsync(string messageId, CancellationToken cancellationToken) =>
             Task.FromResult(Pending.FirstOrDefault(item => item.MessageId == messageId));
 
-        public Task<IReadOnlyList<RemoteEnvelope>> ListPendingAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<RemoteEnvelope>>(Pending);
+        public Task<IReadOnlyList<RemoteEnvelope>> ListPendingAsync(CancellationToken cancellationToken)
+        {
+            if (ThrowOnListPending)
+            {
+                throw new IOException("injected envelope list failure");
+            }
+
+            return Task.FromResult<IReadOnlyList<RemoteEnvelope>>(Pending);
+        }
 
         public Task<bool> TryInsertAsync(RemoteEnvelope envelope, CancellationToken cancellationToken)
         {
@@ -262,7 +310,9 @@ public sealed class ConnectionViewModelForgetPairingTests
             CancellationToken cancellationToken) => Task.FromResult(true);
     }
 
-    private sealed class FakePairing : IPairingService
+    private sealed class FakePairing(
+        FakeRemoteEnvelopeRepository? remoteEnvelopes = null,
+        bool wipesEnvelopesOnForget = false) : IPairingService
     {
         public int ForgetPairingCallCount { get; private set; }
         public Task<PairingAvailability> GetStateAsync(CancellationToken cancellationToken = default) =>
@@ -275,6 +325,16 @@ public sealed class ConnectionViewModelForgetPairingTests
         public Task ForgetPairingAsync(CancellationToken cancellationToken = default)
         {
             ForgetPairingCallCount++;
+            // Models RemoteSyncService.ForgetPairingLocallyAsync's
+            // unreadable-key branch, which wipes every pending envelope as
+            // PART OF the forget itself -- before ForgetPairingAsync
+            // returns, so ConnectionViewModel's later ListPendingAsync
+            // check genuinely observes the post-forget state, matching the
+            // real causal order (forget commits, then the check runs).
+            if (wipesEnvelopesOnForget)
+            {
+                remoteEnvelopes?.Pending.Clear();
+            }
             return Task.CompletedTask;
         }
     }
