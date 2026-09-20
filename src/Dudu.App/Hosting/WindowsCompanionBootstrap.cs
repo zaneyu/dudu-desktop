@@ -895,6 +895,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
             await _host.StartAsync(cancellationToken);
             _hotkey.Triggered += OnHotkeyTriggered;
             var forceVisible = false;
+            var trayAttachFailed = false;
             await _overlay.InvokeOnOwnerAsync(() =>
             {
                 try
@@ -924,15 +925,17 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                     // TaskbarCreated.
                     ReportFailure("tray-attach", exception);
                     Trace.TraceWarning("Dudu tray icon unavailable: {0}", exception.Message);
-                    if (!_initialUserVisible)
-                    {
-                        // A --background/launch-at-sign-in start composes the
-                        // overlay hidden and relies on the tray to give her a
-                        // surface. With the tray gone too there would be no
-                        // UI and no way to exit, so force the overlay visible
-                        // instead of leaving an invisible, unkillable process.
-                        forceVisible = true;
-                    }
+                    // With the tray gone there is no exit surface unless the
+                    // overlay ends up visible, so force the visibility
+                    // request regardless of launch mode -- every launch asks
+                    // to show the overlay today, but this must not silently
+                    // rely on that. Remember the failure itself too: the
+                    // forced show still goes through the normal TryCanShow
+                    // gate below and can be vetoed, and only a tray failure
+                    // (not merely forceVisible) should trigger the Settings
+                    // fallback further down.
+                    trayAttachFailed = true;
+                    forceVisible = true;
                 }
             });
             await StartupVisibilityGate.ApplyAsync(
@@ -940,20 +943,25 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                 _lifecycle.SetUserVisibleAsync,
                 _initialUserVisible || forceVisible,
                 cancellationToken);
-            if (forceVisible && !_overlay.IsVisible)
+            if (trayAttachFailed && !_overlay.IsVisible)
             {
-                // The forced show above still goes through SetUserVisibleAsync's
-                // normal TryCanShow gate (quiet hours/pause/lock/suspend/
-                // fullscreen), so it alone can leave a hidden launch with
-                // neither a tray icon nor a visible overlay — no exit surface
-                // at all. _overlay.IsVisible reflects whether Show() actually
-                // ran (i.e. TryCanShow passed), not merely that it was
-                // requested, so this branch only fires when the forced show
-                // was vetoed. Open Settings directly in that case, the same
-                // "open home" action the tray would have offered, so there is
-                // always a way to reach and quit the app. When the forced
-                // show succeeded, do nothing: opening Settings on every tray
-                // blip (e.g. Explorer restarting — the icon self-heals on
+                // Key this on the tray attach having actually failed, not on
+                // launch mode: every launch already requests the overlay
+                // visible, so forceVisible alone would fire here on every
+                // ordinary successful start too. The forced show above still
+                // goes through SetUserVisibleAsync's normal TryCanShow gate
+                // (quiet hours/pause/lock/suspend/fullscreen), so a failed
+                // tray attach can still leave a launch with neither a tray
+                // icon nor a visible overlay — no exit surface at all.
+                // _overlay.IsVisible reflects whether Show() actually ran
+                // (i.e. TryCanShow passed), not merely that it was requested,
+                // so this branch only fires when the tray failed AND the
+                // (possibly forced) show was vetoed. Open Settings directly
+                // in that case, the same "open home" action the tray would
+                // have offered, so there is always a way to reach and quit
+                // the app. When the tray attach succeeded, or the show went
+                // through, do nothing: opening Settings on every tray blip
+                // (e.g. Explorer restarting — the icon self-heals on
                 // TaskbarCreated) would defeat a silent --background launch.
                 try
                 {

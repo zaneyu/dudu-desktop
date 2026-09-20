@@ -175,40 +175,55 @@ public sealed class WindowsCompanionBootstrapTests
     }
 
     [Fact]
-    public void Tray_attach_failure_on_a_hidden_launch_opens_home_only_when_the_forced_show_was_vetoed()
+    public void Tray_attach_failure_opens_home_only_when_the_forced_show_was_vetoed_regardless_of_launch_mode()
     {
-        // Regression: forceVisible alone does not guarantee an exit surface
-        // for a hidden (--background) launch whose tray attach also failed.
-        // The forced overlay show still goes through SetUserVisibleAsync's
-        // normal TryCanShow gate (quiet hours/pause/lock/suspend/fullscreen),
-        // which can veto it, leaving neither a tray icon nor a visible
-        // overlay. Opening Settings directly (not through OnHotkeyAsync,
-        // which is itself gated by TryCanShow) guarantees a way to reach and
-        // quit the app in that case. But it must NOT fire on every forced
-        // show -- only when the show was actually vetoed (_overlay.IsVisible
-        // stays false) -- otherwise a silent --background launch would pop
-        // Settings on a harmless tray blip (e.g. Explorer restarting, where
-        // the icon self-heals on TaskbarCreated). This can't run on Mac
-        // (StartCoreAsync needs real Win32 window/tray/hotkey handles), so
-        // the ordering and the guard are asserted from source the same way
-        // ProductionStartupContractTests does for other native-only paths.
+        // Regression: every launch now requests the overlay visible (see
+        // CompanionLaunchOptions.ShouldShowOverlay), so _initialUserVisible
+        // is always true post-onboarding and can no longer be used to key
+        // the "no exit surface" fallback -- that would make the fallback
+        // permanently dead. It must instead key off the tray attach having
+        // actually failed (trayAttachFailed), tracked independently of
+        // launch mode. The forced overlay show still goes through
+        // SetUserVisibleAsync's normal TryCanShow gate (quiet hours/pause/
+        // lock/suspend/fullscreen), which can veto it, leaving neither a
+        // tray icon nor a visible overlay. Opening Settings directly (not
+        // through OnHotkeyAsync, which is itself gated by TryCanShow)
+        // guarantees a way to reach and quit the app in that case. But it
+        // must NOT fire whenever the tray happened to attach fine -- only
+        // when the tray attach failed AND the show was actually vetoed
+        // (_overlay.IsVisible stays false) -- otherwise a silent
+        // --background launch would pop Settings on a harmless tray blip
+        // (e.g. Explorer restarting, where the icon self-heals on
+        // TaskbarCreated). This can't run on Mac (StartCoreAsync needs real
+        // Win32 window/tray/hotkey handles), so the ordering and the guard
+        // are asserted from source the same way ProductionStartupContractTests
+        // does for other native-only paths.
         var root = FindRepositoryRoot();
         var runtime = File.ReadAllText(Path.Combine(
             root, "src", "Dudu.App", "Hosting", "WindowsCompanionBootstrap.cs"));
 
+        var trayAttachFailedSet = runtime.IndexOf("trayAttachFailed = true;", StringComparison.Ordinal);
         var forceVisibleSet = runtime.IndexOf("forceVisible = true;", StringComparison.Ordinal);
         var visibilityGate = runtime.IndexOf(
             "await StartupVisibilityGate.ApplyAsync(",
             StringComparison.Ordinal);
         var guard = runtime.IndexOf(
-            "if (forceVisible && !_overlay.IsVisible)",
+            "if (trayAttachFailed && !_overlay.IsVisible)",
             StringComparison.Ordinal);
         var openHomeFallback = runtime.IndexOf("await _openHome(cancellationToken);", StringComparison.Ordinal);
 
+        Assert.True(trayAttachFailedSet >= 0);
         Assert.True(forceVisibleSet >= 0);
+        Assert.True(visibilityGate > trayAttachFailedSet);
         Assert.True(visibilityGate > forceVisibleSet);
         Assert.True(guard > visibilityGate);
         Assert.True(openHomeFallback > guard);
+
+        // The dead-fallback bug: the old guard keyed off forceVisible, whose
+        // only setter used to be wrapped in "if (!_initialUserVisible)" --
+        // always false post-onboarding, so forceVisible (and thus the
+        // fallback) could never fire. That gate must be gone.
+        Assert.DoesNotContain("if (!_initialUserVisible)", runtime, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryRoot()
