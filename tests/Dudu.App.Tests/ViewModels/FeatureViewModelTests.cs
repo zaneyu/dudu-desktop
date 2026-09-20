@@ -117,6 +117,62 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Next_countdown_text_uses_local_calendar_days_not_a_floored_time_span()
+    {
+        // 14:00 today to midnight six calendar days later is 5 days 10 hours of raw
+        // remaining time -- floor(TotalDays) would read "in 5 days" -- but it is six
+        // local calendar dates away and must read "in 6 days".
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        fixture.Clock.UtcNow = DateTimeOffset.Parse("2026-09-19T14:00:00Z");
+        await fixture.Countdowns.SaveAsync(
+            new Countdown(
+                "trip",
+                "Trip",
+                DateTimeOffset.Parse("2026-09-25T00:00:00Z"),
+                isAllDay: false,
+                TimeZoneInfo.Utc),
+            ct);
+        var viewModel = new HomeViewModel(fixture.Context);
+
+        await viewModel.RefreshAsync(ct);
+
+        Assert.Equal("Trip in 6 days", viewModel.NextCountdownText);
+    }
+
+    [Fact]
+    public async Task Next_countdown_text_excludes_a_past_countdown_but_keeps_one_due_later_today()
+    {
+        // An already-past countdown must not keep sorting first and reading "is
+        // today" forever; a countdown whose calendar date genuinely is today must
+        // still read "is today" even though its exact time has not arrived yet.
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        fixture.Clock.UtcNow = DateTimeOffset.Parse("2026-09-19T08:00:00Z");
+        await fixture.Countdowns.SaveAsync(
+            new Countdown(
+                "old",
+                "Old visit",
+                DateTimeOffset.Parse("2026-09-10T12:00:00Z"),
+                isAllDay: false,
+                TimeZoneInfo.Utc),
+            ct);
+        await fixture.Countdowns.SaveAsync(
+            new Countdown(
+                "later",
+                "Later visit",
+                DateTimeOffset.Parse("2026-09-19T20:00:00Z"),
+                isAllDay: false,
+                TimeZoneInfo.Utc),
+            ct);
+        var viewModel = new HomeViewModel(fixture.Context);
+
+        await viewModel.RefreshAsync(ct);
+
+        Assert.Equal("Later visit is today", viewModel.NextCountdownText);
+    }
+
+    [Fact]
     public void DescribeError_matches_FeatureViewModelBases_exception_to_copy_mapping()
     {
         // Home's code-behind click handlers run outside RunAsync and used to show

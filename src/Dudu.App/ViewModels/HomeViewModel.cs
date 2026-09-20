@@ -1,7 +1,6 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.Input;
 using Dudu.App.System;
-using Dudu.Core.Countdowns;
 using Dudu.Core.Models;
 using Dudu.Core.Pet;
 using Dudu.Core.Reminders;
@@ -141,27 +140,48 @@ public sealed class HomeViewModel : FeatureViewModelBase
             : "no reminders yet ah";
 
     /// <summary>Days remaining for the countdown due soonest, from the countdowns
-    /// the page already loaded in <see cref="RefreshAsync"/>.</summary>
+    /// the page already loaded in <see cref="RefreshAsync"/>. A countdown whose
+    /// local calendar date has already gone by is excluded -- otherwise it would
+    /// sort first forever and read as "is today" long after it happened -- but one
+    /// whose calendar date is today still reads "is today" regardless of the exact
+    /// time it is due.</summary>
     public string NextCountdownText
     {
         get
         {
             var nowUtc = _context.Clock.UtcNow;
             var upcoming = Countdowns
-                .Where(countdown => countdown.TargetUtc is not null || countdown.TargetDate is not null)
-                .Select(countdown => (countdown, display: CountdownService.GetDisplay(countdown, nowUtc)))
-                .OrderBy(entry => entry.display.Remaining)
+                .Select(countdown => (countdown, days: CalendarDaysUntil(countdown, nowUtc)))
+                .Where(entry => entry.days is >= 0)
+                .Select(entry => (entry.countdown, days: entry.days!.Value))
+                .OrderBy(entry => entry.days)
                 .FirstOrDefault();
 
             if (upcoming.countdown is null) return "no countdowns yet ah";
 
-            return upcoming.display.Days switch
+            return upcoming.days switch
             {
-                <= 0 => $"{upcoming.countdown.Title} is today",
+                0 => $"{upcoming.countdown.Title} is today",
                 1 => $"{upcoming.countdown.Title} in 1 day",
-                _ => $"{upcoming.countdown.Title} in {upcoming.display.Days} days",
+                _ => $"{upcoming.countdown.Title} in {upcoming.days} days",
             };
         }
+    }
+
+    /// <summary>The target's local calendar date minus today's, or null when the
+    /// countdown has no target at all. Computed directly (not via
+    /// <see cref="Dudu.Core.Countdowns.CountdownService"/>, whose per-countdown
+    /// display intentionally clamps an already-past date to zero) so a truly past
+    /// countdown can be told apart from one due later today.</summary>
+    private static int? CalendarDaysUntil(Countdown countdown, DateTimeOffset nowUtc)
+    {
+        if (countdown.TargetDate is null && countdown.TargetUtc is null) return null;
+
+        var localNow = TimeZoneInfo.ConvertTime(nowUtc.ToUniversalTime(), countdown.LocalTimeZone);
+        var today = DateOnly.FromDateTime(localNow.DateTime);
+        var targetDate = countdown.TargetDate
+            ?? DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(countdown.TargetUtc!.Value, countdown.LocalTimeZone).DateTime);
+        return targetDate.DayNumber - today.DayNumber;
     }
 
     public string ActiveFocusText => ActiveFocus is null
