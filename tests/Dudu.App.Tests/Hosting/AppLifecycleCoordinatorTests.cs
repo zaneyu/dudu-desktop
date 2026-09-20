@@ -277,18 +277,44 @@ public sealed class AppLifecycleCoordinatorTests
         // Quiet hours are bypassed for an explicit gesture, but lock,
         // suspend, and the pause policy are not gestures she is actively
         // making right now -- they still gate the hotkey and tray show.
+        // isQuietHours is true throughout, matching the real quiet-hours
+        // scenario -- this test previously only ever exercised the pause
+        // path and passed against pre-fix code that didn't check lock or
+        // suspend at all, because it never actually drove them.
         var overlay = new FakeOverlay { IsVisible = false };
         var now = new DateTimeOffset(2026, 9, 11, 10, 0, 0, TimeSpan.Zero);
+        var flags = new PauseFlags();
+        var cancellationToken = TestContext.Current.CancellationToken;
         await using var lifecycle = new AppLifecycleCoordinator(
-            new FakeHost(), overlay, PetStateMachine.CreateIdle(),
-            new Preferences(AppTheme.System, new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
                 false, 3, true, false, true, TimeSpan.FromMinutes(15)),
-            pauseState: () => PausePolicy.ForOneHour(now),
+            pauseState: () => flags.State,
+            isQuietHours: () => true,
             clock: () => now,
             initialUserVisible: false);
 
-        await lifecycle.OnHotkeyAsync(TestContext.Current.CancellationToken);
+        // Pause suppresses the explicit-gesture hotkey.
+        flags.State = PausePolicy.ForOneHour(now);
+        await lifecycle.OnHotkeyAsync(cancellationToken);
+        Assert.Equal(0, overlay.ShowCount);
+        Assert.False(overlay.IsVisible);
+        flags.State = PauseState.None;
 
+        // Session lock suppresses the hotkey too.
+        await lifecycle.OnSessionLockedAsync(cancellationToken);
+        await lifecycle.OnHotkeyAsync(cancellationToken);
+        Assert.Equal(0, overlay.ShowCount);
+        Assert.False(overlay.IsVisible);
+        await lifecycle.OnSessionUnlockedAsync(cancellationToken);
+
+        // Suspend suppresses the hotkey too.
+        await lifecycle.OnSuspendAsync(cancellationToken);
+        await lifecycle.OnHotkeyAsync(cancellationToken);
         Assert.Equal(0, overlay.ShowCount);
         Assert.False(overlay.IsVisible);
     }
