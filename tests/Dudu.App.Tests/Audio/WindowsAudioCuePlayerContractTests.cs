@@ -49,6 +49,27 @@ public sealed class WindowsAudioCuePlayerContractTests
         Assert.Contains("catch (TimeoutException)", source);
     }
 
+    [Fact]
+    public void Timeout_teardown_runs_off_the_calling_task_instead_of_inline()
+    {
+        // Finding 8: on the TimeoutException path, MediaEnded/MediaFailed
+        // never fired -- the decoder may be hung -- so tearing the player
+        // down (Source = null, Dispose) right there in `finally` can block
+        // on the same hung native call, reintroducing the exact stall the
+        // completion timeout exists to avoid (this call sits on the
+        // 30-second reminder tick loop). The timeout path must defer
+        // teardown to its own background Task.Run instead of running it on
+        // this method's own continuation; the normal (non-timeout) path is
+        // unaffected and still tears down inline.
+        var root = FindRepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.App", "Audio", "WindowsAudioCuePlayer.cs"));
+
+        Assert.Contains("timedOut = true;", source);
+        Assert.Contains("if (timedOut)", source);
+        Assert.Contains("Task.Run(", source);
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
