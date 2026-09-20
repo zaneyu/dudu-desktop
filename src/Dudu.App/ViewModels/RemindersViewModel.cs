@@ -209,7 +209,7 @@ public sealed class RemindersViewModel : FeatureViewModelBase
             ArgumentNullException.ThrowIfNull(reminder);
             var now = _context.Clock.UtcNow.ToUniversalTime();
             var zone = ResolveTimeZone(reminder.LocalTimeZoneId);
-            var next = ReminderScheduler.NextOccurrenceAfterCompletion(reminder with { SnoozedUntilUtc = null }, now, zone);
+            var next = ReminderScheduler.NextOccurrenceAfterCompletion(reminder, now, zone);
             var occurrence = new ReminderOccurrence(reminder.Id, now);
             if (!await _context.Reminders.RecordOccurrencesAndAdvanceAsync(reminder, [occurrence], next, cancellationToken))
             {

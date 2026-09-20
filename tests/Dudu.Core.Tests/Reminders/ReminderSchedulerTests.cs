@@ -801,6 +801,28 @@ public sealed class ReminderSchedulerTests
     }
 
     [Fact]
+    public void Completing_a_reminder_ignores_a_leftover_snooze_from_before_completion()
+    {
+        // Audit regression: NextOccurrenceAfterCompletion relied on its caller
+        // to strip SnoozedUntilUtc first (RemindersViewModel.CompleteAsync did
+        // `reminder with { SnoozedUntilUtc = null }`). A stale snooze from
+        // before this completion -- e.g. one that resolves well past the real
+        // next occurrence -- must not keep governing the next occurrence's
+        // timing; completion now strips it internally so every caller gets
+        // this for free.
+        var reminder = ReminderBuilder.AtLocalTime(21, 0)
+            .SnoozedUntil(DateTimeOffset.Parse("2026-09-15T00:00:00Z"))
+            .Build();
+
+        var next = ReminderScheduler.NextOccurrenceAfterCompletion(
+            reminder,
+            DateTimeOffset.Parse("2026-09-11T15:00:00Z"),
+            TimeZoneInfo.Utc);
+
+        Assert.Equal(DateTimeOffset.Parse("2026-09-12T21:00:00Z"), next);
+    }
+
+    [Fact]
     public void Completing_a_once_reminder_whose_pending_occurrence_is_inside_quiet_hours_has_no_next_occurrence()
     {
         var reminder = new Reminder(

@@ -129,6 +129,15 @@ public static class ReminderScheduler
         ArgumentNullException.ThrowIfNull(reminder);
 
         nowUtc = nowUtc.ToUniversalTime();
+
+        // A snooze belongs to the occurrence being completed; leaving it on
+        // the reminder passed into NextOccurrence below would let a stale
+        // SnoozedUntilUtc still govern the next occurrence's timing (see
+        // NextOccurrence, which treats a still-future SnoozedUntilUtc as
+        // authoritative). Stripped here so callers don't each have to
+        // remember to do it themselves.
+        reminder = reminder with { SnoozedUntilUtc = null };
+
         if (reminder.NextDueUtc is not { } pendingUtc)
         {
             return NextOccurrence(reminder, nowUtc, timeZone);
