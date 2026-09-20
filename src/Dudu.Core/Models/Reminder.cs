@@ -30,18 +30,34 @@ public abstract record RecurrenceRule
         // The record-synthesized equality would compare Days by reference (sets
         // do not override Equals/GetHashCode), so two rules with the identical
         // selected days as different set instances would never compare equal.
-        // Compare by set membership instead.
-        public bool Equals(SelectedWeekdays? other) =>
-            other is not null
-            && LocalTime == other.LocalTime
-            && Days.SetEquals(other.Days);
+        // Compare by set membership instead. Days is non-nullable by
+        // declaration, but a `with` expression or deserialization can still
+        // hand back a null (ReminderScheduler defends against exactly this),
+        // so treat null as an empty set rather than throwing.
+        public bool Equals(SelectedWeekdays? other)
+        {
+            if (other is null || LocalTime != other.LocalTime)
+            {
+                return false;
+            }
+
+            if (Days is null || other.Days is null)
+            {
+                return Days is null && other.Days is null;
+            }
+
+            return Days.SetEquals(other.Days);
+        }
 
         public override int GetHashCode()
         {
             var daysHash = 0;
-            foreach (var day in Days)
+            if (Days is not null)
             {
-                daysHash ^= day.GetHashCode();
+                foreach (var day in Days)
+                {
+                    daysHash ^= day.GetHashCode();
+                }
             }
 
             return HashCode.Combine(LocalTime, daysHash);
