@@ -129,9 +129,27 @@ public static class ReminderScheduler
         ArgumentNullException.ThrowIfNull(reminder);
 
         nowUtc = nowUtc.ToUniversalTime();
-        var effectiveNow = reminder.NextDueUtc is { } nextDueUtc && nextDueUtc.ToUniversalTime() > nowUtc
-            ? nextDueUtc.ToUniversalTime()
-            : nowUtc;
+
+        // A snooze belongs to the occurrence being completed; leaving it on
+        // the reminder passed into NextOccurrence below would let a stale
+        // SnoozedUntilUtc still govern the next occurrence's timing (see
+        // NextOccurrence, which treats a still-future SnoozedUntilUtc as
+        // authoritative). Stripped here so callers don't each have to
+        // remember to do it themselves.
+        reminder = reminder with { SnoozedUntilUtc = null };
+
+        if (reminder.NextDueUtc is not { } pendingUtc)
+        {
+            return NextOccurrence(reminder, nowUtc, timeZone);
+        }
+
+        // The pending occurrence must be consumed as of its own deferred instant,
+        // not its raw due time -- otherwise a pending occurrence that falls inside
+        // quiet hours lands exactly on NextOccurrence's own deferral arm and comes
+        // back out unchanged (still pending), instead of advancing past it.
+        pendingUtc = pendingUtc.ToUniversalTime();
+        var deferredUtc = ApplyQuietHours(reminder, pendingUtc, timeZone) ?? pendingUtc;
+        var effectiveNow = deferredUtc > nowUtc ? deferredUtc : nowUtc;
         return NextOccurrence(reminder, effectiveNow, timeZone);
     }
 

@@ -54,14 +54,54 @@ public sealed class CompanionFeatureTransactionService : ICompanionFeatureTransa
                 var toSave = reminder;
                 if (existing.TryGetValue(reminder.Id, out var previous))
                 {
+                    // Rule/QuietHoursBehavior/MissedPolicy are a hardcoded per-id
+                    // default in LocalReminderDefaults.Create, never derived from
+                    // Preferences -- so the existing row always wins for them,
+                    // whether it holds the shipped default or an edit made on the
+                    // Reminders page. Only Enabled is preference-driven (the
+                    // hydration/break/bedtime checkboxes own it).
+                    toSave = toSave with
+                    {
+                        Rule = previous.Rule,
+                        QuietHoursBehavior = previous.QuietHoursBehavior,
+                        MissedPolicy = previous.MissedPolicy,
+                    };
+
                     if (previous.Enabled == reminder.Enabled
-                        && previous.Rule == reminder.Rule
                         && previous.LocalTimeZoneId == reminder.LocalTimeZoneId)
                     {
+                        // Nothing that determines the schedule changed: keep the
+                        // existing due time and any in-flight snooze exactly as
+                        // they were.
                         toSave = toSave with
                         {
                             NextDueUtc = previous.NextDueUtc,
                             SnoozedUntilUtc = previous.SnoozedUntilUtc,
+                        };
+                    }
+                    else if (!previous.Enabled && reminder.Enabled)
+                    {
+                        // Re-enabling: `reminder.NextDueUtc` above was computed by
+                        // Create() for its own SHIPPED Daily rule, not the
+                        // preserved (possibly edited) Rule just restored a few
+                        // lines up -- e.g. an edited Interval(15m) rule must not
+                        // resume at tomorrow's shipped 10:00, and a
+                        // SelectedWeekdays rule must not fire on a day she never
+                        // selected. Recompute from the preserved rule instead,
+                        // anchored on the row's last known due time and using the
+                        // same nowUtc/localTimeZone Create used above; a stale
+                        // snooze from before the reminder was disabled must not
+                        // carry forward either. Falls back to Create's shipped
+                        // value only if that anchor yields nothing (e.g. the
+                        // existing row never had a due time).
+                        var recomputed = ReminderScheduler.NextOccurrence(
+                            toSave with { NextDueUtc = previous.NextDueUtc, SnoozedUntilUtc = null },
+                            nowUtc.ToUniversalTime(),
+                            localTimeZone);
+                        toSave = toSave with
+                        {
+                            NextDueUtc = recomputed ?? reminder.NextDueUtc,
+                            SnoozedUntilUtc = null,
                         };
                     }
 
@@ -76,10 +116,14 @@ public sealed class CompanionFeatureTransactionService : ICompanionFeatureTransa
                     {
                         toSave = toSave with { Title = previous.Title };
                     }
-                    if (previous.Details is { } previousDetails
-                        && !LocalReminderDefaults.IsKnownDefaultDetails(reminder.Id, previousDetails))
+                    // A null previous Details (she cleared the field) is a user
+                    // edit too, not just a non-null one -- IsKnownDefaultDetails
+                    // never matches string.Empty, so this still regenerates
+                    // Details when the existing row holds the shipped/legacy
+                    // text but preserves an explicit clear.
+                    if (!LocalReminderDefaults.IsKnownDefaultDetails(reminder.Id, previous.Details ?? string.Empty))
                     {
-                        toSave = toSave with { Details = previousDetails };
+                        toSave = toSave with { Details = previous.Details };
                     }
                 }
 

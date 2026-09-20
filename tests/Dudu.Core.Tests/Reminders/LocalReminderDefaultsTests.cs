@@ -196,6 +196,35 @@ public sealed class LocalReminderDefaultsTests
                 LocalReminderDefaults.BedtimeId, "my custom bedtime text", "mei"));
     }
 
+    [Fact]
+    public void IsKnownDefaultDetails_recognises_the_evening_check_in_shipped_details()
+    {
+        // Audit regression: the evening check-in details text was an inline
+        // literal with no named constant, so IsKnownDefaultDetails always said
+        // "no" for it and a save could never regenerate that copy -- it was
+        // frozen forever on existing installs.
+        Assert.True(
+            LocalReminderDefaults.IsKnownDefaultDetails(
+                LocalReminderDefaults.EveningCheckInId,
+                LocalReminderDefaults.EveningCheckInDefaultDetails));
+        Assert.False(
+            LocalReminderDefaults.IsKnownDefaultDetails(
+                LocalReminderDefaults.EveningCheckInId,
+                "my custom details"));
+    }
+
+    [Fact]
+    public void Create_uses_the_named_evening_check_in_details_constant()
+    {
+        var reminders = LocalReminderDefaults.Create(
+            Preferences.Default with { EveningCheckInEnabled = true },
+            DateTimeOffset.Parse("2026-09-11T10:00:00Z"),
+            TimeZoneInfo.Utc);
+
+        var evening = reminders.Single(reminder => reminder.Id == LocalReminderDefaults.EveningCheckInId);
+        Assert.Equal(LocalReminderDefaults.EveningCheckInDefaultDetails, evening.Details);
+    }
+
     private static TimeZoneInfo FindPacificTimeZone()
     {
         try

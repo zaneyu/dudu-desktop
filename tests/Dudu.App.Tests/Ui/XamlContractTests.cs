@@ -352,6 +352,28 @@ public sealed class XamlContractTests
             "RefreshStartupRecovery() must run before ViewModel.RefreshAsync() in Page_Loaded.");
     }
 
+    [Fact]
+    public void RefreshStartupRecovery_guards_its_own_body_so_its_async_void_callers_cannot_crash()
+    {
+        // Audit regression: RefreshStartupRecovery() ran unguarded inside three
+        // async void handlers (Page_Loaded, RetryStartupButton_Click,
+        // StartupToggle_Changed) with none of them wrapping the call in a
+        // try/catch of their own -- an unhandled throw there is a process
+        // crash. The method now guards its own body instead, so the call
+        // order test above stays satisfied without touching those handlers.
+        var root = FindRepositoryRoot();
+        var homeCode = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml.cs"));
+        var methodStart = homeCode.IndexOf("private void RefreshStartupRecovery()", StringComparison.Ordinal);
+        Assert.True(methodStart >= 0, "HomePage.xaml.cs no longer declares RefreshStartupRecovery().");
+        var methodEnd = homeCode.IndexOf("\n    }", methodStart, StringComparison.Ordinal);
+        Assert.True(methodEnd > methodStart);
+        var methodBody = homeCode[methodStart..methodEnd];
+
+        Assert.Contains("try", methodBody, StringComparison.Ordinal);
+        Assert.Contains("catch (Exception exception)", methodBody, StringComparison.Ordinal);
+        Assert.Contains("Trace.TraceError", methodBody, StringComparison.Ordinal);
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
