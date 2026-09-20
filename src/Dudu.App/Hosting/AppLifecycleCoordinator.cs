@@ -287,10 +287,24 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
                 // hotkey show whenever any window was fullscreen -- TryCanShow
                 // below already applies that preference correctly, so this is
                 // redundant with it and wrong on top of being redundant.
+                //
+                // Finding 3: a reconcile-driven restore (requireStillDesired)
+                // must ignore quiet hours the same way an explicit gesture
+                // does -- otherwise a pause/suspend/fullscreen that ends
+                // inside quiet hours strands her invisible until morning,
+                // since nothing else ever retries the show once TryCanShow
+                // stops vetoing on quiet hours alone. This does not affect
+                // the plain SetUserVisibleAsync(true) API path (neither flag
+                // set), which still respects quiet hours as before.
                 if (_fullscreenHidden
                     || _locked
                     || _suspended
-                    || !TryCanShow(fullscreen, _locked, _suspended, "show-gate", ignoreQuietHours: explicitUserGesture))
+                    || !TryCanShow(
+                        fullscreen,
+                        _locked,
+                        _suspended,
+                        "show-gate",
+                        ignoreQuietHours: explicitUserGesture || requireStillDesired))
                 {
                     // Vetoed: the overlay was never actually shown, so the
                     // presentation layer must not be told otherwise -- pushing
@@ -499,12 +513,18 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
         try
         {
             InvokeSafely(_overlay.RestorePlacement, "fullscreen-placement");
+            // Finding 3: a fullscreen-exit restore is not a gesture she is
+            // actively making right now, but it must still ignore quiet
+            // hours -- otherwise fullscreen ending inside quiet hours
+            // strands her invisible until morning, since nothing else ever
+            // retries this restore.
             if (!restoreVisible
                 || !TryCanShow(
                     TryReadFullscreen("fullscreen-restore-fullscreen"),
                     snapshot.Locked,
                     snapshot.Suspended,
-                    "fullscreen-restore-gate"))
+                    "fullscreen-restore-gate",
+                    ignoreQuietHours: true))
             {
                 return;
             }
@@ -529,7 +549,8 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
                     TryReadFullscreen("fullscreen-restore-final-fullscreen"),
                     latest.Locked,
                     latest.Suspended,
-                    "fullscreen-restore-final-gate"))
+                    "fullscreen-restore-final-gate",
+                    ignoreQuietHours: true))
             {
                 return;
             }
@@ -558,11 +579,16 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
         {
             var snapshot = await CaptureAsync(cancellationToken);
             var fullscreen = TryReadFullscreen("pause-fullscreen");
+            // Finding 3: a pause expiring is not a gesture she is actively
+            // making right now, but it must still ignore quiet hours --
+            // otherwise a timed pause that expires inside quiet hours
+            // strands her invisible until morning.
             var canShow = TryCanShow(
                 fullscreen,
                 snapshot.Locked,
                 snapshot.Suspended,
-                "pause-state-gate");
+                "pause-state-gate",
+                ignoreQuietHours: true);
             if (snapshot.UserVisible && canShow && !snapshot.FullscreenHidden)
             {
                 // Finding A(2): matches the veto push in
@@ -661,9 +687,18 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
         finally { _gate.Release(); }
 
         var fullscreen = TryReadFullscreen("resume-fullscreen");
-        var canShow = TryCanShow(fullscreen, snapshot.Locked, snapshot.Suspended, "resume-gate");
-        var welcome = canShow && !fullscreen && !snapshot.FullscreenHidden;
+        // Finding 3: a lock/suspend ending is not a gesture she is actively
+        // making right now, but it must still ignore quiet hours --
+        // otherwise a lock/suspend that ends inside quiet hours strands her
+        // invisible until morning.
+        var canShow = TryCanShow(
+            fullscreen, snapshot.Locked, snapshot.Suspended, "resume-gate", ignoreQuietHours: true);
+        // Finding 4: welcome must depend on show (which already accounts
+        // for snapshot.UserVisible), not just canShow -- otherwise the
+        // welcome-back greeting (with audio) plays after she hid the pet
+        // before the lock/suspend.
         var show = canShow && !snapshot.FullscreenHidden && snapshot.UserVisible;
+        var welcome = show && !fullscreen;
 
         await _gate.WaitAsync(cancellationToken);
         try

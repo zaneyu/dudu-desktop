@@ -10,7 +10,7 @@ namespace Dudu.App.Tests.Hosting;
 public sealed class AppLifecycleCoordinatorTests
 {
     [Fact]
-    public async Task Unlock_welcomes_back_only_when_all_gates_are_clear()
+    public async Task Unlock_welcomes_back_even_during_quiet_hours_but_not_while_still_paused()
     {
         // A presentOneShotAsync spy stands in for the composed
         // PetPresentationCoordinator.PresentOneShotAsync (see M2): the fix
@@ -18,7 +18,14 @@ public sealed class AppLifecycleCoordinatorTests
         // pet stayed pinned on WelcomeBack — the very bug this work package
         // exists to remove) now makes even the no-delegate case self-clear
         // immediately, so a raised-events spy is what actually distinguishes
-        // "welcome-back fired" from "gated by quiet hours" going forward.
+        // "welcome-back fired" from "gated by pause" going forward.
+        //
+        // Finding 3: quiet hours used to be the gate this test pinned (an
+        // unlock during quiet hours got no welcome-back) -- a lock ending
+        // inside quiet hours must not strand her invisible/silent until
+        // morning, so unlock's restore now ignores quiet hours the same way
+        // an explicit gesture already did. Pause is still authoritative and
+        // takes over as the gating scenario below.
         var host = new FakeHost();
         var overlay = new FakeOverlay();
         var pet = PetStateMachine.CreateIdle();
@@ -31,9 +38,10 @@ public sealed class AppLifecycleCoordinatorTests
             false,
             true,
             TimeSpan.FromMinutes(15));
-        var quiet = false;
+        var quiet = true;
         var fullscreen = false;
         var pause = PauseState.None;
+        var now = new DateTimeOffset(2026, 9, 11, 10, 0, 0, TimeSpan.Zero);
         var requested = new List<PetEvent>();
         var cancellationToken = TestContext.Current.CancellationToken;
         await using var lifecycle = new AppLifecycleCoordinator(
@@ -44,7 +52,7 @@ public sealed class AppLifecycleCoordinatorTests
             () => pause,
             () => quiet,
             () => fullscreen,
-            () => new DateTimeOffset(2026, 9, 11, 10, 0, 0, TimeSpan.Zero),
+            () => now,
             presentOneShotAsync: (petEvent, dismissalId, _) =>
             {
                 requested.Add(petEvent);
@@ -53,18 +61,59 @@ public sealed class AppLifecycleCoordinatorTests
                 return Task.CompletedTask;
             });
 
+        // Quiet hours throughout: unlock's welcome-back still fires.
         await lifecycle.OnSessionLockedAsync(cancellationToken);
         await lifecycle.OnSessionUnlockedAsync(cancellationToken);
         Assert.Single(requested);
         Assert.IsType<PetEvent.WelcomeBackRequested>(requested[0]);
         Assert.Equal(PetState.Idle, pet.Current.State);
 
+        // Still paused at unlock (quiet hours unchanged): welcome-back does
+        // not fire -- pause remains an authoritative gate.
         requested.Clear();
-        quiet = true;
+        pause = PausePolicy.ForOneHour(now);
         await lifecycle.OnSessionLockedAsync(cancellationToken);
         await lifecycle.OnSessionUnlockedAsync(cancellationToken);
         Assert.Empty(requested);
         Assert.Equal(PetState.Idle, pet.Current.State);
+    }
+
+    [Fact]
+    public async Task Unlock_does_not_welcome_back_when_she_hid_the_pet_before_locking()
+    {
+        // Finding 4: welcome used to be computed as
+        // `canShow && !fullscreen && !snapshot.FullscreenHidden`, ignoring
+        // snapshot.UserVisible entirely -- so the welcome-back greeting
+        // (with audio) played on unlock even though she had explicitly
+        // hidden Dudu before locking. welcome now derives from show, which
+        // already accounts for snapshot.UserVisible.
+        var overlay = new FakeOverlay();
+        var pet = PetStateMachine.CreateIdle();
+        var requested = new List<PetEvent>();
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            pet,
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            presentOneShotAsync: (petEvent, dismissalId, _) =>
+            {
+                requested.Add(petEvent);
+                pet.Handle(petEvent);
+                pet.Handle(PetEvent.CompletionForOneShot(petEvent, dismissalId));
+                return Task.CompletedTask;
+            });
+        var cancellationToken = TestContext.Current.CancellationToken;
+
+        await lifecycle.SetUserVisibleAsync(false, cancellationToken);
+        await lifecycle.OnSessionLockedAsync(cancellationToken);
+        await lifecycle.OnSessionUnlockedAsync(cancellationToken);
+
+        Assert.Empty(requested);
+        Assert.Equal(0, overlay.ShowCount);
+        Assert.False(overlay.IsVisible);
     }
 
     [Fact]
@@ -604,6 +653,47 @@ public sealed class AppLifecycleCoordinatorTests
         Assert.Equal(1, overlay.ShowCount);
         Assert.True(overlay.IsVisible);
         Assert.Equal(true, sink.LastUserVisible);
+    }
+
+    [Fact]
+    public async Task Pause_expiring_inside_quiet_hours_restores_the_overlay_on_the_next_reconcile()
+    {
+        // Finding 3: quiet hours vetoed every restore path but never
+        // actually hid a pet that was already visible -- a pause (same as
+        // suspend/fullscreen) ending inside quiet hours used to strand her
+        // invisible until quiet hours ended (morning), because
+        // ReconcileVisibilityAsync's restore call routes through
+        // EnsureUserVisibleAsync(requireStillDesired: true), which used to
+        // respect quiet hours like every other non-gesture caller. That
+        // restore now ignores quiet hours, the same way an explicit gesture
+        // already did.
+        var overlay = new FakeOverlay { IsVisible = true };
+        var now = new DateTimeOffset(2026, 9, 11, 10, 0, 0, TimeSpan.Zero);
+        var pause = PauseState.None;
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            pauseState: () => pause,
+            isQuietHours: () => true,
+            clock: () => now,
+            initialUserVisible: true);
+
+        pause = PausePolicy.ForOneHour(now);
+        await lifecycle.OnPauseStateChangedAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(1, overlay.HideCount);
+        Assert.False(overlay.IsVisible);
+
+        // Quiet hours never changes (still true) -- only the pause expires.
+        pause = PauseState.None;
+        await lifecycle.ReconcileVisibilityAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, overlay.ShowCount);
+        Assert.True(overlay.IsVisible);
     }
 
     [Fact]
