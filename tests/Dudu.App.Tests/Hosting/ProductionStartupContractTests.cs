@@ -200,12 +200,17 @@ public sealed class ProductionStartupContractTests
         // the single-instance mutex, so more than one cooldown wait would block startup for tens
         // of seconds with nothing on screen.
         var root = FindRepositoryRoot();
+        // Finding 9 (test bug): normalized before the embedded-newline
+        // search below, so it does not depend on this checkout's line
+        // endings -- a CRLF Windows checkout would otherwise leave a
+        // literal "\r\n" where the search string below expects "\n",
+        // making IndexOf silently fail to find it.
         var composition = File.ReadAllText(Path.Combine(
             root,
             "src",
             "Dudu.App",
             "Hosting",
-            "WindowsCompanionProductionComposition.cs"));
+            "WindowsCompanionProductionComposition.cs")).Replace("\r\n", "\n");
 
         var loopStart = composition.IndexOf(
             "const int maxTransientDbInitRetries = 1;",

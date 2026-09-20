@@ -9,7 +9,11 @@ public sealed class XamlContractTests
     public void App_constructor_initializes_merged_application_resources_before_startup()
     {
         var root = FindRepositoryRoot();
-        var appCode = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "App.xaml.cs"));
+        // Finding 9 (test bug): normalized before the embedded-newline
+        // search below -- a CRLF Windows checkout would otherwise leave a
+        // literal "\r\n" where "\n    }" expects "\n", making IndexOf
+        // silently fail to find the constructor's end.
+        var appCode = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "App.xaml.cs")).Replace("\r\n", "\n");
         var appXaml = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "App.xaml"));
         var constructorStart = appCode.IndexOf("public App()", StringComparison.Ordinal);
         var constructorEnd = appCode.IndexOf("\n    }", constructorStart, StringComparison.Ordinal);
@@ -336,7 +340,9 @@ public sealed class XamlContractTests
         Assert.True(checkboxMatch.Success, "StartupToggle CheckBox not found in HomePage.xaml.");
         Assert.DoesNotContain("IsChecked", checkboxMatch.Value, StringComparison.Ordinal);
 
-        var homeCode = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml.cs"));
+        // Finding 9 (test bug): normalized before the embedded-newline
+        // search below, for the same CRLF-checkout reason as appCode above.
+        var homeCode = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml.cs")).Replace("\r\n", "\n");
         var loadedStart = homeCode.IndexOf("private async void Page_Loaded(", StringComparison.Ordinal);
         var loadedEnd = homeCode.IndexOf("\n    }", loadedStart, StringComparison.Ordinal);
         Assert.True(loadedStart >= 0);
@@ -362,7 +368,9 @@ public sealed class XamlContractTests
         // crash. The method now guards its own body instead, so the call
         // order test above stays satisfied without touching those handlers.
         var root = FindRepositoryRoot();
-        var homeCode = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml.cs"));
+        // Finding 9 (test bug): normalized before the embedded-newline
+        // search below, for the same CRLF-checkout reason as appCode above.
+        var homeCode = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml.cs")).Replace("\r\n", "\n");
         var methodStart = homeCode.IndexOf("private void RefreshStartupRecovery()", StringComparison.Ordinal);
         Assert.True(methodStart >= 0, "HomePage.xaml.cs no longer declares RefreshStartupRecovery().");
         var methodEnd = homeCode.IndexOf("\n    }", methodStart, StringComparison.Ordinal);
