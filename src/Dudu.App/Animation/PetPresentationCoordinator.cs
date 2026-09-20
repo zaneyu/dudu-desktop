@@ -53,6 +53,13 @@ public sealed class PetPresentationCoordinator
         ArgumentNullException.ThrowIfNull(petEvent);
         ArgumentException.ThrowIfNullOrWhiteSpace(dismissalId);
         var completionEvent = PetEvent.CompletionForOneShot(petEvent, dismissalId);
+        // Captured under the gate (invoked at the same point the old code
+        // awaited it, so ordering relative to the visual playback stays the
+        // same) but only awaited after the gate is released below. The gate
+        // also guards PresentationCoordinator.PresentAsync on the tick path;
+        // holding it across a potentially multi-second audio wait would
+        // block that unrelated tick for the duration of the cue.
+        Task? audioTask = null;
         await _gate.WaitAsync(cancellationToken);
         try
         {
@@ -69,8 +76,7 @@ public sealed class PetPresentationCoordinator
                     await playback;
                     if (_playAudioAsync is not null)
                     {
-                        await ObserveAudioAsync(
-                            () => _playAudioAsync(oneShot, cancellationToken));
+                        audioTask = InvokeAudioAsync(() => _playAudioAsync(oneShot, cancellationToken));
                     }
                 }
                 else
@@ -94,11 +100,29 @@ public sealed class PetPresentationCoordinator
         {
             _gate.Release();
         }
+
+        if (audioTask is not null)
+        {
+            await ObserveAudioAsync(audioTask);
+        }
     }
 
-    private static async Task ObserveAudioAsync(Func<Task> operation)
+    /// <summary>
+    /// Invokes <paramref name="operation"/> immediately, converting a
+    /// synchronous throw into a faulted task instead of letting it escape
+    /// here -- the caller invokes this under the shared gate but awaits the
+    /// result afterward, so a synchronous exception must not propagate
+    /// before the gate's own cleanup (acknowledgement, ambient restore) runs.
+    /// </summary>
+    private static Task InvokeAudioAsync(Func<Task> operation)
     {
-        try { await operation(); }
+        try { return operation(); }
+        catch (Exception exception) { return Task.FromException(exception); }
+    }
+
+    private static async Task ObserveAudioAsync(Task task)
+    {
+        try { await task; }
         catch (OperationCanceledException) { }
         catch (Exception exception)
         {

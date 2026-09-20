@@ -1,4 +1,5 @@
 using Dudu.App.Audio;
+using Dudu.App.Hosting;
 using Dudu.Core.Models;
 using Xunit;
 
@@ -53,15 +54,38 @@ public sealed class AudioCueServiceTests
     }
 
     [Fact]
-    public async Task Failed_playback_does_not_consume_cooldown_or_variant_reservation()
+    public async Task Failed_playback_does_not_consume_cooldown_but_rotates_off_the_failed_cue()
     {
+        // A hung/corrupt cue must not be re-picked forever: the variant and
+        // pack indexes advance on Failed even though the cooldown timestamps
+        // do not, so the very next attempt lands on a different pack/cue
+        // instead of retrying the same one that just failed.
         var now = new MutableClock();
         var player = new RecordingPlayer { FailFirstCall = true };
         var service = CreateService(player, now: now, catalog: CreateCatalogWithVariants());
 
         Assert.Equal(AudioPlaybackStatus.Failed, (await PlayAsync(service, AudioCueEvent.Greeting)).Status);
         Assert.Equal(AudioPlaybackStatus.Completed, (await PlayAsync(service, AudioCueEvent.Greeting)).Status);
-        Assert.Equal("tata-lala/one.wav", player.Played[1]);
+        Assert.NotEqual("tata-lala/one.wav", player.Played[1]);
+        Assert.Equal("dudu-lalala/one.wav", player.Played[1]);
+    }
+
+    [Fact]
+    public async Task Failed_playback_is_reported_through_the_error_reporter()
+    {
+        // The Windows player's bounded completion wait returns Failed
+        // normally (it does not throw), so this is the only path that will
+        // ever surface a stalled/corrupt cue for diagnostics -- previously
+        // it was silent.
+        var reporter = new RecordingErrorReporter();
+        var player = new RecordingPlayer { FailFirstCall = true };
+        var service = CreateService(player, catalog: CreateCatalogWithVariants(), errorReporter: reporter);
+
+        Assert.Equal(AudioPlaybackStatus.Failed, (await PlayAsync(service, AudioCueEvent.Greeting)).Status);
+
+        var report = Assert.Single(reporter.Reports);
+        Assert.Equal("audio-cue-playback", report.Operation);
+        Assert.NotNull(report.Exception);
     }
 
     [Fact]
@@ -187,7 +211,8 @@ public sealed class AudioCueServiceTests
         int seed = 0,
         bool isQuiet = false,
         EnvironmentFlags? flags = null,
-        AudioCatalog? catalog = null)
+        AudioCatalog? catalog = null,
+        IAppHostErrorReporter? errorReporter = null)
     {
         flags ??= new EnvironmentFlags();
         now ??= new MutableClock();
@@ -200,6 +225,7 @@ public sealed class AudioCueServiceTests
             () => flags.Fullscreen,
             () => flags.Locked,
             () => flags.SafeMode,
+            errorReporter: errorReporter,
             utcNow: () => now.Value,
             seed: seed);
     }
@@ -269,6 +295,14 @@ public sealed class AudioCueServiceTests
         }
 
         public void ReleaseFirstCall() => _release.TrySetResult(true);
+    }
+
+    private sealed class RecordingErrorReporter : IAppHostErrorReporter
+    {
+        public List<(string Operation, Exception Exception)> Reports { get; } = [];
+
+        public void Report(string operation, Exception exception) =>
+            Reports.Add((operation, exception));
     }
 
     private sealed class DisposableRecordingPlayer : IAudioCuePlayer, IAsyncDisposable

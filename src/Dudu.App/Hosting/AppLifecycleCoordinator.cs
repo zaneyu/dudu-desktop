@@ -159,7 +159,11 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
     {
         var snapshot = await CaptureAsync(cancellationToken);
         var fullscreen = TryReadFullscreen("hotkey-fullscreen");
-        if (!TryCanShow(fullscreen, snapshot.Locked, snapshot.Suspended, "hotkey-gate"))
+        // The hotkey is an explicit user gesture (also used for second
+        // launch/activation, see WindowsCompanionRuntime.ActivateAsync):
+        // quiet hours suppress proactive presentation only, never a request
+        // she made herself.
+        if (!TryCanShow(fullscreen, snapshot.Locked, snapshot.Suspended, "hotkey-gate", ignoreQuietHours: true))
         {
             return;
         }
@@ -190,13 +194,21 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
     public async Task OnUserShowOrHideAsync(CancellationToken cancellationToken = default)
     {
         var snapshot = await CaptureAsync(cancellationToken);
-        if (snapshot.UserVisible)
+        // Keyed on the overlay's real visibility, not just the desired
+        // _userVisible flag: quiet hours (TryCanShow) or a pause-state hide
+        // can leave _userVisible true while the overlay itself never came
+        // up or was hidden again. Branching on desired state alone made the
+        // first tray click a no-op in exactly that case -- it took the HIDE
+        // branch against an overlay that was already hidden.
+        if (snapshot.UserVisible && _overlay.IsVisible)
         {
             await SetUserVisibleAsync(false, cancellationToken);
             return;
         }
 
-        await SetUserVisibleAsync(true, cancellationToken);
+        // Tray "show dudu" is an explicit user gesture: quiet hours suppress
+        // proactive presentation only, never a request she made herself.
+        await EnsureUserVisibleAsync(cancellationToken, explicitUserGesture: true);
     }
 
     public Task SetUserVisibleAsync(
@@ -206,7 +218,9 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
             ? EnsureUserVisibleAsync(cancellationToken)
             : HideForUserAsync(cancellationToken);
 
-    private async Task EnsureUserVisibleAsync(CancellationToken cancellationToken)
+    private async Task EnsureUserVisibleAsync(
+        CancellationToken cancellationToken,
+        bool explicitUserGesture = false)
     {
         var snapshot = await CaptureAsync(cancellationToken);
         await _visibilityGate.WaitAsync(cancellationToken);
@@ -228,7 +242,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
                     || fullscreen
                     || _locked
                     || _suspended
-                    || !TryCanShow(fullscreen, _locked, _suspended, "show-gate"))
+                    || !TryCanShow(fullscreen, _locked, _suspended, "show-gate", ignoreQuietHours: explicitUserGesture))
                 {
                     return;
                 }
@@ -539,7 +553,20 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
         }
     }
 
-    private bool TryCanShow(bool fullscreen, bool locked, bool suspended, string operation)
+    /// <summary>
+    /// Quiet hours suppress proactive presentation (welcome-back, fullscreen/
+    /// pause restore) only. An explicit user gesture -- tray "show dudu",
+    /// the global hotkey, or a second launch/activation -- always shows the
+    /// pet, so those callers pass <paramref name="ignoreQuietHours"/>. Lock,
+    /// suspend, fullscreen, and the pause policy are not gestures the user
+    /// is actively making right now and still gate every caller.
+    /// </summary>
+    private bool TryCanShow(
+        bool fullscreen,
+        bool locked,
+        bool suspended,
+        string operation,
+        bool ignoreQuietHours = false)
     {
         try
         {
@@ -548,7 +575,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
                 return false;
             }
 
-            return !_isQuietHours()
+            return (ignoreQuietHours || !_isQuietHours())
                 && !PausePolicy.IsSuppressed(_pauseState(), _clock(), fullscreen);
         }
         catch (Exception exception)
