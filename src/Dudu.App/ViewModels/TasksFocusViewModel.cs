@@ -16,6 +16,7 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
     private DateTimeOffset? _dueUtc;
     private int _selectedDurationMinutes = 25;
     private int _customDurationMinutes = 30;
+    private bool _focusExpirySubscribed;
 
     public TasksFocusViewModel(CompanionFeatureContext context)
     {
@@ -290,6 +291,44 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
             ActiveFocus = await transition(focus.Id, cancellationToken);
             OnPropertyChanged(nameof(IsFocusActive));
         }, successMessage);
+
+    /// <summary>Subscribes to <see cref="Dudu.Core.Focus.FocusService.SessionExpired"/> so a
+    /// session that expires naturally -- the background reminder tick calling
+    /// <c>FocusService.CompleteExpiredAsync</c>, not a manual "end focus" -- refreshes this
+    /// page immediately instead of leaving ActiveFocus/FocusHistory stale until she navigates
+    /// away and back. Idempotent: SettingsWindow caches this page and re-attaches on every
+    /// Loaded.</summary>
+    public void AttachFocusExpiry()
+    {
+        if (_focusExpirySubscribed) return;
+        _focusExpirySubscribed = true;
+        _context.FocusService.SessionExpired += OnFocusSessionExpired;
+    }
+
+    public void DetachFocusExpiry()
+    {
+        if (!_focusExpirySubscribed) return;
+        _focusExpirySubscribed = false;
+        _context.FocusService.SessionExpired -= OnFocusSessionExpired;
+    }
+
+    // Raised from the background reminder tick thread, not the UI thread -- and
+    // FocusService.CompleteExpiredAsync must never see an exception escape this handler,
+    // since that would break the tick for every other subscriber (e.g. the pet). Fire and
+    // forget: RefreshAsync marshals its own mutations through MutateAsync/UiDispatcher.
+    private void OnFocusSessionExpired(Guid focusId) => _ = RefreshAfterExpiryAsync();
+
+    private async Task RefreshAfterExpiryAsync()
+    {
+        try
+        {
+            await RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            global::System.Diagnostics.Trace.TraceError("Dudu focus expiry refresh failed: {0}", exception);
+        }
+    }
 
     private void ReplaceTask(TaskItem task)
     {

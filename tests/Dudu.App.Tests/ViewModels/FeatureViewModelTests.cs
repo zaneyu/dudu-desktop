@@ -1547,6 +1547,67 @@ public sealed class FeatureViewModelTests
         Assert.Equal(startedUtc.ToLocalTime().ToString("g"), entry.StartedText);
     }
 
+    [Fact]
+    public async Task Focus_expiring_naturally_refreshes_the_page_while_attached()
+    {
+        // Audit regression: FocusService.SessionExpired (raised from the background
+        // reminder tick when a session runs out, not a manual "end focus") only ever
+        // routed to the pet. If the Tasks & Focus page was open it kept showing the
+        // session as running and its history list stayed stale until she navigated
+        // away and back.
+        var fixture = FeatureFixture.Create();
+        var viewModel = new TasksFocusViewModel(fixture.Context);
+        var started = await viewModel.StartFocusOrThrowAsync(TestContext.Current.CancellationToken);
+        viewModel.AttachFocusExpiry();
+        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddMinutes(26);
+
+        var completed = await fixture.Context.FocusService.CompleteExpiredAsync(
+            started.Id, TestContext.Current.CancellationToken);
+
+        Assert.True(completed);
+        Assert.False(viewModel.IsFocusActive);
+        var entry = Assert.Single(viewModel.FocusHistory);
+        Assert.Equal("completed", entry.StatusText);
+    }
+
+    [Fact]
+    public async Task Detaching_focus_expiry_stops_the_automatic_refresh()
+    {
+        var fixture = FeatureFixture.Create();
+        var viewModel = new TasksFocusViewModel(fixture.Context);
+        var started = await viewModel.StartFocusOrThrowAsync(TestContext.Current.CancellationToken);
+        viewModel.AttachFocusExpiry();
+        viewModel.DetachFocusExpiry();
+        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddMinutes(26);
+
+        var completed = await fixture.Context.FocusService.CompleteExpiredAsync(
+            started.Id, TestContext.Current.CancellationToken);
+
+        Assert.True(completed);
+        // Nothing refreshed the view model, so it still shows the pre-completion snapshot.
+        Assert.True(viewModel.IsFocusActive);
+        Assert.Empty(viewModel.FocusHistory);
+    }
+
+    [Fact]
+    public async Task Focus_expiry_refresh_failure_does_not_escape_the_session_expired_event()
+    {
+        var fixture = FeatureFixture.Create();
+        var viewModel = new TasksFocusViewModel(fixture.Context);
+        var started = await viewModel.StartFocusOrThrowAsync(TestContext.Current.CancellationToken);
+        viewModel.AttachFocusExpiry();
+        fixture.FocusSessions.ThrowOnListHistory = true;
+        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddMinutes(26);
+
+        // A throwing history repository must not propagate out of FocusService's
+        // SessionExpired invocation -- that would break the reminder tick for every
+        // other subscriber (e.g. the pet).
+        var completed = await fixture.Context.FocusService.CompleteExpiredAsync(
+            started.Id, TestContext.Current.CancellationToken);
+
+        Assert.True(completed);
+    }
+
     [Theory]
     [InlineData(true, false, "another focus session is active")]
     [InlineData(false, true, "injected focus repository failure")]

@@ -30,13 +30,24 @@ public sealed partial class TasksFocusPage : Page
     {
         if (IsLoaded) return; // a re-load already won the out-of-order race
         ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
+        ViewModel.DetachFocusExpiry();
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs args)
     {
         ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
         ViewModel.PropertyChanged += ViewModel_PropertyChanged;
-        await ViewModel.RefreshAsync();
+        ViewModel.AttachFocusExpiry();
+
+        try
+        {
+            await ViewModel.RefreshAsync();
+        }
+        catch (Exception exception)
+        {
+            global::System.Diagnostics.Trace.TraceError("Dudu tasks/focus refresh failed: {0}", exception);
+        }
+
         SyncTaskEditor();
         RefreshFocusText();
     }
