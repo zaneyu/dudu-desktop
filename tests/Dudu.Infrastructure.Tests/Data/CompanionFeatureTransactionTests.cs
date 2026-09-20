@@ -140,6 +140,157 @@ public sealed class CompanionFeatureTransactionTests
     }
 
     [Fact]
+    public async Task Saving_preferences_again_preserves_next_due_and_snooze_for_an_unchanged_default()
+    {
+        // Opus review follow-up on finding 3: LocalReminderDefaults.Create
+        // rebuilds every default from scratch on every save, which used to wipe
+        // NextDueUtc/SnoozedUntilUtc even for a default whose own schedule this
+        // save never touched. The fix now lives here (not in the ViewModel) so
+        // it commits atomically with the rest of the transaction.
+        await using var fixture = await Fixture.CreateAsync();
+        var preferences = TestPreferences() with { HydrationRemindersEnabled = true };
+        var service = new CompanionFeatureTransactionService(new AppUnitOfWork(fixture.Database));
+        var reminderRepository = new ReminderRepository(fixture.Database);
+
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            preferences,
+            DateTimeOffset.Parse("2026-09-12T10:00:00Z"),
+            TimeZoneInfo.Utc,
+            TestContext.Current.CancellationToken);
+
+        // Simulate an in-flight snooze on the hydration default that a plain
+        // rebuild would otherwise clobber.
+        var beforeSecondSave = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == "default-hydration");
+        var snoozed = beforeSecondSave with
+        {
+            NextDueUtc = DateTimeOffset.Parse("2026-09-12T11:45:00Z"),
+            SnoozedUntilUtc = DateTimeOffset.Parse("2026-09-12T11:30:00Z"),
+        };
+        await reminderRepository.SaveAsync(snoozed, TestContext.Current.CancellationToken);
+
+        // Enabled, Rule and LocalTimeZoneId are all unchanged from what
+        // LocalReminderDefaults.Create would produce for "default-hydration".
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            preferences,
+            DateTimeOffset.Parse("2026-09-13T09:00:00Z"),
+            TimeZoneInfo.Utc,
+            TestContext.Current.CancellationToken);
+
+        var saved = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == "default-hydration");
+        Assert.Equal(snoozed.NextDueUtc, saved.NextDueUtc);
+        Assert.Equal(snoozed.SnoozedUntilUtc, saved.SnoozedUntilUtc);
+    }
+
+    [Fact]
+    public async Task Saving_preferences_with_a_changed_rule_discards_the_stale_snooze()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var preferences = TestPreferences() with { HydrationRemindersEnabled = true };
+        var service = new CompanionFeatureTransactionService(new AppUnitOfWork(fixture.Database));
+        var reminderRepository = new ReminderRepository(fixture.Database);
+
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            preferences,
+            DateTimeOffset.Parse("2026-09-12T10:00:00Z"),
+            TimeZoneInfo.Utc,
+            TestContext.Current.CancellationToken);
+
+        // Tamper with the persisted rule so it no longer matches what
+        // LocalReminderDefaults.Create will produce next time.
+        var tampered = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == "default-hydration") with
+        {
+            Rule = new RecurrenceRule.Daily(new TimeOnly(11, 0)),
+            SnoozedUntilUtc = DateTimeOffset.Parse("2026-09-12T11:30:00Z"),
+        };
+        await reminderRepository.SaveAsync(tampered, TestContext.Current.CancellationToken);
+
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            preferences,
+            DateTimeOffset.Parse("2026-09-13T09:00:00Z"),
+            TimeZoneInfo.Utc,
+            TestContext.Current.CancellationToken);
+
+        var saved = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == "default-hydration");
+        Assert.Equal(new RecurrenceRule.Daily(new TimeOnly(10, 0)), saved.Rule);
+        Assert.Null(saved.SnoozedUntilUtc);
+    }
+
+    [Fact]
+    public async Task Saving_preferences_with_a_toggled_default_discards_the_stale_snooze()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var service = new CompanionFeatureTransactionService(new AppUnitOfWork(fixture.Database));
+        var reminderRepository = new ReminderRepository(fixture.Database);
+
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            TestPreferences() with { HydrationRemindersEnabled = true },
+            DateTimeOffset.Parse("2026-09-12T10:00:00Z"),
+            TimeZoneInfo.Utc,
+            TestContext.Current.CancellationToken);
+
+        var snoozed = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == "default-hydration") with
+        {
+            SnoozedUntilUtc = DateTimeOffset.Parse("2026-09-12T11:30:00Z"),
+        };
+        await reminderRepository.SaveAsync(snoozed, TestContext.Current.CancellationToken);
+
+        // Toggling the default off changes Enabled, so it must not be treated
+        // as "unchanged" even though the rule and time zone are identical.
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            TestPreferences() with { HydrationRemindersEnabled = false },
+            DateTimeOffset.Parse("2026-09-13T09:00:00Z"),
+            TimeZoneInfo.Utc,
+            TestContext.Current.CancellationToken);
+
+        var saved = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == "default-hydration");
+        Assert.False(saved.Enabled);
+        Assert.Null(saved.SnoozedUntilUtc);
+    }
+
+    [Fact]
+    public async Task Saving_preferences_with_a_changed_time_zone_discards_the_stale_snooze()
+    {
+        // A Singapore-to-London move must not carry a Singapore-local due time
+        // forward under the London zone (e.g. firing "drink water" at 03:00).
+        await using var fixture = await Fixture.CreateAsync();
+        var preferences = TestPreferences() with { HydrationRemindersEnabled = true };
+        var service = new CompanionFeatureTransactionService(new AppUnitOfWork(fixture.Database));
+        var reminderRepository = new ReminderRepository(fixture.Database);
+        var singapore = TimeZoneInfo.FindSystemTimeZoneById("Asia/Singapore");
+        var london = TimeZoneInfo.FindSystemTimeZoneById("Europe/London");
+
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            preferences,
+            DateTimeOffset.Parse("2026-09-12T10:00:00Z"),
+            singapore,
+            TestContext.Current.CancellationToken);
+
+        var snoozed = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == "default-hydration") with
+        {
+            SnoozedUntilUtc = DateTimeOffset.Parse("2026-09-12T11:30:00Z"),
+        };
+        await reminderRepository.SaveAsync(snoozed, TestContext.Current.CancellationToken);
+
+        await service.SavePreferencesAndDefaultRemindersAsync(
+            preferences,
+            DateTimeOffset.Parse("2026-09-13T09:00:00Z"),
+            london,
+            TestContext.Current.CancellationToken);
+
+        var saved = (await reminderRepository.ListAsync(TestContext.Current.CancellationToken))
+            .Single(item => item.Id == "default-hydration");
+        Assert.Equal("Europe/London", saved.LocalTimeZoneId);
+        Assert.Null(saved.SnoozedUntilUtc);
+    }
+
+    [Fact]
     public async Task Remote_note_and_consumed_envelope_roll_back_together()
     {
         await using var fixture = await Fixture.CreateAsync();

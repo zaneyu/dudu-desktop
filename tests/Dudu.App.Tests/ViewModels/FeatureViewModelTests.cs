@@ -1976,12 +1976,31 @@ public sealed class FeatureViewModelTests
                 throw new IOException("injected reminder transaction failure");
             }
             await preferences.SaveAsync(value, cancellationToken);
+
+            // Mirrors CompanionFeatureTransactionService.SavePreferencesAndDefaultRemindersAsync:
+            // carry NextDueUtc/SnoozedUntilUtc over from the existing row when
+            // nothing that determines the schedule actually changed.
+            var existing = (await reminders.ListAsync(cancellationToken))
+                .ToDictionary(item => item.Id, StringComparer.Ordinal);
             foreach (var reminder in Dudu.Core.Reminders.LocalReminderDefaults.Create(
                 value,
                 nowUtc,
                 localTimeZone))
             {
-                await reminders.SaveAsync(reminder, cancellationToken);
+                var toSave = reminder;
+                if (existing.TryGetValue(reminder.Id, out var previous)
+                    && previous.Enabled == reminder.Enabled
+                    && previous.Rule == reminder.Rule
+                    && previous.LocalTimeZoneId == reminder.LocalTimeZoneId)
+                {
+                    toSave = reminder with
+                    {
+                        NextDueUtc = previous.NextDueUtc,
+                        SnoozedUntilUtc = previous.SnoozedUntilUtc,
+                    };
+                }
+
+                await reminders.SaveAsync(toSave, cancellationToken);
             }
         }
 

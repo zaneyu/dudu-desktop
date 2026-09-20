@@ -37,12 +37,34 @@ public sealed class CompanionFeatureTransactionService : ICompanionFeatureTransa
             await InjectFaultAsync("after-preferences", token);
             var writer = context.Reminders as IReminderWriter
                 ?? throw new InvalidOperationException("The transactional reminder repository cannot save reminders.");
+
+            // LocalReminderDefaults.Create rebuilds every default from scratch,
+            // which would otherwise drop an in-flight due time or snooze for a
+            // default whose own schedule this save did not touch. Carry those
+            // over from the existing row when nothing that determines the
+            // schedule actually changed.
+            var existing = (await context.Reminders.ListAsync(token))
+                .ToDictionary(r => r.Id, StringComparer.Ordinal);
+
             foreach (var reminder in LocalReminderDefaults.Create(
                 preferences,
                 nowUtc.ToUniversalTime(),
                 localTimeZone))
             {
-                await writer.SaveAsync(reminder, token);
+                var toSave = reminder;
+                if (existing.TryGetValue(reminder.Id, out var previous)
+                    && previous.Enabled == reminder.Enabled
+                    && previous.Rule == reminder.Rule
+                    && previous.LocalTimeZoneId == reminder.LocalTimeZoneId)
+                {
+                    toSave = reminder with
+                    {
+                        NextDueUtc = previous.NextDueUtc,
+                        SnoozedUntilUtc = previous.SnoozedUntilUtc,
+                    };
+                }
+
+                await writer.SaveAsync(toSave, token);
             }
             await InjectFaultAsync("after-default-reminders", token);
         }, cancellationToken);
