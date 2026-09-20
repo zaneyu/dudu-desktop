@@ -8,6 +8,7 @@ using Dudu.Core.Abstractions;
 using Dudu.Core.Models;
 using Dudu.Core.Notes;
 using Dudu.Core.Pet;
+using Microsoft.Data.Sqlite;
 
 namespace Dudu.App.Presentation;
 
@@ -73,10 +74,15 @@ public sealed class PresentationCoordinator :
     private readonly HashSet<string> _toastedWhileHeldIds = new(StringComparer.Ordinal);
 
     /// <summary>Which held-presentation repository operation kinds ("load",
-    /// "persist", "remove") have already had a failure reported this
-    /// process, so <see cref="ReportHeldFailureOnce"/> reports each kind at
-    /// most once instead of on every reminder tick.</summary>
-    private readonly HashSet<string> _reportedHeldFailureKinds = new(StringComparer.Ordinal);
+    /// "persist", "remove"), each paired with the failing exception's type
+    /// name and (for a <see cref="SqliteException"/>) its error code, have
+    /// already had a failure reported this process, so
+    /// <see cref="ReportHeldFailureOnce"/> reports each distinct failure at
+    /// most once instead of on every reminder tick. Keying on kind alone
+    /// would let one already-reported failure mode (e.g. a transient
+    /// SQLITE_BUSY) permanently swallow a later, unrelated one (e.g. a
+    /// corrupt database) under the same kind.</summary>
+    private readonly HashSet<(string Kind, string ExceptionType, int SqliteErrorCode)> _reportedHeldFailureKinds = new();
     private readonly Func<bool> _isFullscreenNow;
     private readonly Func<DateTimeOffset> _utcNow;
     private readonly IAppHostErrorReporter? _errorReporter;
@@ -948,13 +954,20 @@ public sealed class PresentationCoordinator :
     }
 
     /// <summary>Reports a held-presentation failure at most once per
-    /// <paramref name="kind"/> ("load", "persist", or "remove") for this
-    /// process, instead of on every occurrence.</summary>
+    /// distinct (<paramref name="kind"/> ("load", "persist", or "remove"),
+    /// exception type, Sqlite error code) combination for this process,
+    /// instead of on every occurrence -- so a repeatedly-reported transient
+    /// failure (e.g. SQLITE_BUSY) cannot latch out a later, different
+    /// failure under the same kind (e.g. SQLITE_CORRUPT).</summary>
     private void ReportHeldFailureOnce(string kind, Exception exception)
     {
+        var sqliteErrorCode = exception is SqliteException sqliteException
+            ? sqliteException.SqliteErrorCode
+            : 0;
+        var key = (kind, exception.GetType().FullName ?? exception.GetType().Name, sqliteErrorCode);
         lock (_gate)
         {
-            if (!_reportedHeldFailureKinds.Add(kind))
+            if (!_reportedHeldFailureKinds.Add(key))
             {
                 return;
             }

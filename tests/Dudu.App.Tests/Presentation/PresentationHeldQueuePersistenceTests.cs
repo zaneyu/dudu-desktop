@@ -1,4 +1,5 @@
 using Dudu.App.Animation;
+using Dudu.App.Hosting;
 using Dudu.App.Presentation;
 using Dudu.App.System;
 using Dudu.Core.Abstractions;
@@ -531,6 +532,43 @@ public sealed class PresentationHeldQueuePersistenceTests
             DurableNotification.LocalNote(new LocalLoveNote("note-1", "Hi"), "wave").Key);
     }
 
+    [Fact]
+    public async Task ReportHeldFailureOnce_reports_a_second_failure_of_a_different_exception_type_under_the_same_kind()
+    {
+        // Finding 16: the report-once latch used to key on operation kind
+        // alone ("persist"), so one already-reported transient failure (e.g.
+        // a busy database) would permanently silence a later, genuinely
+        // different failure under the same kind (e.g. a corrupt database) --
+        // exactly the case someone would need diagnosed. Keying on kind plus
+        // exception type (and Sqlite error code) fixes that.
+        var reporter = new RecordingErrorReporter();
+        var repository = new AlternatingThrowHeldPresentationRepository();
+        var coordinator = new PresentationCoordinator(
+            new PresentationPolicy(TimeSpan.Zero),
+            new RecordingNotificationService(),
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => Task.CompletedTask,
+            () => AnimationOptions.Default,
+            isQuietHours: () => true,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            errorReporter: reporter,
+            heldPresentations: repository);
+
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-1", "Stretch"),
+            bypassSuppression: false,
+            CancellationToken.None);
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-2", "Drink water"),
+            bypassSuppression: false,
+            CancellationToken.None);
+
+        Assert.Equal(2, reporter.Reports.Count);
+        Assert.Contains(reporter.Reports, r => r.Exception is InvalidOperationException);
+        Assert.Contains(reporter.Reports, r => r.Exception is NotSupportedException);
+    }
+
     private sealed class RecordingNotificationService : INotificationService
     {
         public Task ShowReminderAsync(string reminderId, string title, CancellationToken cancellationToken) =>
@@ -613,5 +651,33 @@ public sealed class PresentationHeldQueuePersistenceTests
             Rows.Remove(key);
             return Task.CompletedTask;
         }
+    }
+
+    /// <summary>A fake whose <see cref="SaveAsync"/> throws a different
+    /// exception type on each successive call, for testing that the
+    /// report-once latch is keyed on more than just the operation kind.</summary>
+    private sealed class AlternatingThrowHeldPresentationRepository : IHeldPresentationRepository
+    {
+        private int _calls;
+
+        public Task<IReadOnlyList<HeldPresentation>> ListAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<HeldPresentation>>(Array.Empty<HeldPresentation>());
+
+        public Task SaveAsync(HeldPresentation item, CancellationToken cancellationToken)
+        {
+            _calls++;
+            return Task.FromException(_calls == 1
+                ? new InvalidOperationException("simulated transient failure")
+                : new NotSupportedException("simulated distinct failure"));
+        }
+
+        public Task DeleteAsync(string key, CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class RecordingErrorReporter : IAppHostErrorReporter
+    {
+        public List<(string Operation, Exception Exception)> Reports { get; } = [];
+
+        public void Report(string operation, Exception exception) => Reports.Add((operation, exception));
     }
 }
