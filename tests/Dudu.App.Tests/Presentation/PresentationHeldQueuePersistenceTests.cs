@@ -167,6 +167,71 @@ public sealed class PresentationHeldQueuePersistenceTests
     }
 
     [Fact]
+    public async Task A_later_occurrence_of_an_already_queued_item_still_toasts_once_hiding_dudu_is_the_only_hold_reason()
+    {
+        // Finding 12: while an earlier occurrence of a recurring reminder is
+        // held only by quiet hours, a later occurrence's PublishAsync call
+        // hits the already-queued early return and (before this fix) got no
+        // toast at all -- for as long as the hold lasted. Once quiet hours
+        // ends but she has since hidden Dudu from the tray -- so hiding Dudu
+        // becomes the sole reason anything is still held -- that later
+        // occurrence must still toast, exactly like the toastNow path for a
+        // brand new hold.
+        var repository = new RecordingHeldPresentationRepository();
+        var notifications = new CountingNotificationService();
+        var played = 0;
+        var quiet = true;
+        var coordinator = new PresentationCoordinator(
+            new PresentationPolicy(TimeSpan.Zero),
+            notifications,
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => { played++; return Task.CompletedTask; },
+            () => AnimationOptions.Default,
+            isQuietHours: () => quiet,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            heldPresentations: repository);
+
+        // Held purely by quiet hours -- not by hiding Dudu -- so the first
+        // hold does not toast yet.
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-1", "Stretch"),
+            bypassSuppression: false,
+            CancellationToken.None);
+        Assert.Equal(0, notifications.ReminderCalls);
+        Assert.Single(repository.Rows);
+
+        // Quiet hours ends, but she hides Dudu right after -- the item is
+        // still sitting in the queue (nothing has ticked/released it), and
+        // hiding Dudu is now the only reason it remains held.
+        quiet = false;
+        coordinator.SetUserVisible(false);
+
+        // A later occurrence of the same reminder (same Kind:Id key)
+        // publishes while the earlier one is still queued.
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-1", "Stretch"),
+            bypassSuppression: false,
+            CancellationToken.None);
+
+        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.Equal(0, played);
+        // Still only one held row -- the later occurrence does not queue a
+        // second entry, it only toasts.
+        Assert.Single(repository.Rows);
+
+        coordinator.SetUserVisible(true);
+        await coordinator.TickAsync(CancellationToken.None);
+
+        Assert.Equal(1, played);
+        // No second toast on the eventual release -- it is still the same
+        // held row, already marked toasted by the later-occurrence toast
+        // above.
+        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.Empty(repository.Rows);
+    }
+
+    [Fact]
     public async Task A_failed_release_re_persists_the_item_for_a_later_retry()
     {
         var repository = new RecordingHeldPresentationRepository();
@@ -726,11 +791,17 @@ public sealed class PresentationHeldQueuePersistenceTests
         Assert.Single(repository.Rows);
         Assert.Equal("Reminder:reminder-1", repository.Rows.Single().Key);
 
-        // If a discarded remote note's queue entry or row survived, un-hiding
-        // and ticking would present it (or requeue-and-repersist it).
+        // Both queued-while-hidden publishes above already toasted
+        // immediately (PublishAsync's toastNow, same as the sibling test):
+        // RemoteNoteCalls is 2 before the discard even runs. If a discarded
+        // remote note's queue entry or row survived, un-hiding and ticking
+        // would present it (or requeue-and-repersist it) and show a further
+        // toast on top of those two -- so the count staying at 2 here is
+        // what proves nothing survived the discard, not 0.
+        Assert.Equal(2, notifications.RemoteNoteCalls);
         coordinator.SetUserVisible(true);
         await coordinator.TickAsync(CancellationToken.None);
-        Assert.Equal(0, notifications.RemoteNoteCalls);
+        Assert.Equal(2, notifications.RemoteNoteCalls);
     }
 
     [Fact]
@@ -1255,32 +1326,52 @@ public sealed class PresentationHeldQueuePersistenceTests
         }
     }
 
+    // Finding 17: this fake's Dictionary is mutated from concurrent tasks in
+    // tests like TickAsync_requeues_a_released_item_already_presenting_elsewhere_instead_of_dropping_it
+    // and DiscardHeldByKindAsync_during_an_in_flight_presentation_drops_it_for_good_if_it_then_fails,
+    // which deliberately run a publish/tick and a discard/second-tick
+    // concurrently -- Dictionary itself gives no thread-safety guarantee
+    // once more than one thread touches it, even for reads racing a write.
     private sealed class RecordingHeldPresentationRepository : IHeldPresentationRepository
     {
-        public Dictionary<string, HeldPresentation> Rows { get; } = [];
+        private readonly object _sync = new();
+        private readonly Dictionary<string, HeldPresentation> _rows = [];
 
-        public void Seed(HeldPresentation item) => Rows[item.Key] = item;
+        public IReadOnlyDictionary<string, HeldPresentation> Rows
+        {
+            get { lock (_sync) return new Dictionary<string, HeldPresentation>(_rows); }
+        }
 
-        public Task<IReadOnlyList<HeldPresentation>> ListAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<HeldPresentation>>(Rows.Values.ToArray());
+        public void Seed(HeldPresentation item)
+        {
+            lock (_sync) _rows[item.Key] = item;
+        }
+
+        public Task<IReadOnlyList<HeldPresentation>> ListAsync(CancellationToken cancellationToken)
+        {
+            lock (_sync) return Task.FromResult<IReadOnlyList<HeldPresentation>>(_rows.Values.ToArray());
+        }
 
         public Task SaveAsync(HeldPresentation item, CancellationToken cancellationToken)
         {
-            Rows[item.Key] = item;
+            lock (_sync) _rows[item.Key] = item;
             return Task.CompletedTask;
         }
 
         public Task DeleteAsync(string key, CancellationToken cancellationToken)
         {
-            Rows.Remove(key);
+            lock (_sync) _rows.Remove(key);
             return Task.CompletedTask;
         }
 
         public Task MarkToastedAsync(string key, CancellationToken cancellationToken)
         {
-            if (Rows.TryGetValue(key, out var existing))
+            lock (_sync)
             {
-                Rows[key] = existing with { Toasted = true };
+                if (_rows.TryGetValue(key, out var existing))
+                {
+                    _rows[key] = existing with { Toasted = true };
+                }
             }
 
             return Task.CompletedTask;
@@ -1310,29 +1401,44 @@ public sealed class PresentationHeldQueuePersistenceTests
         TaskCompletionSource started,
         Task release) : IHeldPresentationRepository
     {
-        public Dictionary<string, HeldPresentation> Rows { get; } = [];
+        private readonly object _sync = new();
+        private readonly Dictionary<string, HeldPresentation> _rows = [];
 
-        public Task<IReadOnlyList<HeldPresentation>> ListAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<HeldPresentation>>(Rows.Values.ToArray());
+        // Finding 17: the test that uses this fake deliberately overlaps a
+        // blocked SaveAsync with a concurrent TickAsync's own DeleteAsync/
+        // read of these rows -- guard every access the same way the other
+        // fakes now do.
+        public IReadOnlyDictionary<string, HeldPresentation> Rows
+        {
+            get { lock (_sync) return new Dictionary<string, HeldPresentation>(_rows); }
+        }
+
+        public Task<IReadOnlyList<HeldPresentation>> ListAsync(CancellationToken cancellationToken)
+        {
+            lock (_sync) return Task.FromResult<IReadOnlyList<HeldPresentation>>(_rows.Values.ToArray());
+        }
 
         public async Task SaveAsync(HeldPresentation item, CancellationToken cancellationToken)
         {
             started.TrySetResult();
             await release;
-            Rows[item.Key] = item;
+            lock (_sync) _rows[item.Key] = item;
         }
 
         public Task DeleteAsync(string key, CancellationToken cancellationToken)
         {
-            Rows.Remove(key);
+            lock (_sync) _rows.Remove(key);
             return Task.CompletedTask;
         }
 
         public Task MarkToastedAsync(string key, CancellationToken cancellationToken)
         {
-            if (Rows.TryGetValue(key, out var existing))
+            lock (_sync)
             {
-                Rows[key] = existing with { Toasted = true };
+                if (_rows.TryGetValue(key, out var existing))
+                {
+                    _rows[key] = existing with { Toasted = true };
+                }
             }
 
             return Task.CompletedTask;
