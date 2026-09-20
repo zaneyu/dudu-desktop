@@ -255,13 +255,29 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
 
             // FocusHistory is otherwise only populated by RefreshAsync (on
             // Page_Loaded), so ending a session here would leave the
-            // on-screen history stale until she navigates away and back.
-            var history = await _context.FocusSessions.ListHistoryAsync(cancellationToken);
-            await MutateAsync(() =>
+            // on-screen history stale until she navigates away and back. The
+            // session itself has already ended successfully above, so this
+            // reload is best-effort and gets its own try/catch: a transient
+            // failure here (e.g. reading history) must not turn a successful
+            // end into a reported failure -- it just leaves the on-screen
+            // history stale until the next refresh.
+            try
             {
-                FocusHistory.Clear();
-                foreach (var session in history) FocusHistory.Add(ToHistoryEntry(session));
-            }, cancellationToken);
+                var history = await _context.FocusSessions.ListHistoryAsync(cancellationToken);
+                await MutateAsync(() =>
+                {
+                    FocusHistory.Clear();
+                    foreach (var session in history) FocusHistory.Add(ToHistoryEntry(session));
+                }, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                global::System.Diagnostics.Trace.TraceError("Dudu focus history refresh failed: {0}", exception);
+            }
         }, "good job rest rest abit");
 
     private Task RunFocusTransitionAsync(

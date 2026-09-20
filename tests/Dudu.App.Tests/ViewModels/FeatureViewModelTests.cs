@@ -1508,6 +1508,26 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Ending_a_focus_session_still_reports_success_when_the_history_reload_fails()
+    {
+        // Audit regression: the FocusHistory reload used to run inside the
+        // same RunAsync lambda as the already-completed EndAsync call, so a
+        // transient failure reading history (e.g. a repository IOException)
+        // surfaced as "cannot finish that try again" even though the session
+        // had genuinely ended. The reload is best-effort and must not turn a
+        // successful end into a reported failure.
+        var fixture = FeatureFixture.Create();
+        var viewModel = new TasksFocusViewModel(fixture.Context);
+        await viewModel.StartFocusOrThrowAsync(TestContext.Current.CancellationToken);
+        fixture.FocusSessions.ThrowOnListHistory = true;
+
+        await viewModel.EndFocusAsync(TestContext.Current.CancellationToken);
+
+        Assert.Null(viewModel.ErrorMessage);
+        Assert.Equal(FocusStatus.EndedEarly, viewModel.ActiveFocus!.Status);
+    }
+
+    [Fact]
     public async Task Focus_history_shows_friendly_status_text_and_local_time()
     {
         // Regression: the history list used to bind straight to the raw FocusSession, showing
@@ -2359,9 +2379,14 @@ public sealed class FeatureViewModelTests
             item => item.Status is FocusStatus.Running or FocusStatus.Paused);
         public bool RejectCreate { get; set; }
         public bool ThrowOnCreate { get; set; }
+        public bool ThrowOnListHistory { get; set; }
         public Task<FocusSession?> GetAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult(_sessions.GetValueOrDefault(id));
         public Task<FocusSession?> GetActiveAsync(CancellationToken cancellationToken) => Task.FromResult(Active);
-        public Task<IReadOnlyList<FocusSession>> ListHistoryAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<FocusSession>>(_sessions.Values.Where(item => item.Status is not (FocusStatus.Running or FocusStatus.Paused)).ToArray());
+        public Task<IReadOnlyList<FocusSession>> ListHistoryAsync(CancellationToken cancellationToken)
+        {
+            if (ThrowOnListHistory) throw new IOException("injected focus history repository failure");
+            return Task.FromResult<IReadOnlyList<FocusSession>>(_sessions.Values.Where(item => item.Status is not (FocusStatus.Running or FocusStatus.Paused)).ToArray());
+        }
         public Task<bool> TryCreateActiveAsync(FocusSession session, CancellationToken cancellationToken)
         {
             if (ThrowOnCreate) throw new IOException("injected focus repository failure");
