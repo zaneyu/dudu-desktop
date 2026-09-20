@@ -22,7 +22,7 @@ public interface IOverlayLifecycle : IAsyncDisposable
     void RestorePlacement();
 }
 
-public sealed class AppLifecycleCoordinator : IAsyncDisposable
+public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibilityReconciler
 {
     private readonly IAppHostLifecycle _host;
     private readonly IOverlayLifecycle _overlay;
@@ -234,27 +234,69 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
                 // Keeping it true lets fullscreen/pause/session transitions
                 // restore the pet after suppression ends.
                 _userVisible = true;
-                _presentationEnvironment?.SetUserVisible(true);
 
                 var fullscreen = TryReadFullscreen("show-fullscreen");
+                // The bare `fullscreen` term used to veto here even when
+                // HidePetDuringFullscreen is off, blocking an explicit tray/
+                // hotkey show whenever any window was fullscreen -- TryCanShow
+                // below already applies that preference correctly, so this is
+                // redundant with it and wrong on top of being redundant.
                 if (snapshot.FullscreenHidden
                     || _fullscreenHidden
-                    || fullscreen
                     || _locked
                     || _suspended
                     || !TryCanShow(fullscreen, _locked, _suspended, "show-gate", ignoreQuietHours: explicitUserGesture))
                 {
+                    // Vetoed: the overlay was never actually shown, so the
+                    // presentation layer must not be told otherwise -- pushing
+                    // true here used to let a held reminder animate into a
+                    // window that was never shown once the veto's reason ended
+                    // (e.g. quiet hours), then delete its row on that
+                    // "successful" presentation. _userVisible (her desired
+                    // state) stays true above so ReconcileVisibilityAsync can
+                    // retry once the veto ends.
+                    _presentationEnvironment?.SetUserVisible(false);
                     return;
                 }
 
                 // Keep the lifecycle gate held until the show request is
                 // issued. OnFullscreenChangedAsync updates the same state
                 // under this gate before it can hide the request again.
+                _presentationEnvironment?.SetUserVisible(true);
                 InvokeSafely(_overlay.Show, "user-show");
             }
             finally { _gate.Release(); }
         }
         finally { _visibilityGate.Release(); }
+    }
+
+    /// <summary>
+    /// Re-attempts the non-explicit show path when she still wants Dudu
+    /// visible (<see cref="_userVisible"/>) but the overlay is not actually
+    /// on screen -- the case an earlier vetoed <see cref="EnsureUserVisibleAsync"/>
+    /// leaves behind (e.g. quiet hours at sign-in). Nothing previously
+    /// retried that show once the veto's reason ended, so the pet stayed
+    /// invisible for the rest of the session. Ticked from <c>AppHost</c>'s
+    /// existing 30 s reminder tick, before the presentation gateway's own
+    /// release -- no new timer. Exception-safe: a failure here must never
+    /// interrupt that tick.
+    /// </summary>
+    public async Task ReconcileVisibilityAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var snapshot = await CaptureAsync(cancellationToken);
+            if (!snapshot.UserVisible || _overlay.IsVisible)
+            {
+                return;
+            }
+
+            await EnsureUserVisibleAsync(cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            ReportFailure("reconcile-visibility", exception);
+        }
     }
 
     private async Task HideForUserAsync(CancellationToken cancellationToken)

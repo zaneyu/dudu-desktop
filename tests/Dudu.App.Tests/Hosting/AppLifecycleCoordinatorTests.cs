@@ -1,4 +1,5 @@
 using Dudu.App.Hosting;
+using Dudu.App.Presentation;
 using Dudu.App.System;
 using Dudu.Core.Models;
 using Dudu.Core.Pet;
@@ -518,6 +519,97 @@ public sealed class AppLifecycleCoordinatorTests
         Assert.True(overlay.IsVisible);
     }
 
+    [Fact]
+    public async Task Vetoed_show_does_not_mark_the_pet_visible_and_reconcile_retries_once_the_veto_ends()
+    {
+        // Findings 3 & 4: EnsureUserVisibleAsync used to push
+        // SetUserVisible(true) to the presentation environment sink before
+        // its own veto check ran, so a sign-in launch during quiet hours told
+        // PresentationCoordinator the pet was visible even though the
+        // overlay was never shown -- a held reminder could then animate into
+        // that still-hidden window once quiet hours ended and have its row
+        // deleted on that "successful" presentation. Nothing previously
+        // re-attempted the show once the veto ended either, so the pet
+        // stayed invisible for the rest of the session.
+        // ReconcileVisibilityAsync (wired into AppHost's 30 s tick) now
+        // retries the show and only then reports the pet visible.
+        var overlay = new FakeOverlay { IsVisible = false };
+        var sink = new RecordingPresentationEnvironmentSink();
+        var quiet = true;
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            isQuietHours: () => quiet,
+            initialUserVisible: false,
+            presentationEnvironment: sink);
+
+        await lifecycle.SetUserVisibleAsync(true, TestContext.Current.CancellationToken);
+
+        Assert.Equal(0, overlay.ShowCount);
+        Assert.False(overlay.IsVisible);
+        Assert.Equal(false, sink.LastUserVisible);
+
+        quiet = false;
+        await lifecycle.ReconcileVisibilityAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, overlay.ShowCount);
+        Assert.True(overlay.IsVisible);
+        Assert.Equal(true, sink.LastUserVisible);
+    }
+
+    [Fact]
+    public async Task Reconcile_never_shows_a_pet_she_explicitly_hid()
+    {
+        // Finding 4: reconcile must only retry a vetoed *desired-visible*
+        // show, never override an explicit hide.
+        var overlay = new FakeOverlay { IsVisible = false };
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            initialUserVisible: false);
+
+        await lifecycle.ReconcileVisibilityAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(0, overlay.ShowCount);
+        Assert.False(overlay.IsVisible);
+    }
+
+    [Fact]
+    public async Task Explicit_show_is_not_vetoed_by_fullscreen_when_the_preference_is_off()
+    {
+        // Finding 5: EnsureUserVisibleAsync's veto used to include a bare
+        // `fullscreen` term that blocked the show whenever any window was
+        // fullscreen, even with HidePetDuringFullscreen off -- which
+        // TryCanShow (evaluated right after) deliberately permits. TryCanShow
+        // alone must decide.
+        var overlay = new FakeOverlay { IsVisible = false };
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, false, TimeSpan.FromMinutes(15)),
+            isFullscreen: () => true,
+            initialUserVisible: false);
+
+        await lifecycle.SetUserVisibleAsync(true, TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, overlay.ShowCount);
+        Assert.True(overlay.IsVisible);
+    }
+
     private sealed class FakeHost : IAppHostLifecycle
     {
         public Task ResumeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
@@ -534,5 +626,20 @@ public sealed class AppLifecycleCoordinatorTests
         public void Hide() { HideCount++; IsVisible = false; }
         public void RestorePlacement() => RestoreCount++;
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class RecordingPresentationEnvironmentSink : IPresentationEnvironmentSink
+    {
+        public bool? LastUserVisible { get; private set; }
+
+        public void SetSessionLocked(bool locked)
+        {
+        }
+
+        public void SetFullscreen(bool fullscreen)
+        {
+        }
+
+        public void SetUserVisible(bool visible) => LastUserVisible = visible;
     }
 }

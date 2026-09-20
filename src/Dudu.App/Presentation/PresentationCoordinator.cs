@@ -792,9 +792,14 @@ public sealed class PresentationCoordinator :
     {
         try
         {
-            // Live re-sample: the pushed _fullscreen flag is reconciled with a
-            // current read on every decision so PublishAsync/TickAsync never
-            // act on a stale poll. Any read failure is fail-closed (hidden).
+            // Re-sampled on every decision so PublishAsync/TickAsync never
+            // act on a stale poll -- but only when the constructor was given
+            // a real isFullscreenNow callback; production does not pass one,
+            // so this just reads back the last value SetFullscreen pushed
+            // (see the isFullscreenNow default above), which starts out
+            // false/unset until the events sink pushes a real reading during
+            // WindowsCompanionBootstrap, after this host's own startup tick
+            // has already run once. Any read failure is fail-closed (hidden).
             var liveFullscreen = ReadFullscreenFailClosed();
             bool sessionLocked;
             bool userHidden;

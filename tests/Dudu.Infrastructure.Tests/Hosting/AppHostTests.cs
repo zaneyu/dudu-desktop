@@ -185,16 +185,25 @@ public sealed class AppHostTests
         Assert.True(gateway.DatabaseInitializedAtStart);
         Assert.Equal(0, gateway.ReminderTickCountAtStart);
 
-        // TickAsync must only run after a successful reminder tick: by the
-        // time it is first invoked, the reminder service's tick count has
-        // already advanced.
-        Assert.Equal(1, gateway.TickCount);
-        Assert.Equal(1, gateway.ReminderTickCountAtFirstGatewayTick);
+        // Finding 2: the startup reminder tick advances the reminder engine
+        // but must not release held presentations -- by the time StartAsync
+        // returns, the events sink and startup visibility gate that push
+        // real fullscreen/lock/visibility state have not run yet (they run
+        // later, in WindowsCompanionBootstrap), so releasing here would
+        // animate a held item into a window that may not even be shown and
+        // then delete its row on success. TickAsync is deferred to the
+        // first regularly scheduled tick, below.
+        Assert.Equal(0, gateway.TickCount);
+        Assert.Equal(-1, gateway.ReminderTickCountAtFirstGatewayTick);
         Assert.Equal(0, gateway.DisposeCount);
 
         await fixture.Host.ResumeAsync(TestContext.Current.CancellationToken);
 
-        Assert.Equal(2, gateway.TickCount);
+        // The first tick that actually releases presentations: by the time
+        // it runs, the reminder service's tick count has already advanced
+        // twice (the startup tick plus this one).
+        Assert.Equal(1, gateway.TickCount);
+        Assert.Equal(2, gateway.ReminderTickCountAtFirstGatewayTick);
         Assert.Equal(2, gateway.ReminderTickCountAtLastGatewayTick);
         Assert.Equal(0, gateway.DisposeCount);
 
