@@ -79,30 +79,48 @@ public sealed class CompanionFeatureTransactionService : ICompanionFeatureTransa
                             SnoozedUntilUtc = previous.SnoozedUntilUtc,
                         };
                     }
-                    else if (!previous.Enabled && reminder.Enabled)
+                    else if (reminder.Enabled)
                     {
-                        // Re-enabling: `reminder.NextDueUtc` above was computed by
-                        // Create() for its own SHIPPED Daily rule, not the
-                        // preserved (possibly edited) Rule just restored a few
-                        // lines up -- e.g. an edited Interval(15m) rule must not
-                        // resume at tomorrow's shipped 10:00, and a
-                        // SelectedWeekdays rule must not fire on a day she never
-                        // selected. Recompute from the preserved rule instead,
-                        // anchored on the row's last known due time and using the
-                        // same nowUtc/localTimeZone Create used above; a stale
-                        // snooze from before the reminder was disabled must not
-                        // carry forward either. Falls back to Create's shipped
-                        // value only if that anchor yields nothing (e.g. the
-                        // existing row never had a due time).
-                        var recomputed = ReminderScheduler.NextOccurrence(
-                            toSave with { NextDueUtc = previous.NextDueUtc, SnoozedUntilUtc = null },
-                            nowUtc.ToUniversalTime(),
-                            localTimeZone);
+                        // Enabled here either because it is being re-enabled
+                        // after being disabled, or because it stayed enabled
+                        // but LocalTimeZoneId changed -- either way
+                        // `reminder.NextDueUtc` above was computed by Create()
+                        // for its own SHIPPED Daily rule, not the preserved
+                        // (possibly edited) Rule just restored a few lines up,
+                        // evaluated in the row's actual (new) time zone. An
+                        // edited Interval(15m) rule must not resume at
+                        // tomorrow's shipped 10:00, and an edited
+                        // SelectedWeekdays rule must not fire on a day she
+                        // never selected in the new zone. Recompute from the
+                        // preserved rule instead, anchored on the row's last
+                        // known due time and evaluated in the new zone; a
+                        // stale snooze from before must not carry forward
+                        // either.
+                        //
+                        // No `?? reminder.NextDueUtc` fallback: a preserved
+                        // rule whose NextOccurrence is null (e.g. a completed
+                        // Once-edited default, or one overdue past its own
+                        // occurrence) genuinely has no next occurrence and
+                        // must stay null, not silently resume on Create's
+                        // shipped schedule.
                         toSave = toSave with
                         {
-                            NextDueUtc = recomputed ?? reminder.NextDueUtc,
+                            NextDueUtc = ReminderScheduler.NextOccurrence(
+                                toSave with { NextDueUtc = previous.NextDueUtc, SnoozedUntilUtc = null },
+                                nowUtc.ToUniversalTime(),
+                                localTimeZone),
                             SnoozedUntilUtc = null,
                         };
+                    }
+                    else
+                    {
+                        // Disabling: nothing will fire while disabled, but the
+                        // row's real NextDueUtc must not be silently replaced
+                        // by Create's shipped value here -- that value would
+                        // later become the anchor for the re-enable recompute
+                        // above, poisoning it the same way this finding's
+                        // fall-through bug did.
+                        toSave = toSave with { NextDueUtc = previous.NextDueUtc };
                     }
 
                     // The Reminders page edits Title/Details on a default

@@ -2581,17 +2581,28 @@ public sealed class FeatureViewModelTests
                             SnoozedUntilUtc = previous.SnoozedUntilUtc,
                         };
                     }
-                    else if (!previous.Enabled && reminder.Enabled)
+                    else if (reminder.Enabled)
                     {
-                        var recomputed = Dudu.Core.Reminders.ReminderScheduler.NextOccurrence(
-                            toSave with { NextDueUtc = previous.NextDueUtc, SnoozedUntilUtc = null },
-                            nowUtc.ToUniversalTime(),
-                            localTimeZone);
+                        // Re-enabling, or staying enabled with a changed
+                        // LocalTimeZoneId: recompute from the preserved rule.
+                        // No `?? reminder.NextDueUtc` fallback -- a preserved
+                        // rule with no next occurrence (e.g. a completed
+                        // Once-edited default) must stay null.
                         toSave = toSave with
                         {
-                            NextDueUtc = recomputed ?? reminder.NextDueUtc,
+                            NextDueUtc = Dudu.Core.Reminders.ReminderScheduler.NextOccurrence(
+                                toSave with { NextDueUtc = previous.NextDueUtc, SnoozedUntilUtc = null },
+                                nowUtc.ToUniversalTime(),
+                                localTimeZone),
                             SnoozedUntilUtc = null,
                         };
+                    }
+                    else
+                    {
+                        // Disabling: carry the real NextDueUtc forward so it
+                        // doesn't get poisoned with Create's shipped value,
+                        // which would become the anchor for a later re-enable.
+                        toSave = toSave with { NextDueUtc = previous.NextDueUtc };
                     }
 
                     if (!Dudu.Core.Reminders.LocalReminderDefaults.IsKnownDefaultTitle(reminder.Id, previous.Title))
