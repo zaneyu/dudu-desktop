@@ -189,6 +189,63 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Next_countdown_text_reads_nothing_coming_up_when_every_saved_countdown_is_past()
+    {
+        // Regression: a non-empty Countdowns list where every entry has already
+        // gone by used to read "no countdowns yet ah" -- indistinguishable from
+        // an actually empty list.
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        fixture.Clock.UtcNow = DateTimeOffset.Parse("2026-09-19T08:00:00Z");
+        await fixture.Countdowns.SaveAsync(
+            new Countdown(
+                "old",
+                "Old visit",
+                DateTimeOffset.Parse("2026-09-10T12:00:00Z"),
+                isAllDay: false,
+                TimeZoneInfo.Utc),
+            ct);
+        var viewModel = new HomeViewModel(fixture.Context);
+
+        await viewModel.RefreshAsync(ct);
+
+        Assert.NotEmpty(viewModel.Countdowns);
+        Assert.Equal("nothing coming up", viewModel.NextCountdownText);
+    }
+
+    [Fact]
+    public async Task Next_countdown_text_tie_breaks_same_day_countdowns_by_target_time()
+    {
+        // Two countdowns landing on the same calendar day both sort as "days: 0",
+        // so the choice between them must be deterministic (earliest TargetUtc)
+        // rather than depending on Countdowns' incidental storage order.
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        fixture.Clock.UtcNow = DateTimeOffset.Parse("2026-09-19T08:00:00Z");
+        await fixture.Countdowns.SaveAsync(
+            new Countdown(
+                "later-today",
+                "Later today",
+                DateTimeOffset.Parse("2026-09-19T20:00:00Z"),
+                isAllDay: false,
+                TimeZoneInfo.Utc),
+            ct);
+        await fixture.Countdowns.SaveAsync(
+            new Countdown(
+                "earlier-today",
+                "Earlier today",
+                DateTimeOffset.Parse("2026-09-19T12:00:00Z"),
+                isAllDay: false,
+                TimeZoneInfo.Utc),
+            ct);
+        var viewModel = new HomeViewModel(fixture.Context);
+
+        await viewModel.RefreshAsync(ct);
+
+        Assert.Equal("Earlier today is today", viewModel.NextCountdownText);
+    }
+
+    [Fact]
     public void DescribeError_matches_FeatureViewModelBases_exception_to_copy_mapping()
     {
         // Home's code-behind click handlers run outside RunAsync and used to show

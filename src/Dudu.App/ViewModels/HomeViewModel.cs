@@ -144,7 +144,11 @@ public sealed class HomeViewModel : FeatureViewModelBase
     /// local calendar date has already gone by is excluded -- otherwise it would
     /// sort first forever and read as "is today" long after it happened -- but one
     /// whose calendar date is today still reads "is today" regardless of the exact
-    /// time it is due.</summary>
+    /// time it is due. Same-day countdowns tie-break on TargetUtc so the result is
+    /// stable instead of depending on Countdowns' incidental ordering. "no
+    /// countdowns yet ah" means the list itself is empty; when it has entries but
+    /// every one of them has already gone by, that reads "nothing coming up"
+    /// instead -- otherwise it would misreport an empty list.</summary>
     public string NextCountdownText
     {
         get
@@ -155,9 +159,13 @@ public sealed class HomeViewModel : FeatureViewModelBase
                 .Where(entry => entry.days is >= 0)
                 .Select(entry => (entry.countdown, days: entry.days!.Value))
                 .OrderBy(entry => entry.days)
+                .ThenBy(entry => entry.countdown.TargetUtc ?? DateTimeOffset.MaxValue)
                 .FirstOrDefault();
 
-            if (upcoming.countdown is null) return "no countdowns yet ah";
+            if (upcoming.countdown is null)
+            {
+                return Countdowns.Count > 0 ? "nothing coming up" : "no countdowns yet ah";
+            }
 
             return upcoming.days switch
             {
