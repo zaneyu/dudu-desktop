@@ -788,11 +788,11 @@ public sealed class PresentationCoordinator :
     /// reported and swallowed, matching every other secondary concern in this
     /// class (a toast, audio): it must never fail the presentation it is
     /// tracking.</summary>
-    private Task PersistHeldAsync(DurableNotification item, DateTimeOffset queuedUtc, CancellationToken cancellationToken)
+    private async Task PersistHeldAsync(DurableNotification item, DateTimeOffset queuedUtc, CancellationToken cancellationToken)
     {
         if (_heldPresentations is null)
         {
-            return Task.CompletedTask;
+            return;
         }
 
         bool toasted;
@@ -811,12 +811,27 @@ public sealed class PresentationCoordinator :
             item.ExpiresUtc,
             queuedUtc,
             toasted);
-        return ObserveAsync(() => _heldPresentations.SaveAsync(record, cancellationToken), "presentation-tick");
+        await ObserveAsync(() => _heldPresentations.SaveAsync(record, cancellationToken), "presentation-tick");
+
+        // H1: PublishAsync/RequeueHeldAsync enqueue the item into
+        // PresentationPolicy under _gate, then persist it here afterward (a
+        // DB call must not run under a lock) — so a concurrent TickAsync can
+        // dequeue-and-delete this row before this write lands, orphaning it
+        // (and duplicating the popup on the next restart, which would reload
+        // and re-present something already shown). Re-checking membership
+        // right after the write, and deleting if it lost that race, closes
+        // the window.
+        if (!_policy.IsQueued(item))
+        {
+            await RemoveHeldAsync(item.Key, cancellationToken);
+        }
     }
 
     /// <summary>Deletes the persisted row for a key that just left
-    /// PresentationPolicy's in-memory queue (released for presentation or
-    /// purged as expired). No-op when no repository was supplied.</summary>
+    /// PresentationPolicy's in-memory queue for good (released for
+    /// presentation, purged as expired, or lost the H1 race in
+    /// <see cref="PersistHeldAsync"/>). No-op when no repository was
+    /// supplied.</summary>
     private Task RemoveHeldAsync(string key, CancellationToken cancellationToken)
     {
         if (_heldPresentations is null)
