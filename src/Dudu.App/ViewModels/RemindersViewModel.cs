@@ -209,7 +209,7 @@ public sealed class RemindersViewModel : FeatureViewModelBase
             ArgumentNullException.ThrowIfNull(reminder);
             var now = _context.Clock.UtcNow.ToUniversalTime();
             var zone = ResolveTimeZone(reminder.LocalTimeZoneId);
-            var next = ReminderScheduler.NextOccurrence(reminder with { SnoozedUntilUtc = null }, now, zone);
+            var next = ReminderScheduler.NextOccurrenceAfterCompletion(reminder with { SnoozedUntilUtc = null }, now, zone);
             var occurrence = new ReminderOccurrence(reminder.Id, now);
             if (!await _context.Reminders.RecordOccurrencesAndAdvanceAsync(reminder, [occurrence], next, cancellationToken))
             {
@@ -247,10 +247,14 @@ public sealed class RemindersViewModel : FeatureViewModelBase
 
             // These stable IDs make toggle changes an upsert, not a duplicate
             // or a stale disabled default left behind by initial hydration.
+            // The transactional save itself (CompanionFeatureTransactionService)
+            // preserves NextDueUtc/SnoozedUntilUtc for any default whose own
+            // schedule this save did not touch.
             var defaults = (await _context.Reminders.ListAsync(cancellationToken))
                 .Where(item => item.Id is "default-hydration" or "default-break"
                     or LocalReminderDefaults.EveningCheckInId or LocalReminderDefaults.BedtimeId)
                 .ToArray();
+
             await MutateAsync(() =>
             {
                 foreach (var reminder in defaults)
@@ -305,5 +309,58 @@ public sealed class RemindersViewModel : FeatureViewModelBase
         try { return TimeZoneInfo.FindSystemTimeZoneById(timeZoneId); }
         catch (TimeZoneNotFoundException) when (string.Equals(timeZoneId, "UTC", StringComparison.OrdinalIgnoreCase))
         { return TimeZoneInfo.Utc; }
+    }
+}
+
+/// <summary>Turns a reminder's recurrence rule into a short, lowercase, local-time
+/// summary for the reminders list (e.g. "every day at 9:30 pm"). LocalTime and
+/// Period are already the reminder's own local wall-clock values, so no time
+/// zone conversion is needed here.</summary>
+public static class ReminderScheduleSummary
+{
+    private static readonly DayOfWeek[] WeekOrder =
+    [
+        DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday,
+        DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday,
+    ];
+
+    public static string Describe(RecurrenceRule rule) => rule switch
+    {
+        RecurrenceRule.Daily daily => $"every day at {FormatTime(daily.LocalTime)}",
+        RecurrenceRule.SelectedWeekdays weekdays =>
+            $"on {FormatDays(weekdays.Days)} at {FormatTime(weekdays.LocalTime)}",
+        RecurrenceRule.Interval interval => $"every {FormatPeriod(interval.Period)}",
+        _ => "once",
+    };
+
+    private static string FormatTime(TimeOnly localTime) =>
+        localTime.ToString("h:mm tt", global::System.Globalization.CultureInfo.InvariantCulture)
+            .ToLowerInvariant();
+
+    private static string FormatDays(IReadOnlySet<DayOfWeek> days) => string.Join(
+        ", ",
+        WeekOrder.Where(days.Contains).Select(day => day.ToString()[..3].ToLowerInvariant()));
+
+    private static string FormatPeriod(TimeSpan period)
+    {
+        if (period.TotalMinutes < 60 || period.TotalMinutes % 60 != 0)
+        {
+            var minutes = Math.Max(1, (int)period.TotalMinutes);
+            return minutes == 1 ? "1 minute" : $"{minutes} minutes";
+        }
+
+        if (period.TotalMinutes % 1440 == 0)
+        {
+            var days = (int)period.TotalDays;
+            return days switch
+            {
+                1 => "day",
+                7 => "week",
+                _ => $"{days} days",
+            };
+        }
+
+        var hours = (int)period.TotalHours;
+        return hours == 1 ? "1 hour" : $"{hours} hours";
     }
 }

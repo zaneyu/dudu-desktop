@@ -26,6 +26,26 @@ public abstract record RecurrenceRule
             : this(new HashSet<DayOfWeek>(days), localTime)
         {
         }
+
+        // The record-synthesized equality would compare Days by reference (sets
+        // do not override Equals/GetHashCode), so two rules with the identical
+        // selected days as different set instances would never compare equal.
+        // Compare by set membership instead.
+        public bool Equals(SelectedWeekdays? other) =>
+            other is not null
+            && LocalTime == other.LocalTime
+            && Days.SetEquals(other.Days);
+
+        public override int GetHashCode()
+        {
+            var daysHash = 0;
+            foreach (var day in Days)
+            {
+                daysHash ^= day.GetHashCode();
+            }
+
+            return HashCode.Combine(LocalTime, daysHash);
+        }
     }
 
     public sealed record Interval(

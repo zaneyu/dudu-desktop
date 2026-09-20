@@ -60,6 +60,24 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Completing_a_not_yet_due_reminder_consumes_its_pending_occurrence()
+    {
+        // Audit regression: completing used to call NextOccurrence with the real
+        // "now", which for a not-yet-due reminder just returns NextDueUtc
+        // unchanged, so "done" was a no-op and the toast still fired later.
+        var fixture = FeatureFixture.Create();
+        var reminder = fixture.Reminder with { NextDueUtc = fixture.Clock.UtcNow.AddHours(2) };
+        fixture.Reminders.Items.Add(reminder);
+        var viewModel = new RemindersViewModel(fixture.Context);
+
+        await viewModel.CompleteCommand.ExecuteAsync(reminder);
+
+        var updated = Assert.Single(viewModel.Reminders);
+        Assert.Equal(reminder.Id, updated.Id);
+        Assert.Null(updated.NextDueUtc);
+    }
+
+    [Fact]
     public async Task Saving_a_note_clears_the_editor_so_fresh_text_creates_a_new_note()
     {
         var fixture = FeatureFixture.Create();
@@ -1447,6 +1465,35 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Saving_reminder_preferences_preserves_next_due_and_snooze_for_an_unchanged_default()
+    {
+        // Audit regression: every save rebuilt all four defaults from scratch via
+        // LocalReminderDefaults.Create, wiping NextDueUtc/SnoozedUntilUtc even for
+        // a default whose own enabled-state and schedule this save never touched.
+        var fixture = FeatureFixture.Create();
+        var previous = fixture.Reminder with
+        {
+            Id = "default-hydration",
+            Enabled = true,
+            Rule = new RecurrenceRule.Daily(new TimeOnly(10, 0)),
+            NextDueUtc = DateTimeOffset.Parse("2026-09-12T11:45:00Z"),
+            SnoozedUntilUtc = DateTimeOffset.Parse("2026-09-12T11:30:00Z"),
+        };
+        fixture.Reminders.Items.Add(previous);
+        var viewModel = new RemindersViewModel(fixture.Context)
+        {
+            HydrationRemindersEnabled = true,
+            BreakRemindersEnabled = true,
+        };
+
+        await viewModel.SaveReminderPreferencesAsync(TestContext.Current.CancellationToken);
+
+        var saved = fixture.Reminders.Items.Single(item => item.Id == "default-hydration");
+        Assert.Equal(previous.NextDueUtc, saved.NextDueUtc);
+        Assert.Equal(previous.SnoozedUntilUtc, saved.SnoozedUntilUtc);
+    }
+
+    [Fact]
     public async Task Reminder_runtime_apply_failure_restores_exact_previous_default_rows()
     {
         var fixture = FeatureFixture.Create();
@@ -2081,12 +2128,31 @@ public sealed class FeatureViewModelTests
                 throw new IOException("injected reminder transaction failure");
             }
             await preferences.SaveAsync(value, cancellationToken);
+
+            // Mirrors CompanionFeatureTransactionService.SavePreferencesAndDefaultRemindersAsync:
+            // carry NextDueUtc/SnoozedUntilUtc over from the existing row when
+            // nothing that determines the schedule actually changed.
+            var existing = (await reminders.ListAsync(cancellationToken))
+                .ToDictionary(item => item.Id, StringComparer.Ordinal);
             foreach (var reminder in Dudu.Core.Reminders.LocalReminderDefaults.Create(
                 value,
                 nowUtc,
                 localTimeZone))
             {
-                await reminders.SaveAsync(reminder, cancellationToken);
+                var toSave = reminder;
+                if (existing.TryGetValue(reminder.Id, out var previous)
+                    && previous.Enabled == reminder.Enabled
+                    && previous.Rule == reminder.Rule
+                    && previous.LocalTimeZoneId == reminder.LocalTimeZoneId)
+                {
+                    toSave = reminder with
+                    {
+                        NextDueUtc = previous.NextDueUtc,
+                        SnoozedUntilUtc = previous.SnoozedUntilUtc,
+                    };
+                }
+
+                await reminders.SaveAsync(toSave, cancellationToken);
             }
         }
 
