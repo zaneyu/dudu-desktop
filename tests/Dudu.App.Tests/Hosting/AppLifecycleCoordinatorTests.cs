@@ -182,6 +182,50 @@ public sealed class AppLifecycleCoordinatorTests
     }
 
     [Fact]
+    public async Task Hotkey_skips_its_post_open_home_show_if_she_hid_while_it_ran()
+    {
+        // Finding 1: OnHotkeyAsync writes _userVisible=true + pushes true
+        // under _gate, releases the gate, awaits _openHome (which can run
+        // arbitrarily long -- it pumps the UI thread), and only then shows
+        // the overlay. A tray "hide" landing during _openHome used to end
+        // with the overlay shown anyway, despite _userVisible already false
+        // and false already pushed to the presentation sink -- permanently
+        // out of sync until some other caller happened to touch visibility
+        // again.
+        var overlay = new FakeOverlay { IsVisible = false };
+        var openHomeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseOpenHome = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            new Preferences(
+                AppTheme.System,
+                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
+                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+            initialUserVisible: false,
+            openHome: async _ =>
+            {
+                openHomeStarted.TrySetResult();
+                await releaseOpenHome.Task;
+            });
+
+        var hotkey = Task.Run(() => lifecycle.OnHotkeyAsync(cancellationToken), cancellationToken);
+        await openHomeStarted.Task.WaitAsync(cancellationToken);
+
+        // A tray "hide" lands while _openHome is still running -- it needs
+        // no gate the hotkey call is still holding, so it completes freely.
+        await lifecycle.SetUserVisibleAsync(false, cancellationToken);
+
+        releaseOpenHome.SetResult();
+        await hotkey;
+
+        Assert.Equal(0, overlay.ShowCount);
+        Assert.False(overlay.IsVisible);
+    }
+
+    [Fact]
     public async Task Hotkey_shows_the_pet_even_during_quiet_hours()
     {
         // Owner decision 1: quiet hours suppress proactive presentation

@@ -194,7 +194,33 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
         {
             await _openHome(cancellationToken);
         }
-        await InvokeVisualSafelyAsync(_overlay.Show, "hotkey-show", cancellationToken);
+
+        // Finding 1: _openHome above can run arbitrarily long (it pumps the
+        // UI thread), and a tray "hide" landing during it already flipped
+        // _userVisible to false and pushed false to the presentation sink
+        // via HideForUserAsync's own gate section. Showing the overlay
+        // unconditionally here would leave it visible with _userVisible
+        // false and false already pushed -- out of sync until some other
+        // caller happens to touch visibility again. Re-check under the same
+        // visibilityGate-then-gate nesting EnsureUserVisibleAsync uses, and
+        // skip the show if she has since hidden.
+        await _visibilityGate.WaitAsync(cancellationToken);
+        try
+        {
+            await _gate.WaitAsync(cancellationToken);
+            try
+            {
+                ThrowIfDisposed();
+                if (!_userVisible)
+                {
+                    return;
+                }
+            }
+            finally { _gate.Release(); }
+
+            InvokeSafely(_overlay.Show, "hotkey-show");
+        }
+        finally { _visibilityGate.Release(); }
     }
 
     public async Task OnUserShowOrHideAsync(CancellationToken cancellationToken = default)
