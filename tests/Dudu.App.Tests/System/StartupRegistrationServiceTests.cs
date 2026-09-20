@@ -186,6 +186,37 @@ public sealed class StartupRegistrationServiceTests
     }
 
     [Fact]
+    public async Task Packaged_denied_enable_still_caches_the_real_applied_state_before_throwing()
+    {
+        // Regression: SetEnabledAsync used to throw as soon as Windows
+        // denied the requested packaged startup-task state, without ever
+        // caching `applied` -- the actual current state, known right there.
+        // That left IsEnabled/IsEnabledKnown stale (or, on first launch,
+        // permanently unknown) instead of reflecting reality.
+        var startupDirectory = CreateStartupDirectory();
+        var writer = new FakeWriter();
+        var task = new FakePackagedStartupTask { ForcedResult = false };
+        await using var service = new StartupRegistrationService(
+            "/opt/Dudu.exe",
+            startupDirectory,
+            writer,
+            task);
+
+        try
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                service.SetEnabledAsync(true, TestContext.Current.CancellationToken));
+
+            Assert.True(service.IsEnabledKnown);
+            Assert.False(service.IsEnabled);
+        }
+        finally
+        {
+            Directory.Delete(startupDirectory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task Settings_service_persists_startup_setting_after_registration()
     {
         var writer = new FakeWriter();
@@ -469,11 +500,15 @@ public sealed class StartupRegistrationServiceTests
     {
         public List<bool> Requests { get; } = [];
 
+        /// <summary>When set, returned instead of the requested value, to
+        /// simulate Windows denying the requested state.</summary>
+        public bool? ForcedResult { get; set; }
+
         public Task<bool> SetEnabledAsync(bool enabled, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
             Requests.Add(enabled);
-            return Task.FromResult(enabled);
+            return Task.FromResult(ForcedResult ?? enabled);
         }
     }
 

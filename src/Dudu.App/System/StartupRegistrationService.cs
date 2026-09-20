@@ -153,14 +153,18 @@ public sealed class StartupRegistrationService : IAsyncDisposable
             {
                 await DeleteLegacyShortcutAsync(cancellationToken);
                 var applied = await _packagedStartupTask.SetEnabledAsync(enabled, cancellationToken);
+                // Cache the real state before throwing below: even when
+                // Windows denied the requested change, applied is still the
+                // actual current state, and callers deserve an accurate
+                // IsEnabled/IsEnabledKnown instead of a stale or unknown one.
+                Volatile.Write(ref _enabled, applied);
+                Volatile.Write(ref _enabledKnown, true);
                 if (applied != enabled)
                 {
                     throw new InvalidOperationException(
                         "Windows denied the requested packaged startup-task state.");
                 }
 
-                Volatile.Write(ref _enabled, applied);
-                Volatile.Write(ref _enabledKnown, true);
                 return;
             }
             if (enabled)
