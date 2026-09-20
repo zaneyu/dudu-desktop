@@ -268,20 +268,25 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
                 CreateDirectories();
                 await _database.InitializeAsync(operation.CancellationToken);
                 await StartPresentationGatewayAsync(operation.CancellationToken);
-                // Skip the presentation-release half of this startup tick:
-                // StartPresentationGatewayAsync just reloaded held rows into
-                // the gateway's in-memory queue, but the events sink that
-                // pushes SetFullscreen/SetSessionLocked and the startup
-                // visibility gate that pushes SetUserVisible both run later,
-                // in WindowsCompanionBootstrap, only after this host's
-                // StartAsync returns. Releasing here would see every one of
-                // those flags at its unset default (not fullscreen, not
-                // locked, visible) regardless of reality, animating a held
-                // item into a window that may not even be shown yet and then
-                // deleting its row on success. The reminder engine itself
-                // still ticks as before; only the release is deferred to the
-                // first regularly scheduled 30 s tick, by which point the
-                // events sink and visibility gate have both run.
+                // Skip both the reconcile and the presentation-release half
+                // of this startup tick: StartPresentationGatewayAsync just
+                // reloaded held rows into the gateway's in-memory queue, but
+                // the events sink that pushes SetFullscreen/SetSessionLocked
+                // and the startup visibility gate that pushes
+                // SetUserVisible both run later, in
+                // WindowsCompanionBootstrap, only after this host's
+                // StartAsync returns. Reconciling or releasing here would
+                // see every one of those flags at its unset default (not
+                // fullscreen, not locked, visible) regardless of reality --
+                // reconcile would show the overlay and push a real
+                // SetUserVisible(true) before any of that state is known,
+                // defeating the presentation gateway's initialUserHidden
+                // start, and releasing would animate a held item into a
+                // window that may not even be shown yet and then delete its
+                // row on success. The reminder engine itself still ticks as
+                // before; only the reconcile and the release are deferred
+                // to the first regularly scheduled 30 s tick, by which
+                // point the events sink and visibility gate have both run.
                 await RunReminderTickAsync(operation.CancellationToken, releasePresentations: false);
 
                 if (!await TryAcquireLifecycleGateAsync(_stopTimeout, operation.CancellationToken))
@@ -422,10 +427,13 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
     }
 
     /// <param name="releasePresentations">
-    /// Whether to also drain the presentation gateway's queue after the
-    /// reminder engine advances. False only for the one startup tick in
-    /// <see cref="RunStartAsync"/>, before the events sink and startup
-    /// visibility gate have pushed real fullscreen/lock/visibility state.
+    /// Whether to also reconcile visibility and drain the presentation
+    /// gateway's queue after the reminder engine advances. False only for
+    /// the one startup tick in <see cref="RunStartAsync"/>, before the
+    /// events sink and startup visibility gate have pushed real
+    /// fullscreen/lock/visibility state -- reconciling that early would
+    /// show the overlay and push a real value before that state is known,
+    /// defeating the presentation gateway's <c>initialUserHidden</c> start.
     /// </param>
     private async Task RunReminderTickAsync(
         CancellationToken cancellationToken,
@@ -434,18 +442,20 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
         await _reminderTickGate.WaitAsync(cancellationToken);
         try
         {
-            // Finding A(3): reconcile now runs at the START of every tick --
-            // including the startup tick, whose release is deferred -- not
-            // just before the release below. The reminder engine's own
-            // TickAsync can itself publish through the presentation gateway
-            // (a newly-due reminder), so reconciling only right before the
-            // release left that publish evaluated against a pet the sink
-            // may still believe is hidden from an earlier vetoed show that
-            // has since cleared. Give the pet a chance to come back on
-            // screen (e.g. quiet hours that vetoed an earlier explicit show
-            // have now ended) before the reminder engine -- and therefore
-            // any release -- runs at all.
-            await ReconcileVisibilityAsync(cancellationToken);
+            if (releasePresentations)
+            {
+                // Finding A(3): reconcile runs at the START of the tick, not
+                // just before the release below. The reminder engine's own
+                // TickAsync can itself publish through the presentation
+                // gateway (a newly-due reminder), so reconciling only right
+                // before the release left that publish evaluated against a
+                // pet the sink may still believe is hidden from an earlier
+                // vetoed show that has since cleared. Give the pet a chance
+                // to come back on screen (e.g. quiet hours that vetoed an
+                // earlier explicit show have now ended) before the reminder
+                // engine -- and therefore any release -- runs at all.
+                await ReconcileVisibilityAsync(cancellationToken);
+            }
             await _reminderService.TickAsync(cancellationToken);
             if (releasePresentations)
             {
@@ -498,7 +508,11 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
         }
         catch (Exception exception)
         {
-            ReportError("visibility-reconcile", exception);
+            // Finding 16: matches AppLifecycleCoordinator.ReconcileVisibilityAsync's
+            // own "reconcile-visibility" operation name for its identical
+            // failure -- one name for one logical operation, not two
+            // spellings that a diagnostics search has to know to try both.
+            ReportError("reconcile-visibility", exception);
         }
     }
 

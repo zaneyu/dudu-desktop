@@ -243,18 +243,25 @@ public sealed class AppHostTests
     [Fact]
     public async Task Reconcile_runs_before_the_reminder_engine_ticks_not_after()
     {
-        // Finding A(3): ReconcileVisibilityAsync must run at the START of
-        // every RunReminderTickAsync call -- including the startup tick,
-        // whose presentation release is deliberately deferred -- not just
-        // right before that release. The reminder engine's own TickAsync can
+        // Finding A(3): ReconcileVisibilityAsync must run at the START of a
+        // reminder tick that does reconcile, not just right before the
+        // presentation release. The reminder engine's own TickAsync can
         // itself publish through the presentation gateway (a newly-due
         // reminder), so reconciling only right before the release left that
         // publish evaluated against a pet the sink might still believe is
         // hidden from an earlier vetoed show that has since cleared.
         //
-        // Assert the ordering directly: at the moment reconcile observes the
-        // reminder tick count, it must not yet reflect the tick that is
-        // about to happen.
+        // Round 3 finding 3 (pre-handoff audit): the startup tick must not
+        // reconcile at all, not just defer its release -- at that point the
+        // events sink and startup visibility gate have not run yet (they run
+        // later, in WindowsCompanionBootstrap, only after this host's
+        // StartAsync returns), so every flag reconcile would read is still
+        // at its unset default. Reconciling there used to show the overlay
+        // and push a real SetUserVisible(true) before any of that state was
+        // known, defeating the presentation gateway's initialUserHidden
+        // start. So only the resume tick reconciles here -- once, with the
+        // reminder tick count still reflecting the startup tick that already
+        // ran (1), not yet the resume tick about to run.
         using var fixture = new AppHostFixture();
         var reconciler = new TestVisibilityReconciler(() => fixture.Reminder.TickCount);
         fixture.Host.AttachVisibilityReconciler(reconciler);
@@ -262,8 +269,8 @@ public sealed class AppHostTests
         await fixture.Host.StartAsync(TestContext.Current.CancellationToken);
         await fixture.Host.ResumeAsync(TestContext.Current.CancellationToken);
 
-        Assert.Equal(2, reconciler.Calls);
-        Assert.Equal([0, 1], reconciler.ReminderTickCountAtEachReconcile);
+        Assert.Equal(1, reconciler.Calls);
+        Assert.Equal([1], reconciler.ReminderTickCountAtEachReconcile);
         Assert.Equal(2, fixture.Reminder.TickCount);
 
         await fixture.Host.StopAsync(TestContext.Current.CancellationToken);
