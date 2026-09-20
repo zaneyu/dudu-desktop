@@ -101,6 +101,27 @@ public sealed class AudioCueService : IAsyncDisposable
                     _packIndexes[cueEvent] = (packIndex + 1) % AudioCueSelection.PacksFor(cueEvent).Count;
                 }
             }
+            else if (result.Status == AudioPlaybackStatus.Failed)
+            {
+                // A Failed result (e.g. the Windows player's bounded
+                // completion wait timing out) returns normally rather than
+                // throwing, so the catch block below never runs and this
+                // failure would otherwise be silent. Report it through the
+                // same seam thrown exceptions already use, and advance the
+                // variant/pack indexes -- but not the cooldown timestamps,
+                // which still gate retries -- so ReserveCue rotates off a
+                // cue or pack that just failed instead of re-picking it
+                // forever.
+                _errorReporter?.Report(
+                    "audio-cue-playback",
+                    new InvalidOperationException(
+                        $"Audio cue playback failed for pack '{packId}', event '{cueEvent}'."));
+                lock (_gate)
+                {
+                    _variantIndexes[packId!] = cueIndex + 1;
+                    _packIndexes[cueEvent] = (packIndex + 1) % AudioCueSelection.PacksFor(cueEvent).Count;
+                }
+            }
             return result;
         }
         catch (OperationCanceledException) when (playbackToken.IsCancellationRequested)
