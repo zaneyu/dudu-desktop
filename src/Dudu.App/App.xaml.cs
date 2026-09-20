@@ -205,9 +205,9 @@ public sealed partial class App : Application
             _settingsWindow.SetTitleBar(view.TitleBarElement);
             _settingsWindow.Closed += (_, _) =>
             {
-                view.OnHostWindowClosed();
                 var wasSafeMode = _settingsContext?.IsSafeMode == true;
                 _settingsWindow = null;
+                view.OnHostWindowClosed();
                 if (wasSafeMode)
                 {
                     // Safe mode composes no tray and no overlay, so this window is
