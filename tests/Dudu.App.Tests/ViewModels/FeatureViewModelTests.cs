@@ -59,6 +59,24 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Completing_a_not_yet_due_reminder_consumes_its_pending_occurrence()
+    {
+        // Audit regression: completing used to call NextOccurrence with the real
+        // "now", which for a not-yet-due reminder just returns NextDueUtc
+        // unchanged, so "done" was a no-op and the toast still fired later.
+        var fixture = FeatureFixture.Create();
+        var reminder = fixture.Reminder with { NextDueUtc = fixture.Clock.UtcNow.AddHours(2) };
+        fixture.Reminders.Items.Add(reminder);
+        var viewModel = new RemindersViewModel(fixture.Context);
+
+        await viewModel.CompleteCommand.ExecuteAsync(reminder);
+
+        var updated = Assert.Single(viewModel.Reminders);
+        Assert.Equal(reminder.Id, updated.Id);
+        Assert.Null(updated.NextDueUtc);
+    }
+
+    [Fact]
     public async Task Saving_a_note_clears_the_editor_so_fresh_text_creates_a_new_note()
     {
         var fixture = FeatureFixture.Create();

@@ -114,6 +114,27 @@ public static class ReminderScheduler
         };
     }
 
+    /// <summary>
+    /// What a reminder's next occurrence becomes once its currently pending one
+    /// is marked complete. Unlike <see cref="NextOccurrence"/>, this always
+    /// consumes the pending occurrence even if it is not yet due: it evaluates
+    /// as of max(nowUtc, NextDueUtc), so completing early does not leave the
+    /// original due time to still fire later.
+    /// </summary>
+    public static DateTimeOffset? NextOccurrenceAfterCompletion(
+        Reminder reminder,
+        DateTimeOffset nowUtc,
+        TimeZoneInfo timeZone)
+    {
+        ArgumentNullException.ThrowIfNull(reminder);
+
+        nowUtc = nowUtc.ToUniversalTime();
+        var effectiveNow = reminder.NextDueUtc is { } nextDueUtc && nextDueUtc.ToUniversalTime() > nowUtc
+            ? nextDueUtc.ToUniversalTime()
+            : nowUtc;
+        return NextOccurrence(reminder, effectiveNow, timeZone);
+    }
+
     public static ReminderReconciliation Reconcile(
         Reminder reminder,
         DateTimeOffset fromUtc,

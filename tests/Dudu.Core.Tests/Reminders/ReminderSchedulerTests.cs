@@ -677,6 +677,52 @@ public sealed class ReminderSchedulerTests
         Assert.Equal(DateTimeOffset.Parse("2026-09-12T09:00:00Z"), result.NextUtc);
     }
 
+    [Fact]
+    public void Completing_a_not_yet_due_once_reminder_consumes_its_pending_occurrence()
+    {
+        // Audit regression: completing used to call NextOccurrence with the
+        // real "now", which for a not-yet-due reminder just returns NextDueUtc
+        // unchanged -- so the toast still fired later even though "done" was
+        // pressed.
+        var reminder = new Reminder(
+            "once", "Once", null, true, new RecurrenceRule.Once(), "UTC",
+            QuietHoursBehavior.DeliverImmediately, MissedOccurrencePolicy.LatestOnly,
+            DateTimeOffset.Parse("2026-09-12T09:00:00Z"));
+
+        var next = ReminderScheduler.NextOccurrenceAfterCompletion(
+            reminder,
+            DateTimeOffset.Parse("2026-09-11T15:00:00Z"),
+            TimeZoneInfo.Utc);
+
+        Assert.Null(next);
+    }
+
+    [Fact]
+    public void Completing_a_not_yet_due_daily_reminder_advances_past_todays_occurrence()
+    {
+        var reminder = ReminderBuilder.AtLocalTime(21, 0).Build();
+
+        var next = ReminderScheduler.NextOccurrenceAfterCompletion(
+            reminder,
+            DateTimeOffset.Parse("2026-09-11T15:00:00Z"),
+            TimeZoneInfo.Utc);
+
+        Assert.Equal(DateTimeOffset.Parse("2026-09-12T21:00:00Z"), next);
+    }
+
+    [Fact]
+    public void Completing_an_already_due_reminder_matches_plain_next_occurrence()
+    {
+        var reminder = ReminderBuilder.AtLocalTime(9, 0).Build();
+        var now = DateTimeOffset.Parse("2026-09-11T10:00:00Z");
+
+        var expected = ReminderScheduler.NextOccurrence(reminder, now, TimeZoneInfo.Utc);
+        var actual = ReminderScheduler.NextOccurrenceAfterCompletion(reminder, now, TimeZoneInfo.Utc);
+
+        Assert.Equal(expected, actual);
+        Assert.Equal(DateTimeOffset.Parse("2026-09-12T09:00:00Z"), actual);
+    }
+
     private static RecurrenceRule RuleForTest(string rule) => rule switch
     {
         "once" => new RecurrenceRule.Once(),
