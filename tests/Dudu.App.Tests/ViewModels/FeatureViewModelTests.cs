@@ -73,6 +73,21 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Home_text_trims_a_saved_recipient_name_with_stray_whitespace()
+    {
+        // A name saved with stray surrounding whitespace must not leak into Home's
+        // copy as an extra space before the name or before the punctuation.
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        fixture.Profiles.Current = new Profile("  mei  ", OnboardingComplete: true);
+        var viewModel = new HomeViewModel(fixture.Context);
+
+        await viewModel.RefreshAsync(ct);
+
+        Assert.Equal("how was your day, mei?", viewModel.CheckInSectionHeading);
+    }
+
+    [Fact]
     public async Task Home_text_drops_the_name_clause_naturally_when_no_recipient_name_is_saved()
     {
         var fixture = FeatureFixture.Create();

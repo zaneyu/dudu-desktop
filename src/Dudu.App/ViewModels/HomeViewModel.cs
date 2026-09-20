@@ -272,7 +272,10 @@ public sealed class HomeViewModel : FeatureViewModelBase
             var profile = await _context.Profiles.GetAsync(ct);
             await MutateAsync(() =>
             {
-                _recipientName = profile?.RecipientName ?? string.Empty;
+                // Trimmed once here so Home's own copy and the toasts built from
+                // LocalReminderDefaults.PersonalizeTitle (which also trims) agree
+                // on exactly what counts as a blank name.
+                _recipientName = profile?.RecipientName?.Trim() ?? string.Empty;
                 NextReminder = reminders
                     .Where(reminder => reminder.Enabled)
                     .Where(reminder => reminder.NextDueUtc is not null)
