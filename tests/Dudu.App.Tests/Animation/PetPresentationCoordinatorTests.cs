@@ -82,6 +82,42 @@ public sealed class PetPresentationCoordinatorTests
     }
 
     [Fact]
+    public async Task One_shot_releases_the_gate_before_awaiting_a_slow_audio_cue()
+    {
+        // The shared gate also guards PresentationCoordinator.PresentAsync
+        // on the tick path. A slow audio cue must not hold this gate, or an
+        // unrelated tick-driven presentation stalls for the cue's duration.
+        var pet = PetStateMachine.CreateIdle();
+        using var gate = new SemaphoreSlim(1, 1);
+        var audioStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseAudio = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var coordinator = new PetPresentationCoordinator(
+            pet,
+            (_, _, _) => Task.CompletedTask,
+            gate: gate,
+            playAudioAsync: async (_, _) =>
+            {
+                audioStarted.TrySetResult();
+                await releaseAudio.Task;
+            });
+
+        var presentTask = coordinator.PresentOneShotAsync(
+            new PetEvent.AmbientRequested("greeting"),
+            "greeting",
+            TestContext.Current.CancellationToken);
+
+        await audioStarted.Task.WaitAsync(TestContext.Current.CancellationToken);
+
+        // The audio cue is still in flight, but the gate must already be
+        // free for another caller (e.g. the tick loop) to acquire.
+        Assert.True(await gate.WaitAsync(0, TestContext.Current.CancellationToken));
+        gate.Release();
+
+        releaseAudio.SetResult();
+        await presentTask;
+    }
+
+    [Fact]
     public async Task One_shot_completes_when_resolved_playback_is_an_infinite_fallback_loop()
     {
         var pet = PetStateMachine.CreateIdle();
