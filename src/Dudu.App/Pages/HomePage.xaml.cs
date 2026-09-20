@@ -128,7 +128,7 @@ public sealed partial class HomePage : Page
         }
         catch (Exception exception)
         {
-            HomeActionStatus.Text = exception.Message;
+            HomeActionStatus.Text = HomeViewModel.DescribeError(exception);
             global::System.Diagnostics.Trace.TraceError("Dudu action failed: {0}", exception);
         }
     }
@@ -147,7 +147,7 @@ public sealed partial class HomePage : Page
         }
         catch (Exception exception)
         {
-            HomeActionStatus.Text = exception.Message;
+            HomeActionStatus.Text = HomeViewModel.DescribeError(exception);
             global::System.Diagnostics.Trace.TraceError("Dudu comfort action failed: {0}", exception);
         }
     }

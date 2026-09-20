@@ -8,6 +8,61 @@ public static class LocalReminderDefaults
     public const string EveningCheckInId = "default-evening-checkin";
     public const string BedtimeId = "default-bedtime";
 
+    /// <summary>Neutral copy shipped for the evening check-in title. No token is ever
+    /// persisted; personalisation happens at display time via <see cref="PersonalizeTitle"/>.</summary>
+    public const string EveningCheckInDefaultTitle = "how was your day?";
+
+    /// <summary>The evening check-in title as it shipped before display-time
+    /// personalisation existed. Rows created by that version have this text baked
+    /// in verbatim (with "ada" hardcoded) and are recognised here so untouched
+    /// installs still personalise instead of always saying "ada".</summary>
+    public const string EveningCheckInLegacyTitle = "how was your day, ada?";
+
+    public const string BedtimeDefaultTitle = "shuijiaojiao";
+
+    public const string BedtimeLegacyTitle = "shuijiaojiao, ada";
+
+    public const string BedtimeDefaultDetails = "time to wind down. goodnight.";
+
+    public const string BedtimeLegacyDetails = "time to wind down. goodnight, ada.";
+
+    /// <summary>
+    /// Personalises a reminder's stored title or details text for display (toast,
+    /// Home summary) without ever rewriting what is persisted. Returns the
+    /// personalised copy only when <paramref name="reminderId"/> is one of the
+    /// default reminders and <paramref name="storedText"/> exactly matches that
+    /// reminder's neutral text or its legacy "ada" text; otherwise the stored text
+    /// -- including anything the user has edited -- passes through unchanged.
+    /// </summary>
+    public static string PersonalizeTitle(string reminderId, string storedText, string? recipientName)
+    {
+        ArgumentNullException.ThrowIfNull(reminderId);
+        ArgumentNullException.ThrowIfNull(storedText);
+
+        var trimmedName = recipientName?.Trim();
+        var clause = string.IsNullOrEmpty(trimmedName) ? string.Empty : $", {trimmedName}";
+
+        if (reminderId == EveningCheckInId
+            && (storedText == EveningCheckInDefaultTitle || storedText == EveningCheckInLegacyTitle))
+        {
+            return $"how was your day{clause}?";
+        }
+
+        if (reminderId == BedtimeId
+            && (storedText == BedtimeDefaultTitle || storedText == BedtimeLegacyTitle))
+        {
+            return $"shuijiaojiao{clause}";
+        }
+
+        if (reminderId == BedtimeId
+            && (storedText == BedtimeDefaultDetails || storedText == BedtimeLegacyDetails))
+        {
+            return $"time to wind down. goodnight{clause}.";
+        }
+
+        return storedText;
+    }
+
     public static IReadOnlyList<Reminder> Create(
         Preferences preferences,
         DateTimeOffset nowUtc,
@@ -37,7 +92,7 @@ public static class LocalReminderDefaults
                 timeZone),
             CreateReminder(
                 EveningCheckInId,
-                "how was your day, ada?",
+                EveningCheckInDefaultTitle,
                 preferences.EveningCheckInEnabled,
                 new TimeOnly(20, 0),
                 null,
@@ -47,13 +102,13 @@ public static class LocalReminderDefaults
                 MissedOccurrencePolicy.Skip),
             CreateReminder(
                 BedtimeId,
-                "shuijiaojiao, ada",
+                BedtimeDefaultTitle,
                 preferences.BedtimeRitualEnabled,
                 new TimeOnly(22, 0),
                 null,
                 nowUtc,
                 timeZone,
-                "time to wind down. goodnight, ada.",
+                BedtimeDefaultDetails,
                 MissedOccurrencePolicy.Skip),
         ];
     }

@@ -47,6 +47,160 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Home_text_takes_the_saved_recipient_name_instead_of_a_hardcoded_one()
+    {
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        fixture.Profiles.Current = new Profile("mei", OnboardingComplete: true);
+        fixture.Reminders.Items.Add(new Reminder(
+            LocalReminderDefaults.EveningCheckInId,
+            LocalReminderDefaults.EveningCheckInDefaultTitle,
+            "a little space to reflect. your check-in stays on this device.",
+            true,
+            new RecurrenceRule.Daily(new TimeOnly(20, 0)),
+            "UTC",
+            QuietHoursBehavior.WaitUntilQuietHoursEnd,
+            MissedOccurrencePolicy.Skip,
+            DateTimeOffset.Parse("2026-09-13T20:00:00Z")));
+        await fixture.Context.CheckInService.RecordAsync(MoodChoice.Okay, "finished my work", ct);
+        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddDays(1);
+        var viewModel = new HomeViewModel(fixture.Context);
+
+        await viewModel.RefreshAsync(ct);
+
+        Assert.Contains("how was your day, mei?", viewModel.NextReminderText);
+        Assert.Equal("how was your day, mei?", viewModel.CheckInSectionHeading);
+        Assert.Contains("how does today feel, mei?", viewModel.YesterdayReflectionText);
+    }
+
+    [Fact]
+    public async Task Home_text_trims_a_saved_recipient_name_with_stray_whitespace()
+    {
+        // A name saved with stray surrounding whitespace must not leak into Home's
+        // copy as an extra space before the name or before the punctuation.
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        fixture.Profiles.Current = new Profile("  mei  ", OnboardingComplete: true);
+        var viewModel = new HomeViewModel(fixture.Context);
+
+        await viewModel.RefreshAsync(ct);
+
+        Assert.Equal("how was your day, mei?", viewModel.CheckInSectionHeading);
+    }
+
+    [Fact]
+    public async Task Home_text_drops_the_name_clause_naturally_when_no_recipient_name_is_saved()
+    {
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        await fixture.Context.CheckInService.RecordAsync(MoodChoice.Okay, "finished my work", ct);
+        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddDays(1);
+        var viewModel = new HomeViewModel(fixture.Context);
+
+        await viewModel.RefreshAsync(ct);
+
+        Assert.Equal("how was your day?", viewModel.CheckInSectionHeading);
+        Assert.Contains("how does today feel?", viewModel.YesterdayReflectionText);
+    }
+
+    [Fact]
+    public async Task Next_countdown_text_names_the_soonest_countdown_and_its_days_remaining()
+    {
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        var viewModel = new HomeViewModel(fixture.Context)
+        {
+            CountdownTitle = "Anniversary",
+            CountdownTargetUtc = fixture.Clock.UtcNow.AddDays(10),
+        };
+        await viewModel.SaveCountdownAsync(ct);
+        viewModel.CountdownTitle = "Trip";
+        viewModel.CountdownTargetUtc = fixture.Clock.UtcNow.AddDays(2);
+        await viewModel.SaveCountdownAsync(ct);
+
+        Assert.Equal("Trip in 2 days", viewModel.NextCountdownText);
+    }
+
+    [Fact]
+    public async Task Next_countdown_text_reports_no_countdowns_when_none_are_saved()
+    {
+        var fixture = FeatureFixture.Create();
+        var viewModel = new HomeViewModel(fixture.Context);
+
+        await viewModel.RefreshAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal("no countdowns yet ah", viewModel.NextCountdownText);
+    }
+
+    [Fact]
+    public async Task Next_countdown_text_uses_local_calendar_days_not_a_floored_time_span()
+    {
+        // 14:00 today to midnight six calendar days later is 5 days 10 hours of raw
+        // remaining time -- floor(TotalDays) would read "in 5 days" -- but it is six
+        // local calendar dates away and must read "in 6 days".
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        fixture.Clock.UtcNow = DateTimeOffset.Parse("2026-09-19T14:00:00Z");
+        await fixture.Countdowns.SaveAsync(
+            new Countdown(
+                "trip",
+                "Trip",
+                DateTimeOffset.Parse("2026-09-25T00:00:00Z"),
+                isAllDay: false,
+                TimeZoneInfo.Utc),
+            ct);
+        var viewModel = new HomeViewModel(fixture.Context);
+
+        await viewModel.RefreshAsync(ct);
+
+        Assert.Equal("Trip in 6 days", viewModel.NextCountdownText);
+    }
+
+    [Fact]
+    public async Task Next_countdown_text_excludes_a_past_countdown_but_keeps_one_due_later_today()
+    {
+        // An already-past countdown must not keep sorting first and reading "is
+        // today" forever; a countdown whose calendar date genuinely is today must
+        // still read "is today" even though its exact time has not arrived yet.
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        fixture.Clock.UtcNow = DateTimeOffset.Parse("2026-09-19T08:00:00Z");
+        await fixture.Countdowns.SaveAsync(
+            new Countdown(
+                "old",
+                "Old visit",
+                DateTimeOffset.Parse("2026-09-10T12:00:00Z"),
+                isAllDay: false,
+                TimeZoneInfo.Utc),
+            ct);
+        await fixture.Countdowns.SaveAsync(
+            new Countdown(
+                "later",
+                "Later visit",
+                DateTimeOffset.Parse("2026-09-19T20:00:00Z"),
+                isAllDay: false,
+                TimeZoneInfo.Utc),
+            ct);
+        var viewModel = new HomeViewModel(fixture.Context);
+
+        await viewModel.RefreshAsync(ct);
+
+        Assert.Equal("Later visit is today", viewModel.NextCountdownText);
+    }
+
+    [Fact]
+    public void DescribeError_matches_FeatureViewModelBases_exception_to_copy_mapping()
+    {
+        // Home's code-behind click handlers run outside RunAsync and used to show
+        // exception.Message directly; DescribeError must map exceptions the same
+        // way RunAsync's ErrorMessage does so Home stays consistent with the
+        // other pages.
+        Assert.Equal("select one first", HomeViewModel.DescribeError(new ArgumentNullException("thing")));
+        Assert.Equal("aiyo bad input", HomeViewModel.DescribeError(new ArgumentException("aiyo bad input")));
+        Assert.Equal("cannot finish that try again", HomeViewModel.DescribeError(new InvalidCastException("boom")));
+    }
+
+    [Fact]
     public async Task Completing_a_reminder_persists_before_dismissing_pet_state()
     {
         var fixture = FeatureFixture.Create();
@@ -1441,8 +1595,8 @@ public sealed class FeatureViewModelTests
             item.Id == Dudu.Core.Reminders.LocalReminderDefaults.EveningCheckInId);
         var bedtime = fixture.Reminders.Items.Single(item =>
             item.Id == Dudu.Core.Reminders.LocalReminderDefaults.BedtimeId);
-        Assert.Equal("how was your day, ada?", evening.Title);
-        Assert.Equal("shuijiaojiao, ada", bedtime.Title);
+        Assert.Equal("how was your day?", evening.Title);
+        Assert.Equal("shuijiaojiao", bedtime.Title);
         Assert.Equal(new RecurrenceRule.Daily(new TimeOnly(20, 0)), evening.Rule);
         Assert.Equal(new RecurrenceRule.Daily(new TimeOnly(22, 0)), bedtime.Rule);
         Assert.All(new[] { evening, bedtime }, item =>
@@ -1732,6 +1886,7 @@ public sealed class FeatureViewModelTests
             FakeRemoteEnvelopeRepository remoteNotes,
             FakePreferencesRepository preferences,
             FakePlacementRepository placements,
+            FakeProfileRepository profiles,
             FakeTaskRepository tasks,
             FakeFocusRepository focusSessions,
             FakeCountdownRepository countdowns,
@@ -1747,6 +1902,7 @@ public sealed class FeatureViewModelTests
             RemoteNotes = remoteNotes;
             Preferences = preferences;
             Placements = placements;
+            Profiles = profiles;
             Tasks = tasks;
             FocusSessions = focusSessions;
             Countdowns = countdowns;
@@ -1763,6 +1919,7 @@ public sealed class FeatureViewModelTests
         public FakeRemoteEnvelopeRepository RemoteNotes { get; }
         public FakePreferencesRepository Preferences { get; }
         public FakePlacementRepository Placements { get; }
+        public FakeProfileRepository Profiles { get; }
         public FakeTaskRepository Tasks { get; }
         public FakeFocusRepository FocusSessions { get; }
         public FakeCountdownRepository Countdowns { get; }
@@ -1880,6 +2037,7 @@ public sealed class FeatureViewModelTests
                 remoteNotes,
                 preferenceRepository,
                 placementRepository,
+                profileRepository,
                 tasks,
                 focusSessions,
                 countdowns,
@@ -1983,8 +2141,13 @@ public sealed class FeatureViewModelTests
 
     private sealed class FakeProfileRepository : IProfileRepository
     {
-        public Task<Profile?> GetAsync(CancellationToken cancellationToken) => Task.FromResult<Profile?>(null);
-        public Task SaveAsync(Profile profile, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Profile? Current { get; set; }
+        public Task<Profile?> GetAsync(CancellationToken cancellationToken) => Task.FromResult(Current);
+        public Task SaveAsync(Profile profile, CancellationToken cancellationToken)
+        {
+            Current = profile;
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class FakePlacementRepository : IPetPlacementRepository

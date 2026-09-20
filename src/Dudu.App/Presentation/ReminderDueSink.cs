@@ -19,16 +19,19 @@ public sealed class ReminderDueSink : IReminderDueSink
 {
     private readonly IReminderRepository _reminders;
     private readonly Func<IUnsolicitedPresentationGateway> _gateway;
+    private readonly IProfileRepository? _profiles;
     private IAppHostErrorReporter? _errorReporter;
 
     public ReminderDueSink(
         IReminderRepository reminders,
         Func<IUnsolicitedPresentationGateway> gateway,
-        IAppHostErrorReporter? errorReporter = null)
+        IAppHostErrorReporter? errorReporter = null,
+        IProfileRepository? profiles = null)
     {
         _reminders = reminders ?? throw new ArgumentNullException(nameof(reminders));
         _gateway = gateway ?? throw new ArgumentNullException(nameof(gateway));
         _errorReporter = errorReporter;
+        _profiles = profiles;
     }
 
     /// <summary>
@@ -92,13 +95,41 @@ public sealed class ReminderDueSink : IReminderDueSink
                 return;
             }
 
+            // No placeholder is ever persisted: PersonalizeTitle recognises the default
+            // reminders' known neutral/legacy text and substitutes the recipient's name
+            // only for those; a user-edited or non-default title passes through as-is.
+            // The occurrence is already durably committed by this point, so a transient
+            // failure reading the profile must not drop the whole notification -- it is
+            // reported separately and the notify continues with the neutral copy.
+            string? recipientName = null;
+            if (_profiles is not null)
+            {
+                try
+                {
+                    recipientName = (await _profiles.GetAsync(cancellationToken))?.RecipientName;
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    ReportFailure("reminder-notify-profile", exception);
+                }
+            }
+
+            var title = LocalReminderDefaults.PersonalizeTitle(reminder.Id, reminder.Title, recipientName);
+            var details = reminder.Details is null
+                ? null
+                : LocalReminderDefaults.PersonalizeTitle(reminder.Id, reminder.Details, recipientName);
+
             var routine = reminder.Id is LocalReminderDefaults.EveningCheckInId or LocalReminderDefaults.BedtimeId;
             var body = reminder.Id == LocalReminderDefaults.EveningCheckInId
-                ? $"{reminder.Details} open Home to check in."
-                : reminder.Details;
+                ? $"{details} open Home to check in."
+                : details;
             var item = DurableNotification.Reminder(
                 reminder.Id,
-                reminder.Title,
+                title,
                 body: routine ? body : null,
                 animationKey: reminder.Id == LocalReminderDefaults.BedtimeId ? "sleep" : null,
                 expiresUtc: routine ? NextLocalMidnight(occurrence.DueUtc, reminder.LocalTimeZoneId) : null);

@@ -73,8 +73,8 @@ public sealed class LocalReminderDefaultsTests
 
         var evening = reminders.Single(reminder => reminder.Id == LocalReminderDefaults.EveningCheckInId);
         var bedtime = reminders.Single(reminder => reminder.Id == LocalReminderDefaults.BedtimeId);
-        Assert.Equal("how was your day, ada?", evening.Title);
-        Assert.Equal("shuijiaojiao, ada", bedtime.Title);
+        Assert.Equal("how was your day?", evening.Title);
+        Assert.Equal("shuijiaojiao", bedtime.Title);
         Assert.Equal(new RecurrenceRule.Daily(new TimeOnly(20, 0)), evening.Rule);
         Assert.Equal(new RecurrenceRule.Daily(new TimeOnly(22, 0)), bedtime.Rule);
 
@@ -132,6 +132,68 @@ public sealed class LocalReminderDefaultsTests
 
         var evening = reminders.Single(reminder => reminder.Id == LocalReminderDefaults.EveningCheckInId);
         Assert.Equal(DateTimeOffset.Parse("2026-11-02T04:00:00Z"), evening.NextDueUtc);
+    }
+
+    [Fact]
+    public void PersonalizeTitle_inserts_a_comma_led_name_for_neutral_default_text()
+    {
+        Assert.Equal(
+            "how was your day, mei?",
+            LocalReminderDefaults.PersonalizeTitle(
+                LocalReminderDefaults.EveningCheckInId, "how was your day?", "mei"));
+        Assert.Equal(
+            "shuijiaojiao, mei",
+            LocalReminderDefaults.PersonalizeTitle(
+                LocalReminderDefaults.BedtimeId, "shuijiaojiao", " mei "));
+        Assert.Equal(
+            "time to wind down. goodnight, mei.",
+            LocalReminderDefaults.PersonalizeTitle(
+                LocalReminderDefaults.BedtimeId, "time to wind down. goodnight.", "mei"));
+    }
+
+    [Fact]
+    public void PersonalizeTitle_drops_the_clause_cleanly_when_the_name_is_blank()
+    {
+        Assert.Equal(
+            "how was your day?",
+            LocalReminderDefaults.PersonalizeTitle(
+                LocalReminderDefaults.EveningCheckInId, "how was your day?", null));
+        Assert.Equal(
+            "shuijiaojiao",
+            LocalReminderDefaults.PersonalizeTitle(
+                LocalReminderDefaults.BedtimeId, "shuijiaojiao", "   "));
+    }
+
+    [Fact]
+    public void PersonalizeTitle_recognises_the_legacy_ada_text_shipped_before_this_existed()
+    {
+        // Rows persisted by the version that hardcoded "ada" into the stored text
+        // have no way to be migrated; recognising their exact legacy text lets an
+        // untouched install still personalise instead of forever saying "ada".
+        Assert.Equal(
+            "how was your day, mei?",
+            LocalReminderDefaults.PersonalizeTitle(
+                LocalReminderDefaults.EveningCheckInId, "how was your day, ada?", "mei"));
+        Assert.Equal(
+            "shuijiaojiao, mei",
+            LocalReminderDefaults.PersonalizeTitle(
+                LocalReminderDefaults.BedtimeId, "shuijiaojiao, ada", "mei"));
+        Assert.Equal(
+            "time to wind down. goodnight, mei.",
+            LocalReminderDefaults.PersonalizeTitle(
+                LocalReminderDefaults.BedtimeId, "time to wind down. goodnight, ada.", "mei"));
+    }
+
+    [Fact]
+    public void PersonalizeTitle_leaves_a_user_edited_or_non_default_title_unchanged()
+    {
+        Assert.Equal(
+            "drink water lor",
+            LocalReminderDefaults.PersonalizeTitle("default-hydration", "drink water lor", "mei"));
+        Assert.Equal(
+            "my custom bedtime text",
+            LocalReminderDefaults.PersonalizeTitle(
+                LocalReminderDefaults.BedtimeId, "my custom bedtime text", "mei"));
     }
 
     private static TimeZoneInfo FindPacificTimeZone()

@@ -56,6 +56,39 @@ public sealed class ProductionStartupContractTests
     }
 
     [Fact]
+    public void Production_reminder_due_sink_registration_passes_the_profile_repository()
+    {
+        // Resolving IReminderDueSink to the ReminderDueSink type (below) would still
+        // pass even if the `profiles:` argument were dropped from the registration --
+        // it is an optional constructor parameter, so the sink would silently fall
+        // back to never personalising a toast with the saved recipient name. This
+        // asserts the wiring itself, by source, the same way the null-default
+        // override above is asserted.
+        var root = FindRepositoryRoot();
+        var composition = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "Dudu.App",
+            "Hosting",
+            "WindowsCompanionProductionComposition.cs"));
+
+        var reminderSinkRegistration = composition.IndexOf(
+            "AddSingleton<IReminderDueSink>(provider => new ReminderDueSink(",
+            StringComparison.Ordinal);
+        var remoteNoteSinkRegistration = composition.IndexOf(
+            "AddSingleton<IRemoteNoteArrivalSink>(provider => new RemoteNoteArrivalSink(",
+            StringComparison.Ordinal);
+        var profilesArgument = composition.IndexOf(
+            "profiles: provider.GetRequiredService<IProfileRepository>()",
+            StringComparison.Ordinal);
+
+        Assert.True(reminderSinkRegistration >= 0);
+        Assert.True(remoteNoteSinkRegistration > reminderSinkRegistration);
+        Assert.True(profilesArgument > reminderSinkRegistration);
+        Assert.True(profilesArgument < remoteNoteSinkRegistration);
+    }
+
+    [Fact]
     public void Production_presentation_sinks_resolve_to_the_real_implementations()
     {
         // Unlike the source-text check above, this builds a real ServiceCollection and
