@@ -17,6 +17,7 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
     private int _selectedDurationMinutes = 25;
     private int _customDurationMinutes = 30;
     private bool _focusExpirySubscribed;
+    private readonly SemaphoreSlim _expiryReloadGate = new(1, 1);
 
     public TasksFocusViewModel(CompanionFeatureContext context)
     {
@@ -328,7 +329,33 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
     {
         try
         {
-            await RefreshAsync();
+            // This must not reuse the full RefreshAsync: that clears
+            // ErrorMessage/StatusMessage and toggles IsBusy, which are shared
+            // page state a user action may be relying on right now (an error
+            // banner she is reading, a command she is mid-run on) -- none of
+            // which this unattended background reload should touch. Only
+            // ActiveFocus/FocusHistory -- what actually changes when a
+            // session expires -- get reloaded, serialized against a
+            // dedicated gate so overlapping expiry events don't race each
+            // other (RunRefreshAsync's own _refreshGate is private to the
+            // base class and not reusable here).
+            await _expiryReloadGate.WaitAsync();
+            try
+            {
+                var focus = await _context.FocusService.GetCurrentAsync(CancellationToken.None);
+                var history = await _context.FocusSessions.ListHistoryAsync(CancellationToken.None);
+                await MutateAsync(() =>
+                {
+                    ActiveFocus = focus;
+                    FocusHistory.Clear();
+                    foreach (var session in history) FocusHistory.Add(ToHistoryEntry(session));
+                    OnPropertyChanged(nameof(IsFocusActive));
+                }, CancellationToken.None);
+            }
+            finally
+            {
+                _expiryReloadGate.Release();
+            }
         }
         catch (Exception exception)
         {

@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Reflection;
 using Dudu.App.Overlay;
 using Dudu.App.Hosting;
@@ -1607,12 +1608,26 @@ public sealed class FeatureViewModelTests
         // routed to the pet. If the Tasks & Focus page was open it kept showing the
         // session as running and its history list stayed stale until she navigated
         // away and back.
+        //
+        // Opus review follow-up 2: this reload must not clobber shared page state
+        // with no user action behind it -- it must not clear an error banner she
+        // is currently reading, and must not toggle IsBusy while a real user
+        // command might be running. Only ActiveFocus/FocusHistory should move.
         var fixture = FeatureFixture.Create();
         var viewModel = new TasksFocusViewModel(fixture.Context);
         var started = await viewModel.StartFocusOrThrowAsync(TestContext.Current.CancellationToken);
         viewModel.AttachFocusExpiry();
-        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddMinutes(26);
 
+        // An error banner she is currently reading, unrelated to focus.
+        viewModel.RequestDeleteTaskCommand.Execute(null);
+        Assert.Equal("select one first", viewModel.ErrorMessage);
+        var busyChanged = false;
+        viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(TasksFocusViewModel.IsBusy)) busyChanged = true;
+        };
+
+        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddMinutes(26);
         var completed = await fixture.Context.FocusService.CompleteExpiredAsync(
             started.Id, TestContext.Current.CancellationToken);
 
@@ -1620,6 +1635,9 @@ public sealed class FeatureViewModelTests
         Assert.False(viewModel.IsFocusActive);
         var entry = Assert.Single(viewModel.FocusHistory);
         Assert.Equal("completed", entry.StatusText);
+        Assert.False(viewModel.IsBusy);
+        Assert.False(busyChanged);
+        Assert.Equal("select one first", viewModel.ErrorMessage);
     }
 
     [Fact]
@@ -1658,6 +1676,10 @@ public sealed class FeatureViewModelTests
             started.Id, TestContext.Current.CancellationToken);
 
         Assert.True(completed);
+        // Opus review follow-up 2: the quiet reload never goes through
+        // RunAsync, so a failure here must stay silent -- not surface as an
+        // ErrorMessage the user never asked for.
+        Assert.Null(viewModel.ErrorMessage);
     }
 
     [Theory]
