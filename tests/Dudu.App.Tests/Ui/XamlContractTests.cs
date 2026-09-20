@@ -318,6 +318,40 @@ public sealed class XamlContractTests
         }
     }
 
+    [Fact]
+    public void Startup_toggle_is_not_x_bound_and_is_initialized_before_the_view_model_refresh()
+    {
+        // Opus review regression: StartupToggle.IsChecked used to be
+        // {x:Bind Startup.Current.LaunchAtSignIn, Mode=OneTime}. x:Bind evaluates during
+        // InitializeComponent(), before Page_Loaded ever runs and before
+        // _suppressStartupToggle exists, so setting IsChecked there fired the
+        // Checked/Unchecked handler unsuppressed and performed a real OS
+        // startup-registration write on every Home page load. The checkbox state must
+        // instead come only from RefreshStartupRecovery(), which sets it under the
+        // suppression flag, and that must run before (not after) the view-model refresh
+        // so the checkbox reflects the real state immediately.
+        var root = FindRepositoryRoot();
+        var homeXaml = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml"));
+        var checkboxMatch = Regex.Match(homeXaml, "<CheckBox x:Name=\"StartupToggle\"[^>]*/>");
+        Assert.True(checkboxMatch.Success, "StartupToggle CheckBox not found in HomePage.xaml.");
+        Assert.DoesNotContain("IsChecked", checkboxMatch.Value, StringComparison.Ordinal);
+
+        var homeCode = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml.cs"));
+        var loadedStart = homeCode.IndexOf("private async void Page_Loaded(", StringComparison.Ordinal);
+        var loadedEnd = homeCode.IndexOf("\n    }", loadedStart, StringComparison.Ordinal);
+        Assert.True(loadedStart >= 0);
+        Assert.True(loadedEnd > loadedStart);
+        var loadedBody = homeCode[loadedStart..loadedEnd];
+
+        var refreshRecoveryIndex = loadedBody.IndexOf("RefreshStartupRecovery();", StringComparison.Ordinal);
+        var refreshAsyncIndex = loadedBody.IndexOf("await ViewModel.RefreshAsync();", StringComparison.Ordinal);
+        Assert.True(refreshRecoveryIndex >= 0, "Page_Loaded no longer calls RefreshStartupRecovery().");
+        Assert.True(refreshAsyncIndex >= 0, "Page_Loaded no longer calls ViewModel.RefreshAsync().");
+        Assert.True(
+            refreshRecoveryIndex < refreshAsyncIndex,
+            "RefreshStartupRecovery() must run before ViewModel.RefreshAsync() in Page_Loaded.");
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

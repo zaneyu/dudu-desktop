@@ -29,6 +29,12 @@ public sealed partial class HomePage : Page
 
     private async void Page_Loaded(object sender, RoutedEventArgs args)
     {
+        // Run before the (possibly slow, possibly failing) view-model refresh so the
+        // checkbox reflects the real startup registration immediately: the XAML no
+        // longer binds StartupToggle.IsChecked, so until this runs it would otherwise
+        // sit at the CheckBox default instead of the actual state.
+        RefreshStartupRecovery();
+
         try
         {
             await ViewModel.RefreshAsync();
@@ -37,8 +43,6 @@ public sealed partial class HomePage : Page
         {
             global::System.Diagnostics.Trace.TraceError("Dudu home refresh failed: {0}", exception);
         }
-
-        RefreshStartupRecovery();
     }
 
     private void RefreshStartupRecovery()
@@ -49,8 +53,12 @@ public sealed partial class HomePage : Page
             ? Startup.ReconciliationError ?? "aiyo startup registration needs another try"
             : string.Empty;
 
-        // Keep the checkbox on the last applied state: after a failed write is reverted and
-        // "try again" then succeeds, nothing else would re-check it (the binding is OneTime).
+        // Sets the checkbox's initial and every subsequent state imperatively (the XAML
+        // does not bind IsChecked at all -- x:Bind evaluates during InitializeComponent,
+        // before this suppression flag exists, so a OneTime IsChecked binding would fire
+        // Checked/Unchecked and perform a real OS startup-registration write on every
+        // Home load). Also keeps the checkbox on the last applied state after a failed
+        // write is reverted and "try again" then succeeds.
         _suppressStartupToggle = true;
         try
         {

@@ -106,7 +106,7 @@
             </StackPanel>
 
             <StackPanel Spacing="8">
-                <CheckBox x:Name="StartupToggle" Content="launch dudu when i sign in" IsChecked="{x:Bind Startup.Current.LaunchAtSignIn, Mode=OneTime}" Checked="StartupToggle_Changed" Unchecked="StartupToggle_Changed" AutomationProperties.AutomationId="SettingsLaunchAtSignIn" AutomationProperties.Name="launch dudu when i sign in" />
+                <CheckBox x:Name="StartupToggle" Content="launch dudu when i sign in" Checked="StartupToggle_Changed" Unchecked="StartupToggle_Changed" AutomationProperties.AutomationId="SettingsLaunchAtSignIn" AutomationProperties.Name="launch dudu when i sign in" />
                 <TextBlock Text="startup registration is managed locally on this pc" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                 <StackPanel x:Name="StartupRecoveryPanel" Spacing="8" Visibility="Collapsed">
                     <TextBlock x:Name="StartupRecoveryMessage" AutomationProperties.AutomationId="HomeStartupRecoveryMessage" AutomationProperties.Name="startup recovery message" Foreground="{ThemeResource WarningBrush}" TextWrapping="Wrap" />
