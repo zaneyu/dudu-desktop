@@ -1,4 +1,5 @@
 using Dudu.App.Animation;
+using Dudu.App.Hosting;
 using Dudu.App.Presentation;
 using Dudu.App.System;
 using Dudu.Core.Abstractions;
@@ -221,6 +222,32 @@ public sealed class ReminderDueSinkTests
         Assert.Equal("lights out bb", item.Title);
     }
 
+    [Fact]
+    public async Task A_transient_profile_read_failure_still_publishes_with_the_neutral_title()
+    {
+        // The occurrence is already durably committed by the time this sink runs; a
+        // profile-read failure (e.g. a transient SQLITE_BUSY) must not drop the
+        // whole notification. It falls back to the neutral copy and reports the
+        // failure separately instead of throwing.
+        var reminders = new RecordingReminderRepository(
+            MakeReminder(LocalReminderDefaults.EveningCheckInId, LocalReminderDefaults.EveningCheckInDefaultTitle));
+        var gateway = new RecordingGateway();
+        var failure = new InvalidOperationException("profiles table busy");
+        var profiles = new ThrowingProfileRepository(failure);
+        var reporter = new RecordingErrorReporter();
+        var sink = new ReminderDueSink(reminders, () => gateway, reporter, profiles);
+
+        await sink.NotifyAsync(
+            new ReminderOccurrence(LocalReminderDefaults.EveningCheckInId, DueUtc),
+            TestContext.Current.CancellationToken);
+
+        var item = Assert.IsType<DurableNotification>(gateway.LastItem);
+        Assert.Equal("how was your day?", item.Title);
+        var report = Assert.Single(reporter.Reports);
+        Assert.Equal("reminder-notify-profile", report.Operation);
+        Assert.Same(failure, report.Exception);
+    }
+
     private static Reminder MakeReminder(
         string id,
         string title,
@@ -245,6 +272,24 @@ public sealed class ReminderDueSinkTests
 
         public Task SaveAsync(Profile profile, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+    }
+
+    private sealed class ThrowingProfileRepository(Exception failure) : IProfileRepository
+    {
+        public Task<Profile?> GetAsync(CancellationToken cancellationToken) => Task.FromException<Profile?>(failure);
+
+        public Task SaveAsync(Profile profile, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed record ErrorReport(string Operation, Exception Exception);
+
+    private sealed class RecordingErrorReporter : IAppHostErrorReporter
+    {
+        public List<ErrorReport> Reports { get; } = [];
+
+        public void Report(string operation, Exception exception) =>
+            Reports.Add(new ErrorReport(operation, exception));
     }
 
     private sealed class RecordingReminderRepository(params Reminder[] reminders) : IReminderRepository

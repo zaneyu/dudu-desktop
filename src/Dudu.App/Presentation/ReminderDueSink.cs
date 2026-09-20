@@ -98,9 +98,26 @@ public sealed class ReminderDueSink : IReminderDueSink
             // No placeholder is ever persisted: PersonalizeTitle recognises the default
             // reminders' known neutral/legacy text and substitutes the recipient's name
             // only for those; a user-edited or non-default title passes through as-is.
-            var recipientName = _profiles is null
-                ? null
-                : (await _profiles.GetAsync(cancellationToken))?.RecipientName;
+            // The occurrence is already durably committed by this point, so a transient
+            // failure reading the profile must not drop the whole notification -- it is
+            // reported separately and the notify continues with the neutral copy.
+            string? recipientName = null;
+            if (_profiles is not null)
+            {
+                try
+                {
+                    recipientName = (await _profiles.GetAsync(cancellationToken))?.RecipientName;
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    ReportFailure("reminder-notify-profile", exception);
+                }
+            }
+
             var title = LocalReminderDefaults.PersonalizeTitle(reminder.Id, reminder.Title, recipientName);
             var details = reminder.Details is null
                 ? null
