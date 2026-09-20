@@ -53,7 +53,7 @@ public sealed class FeatureViewModelTests
         fixture.Profiles.Current = new Profile("mei", OnboardingComplete: true);
         fixture.Reminders.Items.Add(new Reminder(
             LocalReminderDefaults.EveningCheckInId,
-            "how was your day{recipient}?",
+            LocalReminderDefaults.EveningCheckInDefaultTitle,
             "a little space to reflect. your check-in stays on this device.",
             true,
             new RecurrenceRule.Daily(new TimeOnly(20, 0)),
@@ -1365,8 +1365,8 @@ public sealed class FeatureViewModelTests
             item.Id == Dudu.Core.Reminders.LocalReminderDefaults.EveningCheckInId);
         var bedtime = fixture.Reminders.Items.Single(item =>
             item.Id == Dudu.Core.Reminders.LocalReminderDefaults.BedtimeId);
-        Assert.Equal("how was your day{recipient}?", evening.Title);
-        Assert.Equal("shuijiaojiao{recipient}", bedtime.Title);
+        Assert.Equal("how was your day?", evening.Title);
+        Assert.Equal("shuijiaojiao", bedtime.Title);
         Assert.Equal(new RecurrenceRule.Daily(new TimeOnly(20, 0)), evening.Rule);
         Assert.Equal(new RecurrenceRule.Daily(new TimeOnly(22, 0)), bedtime.Rule);
         Assert.All(new[] { evening, bedtime }, item =>

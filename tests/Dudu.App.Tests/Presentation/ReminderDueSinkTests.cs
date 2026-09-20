@@ -45,8 +45,10 @@ public sealed class ReminderDueSinkTests
             new ReminderOccurrence(LocalReminderDefaults.BedtimeId, DueUtc),
             TestContext.Current.CancellationToken);
 
+        // No profile is wired, so the legacy "ada" details personalise down to the
+        // neutral copy (an unknown recipient) rather than keep saying "ada".
         var item = Assert.IsType<DurableNotification>(gateway.LastItem);
-        Assert.Equal("time to wind down. goodnight, ada.", item.Body);
+        Assert.Equal("time to wind down. goodnight.", item.Body);
         Assert.Equal("sleep", item.AnimationKey);
         Assert.Equal(DateTimeOffset.Parse("2026-09-18T00:00:00Z"), item.ExpiresUtc);
         Assert.False(gateway.LastBypass);
@@ -110,7 +112,7 @@ public sealed class ReminderDueSinkTests
     public async Task Toast_title_never_contains_reflection_content()
     {
         var reminders = new RecordingReminderRepository(
-            MakeReminder(LocalReminderDefaults.EveningCheckInId, "how was your day, ada?"));
+            MakeReminder(LocalReminderDefaults.EveningCheckInId, LocalReminderDefaults.EveningCheckInDefaultTitle));
         var gateway = new RecordingGateway();
         var sink = new ReminderDueSink(reminders, () => gateway);
 
@@ -119,17 +121,17 @@ public sealed class ReminderDueSinkTests
             TestContext.Current.CancellationToken);
 
         var item = Assert.IsType<DurableNotification>(gateway.LastItem);
-        Assert.Equal("how was your day, ada?", item.Title);
+        Assert.Equal("how was your day?", item.Title);
         Assert.Equal("a little space to reflect. your check-in stays on this device. open Home to check in.", item.Body);
     }
 
     [Fact]
-    public async Task Evening_checkin_title_and_body_take_the_saved_recipient_name()
+    public async Task Evening_checkin_title_takes_the_saved_recipient_name()
     {
         var reminders = new RecordingReminderRepository(
             MakeReminder(
                 LocalReminderDefaults.EveningCheckInId,
-                "how was your day{recipient}?"));
+                LocalReminderDefaults.EveningCheckInDefaultTitle));
         var gateway = new RecordingGateway();
         var profiles = new RecordingProfileRepository(new Profile("mei", OnboardingComplete: true));
         var sink = new ReminderDueSink(reminders, () => gateway, profiles: profiles);
@@ -148,8 +150,8 @@ public sealed class ReminderDueSinkTests
         var reminders = new RecordingReminderRepository(
             MakeReminder(
                 LocalReminderDefaults.BedtimeId,
-                "shuijiaojiao{recipient}",
-                details: "time to wind down. goodnight{recipient}."));
+                LocalReminderDefaults.BedtimeDefaultTitle,
+                details: LocalReminderDefaults.BedtimeDefaultDetails));
         var gateway = new RecordingGateway();
         var profiles = new RecordingProfileRepository(new Profile(string.Empty, OnboardingComplete: true));
         var sink = new ReminderDueSink(reminders, () => gateway, profiles: profiles);
@@ -164,10 +166,31 @@ public sealed class ReminderDueSinkTests
     }
 
     [Fact]
-    public async Task Reminders_already_stored_with_a_baked_in_name_are_unaffected_by_the_saved_profile()
+    public async Task Reminders_already_stored_with_the_legacy_baked_in_name_still_personalise()
     {
-        // No IProfileRepository wired at all: the sink must still behave exactly as
-        // before for rows persisted before recipient-name substitution existed.
+        // Rows persisted by the version that hardcoded "ada" into the stored title
+        // are recognised by their exact legacy text so an untouched install still
+        // gets personalised copy instead of always saying "ada".
+        var reminders = new RecordingReminderRepository(
+            MakeReminder(LocalReminderDefaults.EveningCheckInId, "how was your day, ada?"));
+        var gateway = new RecordingGateway();
+        var profiles = new RecordingProfileRepository(new Profile("mei", OnboardingComplete: true));
+        var sink = new ReminderDueSink(reminders, () => gateway, profiles: profiles);
+
+        await sink.NotifyAsync(
+            new ReminderOccurrence(LocalReminderDefaults.EveningCheckInId, DueUtc),
+            TestContext.Current.CancellationToken);
+
+        var item = Assert.IsType<DurableNotification>(gateway.LastItem);
+        Assert.Equal("how was your day, mei?", item.Title);
+    }
+
+    [Fact]
+    public async Task Legacy_ada_text_falls_back_to_neutral_copy_when_no_profile_is_wired()
+    {
+        // No IProfileRepository wired at all (recipientName is always null): the
+        // legacy text is still a recognised default, so it personalises down to the
+        // neutral copy rather than keep saying "ada" to a possibly-different person.
         var reminders = new RecordingReminderRepository(
             MakeReminder(LocalReminderDefaults.EveningCheckInId, "how was your day, ada?"));
         var gateway = new RecordingGateway();
@@ -178,7 +201,24 @@ public sealed class ReminderDueSinkTests
             TestContext.Current.CancellationToken);
 
         var item = Assert.IsType<DurableNotification>(gateway.LastItem);
-        Assert.Equal("how was your day, ada?", item.Title);
+        Assert.Equal("how was your day?", item.Title);
+    }
+
+    [Fact]
+    public async Task A_user_edited_title_is_never_personalised()
+    {
+        var reminders = new RecordingReminderRepository(
+            MakeReminder(LocalReminderDefaults.BedtimeId, "lights out bb"));
+        var gateway = new RecordingGateway();
+        var profiles = new RecordingProfileRepository(new Profile("mei", OnboardingComplete: true));
+        var sink = new ReminderDueSink(reminders, () => gateway, profiles: profiles);
+
+        await sink.NotifyAsync(
+            new ReminderOccurrence(LocalReminderDefaults.BedtimeId, DueUtc),
+            TestContext.Current.CancellationToken);
+
+        var item = Assert.IsType<DurableNotification>(gateway.LastItem);
+        Assert.Equal("lights out bb", item.Title);
     }
 
     private static Reminder MakeReminder(

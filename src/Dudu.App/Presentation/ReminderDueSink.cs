@@ -95,16 +95,16 @@ public sealed class ReminderDueSink : IReminderDueSink
                 return;
             }
 
-            // Reminder text may carry LocalReminderDefaults.RecipientNameToken; rows
-            // persisted before the token existed have a name already baked in and are
-            // left untouched by ApplyRecipientName.
+            // No placeholder is ever persisted: PersonalizeTitle recognises the default
+            // reminders' known neutral/legacy text and substitutes the recipient's name
+            // only for those; a user-edited or non-default title passes through as-is.
             var recipientName = _profiles is null
                 ? null
                 : (await _profiles.GetAsync(cancellationToken))?.RecipientName;
-            var title = LocalReminderDefaults.ApplyRecipientName(reminder.Title, recipientName);
+            var title = LocalReminderDefaults.PersonalizeTitle(reminder.Id, reminder.Title, recipientName);
             var details = reminder.Details is null
                 ? null
-                : LocalReminderDefaults.ApplyRecipientName(reminder.Details, recipientName);
+                : LocalReminderDefaults.PersonalizeTitle(reminder.Id, reminder.Details, recipientName);
 
             var routine = reminder.Id is LocalReminderDefaults.EveningCheckInId or LocalReminderDefaults.BedtimeId;
             var body = reminder.Id == LocalReminderDefaults.EveningCheckInId

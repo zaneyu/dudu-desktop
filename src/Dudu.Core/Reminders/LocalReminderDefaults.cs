@@ -8,26 +8,59 @@ public static class LocalReminderDefaults
     public const string EveningCheckInId = "default-evening-checkin";
     public const string BedtimeId = "default-bedtime";
 
-    /// <summary>
-    /// Marks where a recipient's name belongs in default reminder text.
-    /// Reminders created before this token existed were persisted with a
-    /// name already baked in (e.g. "ada") and contain no token, so
-    /// <see cref="ApplyRecipientName"/> leaves them untouched -- no
-    /// migration of stored rows is needed.
-    /// </summary>
-    public const string RecipientNameToken = "{recipient}";
+    /// <summary>Neutral copy shipped for the evening check-in title. No token is ever
+    /// persisted; personalisation happens at display time via <see cref="PersonalizeTitle"/>.</summary>
+    public const string EveningCheckInDefaultTitle = "how was your day?";
+
+    /// <summary>The evening check-in title as it shipped before display-time
+    /// personalisation existed. Rows created by that version have this text baked
+    /// in verbatim (with "ada" hardcoded) and are recognised here so untouched
+    /// installs still personalise instead of always saying "ada".</summary>
+    public const string EveningCheckInLegacyTitle = "how was your day, ada?";
+
+    public const string BedtimeDefaultTitle = "shuijiaojiao";
+
+    public const string BedtimeLegacyTitle = "shuijiaojiao, ada";
+
+    public const string BedtimeDefaultDetails = "time to wind down. goodnight.";
+
+    public const string BedtimeLegacyDetails = "time to wind down. goodnight, ada.";
 
     /// <summary>
-    /// Expands <see cref="RecipientNameToken"/> with ", name" when a name is
-    /// given, or drops it entirely when the name is empty or whitespace so
-    /// the copy still reads naturally.
+    /// Personalises a reminder's stored title or details text for display (toast,
+    /// Home summary) without ever rewriting what is persisted. Returns the
+    /// personalised copy only when <paramref name="reminderId"/> is one of the
+    /// default reminders and <paramref name="storedText"/> exactly matches that
+    /// reminder's neutral text or its legacy "ada" text; otherwise the stored text
+    /// -- including anything the user has edited -- passes through unchanged.
     /// </summary>
-    public static string ApplyRecipientName(string text, string? recipientName)
+    public static string PersonalizeTitle(string reminderId, string storedText, string? recipientName)
     {
-        ArgumentNullException.ThrowIfNull(text);
-        var trimmed = recipientName?.Trim();
-        var suffix = string.IsNullOrEmpty(trimmed) ? string.Empty : $", {trimmed}";
-        return text.Replace(RecipientNameToken, suffix);
+        ArgumentNullException.ThrowIfNull(reminderId);
+        ArgumentNullException.ThrowIfNull(storedText);
+
+        var trimmedName = recipientName?.Trim();
+        var clause = string.IsNullOrEmpty(trimmedName) ? string.Empty : $", {trimmedName}";
+
+        if (reminderId == EveningCheckInId
+            && (storedText == EveningCheckInDefaultTitle || storedText == EveningCheckInLegacyTitle))
+        {
+            return $"how was your day{clause}?";
+        }
+
+        if (reminderId == BedtimeId
+            && (storedText == BedtimeDefaultTitle || storedText == BedtimeLegacyTitle))
+        {
+            return $"shuijiaojiao{clause}";
+        }
+
+        if (reminderId == BedtimeId
+            && (storedText == BedtimeDefaultDetails || storedText == BedtimeLegacyDetails))
+        {
+            return $"time to wind down. goodnight{clause}.";
+        }
+
+        return storedText;
     }
 
     public static IReadOnlyList<Reminder> Create(
@@ -59,7 +92,7 @@ public static class LocalReminderDefaults
                 timeZone),
             CreateReminder(
                 EveningCheckInId,
-                $"how was your day{RecipientNameToken}?",
+                EveningCheckInDefaultTitle,
                 preferences.EveningCheckInEnabled,
                 new TimeOnly(20, 0),
                 null,
@@ -69,13 +102,13 @@ public static class LocalReminderDefaults
                 MissedOccurrencePolicy.Skip),
             CreateReminder(
                 BedtimeId,
-                $"shuijiaojiao{RecipientNameToken}",
+                BedtimeDefaultTitle,
                 preferences.BedtimeRitualEnabled,
                 new TimeOnly(22, 0),
                 null,
                 nowUtc,
                 timeZone,
-                $"time to wind down. goodnight{RecipientNameToken}.",
+                BedtimeDefaultDetails,
                 MissedOccurrencePolicy.Skip),
         ];
     }

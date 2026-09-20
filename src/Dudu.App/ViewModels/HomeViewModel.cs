@@ -137,7 +137,7 @@ public sealed class HomeViewModel : FeatureViewModelBase
     public string NextReminderText => NextReminder is null
         ? "no reminders yet ah"
         : NextReminder.NextDueUtc is { } nextDue
-            ? $"next reminder {LocalReminderDefaults.ApplyRecipientName(NextReminder.Title, _recipientName)} at {nextDue.ToLocalTime():g}"
+            ? $"next reminder {LocalReminderDefaults.PersonalizeTitle(NextReminder.Id, NextReminder.Title, _recipientName)} at {nextDue.ToLocalTime():g}"
             : "no reminders yet ah";
 
     /// <summary>Days remaining for the countdown due soonest, from the countdowns
