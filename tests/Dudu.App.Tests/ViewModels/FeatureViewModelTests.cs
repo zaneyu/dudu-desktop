@@ -594,19 +594,70 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
-    public async Task Appearance_save_commits_the_pet_scale_the_user_picked()
+    public async Task Appearance_save_commits_a_changed_pet_scale_to_the_existing_placement_row()
     {
         // Regression: "save appearance" used to only persist Theme/ReducedMotion/etc and
         // silently drop whatever the user had just set on the pet-size slider -- only the
         // separate "save pet placement" button (SavePlacementCommand) committed PetScale.
         var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        await fixture.Placements.SaveAsync(new PetPlacement("current monitor", 0.3, 0.4, 1.0), ct);
+        fixture.Placements.SaveHistory.Clear(); // ignore the setup write above
+        var viewModel = new AppearanceViewModel(fixture.Context) { PetScale = 1.5 };
+
+        await viewModel.SaveAsync(ct);
+
+        var saved = Assert.Single(fixture.Placements.SaveHistory);
+        Assert.Equal("current monitor", saved.MonitorDeviceName);
+        Assert.Equal(1.5, saved.Scale);
+        Assert.Equal(0.3, saved.NormalizedX);
+        Assert.Equal(0.4, saved.NormalizedY);
+    }
+
+    [Fact]
+    public async Task Appearance_save_does_not_rewrite_the_placement_when_the_scale_slider_was_not_touched()
+    {
+        // Regression: "save appearance" re-applied PetScale on every save regardless of whether
+        // the user had touched the slider, silently re-moving/resizing the live pet on an
+        // unrelated theme/preferences save.
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        await fixture.Placements.SaveAsync(new PetPlacement("current monitor", 0.3, 0.4, 1.0), ct);
+        fixture.Placements.SaveHistory.Clear();
+        var viewModel = new AppearanceViewModel(fixture.Context); // PetScale left at its ctor default
+
+        await viewModel.SaveAsync(ct);
+
+        Assert.Empty(fixture.Placements.SaveHistory);
+    }
+
+    [Fact]
+    public async Task Appearance_save_does_not_create_a_placement_row_for_an_unregistered_monitor()
+    {
+        // Regression: when no placement row matched MonitorDeviceName, "save appearance" used to
+        // create a phantom row at the default (0.8, 0.8) and teleport the pet there. Only the
+        // explicit "save pet placement" button may create a new row.
+        var fixture = FeatureFixture.Create();
         var viewModel = new AppearanceViewModel(fixture.Context) { PetScale = 1.5 };
 
         await viewModel.SaveAsync(TestContext.Current.CancellationToken);
 
+        Assert.Empty(fixture.Placements.SaveHistory);
+    }
+
+    [Fact]
+    public async Task Save_placement_button_still_creates_a_new_row_for_an_unregistered_monitor()
+    {
+        // The explicit "save pet placement" button (as opposed to "save appearance") is the one
+        // allowed to create a placement row from scratch -- that behaviour must not change.
+        var fixture = FeatureFixture.Create();
+        var viewModel = new AppearanceViewModel(fixture.Context) { PetScale = 1.5 };
+
+        await viewModel.SavePlacementAsync(TestContext.Current.CancellationToken);
+
         var saved = Assert.Single(fixture.Placements.SaveHistory);
-        Assert.Equal(1.5, saved.Scale);
         Assert.Equal("current monitor", saved.MonitorDeviceName);
+        Assert.Equal(1.5, saved.Scale);
     }
 
     [Fact]
