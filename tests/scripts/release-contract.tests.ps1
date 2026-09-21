@@ -427,6 +427,8 @@ Assert-Contains "workflow keeps the Inno artifact" $workflow "DuduDesktop-1\.0\.
 Assert-True "Store package job does not expose secrets in logs" ($workflow -notmatch "echo.*\bSTORE\b|Write-Host.*\bSTORE\b.*\bSECRET\b")
 Assert-True "production workflow pins every action to a full 40-char SHA" (@([regex]::Matches($productionWorkflow, '(?m)^\s*-?\s*uses:\s*(\S+)') | Where-Object { $_.Groups[1].Value -notmatch '@[0-9a-f]{40}$' }).Count -eq 0)
 Assert-Contains "production workflow requires the test job before packaging" $productionWorkflow '(?s)production-store-package:.*?needs:\s*tests'
+Assert-Contains "production workflow attaches the package to a draft release" $productionWorkflow '(?s)gh release create.*?--draft'
+Assert-True "production workflow does not upload the production package as a metered Actions artifact" ($productionWorkflow -notmatch 'name:\s*DuduDesktop-\$\{\{ inputs\.store_version \}\}-win-x64-production-store')
 Assert-Contains "installer job runs the FlaUI UI test suite against the published exe" $workflow 'DUDU_UI_TEST_EXE.*\r?\n.*dotnet test --project tests/Dudu\.UiTests/Dudu\.UiTests\.csproj'
 Assert-Contains "UI automation step is gated behind an explicit repository variable, off by default" $workflow 'UI automation tests \(FlaUI\)\s*\r?\n\s*if:\s*vars\.DUDU_ENABLE_UI_AUTOMATION == ''true'''
 Assert-True "UI automation step is a real gate, not continue-on-error" ($workflow -notmatch '(?s)UI automation tests \(FlaUI\)(?:(?!\n\s*- name:).)*continue-on-error')

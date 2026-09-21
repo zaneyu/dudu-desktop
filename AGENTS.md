@@ -213,19 +213,23 @@ gh run watch <run-id> --interval 10 --exit-status
 
 Do not treat the run as releasable unless it is successful and the job shows
 successful identity injection, package build, WACK execution, Store-readiness
-validation, checksum generation, and artifact upload. The production artifact
-is named:
+validation, checksum generation, and draft-release creation. The production
+package is not an Actions artifact: artifact storage is metered against the
+account's monthly quota, and a spent quota blocked the upload outright. The
+job instead attaches one zip to a private **draft** GitHub Release tagged
+`store-production-<version>-run<run-id>`:
 
 ```text
-DuduDesktop-1.0.0-win-x64-production-store
+DuduDesktop-1.0.0-win-x64-production-store.zip
 ```
 
-The workflow produces a single private `.msix` plus metadata. Verify the
-artifact exists before using it:
+Never publish that draft; delete it once the Store update is live. The zip
+holds a single private `.msix` plus metadata. Verify the draft and its asset
+exist before using it:
 
 ```zsh
-gh api "repos/$(gh repo view --json nameWithOwner --jq .nameWithOwner)/actions/runs/<run-id>/artifacts" \
-  --jq '.artifacts[] | {name,size_in_bytes,expired}'
+gh release view store-production-1.0.0-run<run-id> \
+  --json isDraft,tagName,assets --jq '{isDraft,tagName,assets:[.assets[]|{name,size}]}'
 ```
 
 The package wrapper requires the Partner Center identity in the ephemeral
@@ -246,15 +250,17 @@ short-lived private diagnostic artifact named
 `DuduDesktop-<version>-win-x64-store-diagnostics`; inspect its
 `validation-summary.txt` and `appcert-report.xml` before changing the gate.
 
-After a successful run, download the production artifact into a temporary
+After a successful run, download the production zip into a temporary
 directory and inspect its metadata. Do not download the ordinary CI Store
 artifact and do not upload the diagnostic artifact:
 
 ```zsh
 export DUDU_STORE_RELEASE_TMP="$(mktemp -d /tmp/dudu-store-release-XXXXXX)"
-gh run download <run-id> \
-  --name DuduDesktop-1.0.0-win-x64-production-store \
+gh release download store-production-1.0.0-run<run-id> \
+  --pattern 'DuduDesktop-1.0.0-win-x64-production-store.zip' \
   --dir "$DUDU_STORE_RELEASE_TMP"
+unzip -q "$DUDU_STORE_RELEASE_TMP"/DuduDesktop-1.0.0-win-x64-production-store.zip \
+  -d "$DUDU_STORE_RELEASE_TMP"
 find "$DUDU_STORE_RELEASE_TMP" -maxdepth 3 -type f -print
 grep -F "Windows App Certification Kit report: Store-ready" \
   "$DUDU_STORE_RELEASE_TMP/store-package-metadata/validation-summary.txt"
@@ -286,13 +292,14 @@ gh run list --workflow windows-store-production.yml --limit 1 \
 gh run watch <run-id> --interval 10 --exit-status
 ```
 
-The successful artifact is named
-`DuduDesktop-1.0.1-win-x64-production-store`. Download it into a new
-temporary directory, confirm `validation-summary.txt` contains
+The successful run attaches
+`DuduDesktop-1.0.1-win-x64-production-store.zip` to the private draft release
+`store-production-1.0.1-run<run-id>`. Download and unzip it into a new
+temporary directory as above, confirm `validation-summary.txt` contains
 `Windows App Certification Kit report: Store-ready`, confirm
 `package-version.txt` is `1.0.1.0`, and recompute the SHA-256 against
-`SHA256SUMS.txt` before using the package. Replace `1.0.1` in the commands and
-artifact name with the next strictly increasing version for later updates.
+`SHA256SUMS.txt` before using the package. Replace `1.0.1` in the commands,
+release tag, and zip name with the next strictly increasing version for later updates.
 
 In Partner Center, select **Start update** on the existing product, upload
 only the verified production `.msix`, review the package identity and x64

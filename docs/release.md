@@ -342,9 +342,11 @@ For each normal Store release or update:
    `.github/workflows/windows-store-production.yml`; the ordinary CI artifact
    (`DuduDesktop-<version>-win-x64-store`) is acceptance-only — never upload
    the CI artifact to Partner Center.
-2. Download the workflow artifact named
-   `DuduDesktop-<version>-win-x64-production-store` to a newly created
-   temporary directory. It contains the production `.msix` under
+2. Download `DuduDesktop-<version>-win-x64-production-store.zip` from the
+   private draft GitHub Release `store-production-<version>-run<run-id>`
+   (`gh release download`) to a newly created temporary directory and unzip
+   it. Never publish that draft; delete it once the update is live. The zip
+   contains the production `.msix` under
    `store-package/` and the private release metadata under
    `store-package-metadata/`.
 3. Verify `validation-summary.txt` contains the Store-ready marker, confirm

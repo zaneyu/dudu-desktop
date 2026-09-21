@@ -103,7 +103,9 @@ jobs:
     environment: microsoft-store-production
     timeout-minutes: 90
     permissions:
-      contents: read
+      # write is needed only to create the private draft release that carries
+      # the production package (see the last step).
+      contents: write
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -201,24 +203,52 @@ jobs:
           $checksum
           WACK: Store-ready; optional informational warnings, if any, are retained in the metadata.
 
-          The artifact is not submitted automatically. Upload it to the matching
+          The package is not submitted automatically. Upload it to the matching
           private Partner Center submission only after reviewing the package.
           "@ >> $env:GITHUB_STEP_SUMMARY
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: DuduDesktop-${{ inputs.store_version }}-win-x64-production-store
-          # publish/ and unpacked/ are package-store.ps1's intermediate build/validation
-          # trees under store-package-metadata/, not release evidence; uploading them
-          # exhausted this repository's Actions storage quota. publish/ is also the only
-          # place the PDBs matching the shipped Store MSIX live, so re-include just those
-          # after the broader exclusion (upload-artifact evaluates path patterns in order,
-          # so this include must come after the exclusion it overrides).
-          path: |
-            artifacts/store-package/
-            artifacts/store-package-metadata/
-            !artifacts/store-package-metadata/publish/**
-            !artifacts/store-package-metadata/unpacked/**
-            artifacts/store-package-metadata/publish/**/*.pdb
-          if-no-files-found: error
-          retention-days: 14
+      # The production package is attached to a draft GitHub Release instead of
+      # an Actions artifact: artifact storage is metered against the account's
+      # monthly quota and a spent quota blocked this upload outright, while
+      # release assets are not metered. The draft is never published, so in this
+      # private repository it stays as private as the artifact was. The zip keeps
+      # the artifact's layout (store-package/ and store-package-metadata/) and
+      # leaves out package-store.ps1's bulky publish/ and unpacked/ intermediate
+      # trees, except the PDBs matching the shipped MSIX.
+      - name: Attach the production package to a private draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $name = "DuduDesktop-$($env:STORE_VERSION)-win-x64-production-store"
+          $staging = Join-Path $env:RUNNER_TEMP $name
+          $metadata = Join-Path $env:GITHUB_WORKSPACE 'artifacts/store-package-metadata'
+          New-Item -ItemType Directory -Path $staging | Out-Null
+          Copy-Item -Recurse -LiteralPath artifacts/store-package -Destination (Join-Path $staging 'store-package')
+          $stagedMetadata = Join-Path $staging 'store-package-metadata'
+          New-Item -ItemType Directory -Path $stagedMetadata | Out-Null
+          Get-ChildItem -LiteralPath $metadata -Force |
+            Where-Object { $_.Name -notin @('publish', 'unpacked') } |
+            Copy-Item -Recurse -Destination $stagedMetadata
+          $publish = Join-Path $metadata 'publish'
+          if (Test-Path -LiteralPath $publish) {
+            foreach ($pdb in Get-ChildItem -LiteralPath $publish -Recurse -File -Filter *.pdb) {
+              $target = Join-Path $stagedMetadata (Join-Path 'publish' ([IO.Path]::GetRelativePath($publish, $pdb.FullName)))
+              New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
+              Copy-Item -LiteralPath $pdb.FullName -Destination $target
+            }
+          }
+          if (@(Get-ChildItem -LiteralPath (Join-Path $staging 'store-package') -Recurse -File -Filter *.msix).Count -ne 1) {
+            throw 'Expected exactly one production .msix to attach to the draft release.'
+          }
+
+          $zip = Join-Path $env:RUNNER_TEMP "$name.zip"
+          Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $zip
+          $tag = "store-production-$($env:STORE_VERSION)-run$($env:GITHUB_RUN_ID)"
+          gh release create $tag $zip `
+            --repo $env:GITHUB_REPOSITORY `
+            --draft `
+            --target $env:GITHUB_SHA `
+            --title "Production Store package $($env:STORE_VERSION) (private draft - never publish)" `
+            --notes "Private production Store MSIX from run $($env:GITHUB_RUN_ID). Keep this release a draft; delete it once the Store update is live."
+          if ($LASTEXITCODE -ne 0) { throw 'Creating the draft release failed.' }
