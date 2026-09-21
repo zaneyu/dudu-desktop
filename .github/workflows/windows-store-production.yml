@@ -211,7 +211,8 @@ jobs:
       # an Actions artifact: artifact storage is metered against the account's
       # monthly quota and a spent quota blocked this upload outright, while
       # release assets are not metered. The draft is never published, so in this
-      # private repository it stays as private as the artifact was. The zip keeps
+      # private repository only people with write access can see it. Unlike the
+      # artifact it never expires: delete it once the Store update is live. The zip keeps
       # the artifact's layout (store-package/ and store-package-metadata/) and
       # leaves out package-store.ps1's bulky publish/ and unpacked/ intermediate
       # trees, except the PDBs matching the shipped MSIX.
@@ -243,8 +244,18 @@ jobs:
           }
 
           $zip = Join-Path $env:RUNNER_TEMP "$name.zip"
-          Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $zip
+          # ZipFile (not Compress-Archive) guarantees forward-slash entry names, so
+          # the zip unpacks into real directories on macOS and Linux.
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::CreateFromDirectory($staging, $zip)
           $tag = "store-production-$($env:STORE_VERSION)-run$($env:GITHUB_RUN_ID)"
+          # The run id is stable across re-run attempts. Remove a draft left behind
+          # by an earlier attempt of this same run so the tag names one release.
+          gh release view $tag --repo $env:GITHUB_REPOSITORY --json isDraft --jq .isDraft 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            gh release delete $tag --repo $env:GITHUB_REPOSITORY --yes
+            if ($LASTEXITCODE -ne 0) { throw 'Removing the earlier draft release for this run failed.' }
+          }
           gh release create $tag $zip `
             --repo $env:GITHUB_REPOSITORY `
             --draft `
@@ -252,3 +263,4 @@ jobs:
             --title "Production Store package $($env:STORE_VERSION) (private draft - never publish)" `
             --notes "Private production Store MSIX from run $($env:GITHUB_RUN_ID). Keep this release a draft; delete it once the Store update is live."
           if ($LASTEXITCODE -ne 0) { throw 'Creating the draft release failed.' }
+          "Private draft release: ``$tag`` (asset ``$name.zip``)" >> $env:GITHUB_STEP_SUMMARY
