@@ -29,6 +29,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private const uint WmLButtonUp = 0x0202;
     private const uint WmLButtonDoubleClick = 0x0203;
     private const uint WmRButtonUp = 0x0205;
+    private const uint WmContextMenu = 0x007B;
     private const uint WmMouseMove = 0x0200;
     private const uint WmMouseWheel = 0x020A;
     private const uint WmDestroy = 0x0002;
@@ -38,6 +39,32 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private const nint HTCLIENT = 1;
     private const nint HTTRANSPARENT = -1;
     private const int ErrorAccessDenied = 5;
+
+    /// <summary>
+    /// GetSystemMetrics index for SM_SWAPBUTTON: non-zero when the user has
+    /// swapped the logical left/right buttons (left-handed mouse).
+    /// </summary>
+    private const int SmSwapButton = 23;
+
+    /// <summary>
+    /// Base pointer slop at 96 DPI. Drag breaks past this distance; a click
+    /// additionally requires the release to land on interactive art, so the
+    /// click path stays stricter than the drag path at every DPI.
+    /// </summary>
+    internal const int BaseClickSlopPx = 4;
+
+    /// <summary>
+    /// Quiet period after a double-click opens Home. Windows delivers a
+    /// third rapid click as a plain down/up (not a second DBLCLK), so the
+    /// paired-up flag alone cannot stop it from routing; this window does.
+    /// </summary>
+    internal static readonly TimeSpan DoubleClickQuiesce = TimeSpan.FromMilliseconds(500);
+
+    /// <summary>
+    /// Quiet period after a single-click dismisses the bubble, so a fast
+    /// double-tap on the pet cannot flicker close/re-arm in one gesture.
+    /// </summary>
+    internal static readonly TimeSpan PetBodyDismissQuietPeriod = TimeSpan.FromMilliseconds(250);
 
     /// <summary>
     /// Extended style for the pet window. Deliberately omits WS_EX_TRANSPARENT:
@@ -97,6 +124,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private OverlaySurfaceAction? _armedOverlayAction;
     private bool _petBodyPointerArmed;
     private bool _suppressPetBodyToggleOnNextUp;
+    private DateTimeOffset _petBodyInputSuppressedUntilUtc;
     private bool _placementDirty;
     private int _dragOriginX;
     private int _dragOriginY;
@@ -734,19 +762,26 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
 
     private void ReportOwnerPostFailure(Exception exception) => ReportDiagnostic(exception);
 
-    private void HandleMessage(uint message, WPARAM wParam, LPARAM lParam)
+    /// <summary>
+    /// Routes one window message. Returns true when the message was fully
+    /// handled and must NOT reach DefWindowProc (button-up, double-click,
+    /// and context-menu input on this no-activate window); WindowProc turns
+    /// that into a 0 result. All other messages return false to preserve
+    /// the previous DefWindowProc behavior.
+    /// </summary>
+    private bool HandleMessage(uint message, WPARAM wParam, LPARAM lParam)
     {
         try
         {
             if (_ownerMessageRouter.Dispatch(message))
             {
-                return;
+                return true;
             }
         }
         catch (Exception exception)
         {
             ReportDiagnostic(exception);
-            return;
+            return true;
         }
 
         try
@@ -770,27 +805,16 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                 ContinueDrag(lParam);
                 break;
             case WmLButtonUp:
-                var releasedPoint = GetClientPoint(lParam);
-                var toggleActionSurface = _petBodyPointerArmed
-                    && !_suppressPetBodyToggleOnNextUp
-                    && Math.Abs(releasedPoint.X - _dragOriginX) <= 4
-                    && Math.Abs(releasedPoint.Y - _dragOriginY) <= 4;
-                _suppressPetBodyToggleOnNextUp = false;
-                _petBodyPointerArmed = false;
-                CommitPlacementIfDirty();
-                ReleasePointerCapture();
-                if (_actionSurfacePointerArmed)
-                {
-                    _actionSurfacePointerArmed = false;
-                    _ = TryHandleActionSurfacePointer(lParam);
-                }
-                else if (toggleActionSurface && _actionSurface is not null)
-                {
-                    _actionSurface.ToggleFromPetBody(
-                        new PixelRect(0, 0, _windowBounds.Width, _windowBounds.Height),
-                        new PixelPoint(releasedPoint.X, releasedPoint.Y));
-                }
-                break;
+                // Single left-click never opens the bubble or any menu: it
+                // dispatches an armed bubble action, dismisses an open
+                // surface when the click is valid, or does nothing. Opening
+                // requires an explicit action (Home/Settings/tray). Always
+                // swallowed (see method docs): no DefWindowProc, so the
+                // no-activate window never takes focus and a dismiss click
+                // cannot echo into a reopen. Swap-aware via HandleButtonUp:
+                // on a swapped mouse this release is the menu button.
+                HandleButtonUp(WmLButtonUp, lParam);
+                return true;
             case WmLButtonDoubleClick:
                 if (TryArmActionSurfacePointer(lParam))
                 {
@@ -803,24 +827,37 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                     break;
                 }
 
-                // The pet body's first click of this double-click already ran
-                // its own WM_LBUTTONUP and toggled the action bubble open;
-                // close it before opening Home so the two don't end up
-                // stacked, and suppress the paired WM_LBUTTONUP's bubble
-                // toggle so it doesn't immediately reopen what was just
-                // closed. Arm drag from this second press exactly like a
-                // normal WM_LBUTTONDOWN would.
+                // Close any open bubble before opening Home so the two don't
+                // end up stacked, and suppress the paired WM_LBUTTONUP's
+                // pet-body routing so it cannot dismiss anything underneath.
+                // The time gate extends that suppression to a third rapid
+                // click, which Windows delivers as a plain down/up (not a
+                // second DBLCLK). Arm drag from this second press exactly
+                // like a normal WM_LBUTTONDOWN would.
                 _actionSurface?.Close();
                 ReleasePointerCapture();
                 _petBodyPointerArmed = BeginDrag(lParam);
                 _suppressPetBodyToggleOnNextUp = true;
+                _petBodyInputSuppressedUntilUtc = DateTimeOffset.UtcNow + DoubleClickQuiesce;
                 _ = OverlayNativeCallbackObserver.ObserveAsync(
                     _openHome(CancellationToken.None),
                     _diagnostic);
-                break;
+                return true;
             case WmRButtonUp:
-                _showContextMenu();
-                break;
+                // Gated inside HandleButtonUp: only over interactive art,
+                // never during a left-drag (capture held / _dragging), and
+                // swap-aware so a swapped (left-handed) mouse treats
+                // physical-left as the pet-body button, never the menu
+                // button. Swallowed either way: an ignored right-up must
+                // not reach DefWindowProc either.
+                HandleButtonUp(WmRButtonUp, lParam);
+                return true;
+            case WmContextMenu:
+                // Keyboard-initiated (Shift+F10 / apps key) and any residual
+                // right-button context request: the pet window owns no
+                // system menu, so swallow explicitly instead of letting
+                // DefWindowProc open default menu handling.
+                return true;
             case WmMouseWheel:
                 ChangeScale((short)((long)wParam.Value >> 16));
                 break;
@@ -838,6 +875,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                 _armedOverlayAction = null;
                 _petBodyPointerArmed = false;
                 _suppressPetBodyToggleOnNextUp = false;
+                _petBodyInputSuppressedUntilUtc = default;
                 break;
             case WmDestroy:
                 CommitPlacementIfDirty();
@@ -849,7 +887,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                     _shutdownIssued = true;
                     PInvoke.PostQuitMessage(0);
                 }
-                break;
+                return true;
             }
         }
         catch (Exception exception)
@@ -857,6 +895,8 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             // Per-message containment: report and continue the message loop.
             ReportDiagnostic(exception);
         }
+
+        return false;
     }
 
     private bool BeginDrag(LPARAM lParam)
@@ -908,7 +948,8 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         }
 
         var point = GetClientPoint(lParam);
-        if (Math.Abs(point.X - _dragOriginX) > 4 || Math.Abs(point.Y - _dragOriginY) > 4)
+        var slop = ClickSlopForDpi(_currentDpi);
+        if (Math.Abs(point.X - _dragOriginX) > slop || Math.Abs(point.Y - _dragOriginY) > slop)
         {
             _petBodyPointerArmed = false;
         }
@@ -1050,7 +1091,15 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                     }
                 }
 
-                host.HandleMessage(message, wParam, lParam);
+                if (host.HandleMessage(message, wParam, lParam))
+                {
+                    // Fully handled input (button-up, double-click,
+                    // context-menu, owner commands, destroy): report as
+                    // processed with 0 and skip DefWindowProc, so the
+                    // no-activate window never takes focus and a dismiss
+                    // click cannot echo into a reopen.
+                    return new LRESULT(0);
+                }
             }
             catch (Exception exception)
             {
@@ -1066,8 +1115,36 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         _presenter is LayeredFramePresenter layered
         && layered.IsInteractiveAt(x, y, CurrentBubbleHitRegions());
 
-    private IReadOnlyList<PixelRect>? CurrentBubbleHitRegions() =>
-        _actionSurface is null ? _bubbleHitRegions : null;
+    /// <summary>
+    /// Click-routing hit regions: the authoritative controller geometry
+    /// unioned with the legacy static bubble regions. The controller is the
+    /// source of truth for bubble layout, so it is consulted directly
+    /// instead of relying only on the last presented frame (which lags one
+    /// present behind a geometry change). Returns null when both are empty
+    /// so the presenter keeps its last-presented-frame fallback.
+    /// </summary>
+    private IReadOnlyList<PixelRect>? CurrentBubbleHitRegions()
+    {
+        var controllerRegions = _actionSurface?.HitRegions;
+        var hasController = controllerRegions is not null && controllerRegions.Count != 0;
+        var hasStatic = _bubbleHitRegions is not null && _bubbleHitRegions.Count != 0;
+        if (!hasController && !hasStatic)
+        {
+            return null;
+        }
+
+        if (!hasController)
+        {
+            return _bubbleHitRegions;
+        }
+
+        if (!hasStatic)
+        {
+            return controllerRegions;
+        }
+
+        return [.. _bubbleHitRegions!, .. controllerRegions!];
+    }
 
     private bool TryArmActionSurfacePointer(LPARAM lParam)
     {
@@ -1076,10 +1153,21 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         if (_actionSurface is null || _presenter is not LayeredFramePresenter layered) return false;
         var point = GetClientPoint(lParam);
         var action = layered.FindPresentedOverlayActionAt(point.X, point.Y);
-        if (action is null) return false;
-        _armedOverlayAction = action;
-        _actionSurfacePointerArmed = true;
-        return true;
+        if (action is not null)
+        {
+            _armedOverlayAction = action;
+            _actionSurfacePointerArmed = true;
+            return true;
+        }
+
+        // Presented-frame race: the controller (authoritative bubble
+        // geometry) already covers this point but the last presented frame
+        // does not yet contain the action. Swallow the press so it cannot
+        // fall through to the pet-body path and toggle/dismiss; the paired
+        // button-up is then a harmless no-op and the user retries after the
+        // next present.
+        if (_actionSurface.Contains(new PixelPoint(point.X, point.Y))) return true;
+        return false;
     }
 
     private bool TryHandleActionSurfacePointer(LPARAM lParam)
@@ -1095,6 +1183,134 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             || !string.Equals(released.AutomationId, armed.AutomationId, StringComparison.Ordinal)) return false;
         _actionDispatchQueue.Enqueue(_actionSurface, released);
         return true;
+    }
+
+    /// <summary>
+    /// Physical-button mapping for button-up input. Windows reports logical
+    /// buttons, so on a swapped (left-handed) mouse a WM_RBUTTONUP is the
+    /// physical LEFT release: routing it to the menu would pop the menu on
+    /// every primary click. The menu therefore follows the physical RIGHT
+    /// button in both modes, and the pet-body path follows physical LEFT.
+    /// </summary>
+    internal static bool IsMenuButtonUp(uint message, bool buttonsSwapped) =>
+        buttonsSwapped ? message == WmLButtonUp : message == WmRButtonUp;
+
+    /// <summary>
+    /// Menu-button gate: show only over interactive art and never while a
+    /// left-drag is in flight. A right-up during a drag is swallowed without
+    /// action so it cannot open the menu mid-gesture.
+    /// </summary>
+    internal static bool ShouldShowContextMenu(bool interactive, bool dragging) =>
+        interactive && !dragging;
+
+    /// <summary>
+    /// Pet-body single-up decision. The surface can only be dismissed here,
+    /// never opened: opening requires an explicit action (Home/Settings).
+    /// </summary>
+    internal static bool ShouldDismissBubbleOnPetUp(
+        bool pointerArmed,
+        bool suppressedByFlag,
+        bool suppressedByTime,
+        bool withinSlop,
+        bool interactiveAtRelease,
+        bool bubbleOpen) =>
+        pointerArmed && !suppressedByFlag && !suppressedByTime
+        && withinSlop && interactiveAtRelease && bubbleOpen;
+
+    /// <summary>
+    /// Pointer slop scaled for touch/high-DPI: the 4px base is a minimum and
+    /// grows with DPI (8px at 200%). Drag breaks past this distance, while a
+    /// click additionally requires an interactive release point plus the
+    /// debounce gates, so clicks stay stricter than drags at every DPI.
+    /// </summary>
+    internal static int ClickSlopForDpi(int dpi) =>
+        dpi <= 96
+            ? BaseClickSlopPx
+            : Math.Max(BaseClickSlopPx, (int)Math.Round(BaseClickSlopPx * dpi / 96.0));
+
+    internal static bool IsWithinSuppressionWindow(DateTimeOffset now, DateTimeOffset suppressedUntilUtc) =>
+        now < suppressedUntilUtc;
+
+    private static bool AreButtonsSwapped()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+
+        try
+        {
+            return PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_SWAPBUTTON) != 0;
+        }
+        catch
+        {
+            // Swap state is a nicety, never a crash: fail to unswapped
+            // rather than breaking click routing.
+            return false;
+        }
+    }
+
+    private void HandleButtonUp(uint message, LPARAM lParam)
+    {
+        if (IsMenuButtonUp(message, AreButtonsSwapped()))
+        {
+            // Menu-button release: a chord or stale arm must not leak into
+            // the next gesture, so reset pet-body state before the gate.
+            _suppressPetBodyToggleOnNextUp = false;
+            _petBodyPointerArmed = false;
+            CommitPlacementIfDirty();
+            ReleasePointerCapture();
+            HandleMenuButtonUp(lParam);
+            return;
+        }
+
+        HandlePetBodyLeftUp(lParam);
+    }
+
+    private void HandleMenuButtonUp(LPARAM lParam)
+    {
+        var point = GetClientPoint(lParam);
+        if (ShouldShowContextMenu(IsInteractive(point.X, point.Y), _dragging))
+        {
+            _showContextMenu();
+        }
+    }
+
+    private void HandlePetBodyLeftUp(LPARAM lParam)
+    {
+        var releasedPoint = GetClientPoint(lParam);
+        var wasArmed = _petBodyPointerArmed;
+        var suppressedByFlag = _suppressPetBodyToggleOnNextUp;
+        var now = DateTimeOffset.UtcNow;
+        var suppressedByTime = IsWithinSuppressionWindow(now, _petBodyInputSuppressedUntilUtc);
+        _suppressPetBodyToggleOnNextUp = false;
+        _petBodyPointerArmed = false;
+        CommitPlacementIfDirty();
+        ReleasePointerCapture();
+        if (_actionSurfacePointerArmed)
+        {
+            // An armed bubble action still dispatches on single click; only
+            // the pet-body toggle path lost its open behavior.
+            _actionSurfacePointerArmed = false;
+            _ = TryHandleActionSurfacePointer(lParam);
+            return;
+        }
+
+        var slop = ClickSlopForDpi(_currentDpi);
+        var withinSlop = Math.Abs(releasedPoint.X - _dragOriginX) <= slop
+            && Math.Abs(releasedPoint.Y - _dragOriginY) <= slop;
+        var interactiveAtRelease = IsInteractive(releasedPoint.X, releasedPoint.Y);
+        var bubbleOpen = _actionSurface is not null && _actionSurface.IsOpen;
+        if (ShouldDismissBubbleOnPetUp(
+                wasArmed, suppressedByFlag, suppressedByTime,
+                withinSlop, interactiveAtRelease, bubbleOpen))
+        {
+            _actionSurface!.Close();
+            _petBodyInputSuppressedUntilUtc = now + PetBodyDismissQuietPeriod;
+        }
+        // Otherwise the up intentionally does nothing: a single click on a
+        // closed surface, a suppressed follow-up, a drag release, or a
+        // release over transparent pixels must never open the bubble.
     }
 
     private void WaitForActionDispatchCompletion()

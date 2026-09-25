@@ -365,6 +365,7 @@ internal static unsafe class NativeTrayMenu
 {
     private const uint MfString = 0x0000;
     private const uint TpmRightButton = 0x0002;
+    private const uint WmNull = 0x0000;
 
     public static TrayCommand? Show(nint ownerWindow, IReadOnlyList<TrayCommand> commands)
     {
@@ -390,13 +391,26 @@ internal static unsafe class NativeTrayMenu
         }
 
         if (!PInvoke.GetCursorPos(out var point)) return null;
+        var hwnd = new HWND((void*)ownerWindow);
+        // Foreground ownership first: without it the menu's nested loop
+        // does not dismiss on an outside click, and the click that finally
+        // dismisses it can fall through to the pet window underneath.
+        _ = PInvoke.SetForegroundWindow(hwnd);
         _ = PInvoke.TrackPopupMenuEx(
             menu,
             TpmRightButton,
             point.X,
             point.Y,
-            new HWND((void*)ownerWindow),
+            hwnd,
             null);
+        // Flush the menu's nested message loop so the dismiss click is
+        // consumed here instead of echoing into another window. Selection
+        // itself keeps flowing through WM_COMMAND (handled by
+        // HandleWindowMessage), which is the TPM_RETURNCMD equivalent that
+        // preserves the ITrayNativeApi contract and its fakes. Because the
+        // overlay single-click path can now only dismiss (never open), a
+        // menu dismiss-click landing on the pet cannot reopen the bubble.
+        _ = PInvoke.PostMessage(hwnd, WmNull, 0, 0);
         return null;
     }
 

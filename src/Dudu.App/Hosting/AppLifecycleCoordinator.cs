@@ -543,28 +543,62 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable
     {
         try
         {
-            if (locked || suspended || (fullscreen && CurrentPreferences.HidePetDuringFullscreen))
-            {
-                return false;
-            }
-
-            return !_isQuietHours()
-                && !PausePolicy.IsSuppressed(_pauseState(), _clock(), fullscreen);
+            return CanShowCore(fullscreen, locked, suspended);
         }
         catch (Exception exception)
         {
+            // A transient preference/clock/pause fault (locked settings file,
+            // faulted pause store) must not hide the overlay forever: the
+            // callers below only re-evaluate on the next external event, so a
+            // single fault would stick until the user locks/unlocks or the
+            // fullscreen state flips. Retry once immediately, log both
+            // attempts, and only then fail closed.
             ReportFailure(operation, exception);
+            try
+            {
+                return CanShowCore(fullscreen, locked, suspended);
+            }
+            catch (Exception retryException)
+            {
+                ReportFailure(operation + "-retry", retryException);
+                return false;
+            }
+        }
+    }
+
+    private bool CanShowCore(bool fullscreen, bool locked, bool suspended)
+    {
+        if (locked || suspended || (fullscreen && CurrentPreferences.HidePetDuringFullscreen))
+        {
             return false;
         }
+
+        return !_isQuietHours()
+            && !PausePolicy.IsSuppressed(_pauseState(), _clock(), fullscreen);
     }
 
     private bool TryReadFullscreen(string operation)
     {
-        try { return _isFullscreen(); }
+        try
+        {
+            return _isFullscreen();
+        }
         catch (Exception exception)
         {
+            // Same transient-fault reasoning as TryCanShow: re-sample once
+            // before failing closed to hidden, so a single faulted
+            // fullscreen query cannot strand a Show request that would
+            // otherwise have succeeded.
             ReportFailure(operation, exception);
-            return true;
+            try
+            {
+                return _isFullscreen();
+            }
+            catch (Exception retryException)
+            {
+                ReportFailure(operation + "-retry", retryException);
+                return true;
+            }
         }
     }
 

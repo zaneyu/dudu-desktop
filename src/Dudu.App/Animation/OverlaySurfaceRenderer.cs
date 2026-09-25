@@ -41,11 +41,14 @@ internal static class OverlaySurfaceRenderer
         }
 
         // A status/error surface is still useful when the work area was too
-        // small to arrange buttons. Fall back to the current canvas clip so
-        // the failure is painted instead of silently disappearing.
+        // small to arrange buttons, but it must never cover the pet frame:
+        // when Bounds is missing or invalid, paint only a small status strip
+        // at the bottom of the clip instead of the whole canvas, so the pet
+        // stays visible underneath the diagnostic.
+        var clip = canvas.LocalClipBounds;
         var surface = snapshot.Bounds is { } bounds && bounds.IsValid
             ? ToRect(bounds)
-            : canvas.LocalClipBounds;
+            : StatusFallbackStrip(clip);
         if (surface.Width <= 0 || surface.Height <= 0)
         {
             return;
@@ -93,14 +96,48 @@ internal static class OverlaySurfaceRenderer
             {
                 // Status surfaces intentionally render without action regions;
                 // the matching Settings/Home route carries the accessible live
-                // error text as well.
-                DrawDetail(canvas, snapshot.ErrorMessage, snapshot.DetailRegion, errorPaint);
+                // error text as well. When the arranged detail region is
+                // missing (the same layout failure that forced the strip
+                // fallback above), reuse the strip so the message stays
+                // readable instead of vanishing with the bounds.
+                var detailRegion = snapshot.DetailRegion is { } arranged && arranged.IsValid
+                    ? arranged
+                    : StripDetailRegion(surface);
+                DrawDetail(canvas, snapshot.ErrorMessage, detailRegion, errorPaint);
             }
         }
         finally
         {
             canvas.Restore();
         }
+    }
+
+    private static SKRect StatusFallbackStrip(SKRect clip)
+    {
+        if (clip.Width <= 0 || clip.Height <= 0)
+        {
+            return SKRect.Empty;
+        }
+
+        // A narrow band for the error text: capped so a full-window clip on a
+        // large canvas cannot turn a bounds failure into a pet-sized panel.
+        var width = Math.Min(clip.Width, 360);
+        var height = Math.Min(clip.Height, 32);
+        return SKRect.Create(clip.Left, clip.Bottom - height, width, height);
+    }
+
+    private static PixelRect? StripDetailRegion(SKRect surface)
+    {
+        if (surface.Width <= 16 || surface.Height <= 8)
+        {
+            return null;
+        }
+
+        return new PixelRect(
+            (int)surface.Left + 8,
+            (int)surface.Top + 4,
+            Math.Max(1, (int)surface.Width - 16),
+            Math.Max(1, (int)surface.Height - 8));
     }
 
     private static void DrawDetail(SKCanvas canvas, string text, PixelRect? requestedRegion, SKPaint paint)

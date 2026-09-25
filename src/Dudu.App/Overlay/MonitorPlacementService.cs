@@ -30,6 +30,9 @@ public static class MonitorPlacementService
     public const double MinimumScale = 0.5;
     public const double MaximumScale = 2.0;
     public const double DefaultNominalScale = 0.75;
+
+    /// <summary>Reference DPI Windows reports suggested RECTs against.</summary>
+    public const int ReferenceDpi = 96;
     internal const uint HResultAccessDenied = 0x80070005;
 
     public static PixelSize ScaleNominalSize(PixelSize nominalSize)
@@ -89,6 +92,109 @@ public static class MonitorPlacementService
         }
 
         return Math.Clamp(scale, MinimumScale, MaximumScale);
+    }
+
+    /// <summary>
+    /// DPI scale factor for <paramref name="dpi"/> relative to
+    /// <see cref="ReferenceDpi"/>. Non-positive input falls back to 1.0
+    /// (DPI-ignorant) rather than throwing, so a failed
+    /// <c>GetDpiForMonitor</c> read degrades to unscaled instead of crashing
+    /// the placement path.
+    /// </summary>
+    public static double ScaleFactorForDpi(int dpi) =>
+        dpi <= 0 ? 1.0 : dpi / (double)ReferenceDpi;
+
+    /// <summary>
+    /// Non-throwing <see cref="Resolve"/> for failure paths such as
+    /// <c>WM_DISPLAYCHANGE</c>: returns false (with <paramref name="resolution"/>
+    /// set to a work-area clamp of <paramref name="fallbackBounds"/> when
+    /// monitors remain) instead of throwing when no saved placement matches.
+    /// </summary>
+    public static bool TryResolve(
+        PetPlacement saved,
+        PixelSize nominalSize,
+        IEnumerable<MonitorInfo> monitors,
+        PixelRect fallbackBounds,
+        out PlacementResolution resolution)
+    {
+        try
+        {
+            resolution = Resolve(saved, nominalSize, monitors);
+            return true;
+        }
+        catch
+        {
+            resolution = default;
+        }
+
+        try
+        {
+            var clamped = ClampToWorkArea(fallbackBounds, monitors);
+            var scale = saved is null ? DefaultNominalScale : ClampScale(saved.Scale);
+            resolution = new PlacementResolution(
+                saved?.MonitorDeviceName ?? string.Empty,
+                clamped,
+                scale,
+                saved?.NormalizedX ?? 0.5,
+                saved?.NormalizedY ?? 0.5);
+            return false;
+        }
+        catch
+        {
+            resolution = default;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Clamps <paramref name="bounds"/> into a currently valid work area so a
+    /// monitor unplug never strands the window at stale coordinates. Picks
+    /// the monitor containing the bounds center, else the nearest one; an
+    /// over-large rect is pinned to the area origin. Throws only when no
+    /// monitor has a valid work area.
+    /// </summary>
+    public static PixelRect ClampToWorkArea(
+        PixelRect bounds,
+        IEnumerable<MonitorInfo> monitors)
+    {
+        ArgumentNullException.ThrowIfNull(monitors);
+        var usable = monitors
+            .Where(monitor => monitor is not null && monitor.WorkArea.IsValid)
+            .OrderBy(monitor => monitor.DeviceName, StringComparer.Ordinal)
+            .ToArray();
+        if (usable.Length == 0)
+        {
+            throw new InvalidOperationException("No monitor has a valid work area.");
+        }
+
+        if (!bounds.IsValid)
+        {
+            var primary = usable.FirstOrDefault(monitor => monitor.IsPrimary) ?? usable[0];
+            return new PixelRect(
+                primary.WorkArea.X,
+                primary.WorkArea.Y,
+                Math.Min(1, primary.WorkArea.Width),
+                Math.Min(1, primary.WorkArea.Height));
+        }
+
+        var centerX = (long)bounds.X + bounds.Width / 2L;
+        var centerY = (long)bounds.Y + bounds.Height / 2L;
+        var selected = usable.FirstOrDefault(monitor =>
+            centerX >= monitor.WorkArea.X
+            && centerX < monitor.WorkArea.Right
+            && centerY >= monitor.WorkArea.Y
+            && centerY < monitor.WorkArea.Bottom)
+            ?? usable
+                .OrderBy(monitor => DistanceSquared(monitor.WorkArea, centerX, centerY))
+                .ThenBy(monitor => monitor.DeviceName, StringComparer.Ordinal)
+                .First();
+
+        var area = selected.WorkArea;
+        var width = Math.Min(bounds.Width, area.Width);
+        var height = Math.Min(bounds.Height, area.Height);
+        var x = (int)Math.Clamp((long)bounds.X, area.X, (long)area.Right - width);
+        var y = (int)Math.Clamp((long)bounds.Y, area.Y, (long)area.Bottom - height);
+        return new PixelRect(x, y, width, height);
     }
 
     public static PlacementResolution Resolve(

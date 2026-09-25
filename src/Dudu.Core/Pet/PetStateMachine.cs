@@ -244,46 +244,101 @@ public sealed class PetStateMachine
 
     private void Dismiss(string itemId)
     {
+        // Called with _sync already held by HandleCore; unknown ids are
+        // ignored so a stale or mistyped dismissal can never yank an
+        // unrelated card.
+        _ = TryDismissCore(itemId);
+    }
+
+    /// <summary>
+    /// Dismisses one pending item or latch. Returns true when
+    /// <paramref name="itemId"/> named something actually held; false for
+    /// unknown ids, which are ignored. Callers surfacing diagnostics (e.g.
+    /// the presentation coordinator's error reporter) use the false case to
+    /// log "unknown dismissal id" instead of leaving Comfort or the
+    /// focus-end transition stuck forever with no trace.
+    /// </summary>
+    public bool TryDismiss(string itemId)
+    {
+        lock (_sync)
+        {
+            return TryDismissCore(itemId);
+        }
+    }
+
+    /// <summary>
+    /// True when <paramref name="itemId"/> names something this machine
+    /// currently holds (a pending note/reminder, an active latch, or the
+    /// current ambient animation). Exposed so the coordinator can validate a
+    /// dismissal id before completing a one-shot.
+    /// </summary>
+    public bool IsKnownDismissalId(string itemId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(itemId);
+        lock (_sync)
+        {
+            return IsKnownDismissalIdCore(itemId);
+        }
+    }
+
+    private bool TryDismissCore(string itemId)
+    {
         if (_remoteMessageIds.Remove(itemId))
         {
             _remoteMessageOrder.Remove(itemId);
-            return;
+            return true;
         }
 
         if (_dueReminderIds.Remove(itemId))
         {
             _dueReminderOrder.Remove(itemId);
-            return;
+            return true;
         }
 
         if (string.Equals(itemId, "comfort", StringComparison.Ordinal)
             || string.Equals(itemId, "comfort-hug", StringComparison.Ordinal))
         {
+            var wasActive = _comfortActive;
             _comfortActive = false;
 
-            return;
+            return wasActive;
         }
 
         if (string.Equals(itemId, "focus-end", StringComparison.Ordinal)
             || string.Equals(itemId, "focus-transition", StringComparison.Ordinal))
         {
+            var hadTransition = _focusTransition is not null;
             _focusTransition = null;
 
-            return;
+            return hadTransition;
         }
 
         if (string.Equals(itemId, "welcome-back", StringComparison.Ordinal))
         {
+            var wasPending = _welcomeBackPending;
             _welcomeBackPending = false;
 
-            return;
+            return wasPending;
         }
 
         if (string.Equals(itemId, _ambientAnimation, StringComparison.Ordinal))
         {
             _ambientAnimation = null;
+            return true;
         }
+
+        return false;
     }
+
+    private bool IsKnownDismissalIdCore(string itemId) =>
+        _remoteMessageIds.Contains(itemId)
+        || _dueReminderIds.Contains(itemId)
+        || string.Equals(itemId, "comfort", StringComparison.Ordinal)
+        || string.Equals(itemId, "comfort-hug", StringComparison.Ordinal)
+        || string.Equals(itemId, "focus-end", StringComparison.Ordinal)
+        || string.Equals(itemId, "focus-transition", StringComparison.Ordinal)
+        || string.Equals(itemId, "welcome-back", StringComparison.Ordinal)
+        || string.Equals(itemId, _ambientAnimation, StringComparison.Ordinal);
 
     private bool IsFocusActive() => _focusId is not null;
 

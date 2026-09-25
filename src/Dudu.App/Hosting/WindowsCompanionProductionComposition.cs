@@ -447,7 +447,10 @@ public static class WindowsCompanionProductionComposition
             var animation = pack.ResolveAnimation(
                 "idle",
                 DateOnly.FromDateTime(DateTime.Now),
-                SeasonalDates.Empty);
+                SeasonalDates.Empty,
+                onFallback: message => host.ErrorReporter.Report(
+                    "asset-fallback",
+                    new AssetManifestException(message)));
             composer = new SkiaFrameComposer(pack);
             composer.SetActionSurface(actionSurface);
             composer.SetOverlayPalette(OverlaySurfacePalette.For(
@@ -490,6 +493,17 @@ public static class WindowsCompanionProductionComposition
                 isSafeMode: () => safeMode,
                 errorReporter: host.ErrorReporter);
             var showOverlay = !safeMode && launchOptions.ShouldShowOverlay(preferences, profile);
+
+            // Composed-frame scale matching the window bounds: the host sizes
+            // the window from ScaleNominalSize(nominal) times the persisted
+            // placement scale, so the composer must scale the nominal art by
+            // the same product or every frame is stretched to fit. Reads
+            // activePlacement live so persisted drag/scroll-resize updates
+            // flow into the next playback. (A scroll-resize only persists on
+            // the next drag commit, so the very next frames after the wheel
+            // still use the previous scale until then.)
+            double ComposeScale() => MonitorPlacementService.ClampScale(activePlacement.Scale)
+                * MonitorPlacementService.DefaultNominalScale;
 
             var runtime = await RunStartupPhaseAsync(
                 "overlay",
@@ -538,6 +552,15 @@ public static class WindowsCompanionProductionComposition
                         animationEngine.PlayAsync,
                         () => new AnimationOptions
                         {
+                            // Compose at the same scale the window is sized
+                            // at (see AnimationOptionsFor): the host sizes
+                            // the window from ScaleNominalSize(nominal) and
+                            // the placement scale, so the composed frame must
+                            // carry placement.Scale * DefaultNominalScale or
+                            // every frame is stretched to fit. The lambda
+                            // reads activePlacement live, so a persisted
+                            // scroll-resize flows into the next one-shot.
+                            Scale = ComposeScale(),
                             ReducedMotionEnabled = runtimePreferences.Current.ReducedMotion,
                             OutfitKey = RuntimeOutfitKey(runtimePreferences.Current),
                         },
@@ -545,7 +568,8 @@ public static class WindowsCompanionProductionComposition
                         playAudioAsync: (presentation, token) =>
                             AudioCueSelection.ForPresentation(presentation) is { } cue
                                 ? audioCueService!.TryPlayAsync(cue, token)
-                                : Task.CompletedTask);
+                                : Task.CompletedTask,
+                        errorReporter: host.ErrorReporter);
                     notificationService = new AppNotificationService(
                         new WindowsAppNotificationSink(),
                         errorReporter: host.ErrorReporter);
@@ -601,6 +625,7 @@ public static class WindowsCompanionProductionComposition
                         animationEngine.PlayAsync,
                         () => new AnimationOptions
                         {
+                            Scale = ComposeScale(),
                             ReducedMotionEnabled = runtimePreferences.Current.ReducedMotion,
                             OutfitKey = RuntimeOutfitKey(runtimePreferences.Current),
                         },
@@ -627,8 +652,9 @@ public static class WindowsCompanionProductionComposition
                     _ = StartAnimationPlayback(
                         animationEngine.PlayAsync(
                             pet.Current,
-                            AnimationOptionsFor(preferences),
-                            cancellationToken));
+                            AnimationOptionsFor(preferences, activePlacement.Scale),
+                            cancellationToken),
+                        host.ErrorReporter);
                     await overlay.SetActionSurfaceAsync(actionSurface, cancellationToken);
                 },
                 initialUserVisible: showOverlay,
@@ -653,8 +679,9 @@ public static class WindowsCompanionProductionComposition
                     return StartAnimationPlayback(
                         animationEngine.PlayAsync(
                             pet.Current,
-                            AnimationOptionsFor(updated),
-                            token));
+                            AnimationOptionsFor(updated, activePlacement.Scale),
+                            token),
+                        host.ErrorReporter);
                 },
                 presentationEnvironment: new DelegatingPresentationEnvironmentSink(
                     locked => presentationGateway?.SetSessionLocked(locked),
@@ -748,9 +775,9 @@ public static class WindowsCompanionProductionComposition
                     {
                         var playback = animationEngine.PlayAsync(
                             pet.Current,
-                            AnimationOptionsFor(runtimePreferences.Current),
+                            AnimationOptionsFor(runtimePreferences.Current, activePlacement.Scale),
                             token);
-                        _ = StartAnimationPlayback(playback);
+                        _ = StartAnimationPlayback(playback, host.ErrorReporter);
                         if (AudioCueSelection.ForPresentation(presentation) is { } cue)
                         {
                             _ = ObserveDirectAudioAfterVisualAsync(
@@ -811,9 +838,10 @@ public static class WindowsCompanionProductionComposition
                         pet.Current,
                         new AnimationOptions
                         {
+                            Scale = ComposeScale(),
                             ReducedMotionEnabled = runtimePreferences.Current.ReducedMotion,
                             OutfitKey = outfit ?? RuntimeOutfitKey(runtimePreferences.Current),
-                        }, token));
+                        }, token), host.ErrorReporter);
                     return Task.CompletedTask;
                 },
                 setGlobalShortcutAsync: runtime.SetGlobalShortcutAsync,
@@ -953,9 +981,9 @@ public static class WindowsCompanionProductionComposition
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
-    private static Task StartAnimationPlayback(Task playback)
+    private static Task StartAnimationPlayback(Task playback, IAppHostErrorReporter? errorReporter = null)
     {
-        _ = ObserveAnimationAsync(playback);
+        _ = ObserveAnimationAsync(playback, errorReporter);
         return Task.CompletedTask;
     }
 
@@ -1219,7 +1247,7 @@ public static class WindowsCompanionProductionComposition
             "notification-invoked");
     }
 
-    private static async Task ObserveAnimationAsync(Task playback)
+    private static async Task ObserveAnimationAsync(Task playback, IAppHostErrorReporter? errorReporter = null)
     {
         try
         {
@@ -1230,6 +1258,23 @@ public static class WindowsCompanionProductionComposition
         }
         catch (Exception exception)
         {
+            // A faulted first Present (e.g. an undecodable PNG rejected late
+            // by the composer — the loader already rejects missing/corrupt
+            // files at pack load, but a pack swapped in later takes the same
+            // path) must reach the shared reporter, not just Trace, so an
+            // invisible pet leaves a diagnostic instead of silence.
+            if (errorReporter is not null)
+            {
+                try
+                {
+                    errorReporter.Report("animation-playback", exception);
+                    return;
+                }
+                catch
+                {
+                }
+            }
+
             Trace.TraceError("Dudu animation playback failed: {0}", exception);
         }
     }
@@ -1373,9 +1418,15 @@ public static class WindowsCompanionProductionComposition
     /// as clean for the crash-loop safe-mode counter.</summary>
     internal static readonly TimeSpan StableRunPeriod = TimeSpan.FromSeconds(60);
 
-    private static AnimationOptions AnimationOptionsFor(Preferences preferences) =>
+    private static AnimationOptions AnimationOptionsFor(Preferences preferences, double placementScale = 1.0) =>
         new()
         {
+            // Must equal placement.Scale * DefaultNominalScale so the composed
+            // frame matches the window bounds sized by MonitorPlacementService
+            // (see ComposeScale above); the 1.0 default preserves the
+            // pre-unification compose size for callers without placement.
+            Scale = MonitorPlacementService.ClampScale(placementScale)
+                * MonitorPlacementService.DefaultNominalScale,
             ReducedMotionEnabled = preferences.ReducedMotion,
             OutfitKey = RuntimeOutfitKey(preferences),
         };

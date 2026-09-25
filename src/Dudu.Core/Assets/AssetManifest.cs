@@ -433,7 +433,8 @@ public sealed class AssetPack
         string animationKey,
         DateOnly localDate,
         SeasonalDates dates,
-        string? manualOutfit = null)
+        string? manualOutfit = null,
+        Action<string>? onFallback = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(animationKey);
         ArgumentNullException.ThrowIfNull(dates);
@@ -448,18 +449,32 @@ public sealed class AssetPack
         if (Manifest.Outfits.TryGetValue("base", out var baseOutfit)
             && baseOutfit.Animations.TryGetValue(animationKey, out var baseAnimation))
         {
+            if (!string.Equals(selectedOutfit, "base", StringComparison.Ordinal))
+            {
+                onFallback?.Invoke(
+                    $"Animation '{animationKey}' is missing from outfit '{selectedOutfit}'; using the base outfit.");
+            }
+
             return baseAnimation;
         }
 
         if (Manifest.Outfits.TryGetValue(selectedOutfit, out outfit)
             && outfit.Animations.TryGetValue("idle", out var outfitIdle))
         {
+            onFallback?.Invoke(
+                $"Animation '{animationKey}' has no art in outfit '{selectedOutfit}' or base; showing '{selectedOutfit}' idle instead.");
             return outfitIdle;
         }
 
         if (Manifest.Outfits.TryGetValue("base", out baseOutfit)
             && baseOutfit.Animations.TryGetValue("idle", out var baseIdle))
         {
+            // Missing sticker art used to degrade to idle silently, which made
+            // a "wrong pose" report untraceable. The fallback still shows base
+            // idle so the pet never goes invisible, but the hook lets the app
+            // layer log the substitution through its error reporter.
+            onFallback?.Invoke(
+                $"Animation '{animationKey}' has no art in outfit '{selectedOutfit}' or base; showing base idle instead.");
             return baseIdle;
         }
 

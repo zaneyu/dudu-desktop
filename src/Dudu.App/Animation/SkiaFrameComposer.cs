@@ -105,6 +105,19 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
     public void SetPack(AssetPack pack)
     {
         ArgumentNullException.ThrowIfNull(pack);
+        // Admission validation does File.Exists/OpenRead per frame: run it
+        // outside _gate so pack swaps never hold the compose lock during I/O.
+        // The swap itself stays under lock with the composer-sentenced caches.
+        lock (_gate)
+        {
+            ThrowIfDisposed();
+            if (ReferenceEquals(_pack, pack))
+            {
+                return;
+            }
+        }
+
+        ValidatePackLimits(pack);
         lock (_gate)
         {
             ThrowIfDisposed();
@@ -113,7 +126,6 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
                 return;
             }
 
-            ValidatePackLimits(pack);
             DisposeDecodedBitmaps();
             DisposeSurface();
             ReturnReusableBuffer();
@@ -135,14 +147,19 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
         ArgumentNullException.ThrowIfNull(frame);
         ArgumentException.ThrowIfNullOrWhiteSpace(frame.File);
         ValidateCompositionInputs(pack, animation, frame, scale, opacity, semanticDuration, frameDuration);
+        var dimensions = ValidateDimensions(animation.NominalSize, scale);
+
+        // Narrowed lock scope: path resolution is pure, decode does File I/O,
+        // and only cache lookup/insert + Skia draw stay under _gate. The
+        // fast path (cache hit) never touches the disk inside the lock.
+        EnsurePackReference(pack);
+        var fullPath = ResolveFullPathOutsideLock(pack, frame.File);
+        var source = ResolveSourceOutsideLock(pack, frame.File);
+        var image = GetOrDecodeImage(fullPath, frame.File);
 
         lock (_gate)
         {
             ThrowIfDisposed();
-            EnsurePack(pack);
-            var dimensions = ValidateDimensions(animation.NominalSize, scale);
-            var source = GetSource(pack, frame.File);
-            var image = GetImage(pack, frame.File);
             EnsureSurface(dimensions.Width, dimensions.Height);
             var output = _surface!;
 
@@ -306,16 +323,150 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
 
     private void EnsurePack(AssetPack pack)
     {
-        if (ReferenceEquals(_pack, pack))
+        bool needsSwap;
+        lock (_gate)
         {
-            return;
+            needsSwap = !ReferenceEquals(_pack, pack);
         }
 
+        if (!needsSwap) return;
         ValidatePackLimits(pack);
-        DisposeDecodedBitmaps();
-        DisposeSurface();
-        ReturnReusableBuffer();
-        _pack = pack;
+        lock (_gate)
+        {
+            if (ReferenceEquals(_pack, pack)) return;
+            DisposeDecodedBitmaps();
+            DisposeSurface();
+            ReturnReusableBuffer();
+            _pack = pack;
+        }
+    }
+
+    private void EnsurePackReference(AssetPack pack)
+    {
+        bool needsSwap;
+        lock (_gate)
+        {
+            ThrowIfDisposed();
+            needsSwap = !ReferenceEquals(_pack, pack);
+        }
+
+        if (!needsSwap) return;
+        // File I/O admission check stays outside the compose lock.
+        ValidatePackLimits(pack);
+        lock (_gate)
+        {
+            ThrowIfDisposed();
+            if (ReferenceEquals(_pack, pack)) return;
+            DisposeDecodedBitmaps();
+            DisposeSurface();
+            ReturnReusableBuffer();
+            _pack = pack;
+        }
+    }
+
+    private string ResolveFullPathOutsideLock(AssetPack pack, string relativePath)
+    {
+        lock (_gate)
+        {
+            if (_fullPathCache.TryGetValue(relativePath, out var cached)) return cached;
+        }
+
+        var computed = Path.GetFullPath(Path.Combine(pack.RootDirectory, relativePath));
+        lock (_gate)
+        {
+            if (_fullPathCache.TryGetValue(relativePath, out var raced)) return raced;
+            _fullPathCache.Add(relativePath, computed);
+            return computed;
+        }
+    }
+
+    private string ResolveSourceOutsideLock(AssetPack pack, string relativePath)
+    {
+        lock (_gate)
+        {
+            if (_sourceCache.TryGetValue(relativePath, out var cached)) return cached;
+        }
+
+        var computed = $"{pack.Manifest.PackId}/{relativePath.Replace('\\', '/')}";
+        lock (_gate)
+        {
+            if (_sourceCache.TryGetValue(relativePath, out var raced)) return raced;
+            _sourceCache.Add(relativePath, computed);
+            return computed;
+        }
+    }
+
+    private SKImage GetOrDecodeImage(string fullPath, string relativePath)
+    {
+        lock (_gate)
+        {
+            if (_imageCache.TryGetValue(fullPath, out var cached))
+            {
+                TouchLru(fullPath);
+                return cached;
+            }
+        }
+
+        // Decode outside the global lock: SKBitmap.Decode does File I/O and
+        // PNG decompression. Concurrent misses for the same key may decode
+        // twice; the insert below keeps the first winner and disposes the
+        // loser, so correctness holds without a per-key lock table.
+        var decoded = DecodeImageFile(fullPath, relativePath);
+        try
+        {
+            lock (_gate)
+            {
+                ThrowIfDisposed();
+                if (_imageCache.TryGetValue(fullPath, out var raced))
+                {
+                    TouchLru(fullPath);
+                    return raced;
+                }
+
+                EvictUntilWithinLimits(decoded.ByteCount);
+                _imageCache.Add(fullPath, decoded.Image);
+                _imageCacheBytes.Add(fullPath, decoded.ByteCount);
+                _imageCacheLruNodes.Add(fullPath, _imageCacheLru.AddLast(fullPath));
+                _decodedBitmapBytes += decoded.ByteCount;
+                var owned = decoded.Image;
+                decoded = null;
+                return owned;
+            }
+        }
+        finally
+        {
+            decoded?.Dispose();
+        }
+    }
+
+    private sealed class DecodedImage : IDisposable
+    {
+        public required SKImage Image { get; init; }
+
+        public required long ByteCount { get; init; }
+
+        public void Dispose() => Image.Dispose();
+    }
+
+    private static DecodedImage DecodeImageFile(string fullPath, string relativePath)
+    {
+        using var bitmap = SKBitmap.Decode(fullPath)
+            ?? throw new AssetManifestException($"Animation frame could not be decoded: {relativePath}");
+        if (bitmap.Width <= 0 || bitmap.Height <= 0)
+        {
+            throw new AssetManifestException($"Animation frame has invalid dimensions: {relativePath}");
+        }
+
+        var decodedBytes = checked((long)bitmap.RowBytes * bitmap.Height);
+        if (decodedBytes > MaxDecodedBitmapBytes)
+        {
+            throw new AssetManifestException(
+                $"Asset pack exceeds decoded animation cache limits ({MaxDecodedBitmapCount} frames or {MaxDecodedBitmapBytes} bytes).");
+        }
+
+        var image = SKImage.FromBitmap(bitmap)
+            ?? throw new AssetManifestException($"Animation frame could not be decoded: {relativePath}");
+        return new DecodedImage { Image = image, ByteCount = decodedBytes };
     }
 
     private SKImage GetImage(AssetPack pack, string relativePath)
@@ -325,47 +476,8 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
             throw new AssetManifestException($"Animation frame path is unsafe: {relativePath}");
         }
 
-        if (!_fullPathCache.TryGetValue(relativePath, out var fullPath))
-        {
-            fullPath = Path.GetFullPath(Path.Combine(pack.RootDirectory, relativePath));
-            _fullPathCache.Add(relativePath, fullPath);
-        }
-
-        var cacheKey = fullPath;
-        if (_imageCache.TryGetValue(cacheKey, out var cached))
-        {
-            TouchLru(cacheKey);
-            return cached;
-        }
-
-        using var decoded = SKBitmap.Decode(fullPath)
-            ?? throw new AssetManifestException($"Animation frame could not be decoded: {relativePath}");
-        if (decoded.Width <= 0 || decoded.Height <= 0)
-        {
-            throw new AssetManifestException($"Animation frame has invalid dimensions: {relativePath}");
-        }
-
-        var decodedBytes = checked((long)decoded.RowBytes * decoded.Height);
-        if (decodedBytes > MaxDecodedBitmapBytes)
-        {
-            throw new AssetManifestException(
-                $"Asset pack exceeds decoded animation cache limits ({MaxDecodedBitmapCount} frames or {MaxDecodedBitmapBytes} bytes).");
-        }
-
-        // The frame decoded above isn't in the cache yet, so it can never be
-        // picked as an eviction candidate here: only already-cached frames
-        // (the least recently used first) make room for it.
-        EvictUntilWithinLimits(decodedBytes);
-
-        // The image owns its own copy (or ref) of the pixels, so the decoding
-        // bitmap is released as soon as this returns.
-        var image = SKImage.FromBitmap(decoded)
-            ?? throw new AssetManifestException($"Animation frame could not be decoded: {relativePath}");
-        _imageCache.Add(cacheKey, image);
-        _imageCacheBytes.Add(cacheKey, decodedBytes);
-        _imageCacheLruNodes.Add(cacheKey, _imageCacheLru.AddLast(cacheKey));
-        _decodedBitmapBytes += decodedBytes;
-        return image;
+        var fullPath = ResolveFullPathOutsideLock(pack, relativePath);
+        return GetOrDecodeImage(fullPath, relativePath);
     }
 
     private void TouchLru(string cacheKey)

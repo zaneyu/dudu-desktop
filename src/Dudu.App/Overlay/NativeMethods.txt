@@ -70,6 +70,8 @@ AppendMenu
 TrackPopupMenuEx
 DestroyMenu
 GetCursorPos
+GetSystemMetrics
+SYSTEM_METRICS_INDEX
 IsZoomed
 MessageBox
 MENU_ITEM_FLAGS

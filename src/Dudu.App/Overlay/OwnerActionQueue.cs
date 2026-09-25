@@ -49,7 +49,19 @@ public sealed class OwnerActionQueue : IDisposable
             exception => Complete(completion, exception),
             cancellationToken);
         TryPost(queued);
-        await completion.Task.WaitAsync(InvokeTimeout, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await completion.Task.WaitAsync(InvokeTimeout, cancellationToken).ConfigureAwait(false);
+        }
+        catch (TimeoutException exception)
+        {
+            // A 5s owner-thread stall is a dropped frame, not an app hang:
+            // surface the timeout with owner-busy context so diagnostics can
+            // tell contention apart from a deadlock.
+            throw new TimeoutException(
+                "Owner action dispatch timed out after 5s (dropped frame; owner thread busy or blocked).",
+                exception);
+        }
     }
 
     public async Task<TResult> InvokeAsync<TResult>(
@@ -74,7 +86,16 @@ public sealed class OwnerActionQueue : IDisposable
             exception => Complete(completion, exception),
             cancellationToken);
         TryPost(queued);
-        return await completion.Task.WaitAsync(InvokeTimeout, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await completion.Task.WaitAsync(InvokeTimeout, cancellationToken).ConfigureAwait(false);
+        }
+        catch (TimeoutException exception)
+        {
+            throw new TimeoutException(
+                "Owner action dispatch timed out after 5s (dropped frame; owner thread busy or blocked).",
+                exception);
+        }
     }
 
     public void Post(Action action, Action<Exception>? rejection = null)

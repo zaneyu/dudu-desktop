@@ -34,6 +34,8 @@ public sealed partial class SettingsWindow : UserControl
     private AssetAnimation? _duduAnimation;
     private string? _duduAnimationSignature;
     private int _duduFrameIndex;
+    private DateTime _duduDeadlineUtc = DateTime.UtcNow;
+    private int _duduConsecutiveErrors;
 
     public SettingsWindow(CompanionSettingsContext context)
     {
@@ -152,14 +154,21 @@ public sealed partial class SettingsWindow : UserControl
         try
         {
             DuduTimer_TickCore();
+            _duduConsecutiveErrors = 0;
         }
         catch (Exception exception)
         {
-            // A throw on a DispatcherTimer tick is unhandled and repeats every
-            // 150 ms. Freeze on the last good frame instead of crashing the app.
-            _duduTimer.Stop();
+            // A throw on a DispatcherTimer tick repeats every interval. Keep
+            // the timer alive on transient single failures (freeze on the
+            // last good frame) and only park it after sustained errors so
+            // one bad frame never kills the preview for the session.
+            _duduConsecutiveErrors++;
             DuduCompanionStatus.Text = "dudu art unavailable this run";
             global::System.Diagnostics.Trace.TraceError("Dudu settings companion tick failed: {0}", exception);
+            if (_duduConsecutiveErrors >= 5)
+            {
+                _duduTimer.Stop();
+            }
         }
     }
 
@@ -171,17 +180,55 @@ public sealed partial class SettingsWindow : UserControl
         if (preferences.ReducedMotion)
         {
             _duduFrameIndex = 0;
+            RefreshDuduVisual();
+            return;
         }
-        else if (_duduAnimation is { Frames.Count: > 1 })
+
+        // Deadline-based pacing from frame.DurationMs: advancing by elapsed
+        // deadline instead of index+1 keeps the preview from drifting when a
+        // tick fires late, and drops (rather than queues) missed frames.
+        // The BitmapImage cache in RefreshDuduVisual means ticks never
+        // reload art on the UI thread; only the first sighting decodes.
+        var now = DateTime.UtcNow;
+        if (_duduAnimation is not { Frames.Count: > 1 })
         {
-            if (_duduAnimation.Loop == "loop")
+            RefreshDuduVisual();
+            return;
+        }
+
+        var animation = _duduAnimation;
+        if (now < _duduDeadlineUtc)
+        {
+            RefreshDuduVisual();
+            return;
+        }
+
+        var guard = 0;
+        while (now >= _duduDeadlineUtc && guard++ < animation.Frames.Count + 2)
+        {
+            if (animation.Loop == "loop")
             {
-                _duduFrameIndex = (_duduFrameIndex + 1) % _duduAnimation.Frames.Count;
+                _duduFrameIndex = (_duduFrameIndex + 1) % animation.Frames.Count;
             }
-            else if (_duduFrameIndex < _duduAnimation.Frames.Count - 1)
+            else if (_duduFrameIndex < animation.Frames.Count - 1)
             {
                 _duduFrameIndex++;
             }
+            else
+            {
+                break;
+            }
+
+            var stepMs = Math.Clamp(animation.Frames[_duduFrameIndex].DurationMs, 80, 1000);
+            _duduDeadlineUtc += TimeSpan.FromMilliseconds(stepMs);
+        }
+
+        if (now >= _duduDeadlineUtc)
+        {
+            // Hopelessly behind (suspended UI thread): drop the backlog and
+            // re-anchor the deadline to now instead of spiralling.
+            var currentMs = Math.Clamp(animation.Frames[_duduFrameIndex].DurationMs, 80, 1000);
+            _duduDeadlineUtc = now + TimeSpan.FromMilliseconds(currentMs);
         }
 
         RefreshDuduVisual();
@@ -209,6 +256,7 @@ public sealed partial class SettingsWindow : UserControl
             _duduAnimationSignature = signature;
             _duduAnimation = animation;
             _duduFrameIndex = 0;
+            _duduDeadlineUtc = DateTime.UtcNow + TimeSpan.FromMilliseconds(Math.Clamp(animation.Frames[0].DurationMs, 80, 1000));
         }
 
         _duduAnimation = animation;
@@ -217,6 +265,8 @@ public sealed partial class SettingsWindow : UserControl
         var fullPath = Path.GetFullPath(Path.Combine(_duduPack.RootDirectory, frame.File));
         if (!_duduImages.TryGetValue(fullPath, out var image))
         {
+            // Cached per path: ticks after the first sighting reuse the
+            // BitmapImage instead of reloading on the UI thread per tick.
             image = new BitmapImage(new Uri(fullPath, UriKind.Absolute));
             _duduImages[fullPath] = image;
         }
@@ -226,7 +276,13 @@ public sealed partial class SettingsWindow : UserControl
         DuduCompanionMessage.Text = DuduMessage(presentation);
         DuduCompanionState.Text = $"{presentation.State.ToString().ToLowerInvariant()} · {presentation.AnimationKey}";
         AutomationProperties.SetName(DuduFrameImage, $"dudu {presentation.AnimationKey} pose");
-        _duduTimer.Interval = TimeSpan.FromMilliseconds(Math.Clamp(frame.DurationMs, 80, 1000));
+        // Align the next tick to the deadline (compensates overshoot) rather
+        // than a fixed frame duration, so drift never accumulates.
+        var remaining = _duduDeadlineUtc - DateTime.UtcNow;
+        if (remaining < TimeSpan.FromMilliseconds(16)) remaining = TimeSpan.FromMilliseconds(16);
+        var frameMs = Math.Clamp(frame.DurationMs, 80, 1000);
+        if (remaining > TimeSpan.FromMilliseconds(frameMs)) remaining = TimeSpan.FromMilliseconds(frameMs);
+        _duduTimer.Interval = remaining;
     }
 
     private static string DuduTitle(PetPresentation presentation) => presentation.State switch

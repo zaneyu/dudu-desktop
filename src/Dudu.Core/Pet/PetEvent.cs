@@ -93,6 +93,12 @@ public abstract record PetEvent
         {
             AmbientRequested ambient => new AmbientDismissed(ambient.AnimationKey),
             WelcomeBackRequested => new WelcomeBackDismissed(),
+            // Generic one-shots self-complete to their canonical latch id so a
+            // caller passing an unrelated fallback id cannot leave Comfort or
+            // the focus-end transition stuck with nothing left to dismiss it.
+            ComfortRequested => new Dismissed("comfort"),
+            ComfortDismissed => new Dismissed("comfort"),
+            FocusEnded => new Dismissed("focus-end"),
             _ => new Dismissed(fallbackItemId),
         };
     }

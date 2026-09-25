@@ -19,6 +19,8 @@ public sealed class OverlayActionSurfaceController : IDisposable
     private string? _errorMessage;
     private bool _disposed;
     private long _version;
+    private ComfortPanelState? _lastCoalescedPanel;
+    private long _lastPanelRaiseTicks;
 
     public ActionBubbleArrangement? Arrangement { get { lock (_gate) return _arrangement; } }
     public ComfortBubbleArrangement? ComfortArrangement { get { lock (_gate) return _comfortArrangement; } }
@@ -392,7 +394,44 @@ public sealed class OverlayActionSurfaceController : IDisposable
         RaiseChanged();
     }
 
-    private void OnComfortPanelChanged(object? sender, EventArgs args) => RaiseChanged();
+    private void OnComfortPanelChanged(object? sender, EventArgs args)
+    {
+        // Coalesce ComfortPanelChanged storms: breathing publishes Inhale /
+        // Exhale minutes apart, but cancel paths (queue preempt + router
+        // finally + Close) can raise three identical Idle states within
+        // microseconds. Identical panels inside the 50ms window collapse to
+        // one Changed; distinct phases always flow through.
+        ComfortPanelState? panel;
+        try
+        {
+            OverlayCommandRouter? router;
+            lock (_gate) router = _router;
+            panel = router?.ComfortPanel;
+        }
+        catch (ObjectDisposedException)
+        {
+            return;
+        }
+
+        if (panel is not null)
+        {
+            var now = Environment.TickCount64;
+            lock (_gate)
+            {
+                if (_lastCoalescedPanel is not null
+                    && _lastCoalescedPanel == panel
+                    && unchecked(now - _lastPanelRaiseTicks) < 50)
+                {
+                    return;
+                }
+
+                _lastCoalescedPanel = panel;
+                _lastPanelRaiseTicks = now;
+            }
+        }
+
+        RaiseChanged();
+    }
 
     private void ArrangePrimaryLocked()
     {

@@ -123,8 +123,15 @@ public sealed class ProductionStartupContractTests
         var dispatcher = File.ReadAllText(Path.Combine(
             root, "src", "Dudu.App", "System", "AwaitableUiDispatcher.cs"));
 
-        Assert.Contains("ToggleFromPetBody(", host);
+        Assert.DoesNotContain("ToggleFromPetBody(", host);
         Assert.Contains("_actionDispatchQueue.Enqueue", host);
+        // Menu-on-pet-click audit: a single button-up may only dismiss (never
+        // open), handled ups never reach DefWindowProc, and WM_CONTEXTMENU is
+        // swallowed on the no-activate pet window.
+        Assert.Contains("ShouldDismissBubbleOnPetUp(", host);
+        Assert.Contains("ShouldShowContextMenu(", host);
+        Assert.Contains("WmContextMenu", host);
+        Assert.Contains("return new LRESULT(0);", host);
         Assert.DoesNotContain("OverlayActionSurfaceObserver.ObserveAsync", host);
         Assert.Contains("DispatcherQueue.GetForCurrentThread()", app);
         Assert.Contains("_dispatcherQueue.TryEnqueue", app);

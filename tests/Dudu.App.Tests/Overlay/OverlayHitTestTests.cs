@@ -7,19 +7,30 @@ public sealed class OverlayHitTestTests
 {
     [Theory]
     [InlineData(0, false)]
-    [InlineData(7, false)]
-    [InlineData(8, true)]
+    [InlineData(31, false)]
+    [InlineData(32, true)]
     [InlineData(255, true)]
-    public void Alpha_hit_test_uses_eight_as_the_interactive_threshold(byte alpha, bool expected)
+    public void Alpha_hit_test_uses_thirty_two_as_the_interactive_threshold(byte alpha, bool expected)
     {
         Assert.Equal(expected, OverlayHitTest.IsInteractive(alpha));
+    }
+
+    [Fact]
+    public void Interactive_threshold_rejects_soft_halo_fringe()
+    {
+        // Pinned: composited pet frames carry a soft AA fringe in the
+        // 8..31 alpha band outside the solid art; it must not arm clicks.
+        Assert.Equal(32, OverlayHitTest.InteractiveAlphaThreshold);
+        Assert.False(OverlayHitTest.IsInteractive(8));
+        Assert.False(OverlayHitTest.IsInteractive(31));
+        Assert.True(OverlayHitTest.IsInteractive(32));
     }
 
     [Fact]
     public void Alpha_hit_test_uses_current_stride_and_scale()
     {
         var pixels = new byte[3 * 8];
-        pixels[2 * 8 + 1 * 4 + 3] = 8;
+        pixels[2 * 8 + 1 * 4 + 3] = 32;
 
         Assert.False(OverlayHitTest.IsInteractive(pixels, 2, 3, 8, 2, 1, 2));
         Assert.True(OverlayHitTest.IsInteractive(pixels, 2, 3, 8, 2, 2, 4));
@@ -47,7 +58,7 @@ public sealed class OverlayHitTestTests
         var pixels = new byte[4 * 4 * 4];
         var sourceX = clientX == 1 && scale == 0.5 ? 2 : 1;
         var sourceY = clientY == 1 && scale == 0.5 ? 2 : 1;
-        pixels[sourceY * 16 + sourceX * 4 + 3] = 8;
+        pixels[sourceY * 16 + sourceX * 4 + 3] = 32;
 
         Assert.True(OverlayHitTest.IsInteractive(
             pixels,

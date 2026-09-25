@@ -60,6 +60,13 @@ public sealed class LayeredFramePresenter : IFramePresenter, IDisposable
         ArgumentNullException.ThrowIfNull(frame);
         cancellationToken.ThrowIfCancellationRequested();
 
+        // Snapshot placement under the host-update gate, then do all CPU
+        // work outside the lock: the gate is shared with the owner's
+        // SetWindowPos drag path, so holding it across scaling + UpdateLayeredWindow
+        // stalls moves. Hit-test copies and LINQ region scaling are now
+        // lock-free; only the final publish re-enters the gate.
+        HWND window;
+        LayeredWindowState windowState;
         lock (_gate)
         {
             ThrowIfDisposed();
@@ -73,35 +80,46 @@ public sealed class LayeredFramePresenter : IFramePresenter, IDisposable
                 throw new InvalidOperationException("The presenter has no window placement state.");
             }
 
-            PresentCore(frame, _windowState, cancellationToken);
-            var bytes = frame.PremultipliedBgra.Span;
-            if (_hitTestBuffer is null || _hitTestBuffer.Length < bytes.Length)
-            {
-                _hitTestBuffer = new byte[bytes.Length];
-            }
-            bytes.CopyTo(_hitTestBuffer);
-            _presentedOverlayHitRegions = ScaleRegionsToClient(
-                frame.OverlayHitRegions,
-                frame.Width,
-                frame.Height,
-                _windowState.Bounds.Width,
-                _windowState.Bounds.Height);
-            _presentedOverlayActions = ScaleActionsToClient(
-                frame.OverlaySurface?.Actions ?? [],
-                frame.Width,
-                frame.Height,
-                _windowState.Bounds.Width,
-                _windowState.Bounds.Height);
-            _current = new PresentedFrameInfo(
-                frame.Width,
-                frame.Height,
-                frame.Stride,
-                frame.Opacity,
-                _windowState.Bounds,
-                _windowState.Scale)
-            {
-                OverlayGeometryVersion = frame.OverlayGeometryVersion,
-            };
+            window = _window;
+            windowState = _windowState;
+        }
+
+        PresentCore(window, frame, windowState, cancellationToken);
+        var bytes = frame.PremultipliedBgra.Span;
+        var hitCopy = new byte[bytes.Length];
+        bytes.CopyTo(hitCopy);
+        // Region/action scaling is pure math on small lists: run outside the
+        // gate and skip entirely when source and client geometry match.
+        var overlayHitRegions = ScaleRegionsToClient(
+            frame.OverlayHitRegions,
+            frame.Width,
+            frame.Height,
+            windowState.Bounds.Width,
+            windowState.Bounds.Height);
+        var overlayActions = ScaleActionsToClient(
+            frame.OverlaySurface?.Actions ?? [],
+            frame.Width,
+            frame.Height,
+            windowState.Bounds.Width,
+            windowState.Bounds.Height);
+        var current = new PresentedFrameInfo(
+            frame.Width,
+            frame.Height,
+            frame.Stride,
+            frame.Opacity,
+            windowState.Bounds,
+            windowState.Scale)
+        {
+            OverlayGeometryVersion = frame.OverlayGeometryVersion,
+        };
+
+        lock (_gate)
+        {
+            ThrowIfDisposed();
+            _hitTestBuffer = hitCopy;
+            _presentedOverlayHitRegions = overlayHitRegions;
+            _presentedOverlayActions = overlayActions;
+            _current = current;
         }
 
         return ValueTask.CompletedTask;
@@ -177,6 +195,9 @@ public sealed class LayeredFramePresenter : IFramePresenter, IDisposable
         int clientHeight)
     {
         if (regions.Count == 0) return [];
+        // Fast path: identical geometry needs no math or allocations beyond
+        // the copy. Hit regions are value types, so a shallow copy is safe.
+        if (sourceWidth == clientWidth && sourceHeight == clientHeight) return [.. regions];
         return regions.Select(region =>
             ScaleRegionToClient(region, sourceWidth, sourceHeight, clientWidth, clientHeight))
             .ToArray();
@@ -190,6 +211,7 @@ public sealed class LayeredFramePresenter : IFramePresenter, IDisposable
         int clientHeight)
     {
         if (actions.Count == 0) return [];
+        if (sourceWidth == clientWidth && sourceHeight == clientHeight) return [.. actions];
         return actions.Select(action => action with
         {
             HitRegion = ScaleRegionToClient(
@@ -245,6 +267,7 @@ public sealed class LayeredFramePresenter : IFramePresenter, IDisposable
     }
 
     private unsafe void PresentCore(
+        HWND window,
         RenderedFrame frame,
         LayeredWindowState windowState,
         CancellationToken cancellationToken)
@@ -307,21 +330,50 @@ public sealed class LayeredFramePresenter : IFramePresenter, IDisposable
             var source = (byte*)pinned.Pointer;
             var destination = (byte*)dibBits;
             var destinationRowBytes = checked(update.DestinationWidth * 4);
-            for (var row = 0; row < update.DestinationHeight; row++)
+            if (update.SourceWidth == update.DestinationWidth && update.SourceHeight == update.DestinationHeight
+                && frame.Stride == destinationRowBytes)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                var sourceY = (int)((long)row * update.SourceHeight / update.DestinationHeight);
-                var destinationRow = destination + row * destinationRowBytes;
-                var sourceRow = source + sourceY * frame.Stride;
+                // Fast path: identical size and stride is a straight copy,
+                // no per-pixel math. Check cancellation once per 64 rows so
+                // large frames stay preemptible without per-pixel overhead.
+                var totalBytes = checked(destinationRowBytes * update.DestinationHeight);
+                const int ChunkRows = 64;
+                var copied = 0;
+                while (copied < totalBytes)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var chunk = Math.Min(ChunkRows * destinationRowBytes, totalBytes - copied);
+                    Buffer.MemoryCopy(source + copied, destination + copied, totalBytes - copied, chunk);
+                    copied += chunk;
+                }
+            }
+            else
+            {
+                // Stretched path: hoist the per-column division into a
+                // precomputed X map (one div per destination column, not per
+                // pixel) and check cancellation every row so a cancelled
+                // animation aborts promptly instead of finishing the blit.
+                var mapX = new int[update.DestinationWidth];
                 for (var column = 0; column < update.DestinationWidth; column++)
                 {
-                    var sourceX = (int)((long)column * update.SourceWidth / update.DestinationWidth);
-                    var sourcePixel = sourceRow + sourceX * 4;
-                    var destinationPixel = destinationRow + column * 4;
-                    destinationPixel[0] = sourcePixel[0];
-                    destinationPixel[1] = sourcePixel[1];
-                    destinationPixel[2] = sourcePixel[2];
-                    destinationPixel[3] = sourcePixel[3];
+                    mapX[column] = (int)((long)column * update.SourceWidth / update.DestinationWidth);
+                }
+
+                for (var row = 0; row < update.DestinationHeight; row++)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var sourceY = (int)((long)row * update.SourceHeight / update.DestinationHeight);
+                    var destinationRow = destination + row * destinationRowBytes;
+                    var sourceRow = source + sourceY * frame.Stride;
+                    for (var column = 0; column < update.DestinationWidth; column++)
+                    {
+                        var sourcePixel = sourceRow + mapX[column] * 4;
+                        var destinationPixel = destinationRow + column * 4;
+                        destinationPixel[0] = sourcePixel[0];
+                        destinationPixel[1] = sourcePixel[1];
+                        destinationPixel[2] = sourcePixel[2];
+                        destinationPixel[3] = sourcePixel[3];
+                    }
                 }
             }
 
@@ -338,7 +390,7 @@ public sealed class LayeredFramePresenter : IFramePresenter, IDisposable
             };
 
             if (!PInvoke.UpdateLayeredWindow(
-                    _window,
+                    window,
                     screenDc,
                     &destinationPoint,
                     &size,

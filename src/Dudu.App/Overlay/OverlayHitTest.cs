@@ -2,7 +2,19 @@ namespace Dudu.App.Overlay;
 
 public static class OverlayHitTest
 {
-    public const byte InteractiveAlphaThreshold = 8;
+    /// <summary>
+    /// Minimum premultiplied alpha that counts as an interactive pixel.
+    /// Choice (pre-handoff menu-on-pet-click audit): 32 (~12.5% opacity)
+    /// instead of the old 8. The composited pet frame carries a soft
+    /// anti-aliased fringe/halo whose alpha sits in the 8..31 band several
+    /// pixels outside the solid art; at 8 that halo armed drags and routed
+    /// clicks to the bubble/menu path. At 32 the effective edge moves by
+    /// less than one device pixel on solid art (the AA ramp crosses 32
+    /// almost immediately) while the halo no longer arms. The window rect
+    /// itself is intentionally NOT shrunk: it is exactly the nominal pet
+    /// bounds, and shrinking it would clip real art on large pets.
+    /// </summary>
+    public const byte InteractiveAlphaThreshold = 32;
 
     public static bool IsInteractive(byte alpha) => alpha >= InteractiveAlphaThreshold;
 

@@ -15,6 +15,8 @@ public interface IAnimationClock
 
 public sealed class StopwatchAnimationClock : IAnimationClock
 {
+    private static readonly bool HiResTimerAvailable = TryEnableHiResTimer();
+
     public long Timestamp => Stopwatch.GetTimestamp();
 
     public long Frequency => Stopwatch.Frequency;
@@ -29,9 +31,68 @@ public sealed class StopwatchAnimationClock : IAnimationClock
         }
 
         var milliseconds = remaining * 1000d / Stopwatch.Frequency;
-        return new ValueTask(Task.Delay(
-            TimeSpan.FromMilliseconds(Math.Max(1d, milliseconds)),
-            cancellationToken));
+        // Higher-resolution pacing: Task.Delay clamps to the system timer
+        // (~15ms without timeBeginPeriod, ~1ms with). For frame deadlines,
+        // sleep for all but the last ~2ms, then spin to the deadline so
+        // overshoot stays sub-millisecond. Late-frame drop logic in the
+        // engine (now > frameEnd skips ahead) is unchanged: overshoot just
+        // drops rather than drifts.
+        if (milliseconds <= 2.5)
+        {
+            return new ValueTask(SpinUntilAsync(deadline, cancellationToken));
+        }
+
+        return new ValueTask(DelayThenSpinAsync(deadline, milliseconds, cancellationToken));
+    }
+
+    private static async Task DelayThenSpinAsync(long deadline, double milliseconds, CancellationToken cancellationToken)
+    {
+        var sleepMs = milliseconds - 2d;
+        if (sleepMs >= 1d)
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(sleepMs), cancellationToken).ConfigureAwait(false);
+        }
+
+        await SpinUntilAsync(deadline, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static Task SpinUntilAsync(long deadline, CancellationToken cancellationToken)
+    {
+        // Tight but cooperative spin for the final ~2ms: Yield/Sleep(0)
+        // avoids burning a full core while keeping sub-millisecond accuracy.
+        // The caller's WaitUntilAsync rechecks Timestamp < deadline, so an
+        // overshoot here only causes a frame drop, never drift.
+        while (Stopwatch.GetTimestamp() < deadline)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Thread.SpinWait(50);
+            Thread.Yield();
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private static bool TryEnableHiResTimer()
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                _ = NativeMultimediaTimer.TimeBeginPeriod(1);
+                return true;
+            }
+        }
+        catch
+        {
+        }
+
+        return false;
+    }
+
+    private static class NativeMultimediaTimer
+    {
+        [global::System.Runtime.InteropServices.DllImport("winmm.dll")]
+        internal static extern uint TimeBeginPeriod(uint period);
     }
 }
 
@@ -63,6 +124,9 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
     private readonly SemaphoreSlim _mutationGate = new(1, 1);
     private readonly SemaphoreSlim _runGate = new(1, 1);
     private readonly SemaphoreSlim _presentationGate = new(1, 1);
+    private readonly SemaphoreSlim _composeGate = new(1, 1);
+    private static readonly TimeSpan MutationGateTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan PresentationGateTimeout = TimeSpan.FromSeconds(5);
     private readonly object _repaintGate = new();
     private DateOnly _localDate;
     private SeasonalDates _seasonalDates;
@@ -79,8 +143,11 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
     private bool _resourcesDisposed;
     private bool _mutationGateDisposed;
     private bool _presentationGateDisposed;
+    private bool _composeGateDisposed;
     private bool _repaintPending;
     private Task _repaintWorker = Task.CompletedTask;
+    private string? _lastRepaintKey;
+    private long _lastRepaintTicks;
     private bool _isPaused;
     private TaskCompletionSource<object?>? _pauseCompletion;
 
@@ -153,7 +220,7 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
         }
     }
 
-    public Task PlayAsync(
+    public async Task PlayAsync(
         PetPresentation presentation,
         AnimationOptions? options = null,
         CancellationToken cancellationToken = default)
@@ -164,9 +231,18 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
 
         EnterMutation();
         var gateEntered = false;
+        Task replacement;
         try
         {
-            _mutationGate.Wait();
+            // Async gate with timeout: a stuck ReplacePack/Dispose must
+            // surface as a dropped-frame TimeoutException, never an
+            // indefinite UI-thread hang inside SemaphoreSlim.Wait().
+            if (!await _mutationGate.WaitAsync(MutationGateTimeout, cancellationToken).ConfigureAwait(false))
+            {
+                throw new TimeoutException(
+                    "Animation PlayAsync timed out acquiring the mutation gate (dropped frame; engine busy).");
+            }
+
             gateEntered = true;
             Task? previous;
             CancellationTokenSource operationCancellation;
@@ -179,9 +255,8 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
                 _currentOptions = options;
                 operationCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 _activeCancellation = operationCancellation;
-                var task = RunReplacementAsync(previous, presentation, options, operationCancellation);
-                _activeTask = task;
-                return task;
+                replacement = RunReplacementAsync(previous, presentation, options, operationCancellation);
+                _activeTask = replacement;
             }
         }
         finally
@@ -193,6 +268,8 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
 
             ExitMutation();
         }
+
+        await replacement.ConfigureAwait(false);
     }
 
     /// <summary>Suspends frame-loop waits so ambient ticks stop while hidden,
@@ -228,11 +305,19 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
     public void ReplacePack(AssetPack pack)
     {
         ArgumentNullException.ThrowIfNull(pack);
+        // Synchronous wrapper keeps the existing API but never blocks
+        // indefinitely: every wait carries a timeout and surfaces a
+        // dropped-frame TimeoutException instead of hanging the caller.
         EnterMutation();
         var gateEntered = false;
         try
         {
-            _mutationGate.Wait();
+            if (!_mutationGate.Wait(MutationGateTimeout))
+            {
+                throw new TimeoutException(
+                    "Animation ReplacePack timed out acquiring the mutation gate (dropped frame; engine busy).");
+            }
+
             gateEntered = true;
             Task? active;
             lock (_stateGate)
@@ -242,20 +327,131 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
                 active = _activeTask;
             }
 
-            WaitForCompletionIgnoringFault(active);
-            _presentationGate.Wait();
+            if (!WaitForCompletionIgnoringFault(active, PresentationGateTimeout))
+            {
+                throw new TimeoutException(
+                    "Animation ReplacePack timed out waiting for the active playback (dropped frame).");
+            }
+
+            if (!_composeGate.Wait(PresentationGateTimeout))
+            {
+                throw new TimeoutException(
+                    "Animation ReplacePack timed out acquiring the compose gate (dropped frame).");
+            }
+
             try
             {
-                lock (_stateGate)
+                if (!_presentationGate.Wait(PresentationGateTimeout))
                 {
-                    ThrowIfDisposed();
-                    _pack = pack;
-                    _composer.SetPack(pack);
+                    throw new TimeoutException(
+                        "Animation ReplacePack timed out acquiring the presentation gate (dropped frame).");
+                }
+
+                try
+                {
+                    lock (_stateGate)
+                    {
+                        ThrowIfDisposed();
+                        _pack = pack;
+                        _composer.SetPack(pack);
+                    }
+                }
+                finally
+                {
+                    _presentationGate.Release();
                 }
             }
             finally
             {
-                _presentationGate.Release();
+                _composeGate.Release();
+            }
+        }
+        finally
+        {
+            if (gateEntered)
+            {
+                _mutationGate.Release();
+            }
+
+            ExitMutation();
+        }
+    }
+
+    public async Task ReplacePackAsync(AssetPack pack, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(pack);
+        EnterMutation();
+        var gateEntered = false;
+        try
+        {
+            if (!await _mutationGate.WaitAsync(MutationGateTimeout, cancellationToken).ConfigureAwait(false))
+            {
+                throw new TimeoutException(
+                    "Animation ReplacePack timed out acquiring the mutation gate (dropped frame; engine busy).");
+            }
+
+            gateEntered = true;
+            Task? active;
+            lock (_stateGate)
+            {
+                ThrowIfDisposed();
+                _activeCancellation?.Cancel();
+                active = _activeTask;
+            }
+
+            if (active is not null)
+            {
+                try
+                {
+                    await active.WaitAsync(PresentationGateTimeout, cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Expected: ReplacePack cancels the active playback first.
+                }
+                catch (TimeoutException exception)
+                {
+                    throw new TimeoutException(
+                        "Animation ReplacePack timed out waiting for the active playback (dropped frame).", exception);
+                }
+                catch (Exception)
+                {
+                    // A faulted predecessor was already reported to its own
+                    // caller; it must not poison the pack swap.
+                }
+            }
+
+            if (!await _composeGate.WaitAsync(PresentationGateTimeout, cancellationToken).ConfigureAwait(false))
+            {
+                throw new TimeoutException(
+                    "Animation ReplacePack timed out acquiring the compose gate (dropped frame).");
+            }
+
+            try
+            {
+                if (!await _presentationGate.WaitAsync(PresentationGateTimeout, cancellationToken).ConfigureAwait(false))
+                {
+                    throw new TimeoutException(
+                        "Animation ReplacePack timed out acquiring the presentation gate (dropped frame).");
+                }
+
+                try
+                {
+                    lock (_stateGate)
+                    {
+                        ThrowIfDisposed();
+                        _pack = pack;
+                        _composer.SetPack(pack);
+                    }
+                }
+                finally
+                {
+                    _presentationGate.Release();
+                }
+            }
+            finally
+            {
+                _composeGate.Release();
             }
         }
         finally
@@ -274,7 +470,13 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
         var start = BeginDispose();
         if (!start.IsOwner)
         {
-            start.Completion.Task.GetAwaiter().GetResult();
+            // Timed join, never an indefinite UI-thread block: teardown lag
+            // surfaces as a dropped-frame timeout upstream, not a hang.
+            if (!start.Completion.Task.Wait(PresentationGateTimeout))
+            {
+                Trace.TraceWarning("Dudu animation dispose timed out waiting for the owner (dropped frame).");
+            }
+
             return;
         }
 
@@ -504,10 +706,15 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
         float opacity,
         CancellationToken cancellationToken)
     {
-        await _presentationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        // Split gates: compose (Skia CPU work) runs under _composeGate so a
+        // slow Win32 Present never blocks composition, and ReplacePack takes
+        // compose-then-present in the same order so no deadlock is possible.
+        // The composer's own lock still serializes Skia surface access.
+        RenderedFrame rendered;
+        await _composeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            using var rendered = _composer.Compose(
+            rendered = _composer.Compose(
                 pack,
                 animation,
                 frame,
@@ -515,7 +722,19 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
                 opacity,
                 semanticDuration,
                 frameDuration);
-            await _presenter.PresentAsync(rendered, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _composeGate.Release();
+        }
+
+        await _presentationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            using (rendered)
+            {
+                await _presenter.PresentAsync(rendered, cancellationToken).ConfigureAwait(false);
+            }
         }
         finally
         {
@@ -570,15 +789,46 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
             AssetPack pack;
             PetPresentation? presentation;
             AnimationOptions options;
+            CancellationToken repaintToken;
             lock (_stateGate)
             {
                 if (_disposed || _resourcesDisposed) return;
                 pack = _pack;
                 presentation = _currentPresentation;
                 options = _currentOptions;
+                // Pass the real playback token (not CancellationToken.None) so
+                // a repaint never outlives the presentation it belongs to and
+                // stays cancellable during shutdown or replacement.
+                repaintToken = _activeCancellation?.Token ?? CancellationToken.None;
             }
 
             if (presentation is null) return;
+
+            // Strengthened coalescing: skip recompose when the repaint key is
+            // pixel-identical to the last successful repaint (same pack,
+            // animation, options, and geometry_inputs). Breathing-phase text
+            // changes flow through the composer snapshot, so identical keys
+            // mean identical pixels; the next distinct key still repaints.
+            var repaintKey = string.Concat(
+                pack.Manifest.PackId, "|",
+                presentation.AnimationKey, "|",
+                options.Scale.ToString("R", global::System.Globalization.CultureInfo.InvariantCulture), "|",
+                options.ReducedMotionEnabled, "|",
+                options.OutfitKey ?? "?");
+            string? lastKey;
+            long lastTicks;
+            lock (_repaintGate)
+            {
+                lastKey = _lastRepaintKey;
+                lastTicks = _lastRepaintTicks;
+            }
+
+            if (string.Equals(lastKey, repaintKey, StringComparison.Ordinal)
+                && Stopwatch.GetTimestamp() - lastTicks < Stopwatch.Frequency / 10)
+            {
+                return;
+            }
+
             var resolved = ResolveAnimation(pack, presentation.AnimationKey, options.OutfitKey);
             var animation = resolved.Animation;
             var sourceFrame = animation.Frames[0];
@@ -595,7 +845,12 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
                 semanticDuration,
                 options.Scale,
                 1f,
-                CancellationToken.None).ConfigureAwait(false);
+                repaintToken).ConfigureAwait(false);
+            lock (_repaintGate)
+            {
+                _lastRepaintKey = repaintKey;
+                _lastRepaintTicks = Stopwatch.GetTimestamp();
+            }
         }
         catch (Exception exception) when (exception is ObjectDisposedException or OperationCanceledException)
         {
@@ -839,12 +1094,13 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
     {
         try
         {
-            WaitForCompletionIgnoringFault(active);
-            WaitForRepaintCompletion();
-            WaitForMutationUsersZero();
+            WaitForCompletionIgnoringFault(active, PresentationGateTimeout);
+            WaitForRepaintCompletion(PresentationGateTimeout);
+            WaitForMutationUsersZero(PresentationGateTimeout);
             DisposeResources();
             DisposeMutationGate();
             DisposePresentationGate();
+            DisposeComposeGate();
         }
         catch
         {
@@ -864,7 +1120,11 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
             {
                 try
                 {
-                    await active.ConfigureAwait(false);
+                    await active.WaitAsync(PresentationGateTimeout).ConfigureAwait(false);
+                }
+                catch (TimeoutException exception)
+                {
+                    Trace.TraceWarning("Dudu animation async dispose timed out on playback: {0}", exception);
                 }
                 catch
                 {
@@ -877,6 +1137,7 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
             DisposeResources();
             DisposeMutationGate();
             DisposePresentationGate();
+            DisposeComposeGate();
         }
         catch
         {
@@ -888,24 +1149,31 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
         }
     }
 
-    private static void WaitForCompletionIgnoringFault(Task? task)
+    private static bool WaitForCompletionIgnoringFault(Task? task, TimeSpan? timeout = null)
     {
         if (task is null)
         {
-            return;
+            return true;
         }
 
         try
         {
+            if (timeout is { } limit)
+            {
+                return task.Wait(limit);
+            }
+
             task.GetAwaiter().GetResult();
+            return true;
         }
         catch
         {
             // The active task's original exception is intentionally not propagated by teardown.
+            return true;
         }
     }
 
-    private void WaitForMutationUsersZero()
+    private void WaitForMutationUsersZero(TimeSpan? timeout = null)
     {
         Task? completion;
         lock (_stateGate)
@@ -913,7 +1181,18 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
             completion = _mutationUsersCompletion?.Task;
         }
 
-        completion?.GetAwaiter().GetResult();
+        if (completion is null) return;
+        if (timeout is { } limit)
+        {
+            if (!completion.Wait(limit))
+            {
+                Trace.TraceWarning("Dudu animation teardown timed out on mutation users (dropped frame).");
+            }
+
+            return;
+        }
+
+        completion.GetAwaiter().GetResult();
     }
 
     private async Task WaitForMutationUsersZeroAsync()
@@ -926,7 +1205,14 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
 
         if (completion is not null)
         {
-            await completion.ConfigureAwait(false);
+            try
+            {
+                await completion.WaitAsync(PresentationGateTimeout).ConfigureAwait(false);
+            }
+            catch (TimeoutException exception)
+            {
+                Trace.TraceWarning("Dudu animation async teardown timed out on mutation users: {0}", exception);
+            }
         }
     }
 
@@ -951,10 +1237,20 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
         }
     }
 
-    private void WaitForRepaintCompletion()
+    private void WaitForRepaintCompletion(TimeSpan? timeout = null)
     {
         Task worker;
         lock (_repaintGate) worker = _repaintWorker;
+        if (timeout is { } limit)
+        {
+            if (!WaitForCompletionIgnoringFault(worker, limit))
+            {
+                Trace.TraceWarning("Dudu animation teardown timed out on repaint (dropped frame).");
+            }
+
+            return;
+        }
+
         WaitForCompletionIgnoringFault(worker);
     }
 
@@ -962,7 +1258,12 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
     {
         Task worker;
         lock (_repaintGate) worker = _repaintWorker;
-        try { await worker.ConfigureAwait(false); } catch { }
+        try { await worker.WaitAsync(PresentationGateTimeout).ConfigureAwait(false); }
+        catch (TimeoutException exception)
+        {
+            Trace.TraceWarning("Dudu animation async teardown timed out on repaint: {0}", exception);
+        }
+        catch { }
     }
 
     private void DisposePresentationGate()
@@ -973,6 +1274,16 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
             _presentationGateDisposed = true;
         }
         try { _presentationGate.Dispose(); } catch { }
+    }
+
+    private void DisposeComposeGate()
+    {
+        lock (_stateGate)
+        {
+            if (_composeGateDisposed) return;
+            _composeGateDisposed = true;
+        }
+        try { _composeGate.Dispose(); } catch { }
     }
 
     private void DisposeResources()

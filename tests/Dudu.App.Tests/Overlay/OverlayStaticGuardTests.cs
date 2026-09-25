@@ -27,6 +27,17 @@ public sealed class OverlayStaticGuardTests
     }
 
     [Fact]
+    public void Swap_button_metric_is_available_for_menu_routing()
+    {
+        // SM_SWAPBUTTON keeps the pet context menu on the physical right
+        // button for left-handed mice (see OverlayWindowHost.IsMenuButtonUp).
+        var nativeMethods = ReadRepositoryFile("src", "Dudu.App", "Overlay", "NativeMethods.txt");
+
+        Assert.Contains("GetSystemMetrics", nativeMethods, StringComparison.Ordinal);
+        Assert.Contains("SYSTEM_METRICS_INDEX", nativeMethods, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Native_methods_allowlist_contains_overlay_contract_and_no_handwritten_imports()
     {
         var nativeMethods = ReadRepositoryFile("src", "Dudu.App", "Overlay", "NativeMethods.txt");

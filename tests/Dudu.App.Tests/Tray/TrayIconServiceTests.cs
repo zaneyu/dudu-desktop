@@ -40,6 +40,58 @@ public sealed class TrayIconServiceTests
     }
 
     [Fact]
+    public void Left_button_up_does_not_open_menu()
+    {
+        var native = new FakeTrayNativeApi { Selected = TrayCommand.Exit };
+        var commands = new List<TrayCommand>();
+        using var service = new TrayIconService(native, commands.Add);
+        service.Attach(42);
+
+        Assert.False(service.HandleWindowMessage(TrayIconService.CallbackMessage, 0x0202));
+        Assert.Empty(commands);
+        Assert.Equal(0, native.MenuCount);
+    }
+
+    [Fact]
+    public void Right_button_down_does_not_open_menu()
+    {
+        var native = new FakeTrayNativeApi { Selected = TrayCommand.Exit };
+        var commands = new List<TrayCommand>();
+        using var service = new TrayIconService(native, commands.Add);
+        service.Attach(42);
+
+        Assert.False(service.HandleWindowMessage(TrayIconService.CallbackMessage, 0x0204));
+        Assert.Empty(commands);
+        Assert.Equal(0, native.MenuCount);
+    }
+
+    [Fact]
+    public void Mouse_move_notification_does_not_open_menu()
+    {
+        var native = new FakeTrayNativeApi { Selected = TrayCommand.Exit };
+        var commands = new List<TrayCommand>();
+        using var service = new TrayIconService(native, commands.Add);
+        service.Attach(42);
+
+        Assert.False(service.HandleWindowMessage(TrayIconService.CallbackMessage, 0x0200));
+        Assert.Empty(commands);
+        Assert.Equal(0, native.MenuCount);
+    }
+
+    [Fact]
+    public void Right_button_up_opens_menu()
+    {
+        var native = new FakeTrayNativeApi { Selected = TrayCommand.OpenSettings };
+        var commands = new List<TrayCommand>();
+        using var service = new TrayIconService(native, commands.Add);
+        service.Attach(42);
+
+        Assert.True(service.HandleWindowMessage(TrayIconService.CallbackMessage, 0x0205));
+        Assert.Equal([TrayCommand.OpenSettings], commands);
+        Assert.Equal(1, native.MenuCount);
+    }
+
+    [Fact]
     public void Popup_menu_does_not_hold_service_lock_during_native_call()
     {
         var native = new FakeTrayNativeApi();

@@ -24,6 +24,19 @@ internal sealed class OverlayActionDispatchQueue : IDisposable
     public void Enqueue(OverlayActionSurfaceController surface, PixelPoint point)
     {
         ArgumentNullException.ThrowIfNull(surface);
+        // Preempt a long breathing session before queueing: the FIFO tail
+        // would otherwise hold TinyHug/Tasks behind up to 60s of breath
+        // delays. CancelBreathing is idempotent, so a second Breathe tap
+        // (toggle-off) stays correct; the router owns the toggle decision.
+        // Only preempt on a surface hit so background misses don't churn.
+        try
+        {
+            if (surface.Contains(point)) surface.CancelBreathing();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+
         EnqueueCore(token => surface.HandlePointerAsync(point, token));
     }
 
@@ -31,7 +44,11 @@ internal sealed class OverlayActionDispatchQueue : IDisposable
     {
         ArgumentNullException.ThrowIfNull(surface);
         ArgumentNullException.ThrowIfNull(action);
-        if (action.ComfortAction == ComfortAction.Close) surface.CancelBreathing();
+        // Any new primary action or non-breathe comfort action preempts an
+        // in-progress BreatheWithMe. BreatheWithMe itself is left alone so
+        // the router can apply second-tap toggle-off instead of restart.
+        if (action.ComfortAction != ComfortAction.BreatheWithMe) surface.CancelBreathing();
+        else if (action.PrimaryAction is not null) surface.CancelBreathing();
         EnqueueCore(token => surface.HandlePresentedActionAsync(action, token));
     }
 

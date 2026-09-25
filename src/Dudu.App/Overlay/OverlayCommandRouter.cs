@@ -218,6 +218,36 @@ public sealed class OverlayCommandRouter
     private async Task BreatheWithMeAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        // Second-tap toggle: if a breathing session is already running,
+        // cancel it and return instead of restarting the 60s loop. This
+        // keeps the FIFO dispatch queue preemptible (TinyHug/Tasks never
+        // wait behind a restarted session) and matches the Close preempt.
+        CancellationTokenSource? previous;
+        lock (_gate)
+        {
+            previous = _isBreathing ? _breathingCancellation : null;
+            if (previous is not null)
+            {
+                _breathingCancellation = null;
+                _isBreathing = false;
+                _closePanelAfterBreathingCancellation = false;
+            }
+        }
+
+        if (previous is not null)
+        {
+            try
+            {
+                previous.Cancel();
+            }
+            catch
+            {
+            }
+
+            SetComfortPanel(new ComfortPanelState(true, false, BreathVisualPhase.Idle, "breathing exercise cancelled"));
+            return;
+        }
+
         if (IsReducedMotion)
         {
             const string instruction = "breathe slowly in for 4, out for 6";
@@ -284,6 +314,9 @@ public sealed class OverlayCommandRouter
     {
         lock (_gate)
         {
+            // Coalesce duplicate panel states (e.g. repeated cancels) so a
+            // repaint storm never starts from identical breathing updates.
+            if (_comfortPanel == state) return;
             _comfortPanel = state;
             _breathingInstruction = state.Instruction;
         }

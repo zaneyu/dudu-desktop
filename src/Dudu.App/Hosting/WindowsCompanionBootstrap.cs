@@ -1181,7 +1181,41 @@ internal static class StartupVisibilityGate
         ArgumentNullException.ThrowIfNull(sampleFullscreenAsync);
         ArgumentNullException.ThrowIfNull(setUserVisibleAsync);
 
-        await sampleFullscreenAsync(cancellationToken);
-        await setUserVisibleAsync(desiredVisible, cancellationToken);
+        // A transient fault in the initial fullscreen sample or the first
+        // show (faulted fullscreen query, racing event source) must not
+        // leave the overlay hidden forever with no further event to retry
+        // it: attempt each step once more before giving up, logging both
+        // attempts. Cancellation is never retried.
+        await RunWithOneRetryAsync(sampleFullscreenAsync, "startup-visibility-sample", cancellationToken);
+        await RunWithOneRetryAsync(
+            token => setUserVisibleAsync(desiredVisible, token),
+            "startup-visibility-show",
+            cancellationToken);
+    }
+
+    private static async Task RunWithOneRetryAsync(
+        Func<CancellationToken, Task> operation,
+        string operationName,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await operation(cancellationToken);
+            return;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            Trace.TraceError(
+                "Dudu startup visibility gate '{0}' failed (retrying once): {1} (0x{2:X8})",
+                operationName,
+                exception.GetType().FullName,
+                exception.HResult);
+        }
+
+        await operation(cancellationToken);
     }
 }
