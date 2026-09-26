@@ -83,12 +83,19 @@ public static class AudioCueSelection
     public static AudioCuePriority PriorityFor(PetPresentation presentation, AudioCueEvent cueEvent)
     {
         ArgumentNullException.ThrowIfNull(presentation);
-        return cueEvent is AudioCueEvent.Petted or AudioCueEvent.Drink or AudioCueEvent.Eat
-                or AudioCueEvent.Tantrum or AudioCueEvent.Drag
+        return PriorityFor(cueEvent) == AudioCuePriority.Interactive
             || presentation.State is PetState.Ambient or PetState.Comfort
             ? AudioCuePriority.Interactive
             : AudioCuePriority.Background;
     }
+
+    /// <summary>Priority from the cue alone, for paths with no presentation
+    /// at hand (the presentation coordinator's tantrum and notifications).</summary>
+    public static AudioCuePriority PriorityFor(AudioCueEvent cueEvent) =>
+        cueEvent is AudioCueEvent.Petted or AudioCueEvent.Drink or AudioCueEvent.Eat
+            or AudioCueEvent.Tantrum or AudioCueEvent.Drag
+            ? AudioCuePriority.Interactive
+            : AudioCuePriority.Background;
 
     /// <summary>
     /// Events that only settle or clear state (dismissals, acknowledgements,

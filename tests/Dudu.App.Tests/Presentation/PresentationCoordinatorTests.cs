@@ -473,6 +473,45 @@ public sealed class PresentationCoordinatorTests
     }
 
     [Fact]
+    public async Task Item_is_not_presented_as_a_drag_or_meal_that_started_before_it_reached_the_pet()
+    {
+        var policy = new PresentationPolicy(TimeSpan.Zero);
+        var pet = PetStateMachine.CreateIdle();
+        var playCount = 0;
+        var coordinator = new PresentationCoordinator(
+            policy,
+            new RecordingNotificationService(),
+            pet,
+            (_, _, _) =>
+            {
+                Interlocked.Increment(ref playCount);
+                return Task.CompletedTask;
+            },
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1));
+
+        // Bypass skips the snapshot check, so only the under-gate re-check
+        // can hold it back -- the same spot a tick-path race lands on.
+        pet.Handle(new PetEvent.DragStarted());
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-1", "Stretch"),
+            bypassSuppression: true,
+            CancellationToken.None);
+        pet.Handle(new PetEvent.DragEnded());
+        pet.Handle(new PetEvent.EatingStarted("meal-1"));
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-2", "Drink"),
+            bypassSuppression: true,
+            CancellationToken.None);
+
+        Assert.Equal(0, playCount);
+        Assert.Equal(2, policy.QueuedCount);
+        Assert.Equal(PetState.Eating, pet.Current.State);
+    }
+
+    [Fact]
     public async Task Failed_presentation_is_requeued_for_a_later_tick()
     {
         var policy = new PresentationPolicy(TimeSpan.Zero);

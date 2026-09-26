@@ -687,7 +687,8 @@ public static class WindowsCompanionProductionComposition
                         ambientScheduler: services.GetRequiredService<AmbientScheduler>(),
                         localNoteSelector: services.GetRequiredService<Dudu.Core.Notes.LocalNoteSelector>(),
                         errorReporter: host.ErrorReporter,
-                        playAudioAsync: (cue, token) => audioCueService.TryPlayAsync(cue, token),
+                        playAudioAsync: (cue, token) => audioCueService.TryPlayAsync(
+                            cue, AudioCueSelection.PriorityFor(cue), token),
                         // The scheduler has no access to the loaded pack, so the
                         // sticker keys it may roll are passed in here instead —
                         // otherwise a number the pack has no art for (e.g. the

@@ -915,6 +915,14 @@ public sealed class PresentationCoordinator :
                 return false;
             }
 
+            // A drag or meal may have started while this item waited for the
+            // gate: presenting now would show it as the drag/eat loop and
+            // then count it delivered. Decline so the caller requeues it.
+            if (_pet.IsDragging || _pet.IsEatingActive)
+            {
+                return false;
+            }
+
             _policy.RecordImmediateRelease(now);
             var petEvent = ToPetEvent(item);
             presentation = _pet.Handle(petEvent);

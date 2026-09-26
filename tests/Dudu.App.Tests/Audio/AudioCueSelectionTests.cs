@@ -23,6 +23,13 @@ public sealed class AudioCueSelectionTests
     }
 
     [Fact]
+    public void Tantrum_is_interactive_even_without_a_presentation_so_cooldowns_cannot_mute_it()
+    {
+        Assert.Equal(AudioCuePriority.Interactive, AudioCueSelection.PriorityFor(AudioCueEvent.Tantrum));
+        Assert.Equal(AudioCuePriority.Background, AudioCueSelection.PriorityFor(AudioCueEvent.RemoteNote));
+    }
+
+    [Fact]
     public void Starting_an_interaction_drag_or_meal_still_sounds()
     {
         Assert.False(AudioCueSelection.IsSettlingEvent(new PetEvent.InteractionRequested("petted")));
