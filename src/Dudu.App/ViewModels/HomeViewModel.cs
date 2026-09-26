@@ -192,13 +192,83 @@ public sealed class HomeViewModel : FeatureViewModelBase
         return targetDate.DayNumber - today.DayNumber;
     }
 
-    public string ActiveFocusText => ActiveFocus is null
-        ? "no focus running ah"
-        : $"focus is {ActiveFocus.Status.ToString().ToLowerInvariant()} with {Math.Max(0, (int)Math.Ceiling(ActiveFocus.Remaining.TotalMinutes))} min left";
+    public string ActiveFocusText => DescribeFocus(ActiveFocus);
+
+    /// <summary>Plain-language focus line, worded like the Tasks and Focus page. The
+    /// old copy lower-cased the raw enum ("focus is endedearly with 0 min left") and
+    /// always spoke in minutes ("focus is running with 90 min left").</summary>
+    public static string DescribeFocus(FocusSnapshot? focus) => focus switch
+    {
+        null => "no focus running",
+        { Status: FocusStatus.Running } => $"focus is running with {FormatFocusRemaining(focus.Remaining)} left",
+        { Status: FocusStatus.Paused } => $"focus is paused with {FormatFocusRemaining(focus.Remaining)} left",
+        { Status: FocusStatus.Completed } => "last focus session completed le",
+        _ => "last focus session ended early",
+    };
+
+    /// <summary>Rounds up to whole minutes (never "0 min" while seconds remain) and
+    /// switches to hours past an hour, matching the Tasks and Focus page.</summary>
+    private static string FormatFocusRemaining(TimeSpan remaining)
+    {
+        var totalMinutes = remaining <= TimeSpan.Zero
+            ? 0
+            : (int)Math.Min(int.MaxValue, Math.Ceiling(remaining.TotalMinutes));
+        if (totalMinutes < 60) return $"{totalMinutes} min";
+        var hours = totalMinutes / 60;
+        var minutes = totalMinutes % 60;
+        return minutes == 0 ? $"{hours} hr" : $"{hours} hr {minutes} min";
+    }
 
     public string PetStateText => IsPaused
         ? "dudu is paused"
-        : $"dudu is {PetPresentation.State.ToString().ToLowerInvariant()}";
+        : $"dudu is {DescribePetState(PetPresentation.State)}";
+
+    /// <summary>Plain-language pet state. The raw enum name lower-cased read as
+    /// "dudu is remotenote" / "focustransition" / "welcomeback"; the settings shell's
+    /// companion panel shares this wording so both surfaces agree.</summary>
+    public static string DescribePetState(PetState state) => state switch
+    {
+        PetState.Comfort => "comforting u",
+        PetState.RemoteNote => "holding a note for u",
+        PetState.Reminder => "showing a reminder",
+        PetState.FocusTransition => "wrapping up a focus session",
+        PetState.WelcomeBack => "saying welcome back",
+        PetState.Ambient => "having a little moment",
+        PetState.Focus => "keeping u company while u focus",
+        _ => "idle",
+    };
+
+    /// <summary>Check-in history row label, matching the lower-case choices in the
+    /// mood picker instead of the enum's "Great"/"Okay".</summary>
+    public static string FormatCheckInChoice(MoodChoice choice) =>
+        choice.ToString().ToLowerInvariant();
+
+    /// <summary>Check-in history row time in the user's local time. The row used to
+    /// bind the raw UTC DateTimeOffset, which rendered with a "+00:00" offset and
+    /// the wrong hour for anyone outside UTC.</summary>
+    public static string FormatCheckInTime(DateTimeOffset createdUtc) =>
+        FormatCheckInTimeIn(createdUtc, TimeZoneInfo.Local);
+
+    /// <summary>Zone-explicit form of <see cref="FormatCheckInTime(DateTimeOffset)"/>.
+    /// Deliberately not an overload: x:Bind function bindings resolve by name.</summary>
+    public static string FormatCheckInTimeIn(DateTimeOffset createdUtc, TimeZoneInfo zone)
+    {
+        ArgumentNullException.ThrowIfNull(zone);
+        return TimeZoneInfo.ConvertTime(createdUtc, zone).DateTime.ToString("g");
+    }
+
+    /// <summary>True when the free-text countdown target box already shows
+    /// <paramref name="targetUtc"/> (blank for none). The box is not x:Bound -- it is
+    /// parsed on every keystroke -- so HomePage uses this to re-sync the box only when
+    /// the view model moved the target itself (e.g. cleared it after a save), without
+    /// rewriting text the user is in the middle of typing.</summary>
+    public static bool CountdownTargetTextMatches(string? text, DateTimeOffset? targetUtc)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return targetUtc is null;
+        return targetUtc is { } target
+            && DateTimeOffset.TryParse(text, out var parsed)
+            && parsed.ToUniversalTime() == target.ToUniversalTime();
+    }
 
     public string PetAnimationText => $"current animation {PetPresentation.AnimationKey}";
 

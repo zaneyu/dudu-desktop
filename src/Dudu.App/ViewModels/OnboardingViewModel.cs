@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.ComponentModel;
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using Dudu.App.Hosting;
 using Dudu.App.Overlay;
@@ -29,6 +30,10 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
 {
     public const int StepCount = 6;
     public const string DefaultMonitorDeviceName = "PRIMARY";
+    public const string RecipientNameMessage = "add a name for dudu to call u, up to 80 characters";
+    public const string QuietHoursSameTimeMessage = "quiet hours need different start and end times";
+    public const string QuietHoursTimeFormatMessage = "use a time like 22:00 for quiet hours";
+    public const string LocalNoteLimitMessage = "wait note limit must be 0 to 12";
 
     private readonly PreferenceMutationCoordinator _preferenceMutations;
     private readonly IProfileRepository _profileRepository;
@@ -65,6 +70,9 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
     private string? _validationMessage;
     private string? _runtimeApplyError;
     private string? _startupRegistrationError;
+    private bool _quietHoursInputInvalid;
+    private bool _localNoteLimitInputInvalid;
+    private long _placementPreviewGeneration;
 
     public OnboardingViewModel(
         PreferenceMutationCoordinator preferenceMutations,
@@ -105,9 +113,36 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
     public AppTheme Theme { get => _theme; set => Set(ref _theme, value); }
     public bool ReducedMotion { get => _reducedMotion; set => Set(ref _reducedMotion, value); }
     public bool QuietHoursEnabled { get => _quietHoursEnabled; set => Set(ref _quietHoursEnabled, value); }
-    public TimeOnly QuietHoursStart { get => _quietHoursStart; set => Set(ref _quietHoursStart, value); }
-    public TimeOnly QuietHoursEnd { get => _quietHoursEnd; set => Set(ref _quietHoursEnd, value); }
-    public int LocalNoteDailyLimit { get => _localNoteDailyLimit; set => Set(ref _localNoteDailyLimit, value); }
+    public TimeOnly QuietHoursStart
+    {
+        get => _quietHoursStart;
+        set
+        {
+            // A typed-in value supersedes whatever unparseable text came before it.
+            _quietHoursInputInvalid = false;
+            Set(ref _quietHoursStart, value);
+        }
+    }
+
+    public TimeOnly QuietHoursEnd
+    {
+        get => _quietHoursEnd;
+        set
+        {
+            _quietHoursInputInvalid = false;
+            Set(ref _quietHoursEnd, value);
+        }
+    }
+
+    public int LocalNoteDailyLimit
+    {
+        get => _localNoteDailyLimit;
+        set
+        {
+            _localNoteLimitInputInvalid = false;
+            Set(ref _localNoteDailyLimit, value);
+        }
+    }
     public bool HydrationRemindersEnabled { get => _hydrationRemindersEnabled; set => Set(ref _hydrationRemindersEnabled, value); }
     public bool BreakRemindersEnabled { get => _breakRemindersEnabled; set => Set(ref _breakRemindersEnabled, value); }
     public bool HidePetDuringFullscreen { get => _hidePetDuringFullscreen; set => Set(ref _hidePetDuringFullscreen, value); }
@@ -202,7 +237,16 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
             return;
         }
 
+        // Slider drags raise many overlapping previews; the latest one must win, so a
+        // preview superseded while it awaited the capture is dropped instead of being
+        // applied late and snapping dudu back to an older size.
+        var generation = Interlocked.Increment(ref _placementPreviewGeneration);
         var current = await _placementCapture(cancellationToken);
+        if (generation != Interlocked.Read(ref _placementPreviewGeneration))
+        {
+            return;
+        }
+
         var preview = current.Placement with
         {
             Scale = MonitorPlacementService.ClampScale(PlacementScale),
@@ -225,6 +269,38 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
         await _placementPreviewer(
             current.Placement with { NormalizedX = 0.8, NormalizedY = 0.8, Scale = 1.0 },
             cancellationToken);
+    }
+
+    /// <summary>Applies the raw quiet-hours text boxes. Unparseable text used to be
+    /// dropped silently, so a typo such as "25:00" or a cleared box kept the previous
+    /// time and onboarding advanced as if the user's entry had been accepted. Now an
+    /// unparseable entry is remembered and blocks the quiet-hours step (while quiet
+    /// hours are on) until it is corrected.</summary>
+    public bool TrySetQuietHoursText(string? startText, string? endText)
+    {
+        ThrowIfDisposed();
+        var startParsed = TryParseQuietTime(startText, out var start);
+        var endParsed = TryParseQuietTime(endText, out var end);
+        if (startParsed) QuietHoursStart = start;
+        if (endParsed) QuietHoursEnd = end;
+        _quietHoursInputInvalid = !(startParsed && endParsed);
+        return !_quietHoursInputInvalid;
+    }
+
+    /// <summary>Applies the note-limit NumberBox value. A cleared NumberBox reports
+    /// NaN, which the old (int)Math.Round cast silently turned into a limit of 0 (no
+    /// local notes at all). A non-finite entry is now rejected by validation instead.</summary>
+    public void SetLocalNoteDailyLimitInput(double value)
+    {
+        ThrowIfDisposed();
+        if (!double.IsFinite(value))
+        {
+            _localNoteLimitInputInvalid = true;
+            return;
+        }
+
+        var rounded = Math.Round(value, MidpointRounding.AwayFromZero);
+        LocalNoteDailyLimit = rounded is < int.MinValue or > int.MaxValue ? -1 : (int)rounded;
     }
 
     public void SkipPairing()
@@ -450,17 +526,27 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
     {
         var value = RecipientName.Trim();
         return value.Length is < 1 or > 80 || value.Any(char.IsControl)
-            ? "cannot name must be 1 to 80 chars"
+            ? RecipientNameMessage
             : null;
     }
 
-    private string? ValidateQuietHours() => QuietHoursEnabled && QuietHoursStart == QuietHoursEnd
-        ? "alala quiet hours need start and end"
+    private string? ValidateQuietHours()
+    {
+        if (!QuietHoursEnabled) return null;
+        if (_quietHoursInputInvalid) return QuietHoursTimeFormatMessage;
+        return QuietHoursStart == QuietHoursEnd ? QuietHoursSameTimeMessage : null;
+    }
+
+    private string? ValidateReminderDefaults() => _localNoteLimitInputInvalid || LocalNoteDailyLimit is < 0 or > 12
+        ? LocalNoteLimitMessage
         : null;
 
-    private string? ValidateReminderDefaults() => LocalNoteDailyLimit is < 0 or > 12
-        ? "wait note limit must be 0 to 12"
-        : null;
+    private static bool TryParseQuietTime(string? text, out TimeOnly time)
+    {
+        time = default;
+        return !string.IsNullOrWhiteSpace(text)
+            && TimeOnly.TryParse(text.Trim(), CultureInfo.CurrentCulture, DateTimeStyles.None, out time);
+    }
 
     private string? ValidatePlacement() => string.IsNullOrWhiteSpace(_monitorDeviceName)
         || !double.IsFinite(PlacementX)

@@ -219,6 +219,7 @@ namespace Dudu.App.Pages
         private NumberBox NoteLimitBox = null!;
         private Button RecommendedPlacementButton = null!;
         private Slider PlacementScaleSlider = null!;
+        private TextBlock PlacementScaleLabel = null!;
         private CheckBox HideFullscreenBox = null!;
         private CheckBox LaunchAtSignInBox = null!;
         private StackPanel StartupRecoveryPanel = null!;
@@ -226,6 +227,7 @@ namespace Dudu.App.Pages
         private TextBlock PairingStatus = null!;
         private Button PairingCheckButton = null!;
         private Button SkipPairingButton = null!;
+        private TextBlock OnboardingStatusMessage = null!;
         private TextBlock OnboardingValidationMessage = null!;
         private Button BackButton = null!;
         private Button NextButton = null!;
@@ -251,7 +253,8 @@ namespace Dudu.App.Pages
             BreakBox = new CheckBox();
             NoteLimitBox = new NumberBox { Value = 3 };
             RecommendedPlacementButton = new Button();
-            PlacementScaleSlider = new Slider { Minimum = 0.5, Maximum = 2, Value = 1 };
+            PlacementScaleSlider = new Slider { Minimum = 0.5, Maximum = 2, Value = 1, StepFrequency = 0.05 };
+            PlacementScaleLabel = new TextBlock();
             HideFullscreenBox = new CheckBox();
             LaunchAtSignInBox = new CheckBox();
             StartupRecoveryPanel = new StackPanel();
@@ -259,6 +262,7 @@ namespace Dudu.App.Pages
             PairingStatus = new TextBlock();
             PairingCheckButton = new Button();
             SkipPairingButton = new Button();
+            OnboardingStatusMessage = new TextBlock();
             OnboardingValidationMessage = new TextBlock();
             BackButton = new Button();
             NextButton = new Button();

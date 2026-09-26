@@ -10,7 +10,14 @@
         <Setter Property="MinHeight" Value="40" />
         <Setter Property="Padding" Value="16,8" />
     </Style>
+    <!-- An explicit Style replaces the implicit Button style above rather than
+         layering on it, so the primary style repeats its font, minimum height and
+         padding. Without them the coral primary buttons rendered shorter and
+         tighter than the secondary buttons beside them. -->
     <Style x:Key="PrimaryButtonStyle" TargetType="Button">
+        <Setter Property="FontFamily" Value="Segoe UI Variable" />
+        <Setter Property="MinHeight" Value="40" />
+        <Setter Property="Padding" Value="16,8" />
         <Setter Property="Background" Value="{ThemeResource CoralActionBrush}" />
         <Setter Property="Foreground" Value="{ThemeResource PrimaryButtonForegroundBrush}" />
         <Setter Property="HorizontalContentAlignment" Value="Center" />

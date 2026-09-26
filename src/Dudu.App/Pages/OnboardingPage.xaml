@@ -6,7 +6,7 @@
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel x:Name="PageRoot" MaxWidth="720" Padding="32" Spacing="16">
             <TextBlock Text="calm start with dudu" Style="{StaticResource PageTitleStyle}" />
-            <TextBlock x:Name="OnboardingProgress" AutomationProperties.AutomationId="OnboardingProgress" AutomationProperties.Name="onboarding progress" FontSize="14" Foreground="{ThemeResource TextSecondaryBrush}" />
+            <TextBlock x:Name="OnboardingProgress" AutomationProperties.AutomationId="OnboardingProgress" AutomationProperties.Name="onboarding progress" AutomationProperties.LiveSetting="Polite" FontSize="14" Foreground="{ThemeResource TextSecondaryBrush}" />
             <Border Background="{ThemeResource BlushSurfaceBrush}" BorderBrush="{ThemeResource LavenderBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="24">
                 <StackPanel Spacing="16">
                     <StackPanel x:Name="RecipientStep" Spacing="12">
@@ -52,20 +52,24 @@
                         <TextBlock Text="place dudu" Style="{StaticResource SectionHeadingStyle}" />
                         <TextBlock Text="drag dudu where u want it" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                         <Button x:Name="RecommendedPlacementButton" Content="use recommended placement" AutomationProperties.AutomationId="OnboardingRecommendedPlacement" AutomationProperties.Name="use recommended placement" Click="RecommendedPlacementButton_Click" />
-                        <Slider x:Name="PlacementScaleSlider" Header="pet size" AutomationProperties.AutomationId="OnboardingPetScale" AutomationProperties.Name="pet size" Minimum="0.5" Maximum="2" SmallChange="0.1" Value="1" ValueChanged="PlacementScaleSlider_ValueChanged" />
+                        <!-- Slider.StepFrequency defaults to 1, which with Minimum 0.5 snapped every
+                             drag to 50%, 150% or 200% and made the recommended 100% unreachable. -->
+                        <Slider x:Name="PlacementScaleSlider" Header="pet size" AutomationProperties.AutomationId="OnboardingPetScale" AutomationProperties.Name="pet size" Minimum="0.5" Maximum="2" SmallChange="0.1" LargeChange="0.25" StepFrequency="0.05" IsThumbToolTipEnabled="False" Value="1" ValueChanged="PlacementScaleSlider_ValueChanged" />
+                        <TextBlock x:Name="PlacementScaleLabel" Text="100%" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="OnboardingPetScaleValue" AutomationProperties.Name="pet size 100%" />
                         <CheckBox x:Name="HideFullscreenBox" Content="hide dudu during fullscreen work" AutomationProperties.AutomationId="OnboardingHideDuringFullscreen" AutomationProperties.Name="hide dudu during fullscreen work" IsChecked="True" />
                         <CheckBox x:Name="LaunchAtSignInBox" Content="launch dudu when i sign in" AutomationProperties.AutomationId="OnboardingLaunchAtSignIn" AutomationProperties.Name="launch dudu when i sign in" IsChecked="True" />
                     </StackPanel>
 
                     <StackPanel x:Name="PairingStep" Spacing="12" Visibility="Collapsed">
                         <TextBlock Text="pair later if you want" Style="{StaticResource SectionHeadingStyle}" />
-                        <TextBlock Text="pairing lets someone send encrypted notes its optional" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
-                        <TextBlock x:Name="PairingStatus" AutomationProperties.AutomationId="OnboardingPairingStatus" AutomationProperties.Name="pairing is optional" Text="pairing is optional" TextWrapping="Wrap" />
+                        <TextBlock Text="pairing lets someone send u encrypted notes. it's optional" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                        <TextBlock x:Name="PairingStatus" AutomationProperties.AutomationId="OnboardingPairingStatus" AutomationProperties.Name="pairing status" AutomationProperties.LiveSetting="Polite" Text="pairing is optional" TextWrapping="Wrap" />
                         <Button x:Name="PairingCheckButton" Content="check pairing availability" AutomationProperties.AutomationId="OnboardingPairingCheck" AutomationProperties.Name="check pairing availability" Click="PairingCheckButton_Click" />
                         <Button x:Name="SkipPairingButton" Content="skip for now" AutomationProperties.AutomationId="OnboardingSkipPairing" AutomationProperties.Name="skip for now" Click="SkipPairingButton_Click" />
                     </StackPanel>
 
-                    <TextBlock x:Name="OnboardingValidationMessage" AutomationProperties.AutomationId="OnboardingValidationMessage" AutomationProperties.Name="validation message" Foreground="{ThemeResource ErrorBrush}" TextWrapping="Wrap" />
+                    <TextBlock x:Name="OnboardingStatusMessage" AutomationProperties.AutomationId="OnboardingStatusMessage" AutomationProperties.Name="onboarding status" AutomationProperties.LiveSetting="Polite" Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" />
+                    <TextBlock x:Name="OnboardingValidationMessage" AutomationProperties.AutomationId="OnboardingValidationMessage" AutomationProperties.Name="validation message" AutomationProperties.LiveSetting="Assertive" Foreground="{ThemeResource ErrorBrush}" TextWrapping="Wrap" />
                     <StackPanel x:Name="StartupRecoveryPanel" Spacing="8" Visibility="Collapsed">
                         <TextBlock x:Name="StartupRecoveryMessage" AutomationProperties.AutomationId="OnboardingStartupRecoveryMessage" AutomationProperties.Name="startup recovery message" Foreground="{ThemeResource WarningBrush}" TextWrapping="Wrap" />
                         <Button x:Name="RetryStartupButton" Content="retry startup registration" AutomationProperties.AutomationId="OnboardingRetryStartupRegistration" AutomationProperties.Name="retry startup registration" Click="RetryStartupButton_Click" />

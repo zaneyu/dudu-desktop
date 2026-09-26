@@ -2,6 +2,8 @@ using Dudu.App.Hosting;
 using Dudu.App.Overlay;
 using Dudu.App.ViewModels;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 
 namespace Dudu.App.Pages;
@@ -22,6 +24,7 @@ public sealed partial class HomePage : Page
         InitializeComponent();
         DataContext = ViewModel;
         Loaded += Page_Loaded;
+        ViewModel.PropertyChanged += ViewModel_PropertyChanged;
     }
 
     public HomeViewModel ViewModel { get; }
@@ -54,9 +57,9 @@ public sealed partial class HomePage : Page
         {
             var visible = Startup.NeedsReconciliation;
             StartupRecoveryPanel.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
-            StartupRecoveryMessage.Text = visible
+            SetAccessibleText(StartupRecoveryMessage, visible
                 ? Startup.ReconciliationError ?? "aiyo startup registration needs another try"
-                : string.Empty;
+                : string.Empty);
 
             // Sets the checkbox's initial and every subsequent state imperatively (the XAML
             // does not bind IsChecked at all -- x:Bind evaluates during InitializeComponent,
@@ -103,6 +106,26 @@ public sealed partial class HomePage : Page
         }
     }
 
+    /// <summary>CountdownTargetBox is parsed from code-behind rather than x:Bound, so
+    /// when the view model moves the target on its own -- SaveCountdownAsync clears it
+    /// after a save -- the box has to follow. Otherwise it kept showing the old date
+    /// while the view model held null, and the next save silently used "tomorrow".
+    /// Text that already represents the view model's target (including text the user
+    /// is typing) is left untouched.</summary>
+    private void ViewModel_PropertyChanged(object? sender, global::System.ComponentModel.PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName != nameof(HomeViewModel.CountdownTargetUtc)) return;
+        try
+        {
+            if (HomeViewModel.CountdownTargetTextMatches(CountdownTargetBox.Text, ViewModel.CountdownTargetUtc)) return;
+            CountdownTargetBox.Text = ViewModel.CountdownTargetUtc?.ToLocalTime().ToString("g") ?? string.Empty;
+        }
+        catch (Exception exception)
+        {
+            global::System.Diagnostics.Trace.TraceError("Dudu countdown target sync failed: {0}", exception);
+        }
+    }
+
     private void CountdownTarget_Changed(object sender, TextChangedEventArgs args)
     {
         if (sender is not TextBox box) return;
@@ -125,7 +148,7 @@ public sealed partial class HomePage : Page
     private void SetCountdownTargetValidation(bool isValid, string? message)
     {
         HomeSaveCountdownButton.IsEnabled = isValid;
-        CountdownTargetValidation.Text = message ?? string.Empty;
+        SetAccessibleText(CountdownTargetValidation, message);
         CountdownTargetValidation.Visibility = isValid ? Visibility.Collapsed : Visibility.Visible;
     }
 
@@ -154,11 +177,11 @@ public sealed partial class HomePage : Page
             var commands = _overlayCommands ?? throw new InvalidOperationException(
                 "aiyo dudus action controls not ready yet");
             await commands.ExecuteAccessibleAsync(action);
-            HomeActionStatus.Text = $"{ActionBubbleLayout.Label(action)} ready le";
+            SetAccessibleText(HomeActionStatus, $"{ActionBubbleLayout.Label(action)} ready le");
         }
         catch (Exception exception)
         {
-            HomeActionStatus.Text = HomeViewModel.DescribeError(exception);
+            SetAccessibleText(HomeActionStatus, HomeViewModel.DescribeError(exception));
             global::System.Diagnostics.Trace.TraceError("Dudu action failed: {0}", exception);
         }
     }
@@ -173,11 +196,11 @@ public sealed partial class HomePage : Page
             var commands = _overlayCommands ?? throw new InvalidOperationException(
                 "oh no dudus comfort controls not ready");
             await commands.ExecuteComfortAccessibleAsync(action);
-            HomeActionStatus.Text = $"{ActionBubbleLayout.ComfortLabel(action)} ready le";
+            SetAccessibleText(HomeActionStatus, $"{ActionBubbleLayout.ComfortLabel(action)} ready le");
         }
         catch (Exception exception)
         {
-            HomeActionStatus.Text = HomeViewModel.DescribeError(exception);
+            SetAccessibleText(HomeActionStatus, HomeViewModel.DescribeError(exception));
             global::System.Diagnostics.Trace.TraceError("Dudu comfort action failed: {0}", exception);
         }
     }
@@ -212,4 +235,27 @@ public sealed partial class HomePage : Page
         RefreshStartupRecovery();
     }
 
+    /// <summary>Code-behind status text must also become the element's UIA name: a
+    /// static AutomationProperties.Name ("action status") overrides the TextBlock's
+    /// text, so Narrator and the live-region announcement read the label instead of
+    /// the actual message. Raises LiveRegionChanged so a polite/assertive region is
+    /// actually announced.</summary>
+    private static void SetAccessibleText(TextBlock block, string? text)
+    {
+        block.Text = text ?? string.Empty;
+        AutomationProperties.SetName(block, block.Text);
+        if (block.Text.Length == 0) return;
+        try
+        {
+            var peer = FrameworkElementAutomationPeer.FromElement(block)
+                ?? FrameworkElementAutomationPeer.CreatePeerForElement(block);
+            peer?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
+        }
+        catch (Exception exception)
+        {
+            global::System.Diagnostics.Trace.TraceInformation(
+                "Dudu live region announcement failed: {0}",
+                exception.GetType().Name);
+        }
+    }
 }

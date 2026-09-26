@@ -36,7 +36,11 @@ public sealed class XamlContractTests
         var stubs = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "XamlCompileStubs.cs"));
 
         Assert.Contains("SmallChange=\"0.1\"", onboarding);
-        Assert.DoesNotContain("StepFrequency=", onboarding);
+        // Slider.StepFrequency is a real WinUI 3 property and defaults to 1: left
+        // unset, the pet-size slider (0.5 to 2) snapped to 50%/150%/200% only, so the
+        // recommended 100% could not be picked. The old DoesNotContain here pinned
+        // that bug in place.
+        Assert.Contains("StepFrequency=\"0.05\"", onboarding);
         Assert.Contains("<Setter Property=\"Foreground\" Value=\"{ThemeResource PrimaryButtonForegroundBrush}\" />", controls);
         Assert.Contains("SystemColorHighlightTextColor", colors);
         Assert.Contains("private StackPanel StartupRecoveryPanel", stubs);
