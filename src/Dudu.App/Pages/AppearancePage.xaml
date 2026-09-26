@@ -3,7 +3,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Background="{ThemeResource WindowSurfaceBrush}">
-    <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
         <StackPanel MaxWidth="880" Margin="32" Spacing="24">
             <StackPanel Spacing="8">
                 <TextBlock Text="appearance" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="AppearancePageTitle" AutomationProperties.Name="appearance" />
@@ -35,7 +35,7 @@
                 <TextBlock Text="pet options" Style="{StaticResource SectionHeadingStyle}" />
                 <TextBlock Text="give dudu a small change of clothes without changing the rest of the app" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                 <ComboBox Header="outfit" ItemsSource="{x:Bind ViewModel.OutfitOptions, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.SelectedOutfit, Mode=TwoWay}" IsEnabled="{x:Bind ViewModel.CanPersistOutfit, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceOutfit" AutomationProperties.Name="outfit" />
-                <TextBlock Text="{x:Bind ViewModel.OutfitAvailabilityMessage, Mode=OneWay}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="AppearanceOutfitAvailability" AutomationProperties.Name="outfit availability" />
+                <TextBlock Text="{x:Bind ViewModel.OutfitAvailabilityMessage, Mode=OneWay}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="AppearanceOutfitAvailability" AutomationProperties.Name="{x:Bind ViewModel.OutfitAvailabilityMessage, Mode=OneWay}" />
                 <CheckBox Content="let the calendar choose seasonal outfits" IsChecked="{x:Bind ViewModel.AutomaticSeasonalMode, Mode=TwoWay}" IsEnabled="{x:Bind ViewModel.CanConfigureSeasonalMode, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceSeasonalMode" AutomationProperties.Name="let the calendar choose seasonal outfits" />
                 <TextBlock Text="seasonal outfits for these dates and winter aren't included in this version yet. the dates you save here are kept for when they are." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="AppearanceSeasonalAvailability" AutomationProperties.Name="automatic seasonal mode details" />
                 <Grid ColumnSpacing="16" RowSpacing="12">
@@ -58,14 +58,22 @@
             </StackPanel>
 
             <StackPanel Spacing="4" AutomationProperties.LiveSetting="Polite">
-                <StackPanel Orientation="Horizontal" Spacing="6" Visibility="{x:Bind ViewModel.HasStatus, Mode=OneWay}">
-                    <FontIcon Glyph="&#xE73E;" Foreground="{ThemeResource SuccessBrush}" AutomationProperties.AccessibilityView="Raw" />
-                    <TextBlock Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" Foreground="{ThemeResource SuccessBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="AppearanceStatusMessage" AutomationProperties.Name="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" />
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" Spacing="6" Visibility="{x:Bind ViewModel.HasError, Mode=OneWay}">
-                    <FontIcon Glyph="&#xEA39;" Foreground="{ThemeResource ErrorBrush}" AutomationProperties.AccessibilityView="Raw" />
-                    <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" Foreground="{ThemeResource ErrorBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="AppearanceErrorMessage" AutomationProperties.Name="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" />
-                </StackPanel>
+                <Grid ColumnSpacing="6" Visibility="{x:Bind ViewModel.HasStatus, Mode=OneWay}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon Glyph="&#xE73E;" Foreground="{ThemeResource SuccessBrush}" AutomationProperties.AccessibilityView="Raw" VerticalAlignment="Top" Margin="0,3,0,0" />
+                    <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" Foreground="{ThemeResource SuccessBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="AppearanceStatusMessage" AutomationProperties.Name="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" />
+                </Grid>
+                <Grid ColumnSpacing="6" Visibility="{x:Bind ViewModel.HasError, Mode=OneWay}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon Glyph="&#xEA39;" Foreground="{ThemeResource ErrorBrush}" AutomationProperties.AccessibilityView="Raw" VerticalAlignment="Top" Margin="0,3,0,0" />
+                    <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" Foreground="{ThemeResource ErrorBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="AppearanceErrorMessage" AutomationProperties.Name="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" />
+                </Grid>
             </StackPanel>
         </StackPanel>
     </ScrollViewer>

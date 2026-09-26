@@ -116,16 +116,7 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
     /// snapshot; a paused one holds still. Never negative.</summary>
     public TimeSpan ActiveFocusRemaining
     {
-        get
-        {
-            if (ActiveFocus is not { } focus) return TimeSpan.Zero;
-            if (focus.Status == FocusStatus.Paused) return focus.Remaining;
-            if (focus.Status != FocusStatus.Running) return TimeSpan.Zero;
-            var elapsed = _context.Clock.UtcNow.ToUniversalTime() - _activeFocusCapturedUtc;
-            if (elapsed < TimeSpan.Zero) elapsed = TimeSpan.Zero;
-            var remaining = focus.Remaining - elapsed;
-            return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
-        }
+        get => FocusDisplay.RemainingAt(ActiveFocus, _activeFocusCapturedUtc, _context.Clock.UtcNow);
     }
 
     public string ActiveFocusText => FocusDisplay.Describe(ActiveFocus, ActiveFocusRemaining);
@@ -471,6 +462,19 @@ public static class FocusDisplay
         { Status: FocusStatus.Completed } => "last focus session completed le",
         _ => "last focus session ended early",
     };
+
+    /// <summary>Time left right now for a snapshot read at <paramref name="capturedUtc"/>:
+    /// a running session counts down from it; a paused one holds still. Never negative.</summary>
+    public static TimeSpan RemainingAt(FocusSnapshot? focus, DateTimeOffset capturedUtc, DateTimeOffset nowUtc)
+    {
+        if (focus is null) return TimeSpan.Zero;
+        if (focus.Status == FocusStatus.Paused) return focus.Remaining;
+        if (focus.Status != FocusStatus.Running) return TimeSpan.Zero;
+        var elapsed = nowUtc.ToUniversalTime() - capturedUtc.ToUniversalTime();
+        if (elapsed < TimeSpan.Zero) elapsed = TimeSpan.Zero;
+        var remaining = focus.Remaining - elapsed;
+        return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
+    }
 
     /// <summary>Rounds up to whole minutes (so a session never reads "0 min"
     /// while seconds remain) and switches to hours past an hour.</summary>

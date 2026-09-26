@@ -12,6 +12,7 @@ public sealed partial class HomePage : Page
 {
     private readonly OverlayCommandRouter? _overlayCommands;
     private bool _suppressStartupToggle;
+    private DispatcherTimer? _focusCountdownTimer;
 
     public HomePage(
         HomeViewModel viewModel,
@@ -24,6 +25,7 @@ public sealed partial class HomePage : Page
         InitializeComponent();
         DataContext = ViewModel;
         Loaded += Page_Loaded;
+        Unloaded += Page_Unloaded;
         ViewModel.PropertyChanged += ViewModel_PropertyChanged;
     }
 
@@ -38,6 +40,15 @@ public sealed partial class HomePage : Page
         // sit at the CheckBox default instead of the actual state.
         RefreshStartupRecovery();
 
+        // The focus line was computed once per refresh, so a running session sat at
+        // "25 min left" for as long as Home stayed open. Tick it like Tasks does.
+        if (_focusCountdownTimer is null)
+        {
+            _focusCountdownTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+            _focusCountdownTimer.Tick += FocusCountdownTimer_Tick;
+        }
+        _focusCountdownTimer.Start();
+
         try
         {
             await ViewModel.RefreshAsync();
@@ -45,6 +56,38 @@ public sealed partial class HomePage : Page
         catch (Exception exception)
         {
             global::System.Diagnostics.Trace.TraceError("Dudu home refresh failed: {0}", exception);
+        }
+    }
+
+    // SettingsWindow caches this page and swaps it in and out of the content frame, so
+    // Loaded/Unloaded fire on every visit; the countdown only runs while Home is shown.
+    private void Page_Unloaded(object sender, RoutedEventArgs args)
+    {
+        if (IsLoaded) return; // a re-load already won the out-of-order race
+        _focusCountdownTimer?.Stop();
+    }
+
+    /// <summary>Called when the hosting window closes: Unloaded is not guaranteed for a
+    /// closed window's content, and the UI thread (and so this timer) outlives it.</summary>
+    public void StopFocusCountdown() => _focusCountdownTimer?.Stop();
+
+    private void FocusCountdownTimer_Tick(object? sender, object args)
+    {
+        // A throw on a DispatcherTimer tick is unhandled and repeats every interval;
+        // this is display-only work, so a failure just skips the tick.
+        try
+        {
+            if (ViewModel.ActiveFocus is { Status: Dudu.Core.Models.FocusStatus.Running })
+            {
+                ViewModel.RefreshFocusCountdown();
+            }
+        }
+        catch (Exception exception)
+        {
+            global::System.Diagnostics.Trace.TraceWarning(
+                "Dudu home focus tick failed: {0} 0x{1:X8}",
+                exception.GetType().Name,
+                exception.HResult);
         }
     }
 

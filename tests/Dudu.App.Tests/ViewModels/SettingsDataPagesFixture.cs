@@ -45,7 +45,8 @@ internal sealed class SettingsDataPagesFixture
         Func<CancellationToken, Task>? restoreAsync = null,
         Func<CancellationToken, Task>? deleteLocalDataAsync = null,
         Func<CancellationToken, Task>? deleteRemoteDataAsync = null,
-        Func<string, CancellationToken, Task>? setGlobalShortcutAsync = null)
+        Func<string, CancellationToken, Task>? setGlobalShortcutAsync = null,
+        IFocusSessionRepository? focusSessions = null)
     {
         var clock = new MutableClock(
             DateTimeOffset.Parse("2026-09-19T08:00:00Z"),
@@ -55,7 +56,7 @@ internal sealed class SettingsDataPagesFixture
         var preferenceMutations = new PreferenceMutationCoordinator(preferences, preferenceRepository);
         var localNotes = new EmptyLocalNoteRepository();
         var tasks = new EmptyTaskRepository();
-        var focusSessions = new EmptyFocusRepository();
+        var focusSessionRepository = focusSessions ?? new EmptyFocusRepository();
         var checkIns = new EmptyCheckInRepository();
         var placements = new MemoryPlacementRepository();
         var pairing = new ScriptedPairing();
@@ -67,14 +68,14 @@ internal sealed class SettingsDataPagesFixture
             new EmptyReminderRepository(),
             new EmptyReminderRepository(),
             tasks,
-            focusSessions,
+            focusSessionRepository,
             localNotes,
             new EmptyRemoteEnvelopeRepository(),
             new EmptyCountdownRepository(),
             checkIns,
             new CheckInService(checkIns, clock),
             new TaskService(tasks, clock),
-            new FocusService(focusSessions, clock, tasks),
+            new FocusService(focusSessionRepository, clock, tasks),
             new LocalNoteSelector(localNotes, clock, new FixedRandom(), preferences),
             pairing,
             new UnusedFeatureTransactions(),
@@ -214,6 +215,8 @@ internal sealed class SettingsDataPagesFixture
 
     private sealed class EmptyReminderRepository : IReminderRepository, IReminderWriter
     {
+        public Task<IReadOnlyList<Reminder>> ListAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<Reminder>>([]);
         public Task<IReadOnlyList<Reminder>> LoadDueAsync(DateTimeOffset utcNow, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<Reminder>>([]);
         public Task<bool> RecordOccurrencesAndAdvanceAsync(

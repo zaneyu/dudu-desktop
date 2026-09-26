@@ -12,7 +12,9 @@ public sealed class CrossPageLayoutAccessibilityContractTests
 {
     public static TheoryData<string> FeaturePages => new()
     {
+        "AppearancePage",
         "ConnectionPage",
+        "HomePage",
         "LoveNotesPage",
         "PrivacyDataPage",
         "RemindersPage",
@@ -124,6 +126,30 @@ public sealed class CrossPageLayoutAccessibilityContractTests
         Assert.Single(Regex.Matches(code, $"{element}\\.Text\\s*="));
         Assert.Contains($"{element}.Text = text;", helperBody);
         Assert.Contains($"AutomationProperties.SetName({element},", helperBody);
+    }
+
+    [Fact]
+    public void Home_focus_line_ticks_while_home_is_shown_and_stops_when_it_is_not()
+    {
+        var code = Read("src", "Dudu.App", "Pages", "HomePage.xaml.cs");
+        var loaded = Slice(code, "private async void Page_Loaded(", "\n    }\n");
+        var unloaded = Slice(code, "private void Page_Unloaded(", "\n    }\n");
+        var tick = Slice(code, "private void FocusCountdownTimer_Tick(", "\n    }\n");
+
+        Assert.Contains("Unloaded += Page_Unloaded;", code);
+        Assert.Contains("_focusCountdownTimer.Tick += FocusCountdownTimer_Tick;", loaded);
+        Assert.Contains("_focusCountdownTimer.Start();", loaded);
+        Assert.Contains("if (IsLoaded) return;", unloaded);
+        Assert.Contains("_focusCountdownTimer?.Stop();", unloaded);
+        Assert.Contains("ViewModel.RefreshFocusCountdown();", tick);
+        Assert.Contains("catch (Exception exception)", tick);
+
+        // Unloaded is not guaranteed for a closed window's content, and the UI thread
+        // outlives the settings window, so closing it stops both page timers.
+        var shell = Read("src", "Dudu.App", "Windows", "SettingsWindow.xaml.cs");
+        var closed = Slice(shell, "public void OnHostWindowClosed()", "\n    }\n");
+        Assert.Contains("_homePage?.StopFocusCountdown();", closed);
+        Assert.Contains("_tasksFocusPage?.StopFocusCountdown();", closed);
     }
 
     [Fact]

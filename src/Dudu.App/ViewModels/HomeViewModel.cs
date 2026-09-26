@@ -12,6 +12,7 @@ public sealed class HomeViewModel : FeatureViewModelBase
     private readonly CompanionFeatureContext _context;
     private Reminder? _nextReminder;
     private FocusSnapshot? _activeFocus;
+    private DateTimeOffset _activeFocusCapturedUtc;
     private Countdown? _selectedCountdown;
     private Countdown? _pendingDeleteCountdown;
     private CheckInSummary? _checkInSummary;
@@ -82,8 +83,27 @@ public sealed class HomeViewModel : FeatureViewModelBase
         get => _activeFocus;
         private set
         {
-            if (SetProperty(ref _activeFocus, value)) OnPropertyChanged(nameof(ActiveFocusText));
+            // A snapshot's Remaining is only true at the moment it was read (and an
+            // identical record can come back on a later refresh), so always re-stamp
+            // the capture time and re-announce the line the countdown is derived from.
+            _activeFocusCapturedUtc = _context.Clock.UtcNow.ToUniversalTime();
+            SetProperty(ref _activeFocus, value);
+            OnPropertyChanged(nameof(ActiveFocusRemaining));
+            OnPropertyChanged(nameof(ActiveFocusText));
         }
+    }
+
+    /// <summary>Time left right now: a running session counts down from its snapshot,
+    /// a paused one holds still (same rule as the Tasks and Focus page).</summary>
+    public TimeSpan ActiveFocusRemaining =>
+        FocusDisplay.RemainingAt(ActiveFocus, _activeFocusCapturedUtc, _context.Clock.UtcNow);
+
+    /// <summary>Called by the page's timer so Home's focus line ticks down instead of
+    /// freezing at whatever it read when the page loaded.</summary>
+    public void RefreshFocusCountdown()
+    {
+        OnPropertyChanged(nameof(ActiveFocusRemaining));
+        OnPropertyChanged(nameof(ActiveFocusText));
     }
 
     public Countdown? SelectedCountdown
@@ -192,7 +212,7 @@ public sealed class HomeViewModel : FeatureViewModelBase
         return targetDate.DayNumber - today.DayNumber;
     }
 
-    public string ActiveFocusText => DescribeFocus(ActiveFocus);
+    public string ActiveFocusText => FocusDisplay.Describe(ActiveFocus, ActiveFocusRemaining);
 
     /// <summary>Plain-language focus line, worded like the Tasks and Focus page. The
     /// old copy lower-cased the raw enum ("focus is endedearly with 0 min left") and

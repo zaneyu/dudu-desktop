@@ -80,6 +80,10 @@ public sealed partial class TasksFocusPage : Page
         }
     }
 
+    /// <summary>Called when the hosting window closes: Unloaded is not guaranteed for a
+    /// closed window's content, and the UI thread (and so this timer) outlives it.</summary>
+    public void StopFocusCountdown() => _focusCountdownTimer?.Stop();
+
     private void FocusCountdownTimer_Tick(object? sender, object args)
     {
         if (ViewModel.ActiveFocus is { Status: FocusStatus.Running })

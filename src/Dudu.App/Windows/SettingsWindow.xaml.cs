@@ -196,7 +196,14 @@ public sealed partial class SettingsWindow : UserControl
 
     /// <summary>Called by App from the hosting Window's Closed event, the one close signal
     /// WinUI 3 raises reliably (Unloaded is not guaranteed for a closed window's content).</summary>
-    public void OnHostWindowClosed() => _tasksFocusPage?.ViewModel.DetachFocusExpiry();
+    public void OnHostWindowClosed()
+    {
+        _tasksFocusPage?.ViewModel.DetachFocusExpiry();
+        // The page countdown timers run on the app's UI thread, which outlives this
+        // window; left running they would tick (and keep the pages alive) forever.
+        _tasksFocusPage?.StopFocusCountdown();
+        _homePage?.StopFocusCountdown();
+    }
 
     private async Task EnsureDuduPackAsync()
     {
