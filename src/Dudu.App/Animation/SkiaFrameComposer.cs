@@ -16,7 +16,7 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
     private const long MaxDecodedBitmapBytes = 64L * 1024 * 1024;
 
     private readonly object _gate = new();
-    private static readonly SKSamplingOptions SamplingOptions = new(SKFilterMode.Nearest);
+    private static readonly SKSamplingOptions SamplingOptions = new(SKFilterMode.Linear, SKMipmapMode.Linear);
     private readonly Dictionary<string, SKImage> _imageCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, long> _imageCacheBytes = new(StringComparer.OrdinalIgnoreCase);
     // Least-recently-used order for _imageCache: front (First) is the next

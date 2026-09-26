@@ -50,7 +50,7 @@ public sealed class ReminderDueSinkTests
         // neutral copy (an unknown recipient) rather than keep saying "ada".
         var item = Assert.IsType<DurableNotification>(gateway.LastItem);
         Assert.Equal("time to wind down. goodnight.", item.Body);
-        Assert.Equal("sleep", item.AnimationKey);
+        Assert.Equal("sticker-025", item.AnimationKey);
         Assert.Equal(DateTimeOffset.Parse("2026-09-18T00:00:00Z"), item.ExpiresUtc);
         Assert.False(gateway.LastBypass);
     }

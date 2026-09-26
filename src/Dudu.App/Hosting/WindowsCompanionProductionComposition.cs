@@ -622,9 +622,15 @@ public static class WindowsCompanionProductionComposition
                         // otherwise a number the pack has no art for (e.g. the
                         // shipped pack currently has no sticker-018/027) silently
                         // resolves to the base idle loop via AssetPack.ResolveAnimation.
+                        // Curated ambient rotation: exclude scold/spank/submissive/
+                        // angry/moody poses with legible text (001,005,008,014,
+                        // 021) until text is cropped + tone approved.
                         availableStickerKeys: pack.Manifest.Outfits.TryGetValue("base", out var baseOutfit)
                             ? baseOutfit.Animations.Keys
                                 .Where(AssetManifestContract.IsStickerAnimationKey)
+                                .Where(key => key is not (
+                                    "sticker-001" or "sticker-005" or "sticker-008"
+                                    or "sticker-014" or "sticker-021"))
                                 .ToArray()
                             : null,
                         // P2-B: so an item held by quiet hours/fullscreen/lock/pause
@@ -937,6 +943,16 @@ public static class WindowsCompanionProductionComposition
         Task visualPlayback,
         Func<Task> playAudioAsync)
     {
+        // Ambient poses (idle/focus) loop forever; don't gate audio on visual
+        // completion or the cue never plays and the task leaks.
+        var timeout = Task.Delay(TimeSpan.FromSeconds(2));
+        var completed = await Task.WhenAny(visualPlayback, timeout);
+        if (completed != visualPlayback)
+        {
+            await ObserveAudioCueAsync(playAudioAsync);
+            return;
+        }
+
         try
         {
             await visualPlayback;

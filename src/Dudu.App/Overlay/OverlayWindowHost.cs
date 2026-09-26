@@ -73,6 +73,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private readonly Func<PetPlacement, CancellationToken, Task>? _persistPlacementAsync;
     private readonly Action _showContextMenu;
     private readonly Action<uint, nint, nint>? _systemMessageHandler;
+    private Func<uint, nint, nint, bool>? _runtimeMessageHandler;
     private readonly Action<Exception> _diagnostic;
     private readonly IAppHostErrorReporter? _errorReporter;
     private readonly IReadOnlyList<PixelRect> _bubbleHitRegions;
@@ -734,6 +735,22 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
 
     private void ReportOwnerPostFailure(Exception exception) => ReportDiagnostic(exception);
 
+    public void SetRuntimeMessageHandler(Func<uint, nint, nint, bool>? handler) =>
+        _runtimeMessageHandler = handler;
+
+    public bool TryHandleRuntimeMessage(uint message, nint wParam, nint lParam)
+    {
+        try
+        {
+            return _runtimeMessageHandler?.Invoke(message, wParam, lParam) == true;
+        }
+        catch (Exception exception)
+        {
+            ReportDiagnostic(exception);
+            return false;
+        }
+    }
+
     private void HandleMessage(uint message, WPARAM wParam, LPARAM lParam)
     {
         try
@@ -1051,6 +1068,13 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                 }
 
                 host.HandleMessage(message, wParam, lParam);
+                if (host.TryHandleRuntimeMessage(message, (nint)wParam.Value, (nint)lParam.Value))
+                {
+                    // Hotkey/tray callbacks arrive at the overlay owner window
+                    // and are claimed by the runtime handler; swallow so they
+                    // are not lost to DefWindowProc.
+                    return new LRESULT(0);
+                }
             }
             catch (Exception exception)
             {

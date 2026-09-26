@@ -181,7 +181,7 @@ public sealed class PetStateMachine
 
         // Pending notes and reminders each coalesce into a single display card
         // no matter how many ids are queued behind it.
-        if (!IsFocusActive() && _remoteMessageIds.Count > 0)
+        if (!_paused && !IsFocusActive() && _remoteMessageIds.Count > 0)
         {
             var body = _remoteMessageIds.Count > 1
                 ? $"{_remoteMessageIds.Count} notes waiting"
@@ -189,7 +189,7 @@ public sealed class PetStateMachine
             return new(PetState.RemoteNote, "note-arrival", "A note arrived 💌", body, true);
         }
 
-        if (!IsFocusActive() && _dueReminderIds.Count > 0)
+        if (!_paused && !IsFocusActive() && _dueReminderIds.Count > 0)
         {
             var body = _dueReminderIds.Count > 1
                 ? $"{_dueReminderIds.Count} reminders due"

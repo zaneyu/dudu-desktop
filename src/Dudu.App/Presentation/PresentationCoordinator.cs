@@ -856,7 +856,7 @@ public sealed class PresentationCoordinator :
                 };
             }
             succeeded &= await ObserveAsync(
-                () => _playAsync(presentation, _options(), cancellationToken),
+                () => PlayWithTimeoutAsync(presentation, cancellationToken),
                 "presentation-playback");
         }
         finally
@@ -1089,6 +1089,22 @@ public sealed class PresentationCoordinator :
     private static bool IsSuppressedExcludingUserHidden(SuppressionSnapshot snapshot) =>
         snapshot.NowQuiet || snapshot.Fullscreen || snapshot.Paused
         || snapshot.SessionLocked || snapshot.FocusActive;
+
+    private async Task PlayWithTimeoutAsync(PetPresentation presentation, CancellationToken cancellationToken)
+    {
+        // Loop animations (idle/focus) never complete on their own; without a
+        // bound the petGate is held forever and later notes never present.
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+        try
+        {
+            await _playAsync(presentation, _options(), linked.Token);
+        }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            // Timed out on a loop/long clip: treat as shown, release the gate.
+        }
+    }
 
     private async Task<bool> ObserveAsync(Func<Task> operation, string name)
     {
