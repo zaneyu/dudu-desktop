@@ -17,6 +17,9 @@ public sealed class OverlayCommandRouter
     private string _breathingInstruction = "breathe in for 4, out for 6";
     private ComfortPanelState _comfortPanel = ComfortPanelState.Closed;
     private string? _mealId;
+    /// <summary>Serializes eat-together toggles end to end, so a quick
+    /// start-then-end reaches the pet in that order.</summary>
+    private readonly SemaphoreSlim _mealToggle = new(1, 1);
     private CancellationTokenSource? _mealTimer;
 
     public OverlayCommandRouter(
@@ -186,6 +189,19 @@ public sealed class OverlayCommandRouter
     /// A running meal ends by itself after <see cref="EatingDuration"/>.</summary>
     private async Task ToggleEatTogetherAsync(CancellationToken cancellationToken)
     {
+        await _mealToggle.WaitAsync(cancellationToken);
+        try
+        {
+            await ToggleEatTogetherCoreAsync(cancellationToken);
+        }
+        finally
+        {
+            _mealToggle.Release();
+        }
+    }
+
+    private async Task ToggleEatTogetherCoreAsync(CancellationToken cancellationToken)
+    {
         cancellationToken.ThrowIfCancellationRequested();
         string? endingMeal;
         string? startingMeal = null;
@@ -207,7 +223,17 @@ public sealed class OverlayCommandRouter
 
         if (endingMeal is not null)
         {
-            await PresentAsync(new PetEvent.EatingEnded(endingMeal), cancellationToken);
+            try
+            {
+                await PresentAsync(new PetEvent.EatingEnded(endingMeal), cancellationToken);
+            }
+            catch
+            {
+                // The router already reads "no meal"; never leave the pet
+                // latched in one nothing will end.
+                _context.Pet.Handle(new PetEvent.EatingEnded(endingMeal));
+                throw;
+            }
             return;
         }
 

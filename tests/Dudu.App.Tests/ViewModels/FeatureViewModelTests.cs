@@ -1379,6 +1379,55 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Router_eat_together_end_that_fails_to_present_still_releases_the_meal()
+    {
+        var fixture = FeatureFixture.Create(beforePresent: (petEvent, _) => petEvent is PetEvent.EatingEnded
+            ? Task.FromException(new InvalidOperationException("presentation failed"))
+            : Task.CompletedTask);
+        var router = new OverlayCommandRouter(
+            fixture.Context,
+            (_, _) => Task.CompletedTask,
+            (delay, token) => Task.Delay(Timeout.InfiniteTimeSpan, token));
+        await router.ExecuteAsync(OverlayAction.EatTogether, TestContext.Current.CancellationToken);
+        Assert.True(fixture.Context.Pet.IsEatingActive);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            router.ExecuteAsync(OverlayAction.EatTogether, TestContext.Current.CancellationToken));
+
+        Assert.False(router.IsEating);
+        Assert.False(fixture.Context.Pet.IsEatingActive);
+    }
+
+    [Fact]
+    public async Task Router_eat_together_toggles_are_applied_in_order()
+    {
+        var startPresenting = new TaskCompletionSource();
+        var releaseStart = new TaskCompletionSource();
+        var fixture = FeatureFixture.Create(beforePresent: async (petEvent, token) =>
+        {
+            if (petEvent is PetEvent.EatingStarted)
+            {
+                startPresenting.TrySetResult();
+                await releaseStart.Task.WaitAsync(token);
+            }
+        });
+        var pet = fixture.Context.Pet;
+        var router = new OverlayCommandRouter(
+            fixture.Context,
+            (_, _) => Task.CompletedTask,
+            (delay, token) => Task.Delay(Timeout.InfiniteTimeSpan, token));
+
+        var start = router.ExecuteAsync(OverlayAction.EatTogether, TestContext.Current.CancellationToken);
+        await startPresenting.Task.WaitAsync(TestContext.Current.CancellationToken);
+        var end = router.ExecuteAsync(OverlayAction.EatTogether, TestContext.Current.CancellationToken);
+        releaseStart.SetResult();
+        await Task.WhenAll(start, end);
+
+        Assert.False(router.IsEating);
+        Assert.False(pet.IsEatingActive);
+    }
+
+    [Fact]
     public async Task Router_eat_together_ends_by_itself_after_twenty_minutes()
     {
         var fixture = FeatureFixture.Create();
@@ -2456,7 +2505,8 @@ public sealed class FeatureViewModelTests
             Func<RemoteEnvelope, CancellationToken, Task<RevealedRemoteNote>>? revealRemoteNoteAsync = null,
             IPairingService? pairing = null,
             Func<string, CancellationToken, Task>? discardHeldReminderAsync = null,
-            Func<string, CancellationToken, Task>? dismissReminderNotificationAsync = null)
+            Func<string, CancellationToken, Task>? dismissReminderNotificationAsync = null,
+            Func<PetEvent, CancellationToken, Task>? beforePresent = null)
         {
             var clock = new FakeClock("2026-09-12T10:00:00Z");
             var events = new List<string>();
@@ -2518,8 +2568,10 @@ public sealed class FeatureViewModelTests
                     pause = state;
                     return Task.CompletedTask;
                 },
-                presentPetAsync: (petEvent, _) =>
+                presentPetAsync: async (petEvent, token) =>
                 {
+                    if (beforePresent is not null)
+                        await beforePresent(petEvent, token);
                     pet.Handle(petEvent);
                     events.Add(petEvent switch
                     {
@@ -2527,7 +2579,6 @@ public sealed class FeatureViewModelTests
                         PetEvent.FocusEnded => "pet.focus-end",
                         _ => "pet.present",
                     });
-                    return Task.CompletedTask;
                 },
                 presentOneShotPetAsync: (petEvent, dismissalId, token) =>
                 {
