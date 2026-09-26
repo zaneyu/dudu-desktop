@@ -29,6 +29,7 @@ public sealed class RemindersViewModel : FeatureViewModelBase
     private bool _breakEnabled;
     private bool _eveningCheckInEnabled;
     private bool _bedtimeRitualEnabled;
+    private bool _hasLoaded;
 
     public RemindersViewModel(CompanionFeatureContext context)
     {
@@ -55,37 +56,74 @@ public sealed class RemindersViewModel : FeatureViewModelBase
 
     public ObservableCollection<Reminder> Reminders { get; } = [];
 
+    /// <summary>The reminder the editor is bound to, or null for a fresh draft.
+    /// Every editor field is loaded from the new selection BEFORE the
+    /// SelectedReminder change is raised: RemindersPage syncs its unbound
+    /// controls (schedule, time, interval, quiet-hours, weekdays) on that
+    /// event, so raising it first made the form show the previous reminder's
+    /// schedule and the next save silently used a schedule other than the one
+    /// on screen.</summary>
     public Reminder? SelectedReminder
     {
         get => _selectedReminder;
         set
         {
-            if (!SetProperty(ref _selectedReminder, value) || value is null) return;
-            Title = value.Title;
-            Details = value.Details;
-            Enabled = value.Enabled;
-            QuietHoursBehavior = value.QuietHoursBehavior;
-            switch (value.Rule)
-            {
-                case RecurrenceRule.Daily daily:
-                    ScheduleKind = ReminderScheduleKind.Daily;
-                    LocalTime = daily.LocalTime;
-                    break;
-                case RecurrenceRule.SelectedWeekdays weekdays:
-                    ScheduleKind = ReminderScheduleKind.SelectedWeekdays;
-                    LocalTime = weekdays.LocalTime;
-                    SelectedWeekdays = weekdays.Days;
-                    break;
-                case RecurrenceRule.Interval interval:
-                    ScheduleKind = ReminderScheduleKind.Interval;
-                    IntervalMinutes = Math.Max(1, (int)interval.Period.TotalMinutes);
-                    break;
-                default:
-                    ScheduleKind = ReminderScheduleKind.Once;
-                    break;
-            }
+            if (EqualityComparer<Reminder?>.Default.Equals(_selectedReminder, value)) return;
+            _selectedReminder = value;
+            if (value is not null) LoadEditor(value);
+            OnPropertyChanged(nameof(SelectedReminder));
         }
     }
+
+    private void LoadEditor(Reminder value)
+    {
+        Title = value.Title;
+        Details = value.Details;
+        Enabled = value.Enabled;
+        QuietHoursBehavior = value.QuietHoursBehavior;
+        switch (value.Rule)
+        {
+            case RecurrenceRule.Daily daily:
+                ScheduleKind = ReminderScheduleKind.Daily;
+                LocalTime = daily.LocalTime;
+                IntervalMinutes = DefaultIntervalMinutes;
+                SelectedWeekdays = DefaultWeekdays();
+                break;
+            case RecurrenceRule.SelectedWeekdays weekdays:
+                ScheduleKind = ReminderScheduleKind.SelectedWeekdays;
+                LocalTime = weekdays.LocalTime;
+                IntervalMinutes = DefaultIntervalMinutes;
+                SelectedWeekdays = weekdays.Days is { Count: > 0 } days
+                    ? new HashSet<DayOfWeek>(days)
+                    : DefaultWeekdays();
+                break;
+            case RecurrenceRule.Interval interval:
+                ScheduleKind = ReminderScheduleKind.Interval;
+                LocalTime = DefaultLocalTime;
+                IntervalMinutes = Math.Max(1, (int)interval.Period.TotalMinutes);
+                SelectedWeekdays = DefaultWeekdays();
+                break;
+            default:
+                // A "once" reminder has no wall-clock time in its rule: its
+                // time lives in NextDueUtc. Show that time (in the reminder's
+                // own zone) so saving an edit does not silently move it to
+                // the 09:00 default or to the previous selection's time.
+                ScheduleKind = ReminderScheduleKind.Once;
+                LocalTime = value.NextDueUtc is { } due
+                    ? TimeOnly.FromDateTime(TimeZoneInfo.ConvertTime(
+                        due, ResolveTimeZoneOrLocal(value.LocalTimeZoneId)).DateTime)
+                    : DefaultLocalTime;
+                IntervalMinutes = DefaultIntervalMinutes;
+                SelectedWeekdays = DefaultWeekdays();
+                break;
+        }
+    }
+
+    private static readonly TimeOnly DefaultLocalTime = new(9, 0);
+    private const int DefaultIntervalMinutes = 60;
+
+    private static HashSet<DayOfWeek> DefaultWeekdays() =>
+        [DayOfWeek.Monday, DayOfWeek.Wednesday, DayOfWeek.Friday];
 
     public string Title { get => _title; set => SetProperty(ref _title, value); }
     public string? Details { get => _details; set => SetProperty(ref _details, value); }
@@ -142,13 +180,35 @@ public sealed class RemindersViewModel : FeatureViewModelBase
                 BreakRemindersEnabled = preferences.BreakRemindersEnabled;
                 EveningCheckInEnabled = preferences.EveningCheckInEnabled;
                 BedtimeRitualEnabled = preferences.BedtimeRitualEnabled;
+                // Captured before Clear(): the page's ListView drops its
+                // highlight when the items go away and pushes a null selection
+                // back into SelectedReminder.
+                var selectedId = _selectedReminder?.Id;
                 Reminders.Clear();
                 foreach (var reminder in items)
                 {
                     Reminders.Add(reminder);
                 }
 
-                SelectedReminder ??= Reminders.FirstOrDefault();
+                if (selectedId is not null)
+                {
+                    // Keep editing the same reminder (now the freshly loaded
+                    // instance) without reloading the editor over edits that
+                    // are still in progress.
+                    var match = Reminders.FirstOrDefault(item =>
+                        string.Equals(item.Id, selectedId, StringComparison.Ordinal));
+                    if (match is not null) SelectWithoutReloadingEditor(match);
+                    else NewReminder();
+                }
+                else if (!_hasLoaded)
+                {
+                    // Only the very first load picks a reminder for her. Later
+                    // refreshes (every page visit) must not overwrite a new
+                    // reminder she is halfway through typing.
+                    SelectedReminder = Reminders.FirstOrDefault();
+                }
+
+                _hasLoaded = true;
             }, ct);
         }, cancellationToken);
     }
@@ -163,7 +223,7 @@ public sealed class RemindersViewModel : FeatureViewModelBase
             var zone = SelectedReminder is null
                 ? TimeZoneInfo.Local
                 : ResolveTimeZone(SelectedReminder.LocalTimeZoneId);
-            var nextDue = NextDueUtc(rule, now, zone);
+            var nextDue = NextDueUtc(rule, now, zone, SelectedReminder);
             var isEveningRoutine = SelectedReminder?.Id is LocalReminderDefaults.EveningCheckInId or LocalReminderDefaults.BedtimeId;
             var reminder = SelectedReminder is null
                 ? new Reminder(Guid.NewGuid().ToString("N"), title, Normalize(Details), Enabled, rule,
@@ -189,17 +249,32 @@ public sealed class RemindersViewModel : FeatureViewModelBase
     /// <summary>Clears the editor for a fresh reminder. Runs after every save so typing
     /// a fresh title afterward creates a new reminder instead of silently overwriting
     /// the one just saved.</summary>
+    /// <remarks>The fields are reset first and the SelectedReminder change is
+    /// always raised afterwards -- even when nothing was selected before -- so
+    /// the page's unbound schedule controls resync to the fresh defaults
+    /// instead of keeping stale values the next save would silently use.</remarks>
     public void NewReminder()
     {
-        SelectedReminder = null;
+        _selectedReminder = null;
         Title = string.Empty;
         Details = null;
         ScheduleKind = ReminderScheduleKind.Once;
-        LocalTime = new TimeOnly(9, 0);
-        IntervalMinutes = 60;
+        LocalTime = DefaultLocalTime;
+        IntervalMinutes = DefaultIntervalMinutes;
         Enabled = true;
         QuietHoursBehavior = QuietHoursBehavior.WaitUntilQuietHoursEnd;
-        SelectedWeekdays = new HashSet<DayOfWeek> { DayOfWeek.Monday, DayOfWeek.Wednesday, DayOfWeek.Friday };
+        SelectedWeekdays = DefaultWeekdays();
+        OnPropertyChanged(nameof(SelectedReminder));
+    }
+
+    /// <summary>Points the selection at a newer instance of the same reminder
+    /// (after a refresh, complete or snooze) without reloading the editor
+    /// fields, so a later save neither duplicates it nor writes back stale
+    /// NextDueUtc/SnoozedUntilUtc values.</summary>
+    private void SelectWithoutReloadingEditor(Reminder reminder)
+    {
+        _selectedReminder = reminder;
+        OnPropertyChanged(nameof(SelectedReminder));
     }
 
     public Task CompleteAsync(Reminder? reminder, CancellationToken cancellationToken = default)
@@ -350,9 +425,23 @@ public sealed class RemindersViewModel : FeatureViewModelBase
         _ => new RecurrenceRule.Once(),
     };
 
-    private DateTimeOffset NextDueUtc(RecurrenceRule rule, DateTimeOffset now, TimeZoneInfo zone)
+    private DateTimeOffset NextDueUtc(RecurrenceRule rule, DateTimeOffset now, TimeZoneInfo zone, Reminder? editing)
     {
         if (rule is RecurrenceRule.Interval interval) return now.Add(interval.Period);
+        if (rule is RecurrenceRule.Once
+            && editing is { Rule: RecurrenceRule.Once, NextDueUtc: { } existingDue }
+            && existingDue.ToUniversalTime() > now)
+        {
+            // Editing a still-upcoming "once" reminder without changing its
+            // time keeps its original date as well, instead of pulling it
+            // forward to the next occurrence of that time of day.
+            var existingLocal = TimeZoneInfo.ConvertTime(existingDue, zone);
+            if (existingLocal.Hour == LocalTime.Hour && existingLocal.Minute == LocalTime.Minute)
+            {
+                return existingDue.ToUniversalTime();
+            }
+        }
+
         var localNow = TimeZoneInfo.ConvertTime(now, zone);
         var localDate = localNow.Date.Date + LocalTime.ToTimeSpan();
         if (localDate <= localNow.DateTime) localDate = localDate.AddDays(1);
@@ -365,6 +454,11 @@ public sealed class RemindersViewModel : FeatureViewModelBase
 
     private void Replace(Reminder reminder)
     {
+        // Captured first: replacing the list item makes the page's ListView
+        // drop its highlight and push a null selection back in, which would
+        // leave the form showing a reminder the view model no longer has
+        // selected (the next save would then duplicate it).
+        var wasSelected = string.Equals(_selectedReminder?.Id, reminder.Id, StringComparison.Ordinal);
         var index = -1;
         for (var i = 0; i < Reminders.Count; i++)
         {
@@ -376,9 +470,20 @@ public sealed class RemindersViewModel : FeatureViewModelBase
         }
         if (index >= 0) Reminders[index] = reminder;
         else Reminders.Add(reminder);
+        if (wasSelected) SelectWithoutReloadingEditor(reminder);
     }
 
     private static string? Normalize(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    /// <summary>Non-throwing variant for the selection path, which runs from a
+    /// ListView SelectionChanged handler where a throw would crash the page.</summary>
+    private static TimeZoneInfo ResolveTimeZoneOrLocal(string? timeZoneId)
+    {
+        if (string.IsNullOrEmpty(timeZoneId)) return TimeZoneInfo.Local;
+        try { return ResolveTimeZone(timeZoneId); }
+        catch (Exception exception) when (exception is TimeZoneNotFoundException or InvalidTimeZoneException)
+        { return TimeZoneInfo.Local; }
+    }
 
     private static TimeZoneInfo ResolveTimeZone(string timeZoneId)
     {
@@ -390,7 +495,7 @@ public sealed class RemindersViewModel : FeatureViewModelBase
 }
 
 /// <summary>Turns a reminder's recurrence rule into a short, lowercase, local-time
-/// summary for the reminders list (e.g. "every day at 9:30 pm"). LocalTime and
+/// summary for the reminders list (e.g. "every day at 21:30"). LocalTime and
 /// Period are already the reminder's own local wall-clock values, so no time
 /// zone conversion is needed here.</summary>
 public static class ReminderScheduleSummary
@@ -422,8 +527,9 @@ public static class ReminderScheduleSummary
     }
 
     private static string FormatTime(TimeOnly localTime) =>
-        localTime.ToString("h:mm tt", global::System.Globalization.CultureInfo.InvariantCulture)
-            .ToLowerInvariant();
+        // Same 24-hour HH:mm form the editor's "local time" box uses, so the
+        // list and the editor never show one reminder's time two ways.
+        localTime.ToString("HH:mm", global::System.Globalization.CultureInfo.InvariantCulture);
 
     private static string FormatDays(IReadOnlySet<DayOfWeek>? days) => days is null || days.Count == 0
         ? string.Empty

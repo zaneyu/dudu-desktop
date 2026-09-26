@@ -1946,6 +1946,170 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Editing_a_once_reminder_loads_its_due_time_and_does_not_move_it_on_save()
+    {
+        // Audit regression: the "once" branch of the selection loader never set
+        // LocalTime, so the editor kept 09:00 (or the previous selection's time)
+        // and saving any edit silently moved the reminder to that time.
+        var fixture = FeatureFixture.Create();
+        var due = DateTimeOffset.Parse("2026-09-14T15:30:00Z");
+        var reminder = fixture.Reminder with { NextDueUtc = due, LocalTimeZoneId = "UTC" };
+        fixture.Reminders.Items.Add(reminder);
+        var viewModel = new RemindersViewModel(fixture.Context)
+        {
+            SelectedReminder = fixture.Reminder with
+            {
+                Id = "other",
+                Rule = new RecurrenceRule.Daily(new TimeOnly(20, 0)),
+            },
+        };
+
+        viewModel.SelectedReminder = reminder;
+
+        Assert.Equal(ReminderScheduleKind.Once, viewModel.ScheduleKind);
+        Assert.Equal(new TimeOnly(15, 30), viewModel.LocalTime);
+
+        viewModel.Title = "Drink more water";
+        await viewModel.SaveAsync(TestContext.Current.CancellationToken);
+
+        var saved = fixture.Reminders.Items.Single(item => item.Id == reminder.Id);
+        Assert.Equal("Drink more water", saved.Title);
+        Assert.Equal(due, saved.NextDueUtc);
+    }
+
+    [Fact]
+    public void Selecting_a_reminder_loads_its_schedule_before_announcing_the_selection()
+    {
+        // Audit regression: SelectedReminder raised PropertyChanged before the
+        // schedule fields were loaded, and RemindersPage syncs its unbound
+        // schedule/time/interval/weekday controls on that event -- so the form
+        // showed the PREVIOUS reminder's schedule.
+        var fixture = FeatureFixture.Create();
+        var interval = fixture.Reminder with
+        {
+            Id = "interval",
+            Rule = new RecurrenceRule.Interval(TimeSpan.FromMinutes(45)),
+            QuietHoursBehavior = QuietHoursBehavior.DeliverImmediately,
+        };
+        var weekdays = fixture.Reminder with
+        {
+            Id = "weekdays",
+            Rule = new RecurrenceRule.SelectedWeekdays(
+                new HashSet<DayOfWeek> { DayOfWeek.Tuesday }, new TimeOnly(20, 15)),
+        };
+        var viewModel = new RemindersViewModel(fixture.Context) { SelectedReminder = interval };
+        (ReminderScheduleKind Kind, TimeOnly Time, QuietHoursBehavior Quiet, IReadOnlySet<DayOfWeek> Days)? seen = null;
+        viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(RemindersViewModel.SelectedReminder))
+            {
+                seen = (viewModel.ScheduleKind, viewModel.LocalTime, viewModel.QuietHoursBehavior, viewModel.SelectedWeekdays);
+            }
+        };
+
+        viewModel.SelectedReminder = weekdays;
+
+        Assert.NotNull(seen);
+        Assert.Equal(ReminderScheduleKind.SelectedWeekdays, seen.Value.Kind);
+        Assert.Equal(new TimeOnly(20, 15), seen.Value.Time);
+        Assert.Equal(QuietHoursBehavior.WaitUntilQuietHoursEnd, seen.Value.Quiet);
+        Assert.Equal(DayOfWeek.Tuesday, Assert.Single(seen.Value.Days));
+    }
+
+    [Fact]
+    public void New_reminder_always_announces_the_cleared_selection_so_the_page_resyncs()
+    {
+        // Audit regression: with nothing selected, NewReminder() raised no
+        // SelectedReminder change, so the page's unbound schedule controls kept
+        // stale values that the next save silently used.
+        var fixture = FeatureFixture.Create();
+        var viewModel = new RemindersViewModel(fixture.Context)
+        {
+            ScheduleKind = ReminderScheduleKind.Interval,
+            IntervalMinutes = 15,
+            LocalTime = new TimeOnly(22, 0),
+        };
+        ReminderScheduleKind? kindWhenAnnounced = null;
+        viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(RemindersViewModel.SelectedReminder))
+            {
+                kindWhenAnnounced = viewModel.ScheduleKind;
+            }
+        };
+
+        viewModel.NewReminder();
+
+        Assert.Equal(ReminderScheduleKind.Once, kindWhenAnnounced);
+        Assert.Null(viewModel.SelectedReminder);
+        Assert.Equal(60, viewModel.IntervalMinutes);
+        Assert.Equal(new TimeOnly(9, 0), viewModel.LocalTime);
+    }
+
+    [Fact]
+    public async Task Refreshing_reminders_keeps_a_half_typed_new_reminder_instead_of_selecting_the_first()
+    {
+        // Audit regression: every page visit ran `SelectedReminder ??= first`,
+        // overwriting a new reminder she was halfway through typing.
+        var fixture = FeatureFixture.Create();
+        fixture.Reminders.Items.Add(fixture.Reminder);
+        var viewModel = new RemindersViewModel(fixture.Context);
+        var ct = TestContext.Current.CancellationToken;
+
+        await viewModel.RefreshAsync(ct);
+        Assert.Equal(fixture.Reminder.Id, viewModel.SelectedReminder?.Id);
+
+        viewModel.NewReminder();
+        viewModel.Title = "half typed";
+        await viewModel.RefreshAsync(ct);
+
+        Assert.Null(viewModel.SelectedReminder);
+        Assert.Equal("half typed", viewModel.Title);
+    }
+
+    [Fact]
+    public async Task Refreshing_reminders_keeps_the_same_reminder_selected_without_reloading_edits()
+    {
+        var fixture = FeatureFixture.Create();
+        fixture.Reminders.Items.Add(fixture.Reminder with { Id = "first", Title = "first" });
+        fixture.Reminders.Items.Add(fixture.Reminder with { Id = "second", Title = "second" });
+        var viewModel = new RemindersViewModel(fixture.Context);
+        var ct = TestContext.Current.CancellationToken;
+        await viewModel.RefreshAsync(ct);
+
+        viewModel.SelectedReminder = viewModel.Reminders.Single(item => item.Id == "second");
+        viewModel.Title = "second, edited";
+        await viewModel.RefreshAsync(ct);
+
+        Assert.Equal("second", viewModel.SelectedReminder?.Id);
+        Assert.Same(viewModel.Reminders.Single(item => item.Id == "second"), viewModel.SelectedReminder);
+        Assert.Equal("second, edited", viewModel.Title);
+    }
+
+    [Fact]
+    public async Task Snoozing_the_selected_reminder_keeps_it_selected_so_a_later_save_keeps_the_snooze()
+    {
+        // Audit regression: Replace() after complete/snooze left SelectedReminder
+        // on the stale instance, so a later save overwrote SnoozedUntilUtc (or,
+        // once the list dropped its highlight, duplicated the reminder).
+        var fixture = FeatureFixture.Create();
+        fixture.Reminders.Items.Add(fixture.Reminder);
+        var viewModel = new RemindersViewModel(fixture.Context);
+        await viewModel.RefreshAsync(TestContext.Current.CancellationToken);
+        var selected = Assert.IsType<Reminder>(viewModel.SelectedReminder);
+
+        await viewModel.SnoozeCommand.ExecuteAsync(selected);
+
+        Assert.NotNull(viewModel.SelectedReminder?.SnoozedUntilUtc);
+        viewModel.Title = "Drink water slowly";
+        await viewModel.SaveAsync(TestContext.Current.CancellationToken);
+
+        var saved = Assert.Single(fixture.Reminders.Items);
+        Assert.Equal("Drink water slowly", saved.Title);
+        Assert.Equal(fixture.Clock.UtcNow.AddMinutes(15), saved.SnoozedUntilUtc);
+    }
+
+    [Fact]
     public async Task Reminder_default_commit_precedes_runtime_publish_and_failure_keeps_old_state()
     {
         var fixture = FeatureFixture.Create();

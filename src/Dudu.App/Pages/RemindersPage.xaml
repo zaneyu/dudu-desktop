@@ -87,7 +87,7 @@
                 <CheckBox Content="suggest short breaks" IsChecked="{x:Bind ViewModel.BreakRemindersEnabled, Mode=TwoWay}" AutomationProperties.AutomationId="RemindersBreaks" AutomationProperties.Name="suggest short breaks" />
                 <CheckBox Content="evening check-in at 20:00" IsChecked="{x:Bind ViewModel.EveningCheckInEnabled, Mode=TwoWay}" AutomationProperties.AutomationId="RemindersEveningCheckIn" AutomationProperties.Name="evening check-in at 20:00" />
                 <CheckBox Content="bedtime goodnight at 22:00" IsChecked="{x:Bind ViewModel.BedtimeRitualEnabled, Mode=TwoWay}" AutomationProperties.AutomationId="RemindersBedtimeRitual" AutomationProperties.Name="bedtime goodnight at 22:00" />
-                <TextBlock Text="both are off until you choose them. times use your local time zone. these are local-only prompts, not messages from anyone; check-ins stay on this device. quiet hours still apply." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                <TextBlock Text="tick the ones you want, then save. times use your local time zone. these are local-only prompts, not messages from anyone; check-ins stay on this device. quiet hours still apply." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                 <Button Content="save reminder preferences" Command="{x:Bind ViewModel.SaveReminderPreferencesCommand}" AutomationProperties.AutomationId="RemindersSavePreferences" AutomationProperties.Name="save reminder preferences" HorizontalAlignment="Left" />
             </StackPanel>
 
