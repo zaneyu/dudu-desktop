@@ -33,10 +33,13 @@ public sealed class AudioMuteUxTests
     [Fact]
     public void Windows_cue_player_plays_sound_effects_without_a_media_session()
     {
+        // winmm PlaySound never registers a system media session, so a cue
+        // cannot surface in the volume flyout's media controls the way a
+        // MediaPlayer would.
         var source = ReadRepositoryFile("src", "Dudu.App", "Audio", "WindowsAudioCuePlayer.cs");
 
-        Assert.Contains("MediaPlayerAudioCategory.SoundEffects", source, StringComparison.Ordinal);
-        Assert.Contains("player.CommandManager.IsEnabled = false;", source, StringComparison.Ordinal);
+        Assert.Contains("PlaySound", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("new MediaPlayer", source, StringComparison.Ordinal);
     }
 
     private static AudioCatalog Catalog() => new(new[]

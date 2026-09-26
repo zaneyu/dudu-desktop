@@ -509,13 +509,14 @@ public static class WindowsCompanionProductionComposition
             var runtimePreferences = new RuntimePreferencesState(preferences);
             var audioManifestPath = ResolveAudioManifestPath(assetsRoot);
             AudioCatalog audioCatalog;
+            var audioLoaded = false;
             try
             {
                 audioCatalog = await AudioManifestLoader.LoadAsync(
                     audioManifestPath,
                     cancellationToken);
-                audioPlayer = new WindowsAudioCuePlayer(
-                    Path.GetDirectoryName(audioManifestPath));
+                audioPlayer = new WindowsAudioCuePlayer();
+                audioLoaded = true;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -527,6 +528,11 @@ public static class WindowsCompanionProductionComposition
                 audioCatalog = NoOpAudioCatalog();
                 audioPlayer = new NoOpAudioCuePlayer();
             }
+            LogAudioStartup(
+                services.GetService<Microsoft.Extensions.Logging.ILoggerFactory>(),
+                audioCatalog,
+                audioLoaded,
+                runtimePreferences.Current);
             audioCueService = new AudioCueService(
                 audioCatalog,
                 audioPlayer,
@@ -602,7 +608,10 @@ public static class WindowsCompanionProductionComposition
                         gate: petGate,
                         playAudioAsync: (presentation, token) =>
                             AudioCueSelection.ForPresentation(presentation) is { } cue
-                                ? audioCueService!.TryPlayAsync(cue, token)
+                                ? audioCueService!.TryPlayAsync(
+                                    cue,
+                                    AudioCueSelection.PriorityFor(presentation, cue),
+                                    token)
                                 : Task.CompletedTask);
                     notificationService = new AppNotificationService(
                         new WindowsAppNotificationSink(),
@@ -783,7 +792,10 @@ public static class WindowsCompanionProductionComposition
                             && audioCueService is not null
                             && AudioCueSelection.ForPresentation(started) is { } cue)
                         {
-                            await ObserveAudioCueAsync(() => audioCueService.TryPlayAsync(cue, CancellationToken.None));
+                            await ObserveAudioCueAsync(() => audioCueService.TryPlayAsync(
+                                cue,
+                                AudioCueSelection.PriorityFor(started, cue),
+                                CancellationToken.None));
                         }
                     }
 
@@ -936,11 +948,15 @@ public static class WindowsCompanionProductionComposition
                     }
 
                     if (playback is not null
+                        && !AudioCueSelection.IsSettlingEvent(petEvent)
                         && AudioCueSelection.ForPresentation(presentation) is { } cue)
                     {
-                        _ = ObserveDirectAudioAfterVisualAsync(
+                        _ = ObserveDirectAudioAsync(
                             playback,
-                            () => audioCueService!.TryPlayAsync(cue, token));
+                            () => audioCueService!.TryPlayAsync(
+                                cue,
+                                AudioCueSelection.PriorityFor(presentation, cue),
+                                token));
                     }
                 },
                 presentOneShotPetAsync: (petEvent, dismissalId, token) =>
@@ -1112,38 +1128,66 @@ public static class WindowsCompanionProductionComposition
             new AudioSoundPack("dudu-yapapa", []),
         ]);
 
+    /// <summary>
+    /// One diagnostics.log line per start saying whether sound is live, so a
+    /// "no sound" report can be told apart from a load failure (which
+    /// audio-manifest-load already reports), a muted preference, or assets
+    /// that are themselves silent. Pack ids, counts and settings only --
+    /// no paths or audio content.
+    /// </summary>
+    internal static void LogAudioStartup(
+        Microsoft.Extensions.Logging.ILoggerFactory? loggerFactory,
+        AudioCatalog catalog,
+        bool loaded,
+        Preferences preferences)
+    {
+        if (loggerFactory is null)
+        {
+            return;
+        }
+
+        // The file sink swallows its own I/O failures.
+        var (level, message) = DescribeAudioStartup(catalog, loaded, preferences);
+        Microsoft.Extensions.Logging.LoggerExtensions.Log(
+            loggerFactory.CreateLogger("Dudu.Audio"),
+            level,
+            "{Message}",
+            message);
+    }
+
+    internal static (Microsoft.Extensions.Logging.LogLevel Level, string Message) DescribeAudioStartup(
+        AudioCatalog catalog,
+        bool loaded,
+        Preferences preferences)
+    {
+        var cues = catalog.Packs.SelectMany(pack => pack.Cues.Select(cue => (pack.PackId, Cue: cue))).ToArray();
+        var silentPacks = cues.Where(item => !item.Cue.IsAudible).Select(item => item.PackId).Distinct().ToArray();
+        var message = string.Create(
+            global::System.Globalization.CultureInfo.InvariantCulture,
+            $"audio-startup player={(loaded ? "winmm" : "no-op")} packs={catalog.Packs.Count(pack => pack.Cues.Count > 0)} cues={cues.Length} silentCues={cues.Count(item => !item.Cue.IsAudible)} silentPacks=[{string.Join(",", silentPacks)}] sounds={(preferences.SoundsEnabled ? "on" : "off")} volume={Preferences.ClampSoundVolume(preferences.SoundVolume):0.00}");
+        var healthy = loaded && cues.Length > 0 && silentPacks.Length == 0;
+        return (healthy ? Microsoft.Extensions.Logging.LogLevel.Information : Microsoft.Extensions.Logging.LogLevel.Warning, message);
+    }
+
     internal static string ResolveAudioManifestPath(string assetsRoot) =>
         Path.Combine(assetsRoot, "Audio", "private-dudu", "manifest.json");
 
-    internal static async Task ObserveDirectAudioAfterVisualAsync(
+    /// <summary>
+    /// Starts the cue together with the visual it belongs to. It used to wait
+    /// for the visual to finish (or for 2 s on a loop), so every direct cue
+    /// trailed its animation. A visual that has already failed or been
+    /// cancelled by the time it is handed over gets no sound.
+    /// </summary>
+    internal static Task ObserveDirectAudioAsync(
         Task visualPlayback,
         Func<Task> playAudioAsync)
     {
-        // Ambient poses (idle/focus) loop forever; don't gate audio on visual
-        // completion or the cue never plays and the task leaks.
-        var timeout = Task.Delay(TimeSpan.FromSeconds(2));
-        var completed = await Task.WhenAny(visualPlayback, timeout);
-        if (completed != visualPlayback)
+        if (visualPlayback.IsFaulted || visualPlayback.IsCanceled)
         {
-            await ObserveAudioCueAsync(playAudioAsync);
-            return;
+            return Task.CompletedTask;
         }
 
-        try
-        {
-            await visualPlayback;
-        }
-        catch (OperationCanceledException)
-        {
-            return;
-        }
-        catch (Exception exception)
-        {
-            Trace.TraceError("Dudu direct animation failed: {0}", exception.GetType().FullName);
-            return;
-        }
-
-        await ObserveAudioCueAsync(playAudioAsync);
+        return ObserveAudioCueAsync(playAudioAsync);
     }
 
     private static async Task ObserveAudioCueAsync(Func<Task> operation)

@@ -29,13 +29,112 @@ public sealed class AudioCueServiceTests
             (AudioCueEvent.Reminder, new[] { "dudu-yapapa", "tata-lala" }),
             (AudioCueEvent.Celebration, new[] { "dudu-atatata", "bubu-dudu-atata" }),
             (AudioCueEvent.ManualInteraction, new[] { "dudu-lalala", "dudu-yapapa" }),
+            (AudioCueEvent.Petted, new[] { "dudu-lalala", "tata-lala" }),
+            (AudioCueEvent.Drink, new[] { "dudu-yapapa", "dudu-lalala" }),
+            (AudioCueEvent.Eat, new[] { "bubu-dudu-atata", "dudu-yapapa" }),
+            (AudioCueEvent.Tantrum, new[] { "dudu-atatata", "bubu-dudu-atata" }),
+            (AudioCueEvent.Drag, new[] { "tata-lala", "dudu-yapapa" }),
+            (AudioCueEvent.Sticker, new[] { "dudu-lalala", "dudu-yapapa", "tata-lala" }),
         })
         {
+            Assert.Equal(expected, AudioCueSelection.PacksFor(eventKind));
             var result = await PlayAsync(service, eventKind);
             Assert.Equal(AudioPlaybackStatus.Completed, result.Status);
             Assert.Contains(player.Played[^1].Split('/')[0], expected);
-            now.Advance(AudioCueService.GlobalCooldown);
+            now.Advance(AudioCueService.PackCooldown);
         }
+    }
+
+    [Fact]
+    public void Every_cue_event_uses_only_the_five_reviewed_packs()
+    {
+        var reviewed = new[] { "bubu-dudu-atata", "tata-lala", "dudu-lalala", "dudu-atatata", "dudu-yapapa" };
+        foreach (var cueEvent in Enum.GetValues<AudioCueEvent>())
+        {
+            var packs = AudioCueSelection.PacksFor(cueEvent);
+            Assert.True(packs.Count >= 2, $"{cueEvent} should rotate between packs");
+            Assert.All(packs, pack => Assert.Contains(pack, reviewed));
+        }
+    }
+
+    [Fact]
+    public async Task Interactive_cue_bypasses_cooldowns_and_supersedes_a_playing_cue()
+    {
+        // Regression: a click during (or within 1.5 s of) any other cue was
+        // silently dropped by the global cooldown.
+        var now = new MutableClock();
+        var player = new RecordingPlayer();
+        var service = CreateService(player, now: now, catalog: CreateCatalog(durationMs: 3000));
+
+        Assert.Equal(AudioPlaybackStatus.Completed, (await PlayAsync(service, AudioCueEvent.Greeting)).Status);
+        now.Advance(TimeSpan.FromMilliseconds(100));
+        Assert.Equal(AudioPlaybackStatus.Completed,
+            (await PlayAsync(service, AudioCueEvent.Petted, AudioCuePriority.Interactive)).Status);
+        now.Advance(TimeSpan.FromMilliseconds(100));
+        Assert.Equal(AudioPlaybackStatus.Completed,
+            (await PlayAsync(service, AudioCueEvent.Drink, AudioCuePriority.Interactive)).Status);
+        Assert.Equal(3, player.CallCount);
+    }
+
+    [Fact]
+    public async Task Interactive_repeat_of_the_same_event_waits_out_the_repeat_gap()
+    {
+        var now = new MutableClock();
+        var player = new RecordingPlayer();
+        var service = CreateService(player, now: now);
+
+        Assert.Equal(AudioPlaybackStatus.Completed,
+            (await PlayAsync(service, AudioCueEvent.Drag, AudioCuePriority.Interactive)).Status);
+        now.Advance(AudioCueService.InteractiveRepeatGap - TimeSpan.FromMilliseconds(1));
+        Assert.Equal(AudioPlaybackStatus.Suppressed,
+            (await PlayAsync(service, AudioCueEvent.Drag, AudioCuePriority.Interactive)).Status);
+        now.Advance(TimeSpan.FromMilliseconds(1));
+        Assert.Equal(AudioPlaybackStatus.Completed,
+            (await PlayAsync(service, AudioCueEvent.Drag, AudioCuePriority.Interactive)).Status);
+    }
+
+    [Fact]
+    public async Task Interactive_cue_reuses_a_cooling_pack_rather_than_stay_silent()
+    {
+        var now = new MutableClock();
+        var player = new RecordingPlayer();
+        var service = CreateService(player, now: now);
+
+        for (var press = 0; press < 3; press++)
+        {
+            Assert.Equal(AudioPlaybackStatus.Completed,
+                (await PlayAsync(service, AudioCueEvent.Petted, AudioCuePriority.Interactive)).Status);
+            now.Advance(AudioCueService.InteractiveRepeatGap);
+        }
+
+        // Petted has two packs, both still inside PackCooldown on the third press.
+        Assert.Equal(3, player.CallCount);
+        Assert.Equal(player.Played[0], player.Played[2]);
+    }
+
+    [Fact]
+    public async Task Background_cue_never_interrupts_a_cue_that_is_still_playing()
+    {
+        var now = new MutableClock();
+        var player = new RecordingPlayer();
+        var service = CreateService(player, now: now, catalog: CreateCatalog(durationMs: 3000));
+
+        Assert.Equal(AudioPlaybackStatus.Completed, (await PlayAsync(service, AudioCueEvent.Greeting)).Status);
+        now.Advance(AudioCueService.GlobalCooldown);
+        Assert.Equal(AudioPlaybackStatus.Suppressed, (await PlayAsync(service, AudioCueEvent.RemoteNote)).Status);
+        now.Advance(TimeSpan.FromMilliseconds(1500));
+        Assert.Equal(AudioPlaybackStatus.Completed, (await PlayAsync(service, AudioCueEvent.RemoteNote)).Status);
+    }
+
+    [Fact]
+    public async Task Interactive_cue_still_honours_preferences_and_environment()
+    {
+        var player = new RecordingPlayer();
+        var service = CreateService(player, preferences: Preferences.Default with { SoundsEnabled = false });
+
+        Assert.Equal(AudioPlaybackStatus.Suppressed,
+            (await PlayAsync(service, AudioCueEvent.Petted, AudioCuePriority.Interactive)).Status);
+        Assert.Empty(player.Played);
     }
 
     [Fact]
@@ -255,10 +354,16 @@ public sealed class AudioCueServiceTests
     private static Task<AudioPlaybackState> PlayAsync(AudioCueService service, AudioCueEvent cueEvent) =>
         service.TryPlayAsync(cueEvent, TestContext.Current.CancellationToken);
 
-    private static AudioCatalog CreateCatalog() => new(new[]
+    private static Task<AudioPlaybackState> PlayAsync(
+        AudioCueService service,
+        AudioCueEvent cueEvent,
+        AudioCuePriority priority) =>
+        service.TryPlayAsync(cueEvent, priority, TestContext.Current.CancellationToken);
+
+    private static AudioCatalog CreateCatalog(int durationMs = 100) => new(new[]
     {
-        Pack("bubu-dudu-atata"), Pack("tata-lala"), Pack("dudu-lalala"),
-        Pack("dudu-atatata"), Pack("dudu-yapapa"),
+        Pack("bubu-dudu-atata", durationMs), Pack("tata-lala", durationMs), Pack("dudu-lalala", durationMs),
+        Pack("dudu-atatata", durationMs), Pack("dudu-yapapa", durationMs),
     });
 
     private static AudioCatalog CreateCatalogWithVariants() => new(new[]
@@ -274,8 +379,8 @@ public sealed class AudioCueServiceTests
         new AudioSoundPack("dudu-yapapa", new[] { new AudioCue("dudu-yapapa/one.wav", 100, "hash") }),
     });
 
-    private static AudioSoundPack Pack(string id) =>
-        new(id, new[] { new AudioCue($"{id}/one.wav", 100, "hash") });
+    private static AudioSoundPack Pack(string id, int durationMs = 100) =>
+        new(id, new[] { new AudioCue($"{id}/one.wav", durationMs, "hash") });
 
     private sealed class EnvironmentFlags
     {

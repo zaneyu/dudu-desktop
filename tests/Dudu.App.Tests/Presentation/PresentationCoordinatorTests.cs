@@ -36,7 +36,142 @@ public sealed class PresentationCoordinatorTests
     }
 
     [Fact]
-    public async Task Audio_runs_after_visual_and_a_failure_does_not_block_notification_delivery()
+    public void Ambient_sticker_note_maps_to_the_sticker_cue()
+    {
+        var item = DurableNotification.LocalNote(new LocalLoveNote("note-1", "hello"), "sticker-003");
+
+        Assert.Equal(AudioCueEvent.Sticker, AudioCueSelection.ForNotification(item));
+    }
+
+    [Fact]
+    public async Task Audio_starts_with_the_visual_before_it_completes()
+    {
+        // Regression: the cue used to start only after the visual finished
+        // (up to the 5 s playback bound), so it trailed its animation.
+        var visual = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var audioStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var coordinator = new PresentationCoordinator(
+            new PresentationPolicy(TimeSpan.Zero),
+            new RecordingNotificationService(),
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => visual.Task,
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            playAudioAsync: (_, _) =>
+            {
+                audioStarted.TrySetResult();
+                return Task.CompletedTask;
+            });
+
+        var publish = coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-1", "Stretch"),
+            bypassSuppression: false,
+            CancellationToken.None);
+
+        await audioStarted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        Assert.False(publish.IsCompleted);
+        visual.SetResult();
+        await publish;
+    }
+
+    [Fact]
+    public async Task A_requeued_retry_does_not_replay_the_cue_that_already_started()
+    {
+        var policy = new PresentationPolicy(TimeSpan.Zero);
+        var visualCalls = 0;
+        var audioCalls = 0;
+        var coordinator = new PresentationCoordinator(
+            policy,
+            new RecordingNotificationService(),
+            PetStateMachine.CreateIdle(),
+            async (_, _, _) =>
+            {
+                // Fails after starting (the cue has already begun by then).
+                if (Interlocked.Increment(ref visualCalls) == 1)
+                {
+                    await Task.Yield();
+                    throw new InvalidOperationException("playback failed");
+                }
+            },
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            playAudioAsync: (_, _) =>
+            {
+                Interlocked.Increment(ref audioCalls);
+                return Task.CompletedTask;
+            });
+
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-1", "Stretch"),
+            bypassSuppression: false,
+            CancellationToken.None);
+        Assert.Equal(1, policy.QueuedCount);
+        await coordinator.TickAsync(CancellationToken.None);
+
+        Assert.Equal(0, policy.QueuedCount);
+        Assert.Equal(2, visualCalls);
+        Assert.Equal(1, audioCalls);
+    }
+
+    [Fact]
+    public async Task A_visual_that_fails_immediately_gets_no_cue()
+    {
+        var audioCalls = 0;
+        var coordinator = new PresentationCoordinator(
+            new PresentationPolicy(TimeSpan.Zero),
+            new RecordingNotificationService(),
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => Task.FromException(new InvalidOperationException("playback failed")),
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            playAudioAsync: (_, _) =>
+            {
+                audioCalls++;
+                return Task.CompletedTask;
+            });
+
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-1", "Stretch"),
+            bypassSuppression: false,
+            CancellationToken.None);
+
+        Assert.Equal(0, audioCalls);
+    }
+
+    [Fact]
+    public async Task Audio_cue_failure_is_reported_as_audio_cue_playback()
+    {
+        var reporter = new RecordingErrorReporter();
+        var failure = new InvalidOperationException("audio");
+        var coordinator = new PresentationCoordinator(
+            new PresentationPolicy(TimeSpan.Zero),
+            new RecordingNotificationService(),
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => Task.CompletedTask,
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            errorReporter: reporter,
+            playAudioAsync: (_, _) => throw failure);
+
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder("reminder-1", "Stretch"),
+            bypassSuppression: false,
+            CancellationToken.None);
+
+        Assert.Contains(reporter.Reports, report => report.Operation == "audio-cue-playback"
+            && ReferenceEquals(report.Exception, failure));
+    }
+
+    [Fact]
+    public async Task Audio_starts_with_visual_and_a_failure_does_not_block_notification_delivery()
     {
         var order = new List<string>();
         var notifications = new RecordingNotificationService(order);
@@ -152,12 +287,14 @@ public sealed class PresentationCoordinatorTests
     }
 
     [Fact]
-    public async Task Direct_audio_waits_for_visual_playback_completion()
+    public async Task Direct_audio_starts_without_waiting_for_the_visual()
     {
+        // Regression: the direct (Home / overlay menu) path waited for the
+        // visual to finish, or 2 s on a loop, before the cue started.
         var visual = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var order = new List<string>();
 
-        var observation = WindowsCompanionProductionComposition.ObserveDirectAudioAfterVisualAsync(
+        var observation = WindowsCompanionProductionComposition.ObserveDirectAudioAsync(
             visual.Task,
             () =>
             {
@@ -165,11 +302,59 @@ public sealed class PresentationCoordinatorTests
                 return Task.CompletedTask;
             });
 
-        Assert.Empty(order);
-        visual.SetResult();
-        await observation;
-
         Assert.Equal(["audio"], order);
+        await observation;
+        Assert.False(visual.Task.IsCompleted);
+    }
+
+    [Fact]
+    public async Task Direct_audio_is_skipped_for_a_failed_or_cancelled_visual_and_swallows_cue_failures()
+    {
+        var calls = 0;
+        Task Play() { calls++; return Task.CompletedTask; }
+
+        await WindowsCompanionProductionComposition.ObserveDirectAudioAsync(
+            Task.FromException(new InvalidOperationException("visual")), Play);
+        await WindowsCompanionProductionComposition.ObserveDirectAudioAsync(
+            Task.FromCanceled(new CancellationToken(canceled: true)), Play);
+        Assert.Equal(0, calls);
+
+        await WindowsCompanionProductionComposition.ObserveDirectAudioAsync(
+            Task.CompletedTask,
+            () => Task.FromException(new InvalidOperationException("audio")));
+    }
+
+    [Fact]
+    public void Audio_startup_line_flags_silent_packs_without_paths()
+    {
+        var loud = new AudioCue("tata-lala/tata-lala-01.wav", 500, "hash") { PeakLevel = 0.5 };
+        var silent = new AudioCue("dudu-lalala/lalala-01.wav", 500, "hash") { PeakLevel = 0 };
+        var catalog = new AudioCatalog([
+            new AudioSoundPack("tata-lala", [loud]),
+            new AudioSoundPack("dudu-lalala", [silent]),
+        ]);
+
+        var (level, message) = WindowsCompanionProductionComposition.DescribeAudioStartup(
+            catalog, loaded: true, Preferences.Default);
+
+        Assert.Equal(Microsoft.Extensions.Logging.LogLevel.Warning, level);
+        Assert.Contains("player=winmm", message);
+        Assert.Contains("cues=2", message);
+        Assert.Contains("silentCues=1", message);
+        Assert.Contains("silentPacks=[dudu-lalala]", message);
+        Assert.Contains("sounds=on", message);
+        Assert.DoesNotContain(".wav", message);
+        Assert.DoesNotContain("/", message);
+        Assert.DoesNotContain("\\", message);
+
+        var healthy = WindowsCompanionProductionComposition.DescribeAudioStartup(
+            new AudioCatalog([new AudioSoundPack("tata-lala", [loud])]), loaded: true, Preferences.Default);
+        Assert.Equal(Microsoft.Extensions.Logging.LogLevel.Information, healthy.Level);
+
+        var fallback = WindowsCompanionProductionComposition.DescribeAudioStartup(
+            new AudioCatalog([new AudioSoundPack("tata-lala", [])]), loaded: false, Preferences.Default);
+        Assert.Equal(Microsoft.Extensions.Logging.LogLevel.Warning, fallback.Level);
+        Assert.Contains("player=no-op", fallback.Message);
     }
 
     [Fact]

@@ -53,6 +53,18 @@ public sealed record AudioSoundPack(string PackId, IReadOnlyList<AudioCue> Cues)
 public sealed record AudioCue(string FilePath, int DurationMs, string Sha256)
 {
     public string RelativeFile => FilePath;
+
+    /// <summary>The hash-verified WAV bytes captured by
+    /// <see cref="AudioManifestLoader"/> at validation time. The player plays
+    /// these bytes, never re-opening the file, so what plays is exactly what
+    /// was validated.</summary>
+    public ReadOnlyMemory<byte> WaveData { get; init; }
+
+    /// <summary>Linear 0..1 sample peak measured at load (see
+    /// <see cref="WavPcm.PeakLevel"/>); 1 when unknown.</summary>
+    public double PeakLevel { get; init; } = 1.0;
+
+    public bool IsAudible => PeakLevel >= WavPcm.AudiblePeakThreshold;
 }
 
 public sealed class AudioManifestException : Exception

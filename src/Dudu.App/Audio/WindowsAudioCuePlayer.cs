@@ -1,27 +1,60 @@
-using Windows.Media.Core;
-using Windows.Media.Playback;
-using Windows.Foundation;
+using System.Runtime.InteropServices;
 
 namespace Dudu.App.Audio;
 
-public sealed class WindowsAudioCuePlayer : IAudioCuePlayer, IAudioCuePlayerLifecycle
+/// <summary>
+/// Plays a cue with winmm <c>PlaySound(SND_MEMORY | SND_ASYNC | SND_NODEFAULT)</c>
+/// from the hash-verified, volume-scaled in-memory WAV bytes.
+/// </summary>
+/// <remarks>
+/// This replaced a <c>Windows.Media.Playback.MediaPlayer</c> implementation
+/// that built a <c>file:///</c> URI into the MSIX install directory, created
+/// the player on a thread-pool thread, and awaited <c>MediaEnded</c>.
+/// PlaySound is the smaller dependency for short PCM effects: it needs no
+/// Media Foundation pipeline (absent on N editions), no media session (no
+/// media flyout, no captured play/pause keys), no packaged-path URI
+/// resolution, and no end-of-media callback -- the one path that could hang.
+/// A new PlaySound call stops the previous sound, which is exactly the
+/// "one Dudu vocal at a time, a newer cue supersedes" policy.
+/// PlaySound has no volume parameter, so the samples are pre-scaled
+/// (<see cref="WavPcm.CreateScaledCopy"/>). With SND_ASYNC | SND_MEMORY
+/// winmm keeps reading the buffer after the call returns, so the buffer is
+/// pinned and kept referenced in <see cref="_playing"/> until a later call
+/// or <see cref="DisposeAsync"/> has stopped it.
+/// </remarks>
+public sealed partial class WindowsAudioCuePlayer : IAudioCuePlayer, IAudioCuePlayerLifecycle
 {
-    /// <summary>
-    /// Extra time allowed past a cue's own duration before the completion
-    /// wait times out -- covers MediaPlayer's own startup/decode latency.
-    /// </summary>
-    private static readonly TimeSpan CompletionSlack = TimeSpan.FromSeconds(2);
+    internal const uint SndAsync = 0x0001;
+    internal const uint SndNoDefault = 0x0002;
+    internal const uint SndMemory = 0x0004;
+    internal const uint PlayFlags = SndAsync | SndMemory | SndNoDefault;
 
     /// <summary>
-    /// Fallback wait when a cue carries no usable duration.
+    /// Bound on a single native start/stop call. PlaySound returns as soon as
+    /// the sound has started, but it opens the wave device on first use; a
+    /// wedged audio driver must never stall the caller (the 30-second
+    /// reminder tick or an explicit pet action) behind it.
     /// </summary>
-    private static readonly TimeSpan DefaultCompletionTimeout = TimeSpan.FromSeconds(5);
+    internal static readonly TimeSpan NativeCallTimeout = TimeSpan.FromSeconds(2);
 
-    private readonly string? _assetRoot;
+    private readonly Func<nint, uint, bool> _playSound;
+    private readonly bool _requiresWindows;
+    private readonly object _gate = new();
+    private byte[]? _playing;
+    private int _nativeCallInFlight;
+    private int _disposed;
 
-    public WindowsAudioCuePlayer(string? assetRoot = null)
+    public WindowsAudioCuePlayer()
+        : this(null)
     {
-        _assetRoot = assetRoot;
+    }
+
+    /// <param name="playSound">Test seam for the native call:
+    /// (pointer to WAV bytes or 0 to stop, flags) -> started.</param>
+    internal WindowsAudioCuePlayer(Func<nint, uint, bool>? playSound)
+    {
+        _requiresWindows = playSound is null;
+        _playSound = playSound ?? ((sound, flags) => PlaySoundNative(sound, 0, flags));
     }
 
     public async Task<AudioPlaybackState> PlayAsync(
@@ -29,115 +62,102 @@ public sealed class WindowsAudioCuePlayer : IAudioCuePlayer, IAudioCuePlayerLife
         double volume,
         CancellationToken cancellationToken)
     {
-        if (!OperatingSystem.IsWindows() || string.IsNullOrWhiteSpace(_assetRoot))
-            return AudioPlaybackState.Completed;
+        ArgumentNullException.ThrowIfNull(cue);
+        if (Volatile.Read(ref _disposed) != 0 || cancellationToken.IsCancellationRequested)
+            return AudioPlaybackState.Suppressed;
+        if (_requiresWindows && !OperatingSystem.IsWindows())
+            return AudioPlaybackState.Suppressed;
 
-        var root = Path.GetFullPath(_assetRoot);
-        var path = Path.GetFullPath(Path.Combine(root, cue.RelativeFile));
-        if (!path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
-            || !File.Exists(path))
-            return AudioPlaybackState.Completed;
+        var buffer = WavPcm.CreateScaledCopy(cue.WaveData.Span, volume);
+        if (buffer is null)
+            return AudioPlaybackState.Failed;
 
-        // Not a `using`: on the TimeoutException path below, teardown is
-        // deliberately deferred to a background Task.Run instead of running
-        // here, so `player` must survive past this method returning.
-        var player = new MediaPlayer
+        // One native call at a time. If an earlier call is still stuck in the
+        // driver, fail fast instead of queueing another blocked thread behind it.
+        if (Interlocked.CompareExchange(ref _nativeCallInFlight, 1, 0) != 0)
+            return AudioPlaybackState.Failed;
+
+        var call = Task.Run(() =>
         {
-            Volume = Math.Clamp(volume, 0.0, 1.0),
-            // A cue is a short sound effect, not media: without these every
-            // chirp registered as a media session, popped the Windows media
-            // flyout next to the volume overlay, and could capture the
-            // keyboard play/pause keys away from her music player.
-            AudioCategory = MediaPlayerAudioCategory.SoundEffects,
-        };
-        player.CommandManager.IsEnabled = false;
-        var completion = new TaskCompletionSource<AudioPlaybackState>(
-            TaskCreationOptions.RunContinuationsAsynchronously);
-        TypedEventHandler<MediaPlayer, object> ended = (_, _) =>
-            completion.TrySetResult(AudioPlaybackState.Completed);
-        TypedEventHandler<MediaPlayer, MediaPlayerFailedEventArgs> failed = (_, _) =>
-            completion.TrySetResult(AudioPlaybackState.Failed);
-        player.MediaEnded += ended;
-        player.MediaFailed += failed;
-        // Finding H: this callback must only ever complete the TCS. The
-        // `using var cancellation` below disposes the registration on every
-        // exit path, and CancellationTokenRegistration.Dispose() blocks
-        // until a currently-running callback returns -- if that callback
-        // touched `player` (Source = null, as it used to) while a hung
-        // native decoder still owned it (see the TimeoutException path
-        // below), disposing the registration -- and therefore this whole
-        // method -- could still stall despite the completion timeout that
-        // exists specifically to prevent that. All player teardown stays in
-        // `finally`, either inline or deferred to its own background task.
-        using var cancellation = cancellationToken.Register(() =>
-        {
-            completion.TrySetResult(AudioPlaybackState.Suppressed);
+            try
+            {
+                var started = _playSound(Marshal.UnsafeAddrOfPinnedArrayElement(buffer, 0), PlayFlags);
+                if (started)
+                {
+                    // This call already stopped the previous sound, so the
+                    // previous buffer may be released now.
+                    lock (_gate) _playing = buffer;
+                }
+
+                return started;
+            }
+            finally
+            {
+                Volatile.Write(ref _nativeCallInFlight, 0);
+            }
         });
 
-        // A MediaEnded/MediaFailed that never fires (a hung native decoder)
-        // must not await completion.Task forever -- this call sits on the
-        // single 30-second reminder tick loop (via AudioCueService.TryPlayAsync),
-        // so a stalled MediaPlayer would otherwise stop reminders, note
-        // delivery, and ambient behaviour for the rest of the session.
-        var completionTimeout = cue.DurationMs > 0
-            ? TimeSpan.FromMilliseconds(cue.DurationMs) + CompletionSlack
-            : DefaultCompletionTimeout;
-        var timedOut = false;
         try
         {
-            player.Source = MediaSource.CreateFromUri(new Uri(path));
-            player.Play();
-            return await completion.Task.WaitAsync(completionTimeout).ConfigureAwait(false);
+            var started = await call.WaitAsync(NativeCallTimeout, cancellationToken).ConfigureAwait(false);
+            return started ? AudioPlaybackState.Started : AudioPlaybackState.Failed;
         }
         catch (TimeoutException)
         {
-            timedOut = true;
+            // The closure above keeps `buffer` alive until the stuck call
+            // returns, and it is then parked in _playing like any other.
             return AudioPlaybackState.Failed;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             return AudioPlaybackState.Suppressed;
         }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+
+        lock (_gate)
+        {
+            if (_playing is null)
+                return;
+        }
+
+        // A stuck start call still owns winmm; leave its buffer referenced
+        // rather than freeing memory the driver may still read.
+        if (Interlocked.CompareExchange(ref _nativeCallInFlight, 1, 0) != 0)
+            return;
+
+        var stop = Task.Run(() =>
+        {
+            try
+            {
+                if (_playSound(0, 0))
+                {
+                    lock (_gate) _playing = null;
+                }
+            }
+            finally
+            {
+                Volatile.Write(ref _nativeCallInFlight, 0);
+            }
+        });
+
+        try
+        {
+            await stop.WaitAsync(NativeCallTimeout).ConfigureAwait(false);
+        }
         catch
         {
-            return AudioPlaybackState.Failed;
-        }
-        finally
-        {
-            if (timedOut)
-            {
-                // The timeout above means the decoder never called back --
-                // it may be hung, and `Source = null`/Dispose() can block on
-                // that same native call. Tearing it down inline here would
-                // reintroduce the exact stall the timeout exists to avoid
-                // (this call sits on the 30-second reminder tick loop), so
-                // it runs on its own background task instead, independent of
-                // this method's caller. The event unsubscribes are exactly
-                // as likely to block against a hung native decoder as
-                // Source/Dispose are -- Finding 15: they used to still run
-                // inline here even on this branch, so they moved into the
-                // same deferred task instead of only the teardown calls.
-                var hungPlayer = player;
-                _ = Task.Run(() =>
-                {
-                    try { hungPlayer.MediaEnded -= ended; } catch { }
-                    try { hungPlayer.MediaFailed -= failed; } catch { }
-                    try { hungPlayer.Source = null; } catch { }
-                    try { hungPlayer.Dispose(); } catch { }
-                });
-            }
-            else
-            {
-                player.MediaEnded -= ended;
-                player.MediaFailed -= failed;
-                try { player.Source = null; } catch { }
-                // Finding H: guard this the same way the deferred hung-player
-                // teardown above already does -- Dispose() must never throw
-                // out of this finally block.
-                try { player.Dispose(); } catch { }
-            }
+            // Shutdown is best-effort: a stop that fails or times out keeps
+            // the buffer referenced by the task above until it returns.
         }
     }
 
-    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    [LibraryImport("winmm.dll", EntryPoint = "PlaySoundW")]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool PlaySoundNative(nint sound, nint module, uint flags);
 }

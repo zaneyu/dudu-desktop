@@ -79,12 +79,11 @@ public sealed class PetPresentationCoordinator
         ArgumentNullException.ThrowIfNull(petEvent);
         ArgumentException.ThrowIfNullOrWhiteSpace(dismissalId);
         var completionEvent = PetEvent.CompletionForOneShot(petEvent, dismissalId);
-        // Captured under the gate (invoked at the same point the old code
-        // awaited it, so ordering relative to the visual playback stays the
-        // same) but only awaited after the gate is released below. The gate
-        // also guards PresentationCoordinator.PresentAsync on the tick path;
-        // holding it across a potentially multi-second audio wait would
-        // block that unrelated tick for the duration of the cue.
+        // Started under the gate, together with the visual, but only awaited
+        // after the gate is released below. The gate also guards
+        // PresentationCoordinator.PresentAsync on the tick path; holding it
+        // across a potentially multi-second audio wait would block that
+        // unrelated tick for the duration of the cue.
         Task? audioTask = null;
         await _gate.WaitAsync(cancellationToken);
         try
@@ -107,6 +106,25 @@ public sealed class PetPresentationCoordinator
                         InvokeCompanionAsync(companion, playbackCancellation.Token));
                 }
 
+                if (_playAudioAsync is not null && !playback.IsFaulted && !playback.IsCanceled)
+                {
+                    // The sound starts with the animation, as soon as the
+                    // visual has been accepted. It used to wait for the
+                    // visual to finish and was skipped outright when that
+                    // took longer than _maximumDuration -- so a looping or
+                    // long clip (drag, eat-together) never made a sound.
+                    //
+                    // Wrapped in ObserveAudioAsync eagerly, right here under
+                    // the gate, so it starts observing (and, on failure,
+                    // reporting) the cue immediately. If the finally block
+                    // below throws, the exception skips straight past the
+                    // "await audioTask" further down, and an audioTask still
+                    // bare at that point would go unobserved; a task already
+                    // wrapped keeps consuming its own exception regardless.
+                    audioTask = ObserveAudioAsync(
+                        InvokeAudioAsync(() => _playAudioAsync(oneShot, cancellationToken)));
+                }
+
                 var timeout = _delayAsync(_maximumDuration, timeoutCancellation.Token);
                 if (await Task.WhenAny(playback, timeout) == playback)
                 {
@@ -117,20 +135,6 @@ public sealed class PetPresentationCoordinator
                         // Let a glide that runs a hair longer than the clip land
                         // before idle is restored. Never throws (observed).
                         await companionTask;
-                    }
-
-                    if (_playAudioAsync is not null)
-                    {
-                        // Wrapped in ObserveAudioAsync eagerly, right here
-                        // under the gate, so it starts observing (and, on
-                        // failure, reporting) the cue immediately. If the
-                        // finally block below throws, the exception skips
-                        // straight past the "await audioTask" further down,
-                        // and an audioTask still bare at that point would go
-                        // unobserved; a task already wrapped keeps consuming
-                        // its own exception regardless.
-                        audioTask = ObserveAudioAsync(
-                            InvokeAudioAsync(() => _playAudioAsync(oneShot, cancellationToken)));
                     }
                 }
                 else
