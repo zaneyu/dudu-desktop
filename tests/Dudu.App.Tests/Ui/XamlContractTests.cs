@@ -153,6 +153,8 @@ public sealed class XamlContractTests
         Assert.Contains("SelectedItem=\"{x:Bind ViewModel.SelectedRemoteEnvelope, Mode=TwoWay}\"", loveNotes);
         Assert.Contains("AutomationProperties.AutomationId=\"LoveNotesRevealSelected\"", loveNotes);
         Assert.DoesNotContain("RemoteNoteList_SelectionChanged", loveNotes);
+        // The cached privacy page disarms a stale destructive confirmation on every visit.
+        Assert.Contains("ViewModel.ResetPendingConfirmation();", File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "PrivacyDataPage.xaml.cs")));
         var privacy = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "PrivacyDataPage.xaml"));
         Assert.Contains("AutomationProperties.AutomationId=\"PrivacyConfirmationMessage\"", privacy);
         Assert.Contains("AutomationProperties.AutomationId=\"PrivacyConfirm\"", privacy);

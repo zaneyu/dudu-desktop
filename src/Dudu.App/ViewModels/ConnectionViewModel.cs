@@ -191,6 +191,13 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
                 foreach (var session in sessions) Sessions.Add(session);
                 SessionCount = count;
                 OnPropertyChanged(nameof(IsPaired));
+                // A pairing code shown on an earlier visit stops working when it
+                // expires; keep showing it and she may send a dead code.
+                if (CodeExpiresUtc is { } expires && expires <= _context.Clock.UtcNow)
+                {
+                    PairingCode = null;
+                    CodeExpiresUtc = null;
+                }
                 // M3: the page is cached and Page_Loaded calls RefreshAsync on every visit, not
                 // just the first one. A confirmation left pending from a previous visit (the user
                 // requested an action, then navigated away without confirming or cancelling) must

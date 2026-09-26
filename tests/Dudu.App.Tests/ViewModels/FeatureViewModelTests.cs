@@ -1536,6 +1536,50 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Refreshing_connection_clears_a_pairing_code_that_has_expired()
+    {
+        // Audit regression: RefreshAsync never cleared an expired code, so a
+        // later visit still showed a dead code (and its past expiry) as usable.
+        var pairing = new FakePairing { State = PairingAvailability.Available, SessionCountResult = 0 };
+        var fixture = FeatureFixture.Create(pairing: pairing);
+        var ct = TestContext.Current.CancellationToken;
+        pairing.CodeResult = new PairingCodeResult(
+            PairingAvailability.Available, "ABC123", fixture.Clock.UtcNow.AddMinutes(10));
+        var viewModel = new ConnectionViewModel(fixture.Context);
+        await viewModel.CreateCodeAsync(ct);
+        Assert.Equal("ABC123", viewModel.PairingCode);
+
+        await viewModel.RefreshAsync(ct);
+        Assert.False(viewModel.HasError);
+        Assert.Equal("ABC123", viewModel.PairingCode); // still valid
+
+        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddMinutes(11);
+        await viewModel.RefreshAsync(ct);
+
+        Assert.Null(viewModel.PairingCode);
+        Assert.Null(viewModel.CodeExpiresUtc);
+        Assert.Equal("no code yet ah", viewModel.PairingCodeText);
+    }
+
+    [Fact]
+    public void Returning_to_privacy_disarms_a_confirmation_left_pending_on_an_earlier_visit()
+    {
+        var calls = new List<string>();
+        var fixture = FeatureFixture.Create(
+            deleteLocalDataAsync: _ => { calls.Add("local"); return Task.CompletedTask; });
+        var viewModel = new PrivacyDataViewModel(fixture.Context);
+        viewModel.RequestDeleteLocalDataCommand.Execute(null);
+        Assert.True(viewModel.ConfirmCommand.CanExecute(null));
+
+        // What PrivacyDataPage.Page_Loaded does on every visit.
+        viewModel.ResetPendingConfirmation();
+
+        Assert.Equal(PrivacyConfirmationAction.None, viewModel.PendingConfirmation);
+        Assert.False(viewModel.ConfirmCommand.CanExecute(null));
+        Assert.Empty(calls);
+    }
+
+    [Fact]
     public async Task Connection_destructive_actions_require_a_separate_confirmation()
     {
         // F3: mirrors Privacy_destructive_actions_require_a_separate_confirmation. Available is
@@ -3129,7 +3173,14 @@ public sealed class FeatureViewModelTests
         public int ForgetPairingCallCount { get; private set; }
 
         public Task<PairingAvailability> GetStateAsync(CancellationToken cancellationToken = default) => Task.FromResult(State);
-        public Task<PairingCodeResult> CreateCodeAsync(CancellationToken cancellationToken = default) => Task.FromResult(PairingCodeResult.Offline);
+        public PairingCodeResult CodeResult { get; set; } = PairingCodeResult.Offline;
+        // Null keeps the interface default (session management unsupported).
+        public int? SessionCountResult { get; set; }
+        public Task<int> GetSessionCountAsync(CancellationToken cancellationToken = default) =>
+            SessionCountResult is { } count
+                ? Task.FromResult(count)
+                : Task.FromException<int>(new NotSupportedException("session management unsupported"));
+        public Task<PairingCodeResult> CreateCodeAsync(CancellationToken cancellationToken = default) => Task.FromResult(CodeResult);
         public Task DisconnectSenderSessionsAsync(CancellationToken cancellationToken = default)
         {
             DisconnectSenderSessionsCallCount++;
