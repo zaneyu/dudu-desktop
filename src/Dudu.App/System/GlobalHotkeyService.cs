@@ -400,6 +400,10 @@ public sealed class GlobalHotkeyService : IDisposable
 
 internal sealed unsafe class WindowsGlobalHotkeyNativeApi : IGlobalHotkeyNativeApi
 {
+    /// <summary>MOD_NOREPEAT: holding the shortcut down fires WM_HOTKEY once,
+    /// not once per keyboard auto-repeat (each of which opened Home again).</summary>
+    internal const uint ModNoRepeat = 0x4000;
+
     public bool Register(int id, HotkeyModifiers modifiers, uint key) =>
         Register(0, id, modifiers, key);
 
@@ -409,7 +413,7 @@ internal sealed unsafe class WindowsGlobalHotkeyNativeApi : IGlobalHotkeyNativeA
         PInvoke.RegisterHotKey(
             new HWND((void*)ownerWindow),
             id,
-            (HOT_KEY_MODIFIERS)(uint)modifiers,
+            (HOT_KEY_MODIFIERS)((uint)modifiers | ModNoRepeat),
             key);
 
     public bool Unregister(nint ownerWindow, int id) =>

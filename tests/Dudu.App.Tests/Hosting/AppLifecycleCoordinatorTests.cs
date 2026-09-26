@@ -498,6 +498,93 @@ public sealed class AppLifecycleCoordinatorTests
         Assert.False(overlay.IsVisible);
     }
 
+    [Fact]
+    public async Task Hotkey_opens_home_even_when_paused_locked_or_fullscreen_hidden_without_showing_the_overlay()
+    {
+        // "The tray and global hotkey remain available": a vetoed hotkey (or
+        // second launch, which routes through OnHotkeyAsync) used to return
+        // before _openHome, so it did nothing at all. Home must open; only the
+        // overlay show stays gated, and a vetoed gesture must not flip the
+        // desired-visible state either (so unlock/resume does not resurrect a
+        // pet she never asked to show).
+        var overlay = new FakeOverlay { IsVisible = false };
+        var sink = new RecordingPresentationEnvironmentSink();
+        var now = new DateTimeOffset(2026, 9, 11, 10, 0, 0, TimeSpan.Zero);
+        var flags = new PauseFlags();
+        var openHome = 0;
+        var fullscreen = false;
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            Preferences.Default,
+            pauseState: () => flags.State,
+            isFullscreen: () => fullscreen,
+            clock: () => now,
+            openHome: _ => { openHome++; return Task.CompletedTask; },
+            initialUserVisible: false,
+            presentationEnvironment: sink);
+
+        flags.State = new PauseState(PauseMode.Indefinite, null);
+        await lifecycle.OnHotkeyAsync(cancellationToken);
+        Assert.Equal(1, openHome);
+        Assert.Equal(0, overlay.ShowCount);
+        flags.State = PauseState.None;
+
+        fullscreen = true;
+        await lifecycle.OnFullscreenChangedAsync(true, cancellationToken);
+        await lifecycle.OnHotkeyAsync(cancellationToken);
+        Assert.Equal(2, openHome);
+        Assert.Equal(0, overlay.ShowCount);
+        fullscreen = false;
+        await lifecycle.OnFullscreenChangedAsync(false, cancellationToken);
+
+        await lifecycle.OnSessionLockedAsync(cancellationToken);
+        await lifecycle.OnHotkeyAsync(cancellationToken);
+        Assert.Equal(3, openHome);
+        await lifecycle.OnSessionUnlockedAsync(cancellationToken);
+
+        Assert.Equal(0, overlay.ShowCount);
+        Assert.False(overlay.IsVisible);
+        Assert.DoesNotContain(true, sink.UserVisiblePushes);
+
+        // Once nothing vetoes it, the same gesture opens Home and shows her.
+        await lifecycle.OnHotkeyAsync(cancellationToken);
+        Assert.Equal(4, openHome);
+        Assert.Equal(1, overlay.ShowCount);
+        Assert.True(overlay.IsVisible);
+    }
+
+    [Fact]
+    public async Task Fullscreen_end_clears_a_pause_until_fullscreen_ends()
+    {
+        // Nothing ever cleared "pause until fullscreen ends", so audio stayed
+        // muted and Home said "paused" long after the fullscreen app closed.
+        var pause = new PauseStateStore();
+        var now = new DateTimeOffset(2026, 9, 11, 10, 0, 0, TimeSpan.Zero);
+        var fullscreen = false;
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            new FakeOverlay(),
+            PetStateMachine.CreateIdle(),
+            Preferences.Default,
+            pauseState: () => pause.GetEffective(now),
+            isFullscreen: () => fullscreen,
+            clock: () => now,
+            fullscreenObserved: fullscreenNow => pause.OnFullscreenChanged(fullscreenNow));
+        pause.Set(new PauseState(PauseMode.UntilFullscreenEnds, null));
+
+        fullscreen = true;
+        await lifecycle.OnFullscreenChangedAsync(true, cancellationToken);
+        Assert.Equal(PauseMode.UntilFullscreenEnds, pause.Current.Mode);
+
+        fullscreen = false;
+        await lifecycle.OnFullscreenChangedAsync(false, cancellationToken);
+        Assert.Equal(PauseMode.None, pause.Current.Mode);
+    }
+
     private sealed class PauseFlags
     {
         public PauseState State { get; set; } = PauseState.None;

@@ -37,6 +37,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
     private readonly IAppHostErrorReporter? _errorReporter;
     private readonly Func<PetEvent, string, CancellationToken, Task>? _presentOneShotAsync;
     private readonly IPresentationEnvironmentSink? _presentationEnvironment;
+    private readonly Action<bool>? _fullscreenObserved;
     private readonly TrayIconService? _tray;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly SemaphoreSlim _visibilityGate = new(1, 1);
@@ -63,7 +64,8 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
         bool? initialUserVisible = null,
         IAppHostErrorReporter? errorReporter = null,
         Func<PetEvent, string, CancellationToken, Task>? presentOneShotAsync = null,
-        IPresentationEnvironmentSink? presentationEnvironment = null)
+        IPresentationEnvironmentSink? presentationEnvironment = null,
+        Action<bool>? fullscreenObserved = null)
     {
         _host = host ?? throw new ArgumentNullException(nameof(host));
         _overlay = overlay ?? throw new ArgumentNullException(nameof(overlay));
@@ -80,6 +82,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
         _userVisible = initialUserVisible ?? overlay.IsVisible;
         _presentOneShotAsync = presentOneShotAsync;
         _presentationEnvironment = presentationEnvironment;
+        _fullscreenObserved = fullscreenObserved;
         // Sync the sink with whatever visibility this instance started at,
         // the same way SetSessionLocked/SetFullscreen are seeded elsewhere —
         // otherwise a coordinator constructed already-hidden would leave
@@ -169,29 +172,42 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
         // launch/activation, see WindowsCompanionRuntime.ActivateAsync):
         // quiet hours never veto the overlay's visibility (see TryCanShow),
         // so this always shows the pet regardless of the hour.
-        if (!TryCanShow(fullscreen, snapshot.Locked, snapshot.Suspended, "hotkey-gate"))
+        //
+        // Home opens regardless of the veto: "the tray and global hotkey
+        // remain available" while paused or fullscreen-hidden, and returning
+        // before _openHome made the hotkey (and second launch, which routes
+        // here) do nothing at all. Only the overlay show below is gated --
+        // a vetoed gesture neither writes the desired-visible flag nor shows
+        // the pet.
+        var showOverlay = TryCanShow(fullscreen, snapshot.Locked, snapshot.Suspended, "hotkey-gate");
+        if (showOverlay)
         {
-            return;
-        }
-
-        await _gate.WaitAsync(cancellationToken);
-        try
-        {
-            ThrowIfDisposed();
-            if (_locked != snapshot.Locked
-                || _suspended != snapshot.Suspended
-                || _fullscreenHidden != snapshot.FullscreenHidden)
+            await _gate.WaitAsync(cancellationToken);
+            try
             {
-                return;
+                ThrowIfDisposed();
+                if (_locked != snapshot.Locked
+                    || _suspended != snapshot.Suspended
+                    || _fullscreenHidden != snapshot.FullscreenHidden)
+                {
+                    showOverlay = false;
+                }
+                else
+                {
+                    _userVisible = true;
+                }
             }
-
-            _userVisible = true;
+            finally { _gate.Release(); }
         }
-        finally { _gate.Release(); }
 
         if (_openHome is not null)
         {
             await _openHome(cancellationToken);
+        }
+
+        if (!showOverlay)
+        {
+            return;
         }
 
         // Finding 1: _openHome above can run arbitrarily long (it pumps the
@@ -482,6 +498,14 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
         bool fullscreen,
         CancellationToken cancellationToken = default)
     {
+        // "pause until fullscreen ends" is ended by exactly this signal:
+        // nothing else ever cleared it, so the pause (muted audio, "paused"
+        // on Home) outlived the fullscreen session forever. Observed before
+        // any visibility decision below so the restore path already sees the
+        // cleared pause.
+        InvokeSafely(
+            _fullscreenObserved is null ? null : () => _fullscreenObserved(fullscreen),
+            "fullscreen-pause-observe");
         bool hide;
         bool restore;
         bool restoreVisible;

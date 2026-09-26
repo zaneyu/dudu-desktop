@@ -9,12 +9,26 @@ public interface IPauseStateStore
     PauseState Current { get; }
     PauseState GetEffective(DateTimeOffset now);
     void Set(PauseState state);
+
+    /// <summary>Feeds a fullscreen transition so "pause until fullscreen
+    /// ends" can actually end. Returns true when it cleared that pause.</summary>
+    bool OnFullscreenChanged(bool fullscreen) => false;
 }
 
 public sealed class PauseStateStore : IPauseStateStore
 {
     private readonly object _gate = new();
+    private readonly Func<bool>? _isFullscreenNow;
     private PauseState _current = PauseState.None;
+    private bool _fullscreenSeen;
+
+    /// <param name="isFullscreenNow">Seeds whether fullscreen is already
+    /// active when "pause until fullscreen ends" is chosen, so choosing it
+    /// from inside a fullscreen session still ends with that session.</param>
+    public PauseStateStore(Func<bool>? isFullscreenNow = null)
+    {
+        _isFullscreenNow = isFullscreenNow;
+    }
 
     public PauseState Current
     {
@@ -24,7 +38,12 @@ public sealed class PauseStateStore : IPauseStateStore
     public void Set(PauseState state)
     {
         ArgumentNullException.ThrowIfNull(state);
-        lock (_gate) _current = state;
+        var fullscreenNow = state.Mode == PauseMode.UntilFullscreenEnds && ReadFullscreenNow();
+        lock (_gate)
+        {
+            _current = state;
+            _fullscreenSeen = fullscreenNow;
+        }
     }
 
     public PauseState GetEffective(DateTimeOffset now)
@@ -34,6 +53,48 @@ public sealed class PauseStateStore : IPauseStateStore
             _current = PausePolicy.ExpireIfNeeded(_current, now);
             return _current;
         }
+    }
+
+    /// <summary>
+    /// "pause until fullscreen ends" is armed when chosen and ends at the
+    /// first fullscreen-to-not-fullscreen transition after that: a
+    /// fullscreen reading marks the session as started, and the next
+    /// not-fullscreen reading clears the pause. Nothing used to clear it at
+    /// all, so audio stayed muted and Home said "paused" forever. Other
+    /// modes are untouched.
+    /// </summary>
+    public bool OnFullscreenChanged(bool fullscreen)
+    {
+        lock (_gate)
+        {
+            if (_current.Mode != PauseMode.UntilFullscreenEnds)
+            {
+                _fullscreenSeen = false;
+                return false;
+            }
+
+            if (fullscreen)
+            {
+                _fullscreenSeen = true;
+                return false;
+            }
+
+            if (!_fullscreenSeen)
+            {
+                return false;
+            }
+
+            _current = PauseState.None;
+            _fullscreenSeen = false;
+            return true;
+        }
+    }
+
+    private bool ReadFullscreenNow()
+    {
+        if (_isFullscreenNow is null) return false;
+        try { return _isFullscreenNow(); }
+        catch { return false; }
     }
 }
 
@@ -82,8 +143,11 @@ public sealed class CompanionCommandRouter
                     cancellationToken);
                 break;
             case TrayCommand.PauseIndefinitelyOrResume:
+                // "resume" means resume from ANY active pause: a timed pause
+                // (one hour, until 07:00) or "until fullscreen ends" used to
+                // be turned into an indefinite one here instead of resuming.
                 await SetPauseAsync(
-                    _pause.GetEffective(_clock()).Mode == PauseMode.Indefinite
+                    IsPaused(_pause, _clock())
                         ? PauseState.None
                         : new PauseState(PauseMode.Indefinite, null),
                     cancellationToken);
@@ -98,6 +162,21 @@ public sealed class CompanionCommandRouter
                 throw new ArgumentOutOfRangeException(nameof(command));
         }
     }
+
+    /// <summary>Whether a pause is currently active, i.e. whether the
+    /// "pause indefinitely or resume" tray command resumes.</summary>
+    public static bool IsPaused(IPauseStateStore pause, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(pause);
+        return pause.GetEffective(now).Mode != PauseMode.None;
+    }
+
+    /// <summary>The state-dependent tray label for <paramref name="command"/>,
+    /// or null to keep <see cref="TrayIconService.DefaultLabel"/>.</summary>
+    public static string? TrayLabelFor(TrayCommand command, IPauseStateStore pause, DateTimeOffset now) =>
+        command == TrayCommand.PauseIndefinitelyOrResume
+            ? IsPaused(pause, now) ? "resume dudu" : "pause indefinitely"
+            : null;
 
     private async Task SetPauseAsync(PauseState state, CancellationToken cancellationToken)
     {

@@ -457,7 +457,10 @@ public static class WindowsCompanionProductionComposition
                 preferences.Theme,
                 OverlaySurfaceRenderer.IsHighContrastEnabled()));
             presenter = new LayeredFramePresenter();
-            var pause = new PauseStateStore();
+            // Seeded with the live fullscreen reading so "pause until
+            // fullscreen ends" chosen from inside a fullscreen session still
+            // ends with that session (see PauseStateStore.OnFullscreenChanged).
+            var pause = new PauseStateStore(() => presentationGateway?.IsFullscreen ?? false);
             var runtimePreferences = new RuntimePreferencesState(preferences);
             var audioManifestPath = ResolveAudioManifestPath(assetsRoot);
             AudioCatalog audioCatalog;
@@ -487,7 +490,18 @@ public static class WindowsCompanionProductionComposition
                     DateTimeOffset.UtcNow,
                     runtimePreferences.Current.QuietHours,
                     TimeZoneInfo.Local),
-                isPaused: () => pause.GetEffective(DateTimeOffset.UtcNow).Mode != PauseMode.None,
+                // The same pause gate every other surface uses: "pause until
+                // fullscreen ends" only mutes while fullscreen is actually
+                // active, instead of muting audio for as long as the mode is
+                // merely set.
+                isPaused: () =>
+                {
+                    var now = DateTimeOffset.UtcNow;
+                    return PausePolicy.IsSuppressed(
+                        pause.GetEffective(now),
+                        now,
+                        presentationGateway?.IsFullscreen ?? false);
+                },
                 isFullscreen: () => presentationGateway?.IsFullscreen ?? false,
                 isSessionLocked: () => presentationGateway?.IsSessionLocked ?? false,
                 isSafeMode: () => safeMode,
@@ -522,6 +536,9 @@ public static class WindowsCompanionProductionComposition
                         $"tray-{command}",
                         host.ErrorReporter);
                 },
+                trayLabelOverride: command =>
+                    CompanionCommandRouter.TrayLabelFor(command, pause, DateTimeOffset.UtcNow),
+                fullscreenObserved: fullscreenNow => pause.OnFullscreenChanged(fullscreenNow),
                 initializeOverlay: async overlay =>
                 {
                     animationEngine = new AnimationEngine(

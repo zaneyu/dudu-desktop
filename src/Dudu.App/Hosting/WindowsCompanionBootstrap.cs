@@ -722,7 +722,9 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         CancellationToken cancellationToken = default,
         IAppHostErrorReporter? errorReporter = null,
         Func<PetPlacement, CancellationToken, Task>? persistPlacementAsync = null,
-        Func<PetEvent, string, CancellationToken, Task>? presentOneShotAsync = null)
+        Func<PetEvent, string, CancellationToken, Task>? presentOneShotAsync = null,
+        Func<TrayCommand, string?>? trayLabelOverride = null,
+        Action<bool>? fullscreenObserved = null)
     {
         ArgumentNullException.ThrowIfNull(openHome);
         if (trayCommandHandler is null && trayCommandHandlerFactory is null)
@@ -755,7 +757,10 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
             var handler = trayCommandHandler
                 ?? (command => trayCommandHandlerFactory!(lifecycle
                     ?? throw new InvalidOperationException("Lifecycle is not composed."))(command));
-            tray = new TrayIconService(commandHandler: handler, errorReporter: errorReporter);
+            tray = new TrayIconService(
+                commandHandler: handler,
+                errorReporter: errorReporter,
+                labelOverride: trayLabelOverride);
             hotkey = new GlobalHotkeyService(errorReporter: errorReporter);
             lifecycle = new AppLifecycleCoordinator(
                 host,
@@ -771,7 +776,8 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                 initialUserVisible: initialUserVisible,
                 errorReporter: errorReporter,
                 presentOneShotAsync: presentOneShotAsync,
-                presentationEnvironment: presentationEnvironment);
+                presentationEnvironment: presentationEnvironment,
+                fullscreenObserved: fullscreenObserved);
             // Wired the same way the presentation gateway and remote sync are
             // attached to the host: before host.StartAsync ever runs (it is
             // only called later, from WindowsCompanionRuntime.StartAsync).

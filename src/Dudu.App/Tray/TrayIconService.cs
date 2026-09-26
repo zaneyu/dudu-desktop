@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using Dudu.App.Hosting;
 using Windows.Win32;
 using Windows.Win32.Foundation;
@@ -24,6 +25,14 @@ public interface ITrayNativeApi
     bool Remove(nint ownerWindow);
     bool Recreate(nint ownerWindow, uint callbackMessage, string tooltip);
     TrayCommand? TrackPopupMenu(nint ownerWindow, IReadOnlyList<TrayCommand> commands) => null;
+
+    /// <summary>Shows the menu with the given per-command labels (parallel to
+    /// <paramref name="commands"/>), so a label can reflect current state --
+    /// e.g. "resume dudu" while a pause is active.</summary>
+    TrayCommand? TrackPopupMenu(
+        nint ownerWindow,
+        IReadOnlyList<TrayCommand> commands,
+        IReadOnlyList<string> labels) => TrackPopupMenu(ownerWindow, commands);
 }
 
 public sealed class TrayIconService : IDisposable, IAsyncDisposable
@@ -41,6 +50,7 @@ public sealed class TrayIconService : IDisposable, IAsyncDisposable
     private readonly IAppHostErrorReporter? _errorReporter;
     private readonly object _gate = new();
     private readonly string _tooltip;
+    private readonly Func<TrayCommand, string?>? _labelOverride;
     private Func<Action, Task>? _ownerDispatcher;
     private nint _ownerWindow;
     private int _ownerThreadId;
@@ -51,13 +61,15 @@ public sealed class TrayIconService : IDisposable, IAsyncDisposable
         ITrayNativeApi? native = null,
         Action<TrayCommand>? commandHandler = null,
         string tooltip = "dudu",
-        IAppHostErrorReporter? errorReporter = null)
+        IAppHostErrorReporter? errorReporter = null,
+        Func<TrayCommand, string?>? labelOverride = null)
     {
         _native = native ?? new WindowsTrayNativeApi();
         _commandHandler = commandHandler
             ?? throw new ArgumentNullException(nameof(commandHandler));
         _tooltip = tooltip;
         _errorReporter = errorReporter;
+        _labelOverride = labelOverride;
     }
 
     public IReadOnlyList<TrayCommand> Commands { get; } =
@@ -70,6 +82,40 @@ public sealed class TrayIconService : IDisposable, IAsyncDisposable
         TrayCommand.OpenSettings,
         TrayCommand.Exit,
     ];
+
+    /// <summary>The menu label for a command when no state-dependent override applies.</summary>
+    public static string DefaultLabel(TrayCommand command) => command switch
+    {
+        TrayCommand.ShowOrHide => "show or hide dudu",
+        TrayCommand.PauseOneHour => "pause for one hour",
+        TrayCommand.PauseUntilTomorrowAtSeven => "pause until tomorrow at 07:00",
+        TrayCommand.PauseUntilFullscreenEnds => "pause until fullscreen ends",
+        TrayCommand.PauseIndefinitelyOrResume => "pause indefinitely or resume",
+        TrayCommand.OpenSettings => "open settings",
+        TrayCommand.Exit => "exit",
+        _ => command.ToString(),
+    };
+
+    /// <summary>The labels the menu is about to show: <see cref="DefaultLabel"/>
+    /// unless the composed label override returns something else for the
+    /// current state. A faulting override falls back to the default label.</summary>
+    public IReadOnlyList<string> ResolveLabels(IReadOnlyList<TrayCommand> commands)
+    {
+        var labels = new string[commands.Count];
+        for (var index = 0; index < commands.Count; index++)
+        {
+            string? label = null;
+            if (_labelOverride is not null)
+            {
+                try { label = _labelOverride(commands[index]); }
+                catch (Exception exception) { ReportFailure("tray-label", exception); }
+            }
+
+            labels[index] = string.IsNullOrWhiteSpace(label) ? DefaultLabel(commands[index]) : label;
+        }
+
+        return labels;
+    }
 
     public void Attach(nint ownerWindow, Func<Action, Task>? ownerDispatcher = null)
     {
@@ -151,7 +197,7 @@ public sealed class TrayIconService : IDisposable, IAsyncDisposable
         {
             // TrackPopupMenuEx runs a nested native message loop. Never hold
             // the service lock while Windows or the command callback runs.
-            command = _native.TrackPopupMenu(ownerWindow, commands);
+            command = _native.TrackPopupMenu(ownerWindow, commands, ResolveLabels(commands));
         }
 
         if (command is { } selected)
@@ -333,7 +379,13 @@ internal sealed class WindowsTrayNativeApi : ITrayNativeApi
     }
 
     public TrayCommand? TrackPopupMenu(nint ownerWindow, IReadOnlyList<TrayCommand> commands) =>
-        NativeTrayMenu.Show(ownerWindow, commands);
+        NativeTrayMenu.Show(ownerWindow, commands, commands.Select(TrayIconService.DefaultLabel).ToArray());
+
+    public TrayCommand? TrackPopupMenu(
+        nint ownerWindow,
+        IReadOnlyList<TrayCommand> commands,
+        IReadOnlyList<string> labels) =>
+        NativeTrayMenu.Show(ownerWindow, commands, labels);
 }
 
 internal static unsafe class NativeShellNotifyIcon
@@ -351,7 +403,7 @@ internal static unsafe class NativeShellNotifyIcon
                 | NOTIFY_ICON_DATA_FLAGS.NIF_ICON,
             uCallbackMessage = callbackMessage,
             szTip = tooltip,
-            hIcon = PInvoke.LoadIcon(HINSTANCE.Null, new PCWSTR((char*)32512)),
+            hIcon = new HICON((void*)TrayAppIcon.Handle),
         };
         return PInvoke.Shell_NotifyIcon(
             add ? NOTIFY_ICON_MESSAGE.NIM_ADD : NOTIFY_ICON_MESSAGE.NIM_DELETE,
@@ -361,12 +413,93 @@ internal static unsafe class NativeShellNotifyIcon
     public static bool Remove(nint ownerWindow) => Change(ownerWindow, 0, string.Empty, add: false);
 }
 
+/// <summary>
+/// The notification-area icon: Dudu's own icon (the csproj
+/// <c>ApplicationIcon</c>, embedded in the executable by the SDK), not the
+/// generic Windows application icon. Loaded once at the small-icon metric
+/// and kept for the process lifetime -- Shell_NotifyIcon copies the icon, and
+/// every recreate reuses the same handle instead of leaking a fresh one.
+/// </summary>
+internal static unsafe class TrayAppIcon
+{
+    /// <summary>The icon-group id the .NET SDK (via Roslyn's default Win32
+    /// resources) gives the ApplicationIcon in the managed assembly and the
+    /// apphost copies into the executable.</summary>
+    internal const int ApplicationIconResourceId = 32512;
+    private const uint ImageIcon = 1;
+    private const int SmCxSmIcon = 49;
+    private const int SmCySmIcon = 50;
+    private static nint _handle;
+
+    public static nint Handle
+    {
+        get
+        {
+            var cached = Volatile.Read(ref _handle);
+            if (cached != 0) return cached;
+            var loaded = Load();
+            var previous = Interlocked.CompareExchange(ref _handle, loaded, 0);
+            return previous != 0 ? previous : loaded;
+        }
+    }
+
+    private static nint Load()
+    {
+        try
+        {
+            var width = GetSystemMetrics(SmCxSmIcon);
+            var height = GetSystemMetrics(SmCySmIcon);
+
+            // 1. The embedded app icon from this executable's own resources.
+            var module = GetModuleHandleW(null);
+            if (module != 0)
+            {
+                var icon = LoadImageW(module, ApplicationIconResourceId, ImageIcon, width, height, 0);
+                if (icon != 0) return icon;
+            }
+
+            // 2. Whatever icon group the executable carries first, whatever
+            //    its resource id -- the same icon Explorer shows for the exe.
+            if (Environment.ProcessPath is { Length: > 0 } processPath)
+            {
+                nint small = 0;
+                if (ExtractIconExW(processPath, 0, null, &small, 1) > 0 && small != 0)
+                {
+                    return small;
+                }
+            }
+        }
+        catch (Exception exception) when (exception is DllNotFoundException or EntryPointNotFoundException)
+        {
+        }
+
+        // 3. Last resort: the generic system application icon (IDI_APPLICATION).
+        return (nint)PInvoke.LoadIcon(HINSTANCE.Null, new PCWSTR((char*)32512)).Value;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern int GetSystemMetrics(int index);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern nint GetModuleHandleW(string? moduleName);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern nint LoadImageW(nint instance, nint name, uint type, int width, int height, uint load);
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint ExtractIconExW(string file, int iconIndex, nint* large, nint* small, uint icons);
+}
+
 internal static unsafe class NativeTrayMenu
 {
     private const uint MfString = 0x0000;
     private const uint TpmRightButton = 0x0002;
+    private const uint WmNull = 0x0000;
 
-    public static TrayCommand? Show(nint ownerWindow, IReadOnlyList<TrayCommand> commands)
+    public static TrayCommand? Show(
+        nint ownerWindow,
+        IReadOnlyList<TrayCommand> commands,
+        IReadOnlyList<string> labels)
     {
         if (!OperatingSystem.IsWindows())
         {
@@ -378,7 +511,9 @@ internal static unsafe class NativeTrayMenu
 
         for (var index = 0; index < commands.Count; index++)
         {
-            var label = GetLabel(commands[index]);
+            var label = index < labels.Count && !string.IsNullOrWhiteSpace(labels[index])
+                ? labels[index]
+                : TrayIconService.DefaultLabel(commands[index]);
             if (!PInvoke.AppendMenu(
                     menu,
                     (MENU_ITEM_FLAGS)MfString,
@@ -390,25 +525,21 @@ internal static unsafe class NativeTrayMenu
         }
 
         if (!PInvoke.GetCursorPos(out var point)) return null;
+        var owner = new HWND((void*)ownerWindow);
+        // KB135788: a notification-area menu only dismisses when she clicks
+        // elsewhere (and only takes keyboard focus for arrow/Enter/Esc) if its
+        // owner is the foreground window while TrackPopupMenuEx runs, and the
+        // owner must receive a message right after it returns so the next
+        // right-click opens the menu instead of silently closing it.
+        _ = PInvoke.SetForegroundWindow(owner);
         _ = PInvoke.TrackPopupMenuEx(
             menu,
             TpmRightButton,
             point.X,
             point.Y,
-            new HWND((void*)ownerWindow),
+            owner,
             null);
+        _ = PInvoke.PostMessage(owner, WmNull, default, default);
         return null;
     }
-
-    private static string GetLabel(TrayCommand command) => command switch
-    {
-        TrayCommand.ShowOrHide => "show or hide dudu",
-        TrayCommand.PauseOneHour => "pause for one hour",
-        TrayCommand.PauseUntilTomorrowAtSeven => "pause until tomorrow at 07:00",
-        TrayCommand.PauseUntilFullscreenEnds => "pause until fullscreen ends",
-        TrayCommand.PauseIndefinitelyOrResume => "pause indefinitely or resume",
-        TrayCommand.OpenSettings => "open settings",
-        TrayCommand.Exit => "exit",
-        _ => command.ToString(),
-    };
 }
