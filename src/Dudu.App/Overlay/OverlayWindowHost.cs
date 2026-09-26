@@ -738,16 +738,62 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     public void SetRuntimeMessageHandler(Func<uint, nint, nint, bool>? handler) =>
         _runtimeMessageHandler = handler;
 
-    public bool TryHandleRuntimeMessage(uint message, nint wParam, nint lParam)
+    public bool TryHandleRuntimeMessage(uint message, nint wParam, nint lParam) =>
+        TryDispatchRuntimeMessage(message, wParam, lParam) == RuntimeMessageDispatch.Claimed;
+
+    internal enum RuntimeMessageDispatch
+    {
+        NotClaimed,
+        Claimed,
+        Faulted,
+    }
+
+    private RuntimeMessageDispatch TryDispatchRuntimeMessage(uint message, nint wParam, nint lParam)
     {
         try
         {
-            return _runtimeMessageHandler?.Invoke(message, wParam, lParam) == true;
+            return _runtimeMessageHandler?.Invoke(message, wParam, lParam) == true
+                ? RuntimeMessageDispatch.Claimed
+                : RuntimeMessageDispatch.NotClaimed;
         }
         catch (Exception exception)
         {
             ReportDiagnostic(exception);
-            return false;
+            return RuntimeMessageDispatch.Faulted;
+        }
+    }
+
+    /// <summary>
+    /// Routes one owner-window message exactly once. The runtime handler
+    /// (hotkey + tray) runs FIRST; a message it claims is never handed to the
+    /// host's own handling, because that path also forwards to the companion
+    /// event source, whose sink is the very same runtime handler. Doing both
+    /// used to run every WM_HOTKEY, tray callback, WM_COMMAND and
+    /// TaskbarCreated twice (the tray menu opened twice, "pause or resume"
+    /// toggled straight back, Home opened twice). A runtime handler that
+    /// faulted has already acted on the message, so it is not re-dispatched
+    /// either; it falls through to DefWindowProc as before.
+    /// </summary>
+    /// <returns>True when the runtime handler claimed the message.</returns>
+    internal static bool RouteWindowMessage<TState>(
+        TState state,
+        uint message,
+        nint wParam,
+        nint lParam,
+        Func<TState, uint, nint, nint, RuntimeMessageDispatch> dispatchRuntime,
+        Action<TState, uint, nint, nint> handleHostMessage)
+    {
+        ArgumentNullException.ThrowIfNull(dispatchRuntime);
+        ArgumentNullException.ThrowIfNull(handleHostMessage);
+        switch (dispatchRuntime(state, message, wParam, lParam))
+        {
+            case RuntimeMessageDispatch.Claimed:
+                return true;
+            case RuntimeMessageDispatch.Faulted:
+                return false;
+            default:
+                handleHostMessage(state, message, wParam, lParam);
+                return false;
         }
     }
 
@@ -1067,8 +1113,25 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                     }
                 }
 
-                host.HandleMessage(message, wParam, lParam);
-                if (host.TryHandleRuntimeMessage(message, (nint)wParam.Value, (nint)lParam.Value))
+                if (message is HostCommandMessage or ShutdownCommandMessage)
+                {
+                    // Private owner-thread commands never reach the runtime.
+                    host.HandleMessage(message, wParam, lParam);
+                    return new LRESULT(0);
+                }
+
+                if (RouteWindowMessage(
+                        host,
+                        message,
+                        (nint)wParam.Value,
+                        (nint)lParam.Value,
+                        static (owner, routedMessage, routedWParam, routedLParam) =>
+                            owner.TryDispatchRuntimeMessage(routedMessage, routedWParam, routedLParam),
+                        static (owner, routedMessage, routedWParam, routedLParam) =>
+                            owner.HandleMessage(
+                                routedMessage,
+                                new WPARAM((nuint)routedWParam),
+                                new LPARAM(routedLParam))))
                 {
                     // Hotkey/tray callbacks arrive at the overlay owner window
                     // and are claimed by the runtime handler; swallow so they
