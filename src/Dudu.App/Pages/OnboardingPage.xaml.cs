@@ -30,13 +30,32 @@ public sealed partial class OnboardingPage : Page
 
     private async void RecommendedDefaultsButton_Click(object sender, RoutedEventArgs args)
     {
-        await _viewModel.AcceptRecommendedDefaultsAsync();
-        SyncControlsFromDraft();
-        SetMessage(null);
+        // Capture what she already typed (her name above all) into the draft
+        // first: SyncControlsFromDraft below rewrites every control from the
+        // draft, which would otherwise erase anything not yet synced.
+        SyncDraftFromControls();
+        try
+        {
+            await _viewModel.AcceptRecommendedDefaultsAsync();
+            SyncControlsFromDraft();
+            SetMessage(null);
+        }
+        catch (OperationCanceledException)
+        {
+            SetMessage("setup paused ur choices still here");
+        }
+        catch (Exception exception)
+        {
+            SetMessage("aiyo cant use defaults now ur choices stay");
+            global::System.Diagnostics.Trace.TraceError("Dudu recommended defaults failed: {0}", exception);
+        }
     }
 
     private async void RecommendedPlacementButton_Click(object sender, RoutedEventArgs args)
     {
+        // Same as above: keep the fullscreen/startup toggles she just changed
+        // on this step instead of reverting them to the last synced draft.
+        SyncDraftFromControls();
         try
         {
             await _viewModel.UseRecommendedPlacementAsync();
@@ -252,11 +271,16 @@ public sealed partial class OnboardingPage : Page
         _viewModel.RecipientName = RecipientNameBox.Text;
         _viewModel.ReducedMotion = ReducedMotionBox.IsChecked == true;
         _viewModel.QuietHoursEnabled = QuietHoursBox.IsChecked == true;
-        if (TimeOnly.TryParse(QuietStartBox.Text, out var start)) _viewModel.QuietHoursStart = start;
-        if (TimeOnly.TryParse(QuietEndBox.Text, out var end)) _viewModel.QuietHoursEnd = end;
+        // Invalid time text is recorded by the view model and blocks Next with
+        // a message, instead of silently keeping the old time and advancing.
+        _viewModel.TrySetQuietHoursText(QuietStartBox.Text, QuietEndBox.Text);
         _viewModel.HydrationRemindersEnabled = HydrationBox.IsChecked == true;
         _viewModel.BreakRemindersEnabled = BreakBox.IsChecked == true;
-        _viewModel.LocalNoteDailyLimit = (int)Math.Round(NoteLimitBox.Value);
+        if (!_viewModel.TrySetLocalNoteDailyLimit(NoteLimitBox.Value))
+        {
+            // A cleared NumberBox reads NaN: keep the current limit and show it.
+            NoteLimitBox.Value = _viewModel.LocalNoteDailyLimit;
+        }
         _viewModel.PlacementScale = PlacementScaleSlider.Value;
         _viewModel.HidePetDuringFullscreen = HideFullscreenBox.IsChecked == true;
         _viewModel.LaunchAtSignIn = LaunchAtSignInBox.IsChecked == true;

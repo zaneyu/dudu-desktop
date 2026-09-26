@@ -65,6 +65,10 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
     private string? _validationMessage;
     private string? _runtimeApplyError;
     private string? _startupRegistrationError;
+    private bool _quietHoursTextInvalid;
+
+    /// <summary>Shown when a quiet-hours box holds text that is not a time.</summary>
+    public const string QuietHoursTimeFormatMessage = "wait use a time like 22:00";
 
     public OnboardingViewModel(
         PreferenceMutationCoordinator preferenceMutations,
@@ -186,12 +190,41 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
             LaunchAtSignIn = true;
             HydrationRemindersEnabled = true;
             BreakRemindersEnabled = true;
+            _quietHoursTextInvalid = false;
             ValidationMessage = null;
         }
         finally
         {
             _navigationGate.Release();
         }
+    }
+
+    /// <summary>Applies the quiet-hours text boxes to the draft. Text that is
+    /// not a time is remembered as invalid -- instead of silently keeping the
+    /// previous value and moving on -- so Next/finish report it and stay put
+    /// until she fixes it.</summary>
+    /// <returns>True when both boxes hold a valid time.</returns>
+    public bool TrySetQuietHoursText(string? startText, string? endText)
+    {
+        ThrowIfDisposed();
+        var startValid = TimeOnly.TryParse(startText, out var start);
+        var endValid = TimeOnly.TryParse(endText, out var end);
+        if (startValid) QuietHoursStart = start;
+        if (endValid) QuietHoursEnd = end;
+        _quietHoursTextInvalid = !(startValid && endValid);
+        return !_quietHoursTextInvalid;
+    }
+
+    /// <summary>Applies the note-limit NumberBox value. A cleared NumberBox
+    /// reports NaN, which used to round to 0 and silently turn local notes
+    /// off; it now keeps the current limit instead.</summary>
+    /// <returns>False when the value was not a number and was ignored.</returns>
+    public bool TrySetLocalNoteDailyLimit(double value)
+    {
+        ThrowIfDisposed();
+        if (!double.IsFinite(value)) return false;
+        LocalNoteDailyLimit = (int)Math.Round(value);
+        return true;
     }
 
     public async Task PreviewPlacementAsync(CancellationToken cancellationToken = default)
@@ -454,9 +487,11 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
             : null;
     }
 
-    private string? ValidateQuietHours() => QuietHoursEnabled && QuietHoursStart == QuietHoursEnd
-        ? "alala quiet hours need start and end"
-        : null;
+    private string? ValidateQuietHours() => _quietHoursTextInvalid
+        ? QuietHoursTimeFormatMessage
+        : QuietHoursEnabled && QuietHoursStart == QuietHoursEnd
+            ? "alala quiet hours need start and end"
+            : null;
 
     private string? ValidateReminderDefaults() => LocalNoteDailyLimit is < 0 or > 12
         ? "wait note limit must be 0 to 12"

@@ -27,6 +27,93 @@ public sealed class OnboardingViewModelTests
     }
 
     [Fact]
+    public async Task Invalid_quiet_hours_text_blocks_next_instead_of_silently_keeping_the_old_time()
+    {
+        // Audit regression: the page ignored a failed TimeOnly.TryParse of the
+        // quiet-hours boxes, kept the previous time and advanced anyway.
+        await using var fixture = OnboardingFixture.Create();
+        var ct = fixture.CancellationToken;
+        fixture.ViewModel.RecipientName = "Mia";
+        Assert.True(await fixture.ViewModel.NextAsync(ct)); // appearance
+        Assert.True(await fixture.ViewModel.NextAsync(ct)); // quiet hours
+        Assert.Equal(OnboardingStep.QuietHours, fixture.ViewModel.CurrentStep);
+
+        Assert.False(fixture.ViewModel.TrySetQuietHoursText("23:30", "later"));
+        Assert.False(await fixture.ViewModel.NextAsync(ct));
+
+        Assert.Equal(OnboardingStep.QuietHours, fixture.ViewModel.CurrentStep);
+        Assert.Equal(OnboardingViewModel.QuietHoursTimeFormatMessage, fixture.ViewModel.ValidationMessage);
+        Assert.False(await fixture.ViewModel.CompleteAsync(ct));
+        Assert.Null(fixture.SavedPreferences);
+
+        Assert.True(fixture.ViewModel.TrySetQuietHoursText("23:30", "06:45"));
+        Assert.True(await fixture.ViewModel.NextAsync(ct));
+        Assert.Equal(new TimeOnly(23, 30), fixture.ViewModel.QuietHoursStart);
+        Assert.Equal(new TimeOnly(6, 45), fixture.ViewModel.QuietHoursEnd);
+    }
+
+    [Fact]
+    public async Task Recommended_defaults_clear_a_pending_invalid_quiet_hours_entry()
+    {
+        await using var fixture = OnboardingFixture.Create();
+        fixture.ViewModel.RecipientName = "Mia";
+        fixture.ViewModel.TrySetQuietHoursText("nope", "07:00");
+
+        await fixture.ViewModel.AcceptRecommendedDefaultsAsync(fixture.CancellationToken);
+
+        Assert.True(await fixture.ViewModel.CompleteAsync(fixture.CancellationToken));
+        Assert.Equal("Mia", fixture.SavedProfile!.RecipientName);
+    }
+
+    [Fact]
+    public async Task Cleared_note_limit_keeps_the_current_limit_instead_of_turning_notes_off()
+    {
+        // Audit regression: a cleared NumberBox reports NaN, which rounded to 0.
+        await using var fixture = OnboardingFixture.Create();
+        fixture.ViewModel.LocalNoteDailyLimit = 5;
+
+        Assert.False(fixture.ViewModel.TrySetLocalNoteDailyLimit(double.NaN));
+        Assert.Equal(5, fixture.ViewModel.LocalNoteDailyLimit);
+
+        Assert.True(fixture.ViewModel.TrySetLocalNoteDailyLimit(7.4));
+        Assert.Equal(7, fixture.ViewModel.LocalNoteDailyLimit);
+    }
+
+    [Fact]
+    public void Onboarding_recommended_buttons_capture_typed_controls_before_rewriting_them()
+    {
+        // Audit regression: "use recommended defaults" rewrote every control
+        // from the draft without syncing the draft from the controls first,
+        // erasing her typed name; the placement-step button did the same to
+        // the fullscreen/startup toggles.
+        var code = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "src", "Dudu.App", "Pages", "OnboardingPage.xaml.cs")).Replace("\r\n", "\n");
+        foreach (var handler in new[] { "RecommendedDefaultsButton_Click", "RecommendedPlacementButton_Click" })
+        {
+            var start = code.IndexOf($"private async void {handler}(", StringComparison.Ordinal);
+            Assert.True(start >= 0, handler);
+            var end = code.IndexOf("\n    }", start, StringComparison.Ordinal);
+            var body = code[start..end];
+            var captureIndex = body.IndexOf("SyncDraftFromControls();", StringComparison.Ordinal);
+            var rewriteIndex = body.IndexOf("SyncControlsFromDraft();", StringComparison.Ordinal);
+            Assert.True(captureIndex >= 0, $"{handler} must call SyncDraftFromControls().");
+            Assert.True(rewriteIndex > captureIndex, $"{handler} must capture controls before rewriting them.");
+        }
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "PRODUCT.md"))) return directory.FullName;
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Repository root was not found from the test output path.");
+    }
+
+    [Fact]
     public async Task Completion_writes_profile_and_preferences_in_one_transaction()
     {
         await using var fixture = OnboardingFixture.Create();
