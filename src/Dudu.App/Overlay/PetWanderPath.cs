@@ -99,7 +99,7 @@ internal static class PetWanderPath
         }
 
         delayAsync ??= Task.Delay;
-        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var stopwatch = global::System.Diagnostics.Stopwatch.StartNew();
         var expected = plan.Start;
         try
         {
