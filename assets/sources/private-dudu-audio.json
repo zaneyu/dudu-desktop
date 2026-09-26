@@ -20,8 +20,8 @@
           "sourceRange": null,
           "derivedFile": "bubu-dudu-atata/atata-01.wav",
           "derivedDurationMs": 2091,
-          "derivedSha256": "3ba10e1705d3ff04ccaf40270a2e565ac102f859b161be798ac45d934d7cbb35",
-          "transform": "Decoded MP3; converted to mono 48 kHz, 16-bit PCM WAV; conservative loudness normalization to -18 LUFS target with -1.5 dBTP ceiling; applied 10 ms fade-in and fade-out."
+          "derivedSha256": "af0681dd6cdac0e087108dda63a75bc6ab5ee7c8215894ceedf954a2665e6761",
+          "transform": "Decoded source; converted to mono 48 kHz, 16-bit PCM WAV; peak-normalized to -1.5 dBFS (regenerated 2026-09-27: the original -18 LUFS pass produced silent or near-silent output); applied 10 ms fade-in and fade-out."
         }
       ]
     },
@@ -41,8 +41,8 @@
           "sourceRange": null,
           "derivedFile": "tata-lala/tata-lala-01.wav",
           "derivedDurationMs": 2234,
-          "derivedSha256": "98f6d34afe7d1be8be77a7b1729b993e0a2fcf154cc63dd3c43f4b461422ad9f",
-          "transform": "Decoded MP3; converted to mono 48 kHz, 16-bit PCM WAV; conservative loudness normalization to -18 LUFS target with -1.5 dBTP ceiling; applied 10 ms fade-in and fade-out."
+          "derivedSha256": "3497b5d3704dfe33ca868976aed14a13f785fd962be07f528c29890f011518e3",
+          "transform": "Decoded source; converted to mono 48 kHz, 16-bit PCM WAV; peak-normalized to -1.5 dBFS (regenerated 2026-09-27: the original -18 LUFS pass produced silent or near-silent output); applied 10 ms fade-in and fade-out."
         }
       ]
     },
@@ -58,11 +58,15 @@
       "derivedCues": [
         {
           "cueId": "dudu-lalala/lalala-01",
-          "sourceRange": { "startMs": 0, "endMs": 2420, "label": "lalala" },
+          "sourceRange": {
+            "startMs": 0,
+            "endMs": 2420,
+            "label": "lalala"
+          },
           "derivedFile": "dudu-lalala/lalala-01.wav",
           "derivedDurationMs": 2420,
-          "derivedSha256": "d890298fd77499d0af64eb9503d307b638a53279ff3e103d65390e30f00399e5",
-          "transform": "Extracted the observed lalala section; converted to mono 48 kHz, 16-bit PCM WAV; conservative loudness normalization to -18 LUFS target with -1.5 dBTP ceiling; applied 10 ms fade-in and fade-out."
+          "derivedSha256": "2e1b7b58c47ee1363dabf7eec6f336aacaaa4a7a507defbd45ba0d7626cf4a3c",
+          "transform": "Decoded source; converted to mono 48 kHz, 16-bit PCM WAV; peak-normalized to -1.5 dBFS (regenerated 2026-09-27: the original -18 LUFS pass produced silent or near-silent output); applied 10 ms fade-in and fade-out."
         }
       ]
     },
@@ -78,11 +82,15 @@
       "derivedCues": [
         {
           "cueId": "dudu-atatata/atatata-01",
-          "sourceRange": { "startMs": 4000, "endMs": 8000, "label": "atatata" },
+          "sourceRange": {
+            "startMs": 4000,
+            "endMs": 8000,
+            "label": "atatata"
+          },
           "derivedFile": "dudu-atatata/atatata-01.wav",
           "derivedDurationMs": 4000,
-          "derivedSha256": "55832bf28ae46c1c18669004f9f664a613a15d6186c190bf6be35261246e17e0",
-          "transform": "Extracted the observed atatata section; converted to mono 48 kHz, 16-bit PCM WAV; conservative loudness normalization to -18 LUFS target with -1.5 dBTP ceiling; applied 10 ms fade-in and fade-out."
+          "derivedSha256": "86bad4688528559123e4aafc1da78fc083f646d63da75fdb4602df6ad7bdab05",
+          "transform": "Decoded source; converted to mono 48 kHz, 16-bit PCM WAV; peak-normalized to -1.5 dBFS (regenerated 2026-09-27: the original -18 LUFS pass produced silent or near-silent output); applied 10 ms fade-in and fade-out."
         }
       ]
     },
@@ -98,11 +106,15 @@
       "derivedCues": [
         {
           "cueId": "dudu-yapapa/yapapa-01",
-          "sourceRange": { "startMs": 12800, "endMs": 15673, "label": "ya papa hmm ya papa" },
+          "sourceRange": {
+            "startMs": 12800,
+            "endMs": 15673,
+            "label": "ya papa hmm ya papa"
+          },
           "derivedFile": "dudu-yapapa/yapapa-01.wav",
-          "derivedDurationMs": 2875,
-          "derivedSha256": "923138156237f9e3ae31fe27146c4a6b81dd9374e1aaa0b93f207165f62c2141",
-          "transform": "Extracted the observed ya papa hmm ya papa section; converted to mono 48 kHz, 16-bit PCM WAV; conservative loudness normalization to -18 LUFS target with -1.5 dBTP ceiling; applied 10 ms fade-in and fade-out."
+          "derivedDurationMs": 2873,
+          "derivedSha256": "845cea234af413b7f0f077a9c1fd49f31214c59c6d66643d865d5088406cdeb6",
+          "transform": "Decoded source; converted to mono 48 kHz, 16-bit PCM WAV; peak-normalized to -1.5 dBFS (regenerated 2026-09-27: the original -18 LUFS pass produced silent or near-silent output); applied 10 ms fade-in and fade-out."
         }
       ]
     }

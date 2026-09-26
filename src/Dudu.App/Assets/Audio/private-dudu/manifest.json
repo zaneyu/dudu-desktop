@@ -17,7 +17,7 @@
           "CueId": "atata-01",
           "FilePath": "bubu-dudu-atata/atata-01.wav",
           "DurationMs": 2091,
-          "Sha256": "3ba10e1705d3ff04ccaf40270a2e565ac102f859b161be798ac45d934d7cbb35"
+          "Sha256": "af0681dd6cdac0e087108dda63a75bc6ab5ee7c8215894ceedf954a2665e6761"
         }
       ]
     },
@@ -28,7 +28,7 @@
           "CueId": "tata-lala-01",
           "FilePath": "tata-lala/tata-lala-01.wav",
           "DurationMs": 2234,
-          "Sha256": "98f6d34afe7d1be8be77a7b1729b993e0a2fcf154cc63dd3c43f4b461422ad9f"
+          "Sha256": "3497b5d3704dfe33ca868976aed14a13f785fd962be07f528c29890f011518e3"
         }
       ]
     },
@@ -39,7 +39,7 @@
           "CueId": "lalala-01",
           "FilePath": "dudu-lalala/lalala-01.wav",
           "DurationMs": 2420,
-          "Sha256": "d890298fd77499d0af64eb9503d307b638a53279ff3e103d65390e30f00399e5"
+          "Sha256": "2e1b7b58c47ee1363dabf7eec6f336aacaaa4a7a507defbd45ba0d7626cf4a3c"
         }
       ]
     },
@@ -50,7 +50,7 @@
           "CueId": "atatata-01",
           "FilePath": "dudu-atatata/atatata-01.wav",
           "DurationMs": 4000,
-          "Sha256": "55832bf28ae46c1c18669004f9f664a613a15d6186c190bf6be35261246e17e0"
+          "Sha256": "86bad4688528559123e4aafc1da78fc083f646d63da75fdb4602df6ad7bdab05"
         }
       ]
     },
@@ -60,8 +60,8 @@
         {
           "CueId": "yapapa-01",
           "FilePath": "dudu-yapapa/yapapa-01.wav",
-          "DurationMs": 2875,
-          "Sha256": "923138156237f9e3ae31fe27146c4a6b81dd9374e1aaa0b93f207165f62c2141"
+          "DurationMs": 2873,
+          "Sha256": "845cea234af413b7f0f077a9c1fd49f31214c59c6d66643d865d5088406cdeb6"
         }
       ]
     }

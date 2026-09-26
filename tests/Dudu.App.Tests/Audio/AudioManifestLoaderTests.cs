@@ -45,9 +45,7 @@ public sealed class AudioManifestLoaderTests
         Assert.False(cue.IsAudible);
     }
 
-    [Fact(Skip = "Known asset defect, not a code defect: atata-01, lalala-01 and tata-lala-01 are "
-        + "all-zero samples and atatata-01 / yapapa-01 peak at -42 / -59 dBFS. Unskip once the "
-        + "private-dudu WAVs are regenerated from their loud sources (manifest SHA/duration updated).")]
+    [Fact]
     public async Task Shipped_private_cues_are_audible()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
