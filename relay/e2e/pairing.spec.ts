@@ -76,3 +76,61 @@ test("pairs and sends a note using only the keyboard", async ({ page, browserNam
   await expect(page.getByTestId("send-status")).toHaveText("Queued securely");
   expect(api.lastDecryptedPayload?.text).toBe("keyboard only note");
 });
+
+test("disconnect clears the pairing when the relay says the session already ended", async ({ page }) => {
+  const api = await openPairedSender(page);
+  api.failNextDisconnect = 401;
+
+  await page.getByRole("button", { name: "Disconnect this phone" }).click();
+
+  await expect(page.getByRole("button", { name: "Pair privately" })).toBeVisible();
+});
+
+test("re-pairing after a disconnect does not keep the stale disconnecting status", async ({ page }) => {
+  await openPairedSender(page);
+  await page.getByRole("button", { name: "Disconnect this phone" }).click();
+  await page.getByLabel("Pairing code").fill(VALID_PAIRING_CODE);
+  await page.getByRole("button", { name: "Pair privately" }).click();
+
+  await expect(page.getByLabel("Message")).toBeVisible();
+  await expect(page.getByTestId("disconnect-status")).toHaveText("");
+});
+
+test("a pasted code with spaces, dashes and lower case still pairs", async ({ page }) => {
+  await mockRelay(page);
+  await page.goto("/");
+  await page.getByLabel("Pairing code").fill(" 7k9m-2r4x ");
+  await page.getByRole("button", { name: "Pair privately" }).click();
+
+  await expect(page.getByLabel("Message")).toBeVisible();
+});
+
+test("an empty or malformed code is rejected locally without spending a redeem attempt", async ({ page }) => {
+  const api = await mockRelay(page);
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "Pair privately" }).click();
+  await expect(page.locator("#pairing-status")).toHaveText("type the code from the desktop app first");
+
+  await page.getByLabel("Pairing code").fill("7K9M2R4");
+  await page.getByRole("button", { name: "Pair privately" }).click();
+  await expect(page.locator("#pairing-status")).toHaveText("check the code its 8 letters and numbers");
+  await expect(page.getByLabel("Pairing code")).toHaveAttribute("aria-invalid", "true");
+
+  expect(api.redeemCount).toBe(0);
+});
+
+test("a paired phone that opens the page offline is not sent back to pairing", async ({ page }) => {
+  const api = await openPairedSender(page);
+  api.failDeviceLookup = true;
+
+  await page.reload();
+
+  await expect(page.locator("#boot-status")).toHaveText("couldnt reach dudu trying again");
+  await expect(page.getByLabel("Pairing code")).toBeHidden();
+
+  api.failDeviceLookup = false;
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect(page.getByLabel("Message")).toBeVisible();
+  await expect(page.locator("#boot-status")).toHaveText("");
+});

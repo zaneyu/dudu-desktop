@@ -88,3 +88,34 @@ test("editing the note after a failed send mints a new message id instead of reu
   expect(api.sentMessageIds).toHaveLength(2);
   expect(api.sentMessageIds[0]).not.toBe(api.sentMessageIds[1]);
 });
+
+test("a sent note shows up in recent right away", async ({ page }) => {
+  await openPairedSender(page);
+  await page.getByLabel("Message").fill("show me in recent");
+  await page.getByRole("button", { name: "Send note" }).click();
+
+  await expect(page.getByTestId("send-status")).toHaveText("Queued securely");
+  await expect(page.locator("#recent-statuses li")).toHaveCount(1);
+  await expect(page.locator("#recent-statuses li").first()).toContainText("on the way");
+});
+
+test("the preview keeps line breaks and wraps long words on a phone", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openPairedSender(page);
+  await page.getByLabel("Message").fill(`first line\nsecond line ${"x".repeat(120)}`);
+  await page.getByRole("button", { name: "Preview" }).click();
+
+  const preview = page.getByTestId("preview");
+  expect(await preview.evaluate((element) => (element as HTMLElement).innerText)).toContain("\n");
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(0);
+});
+
+test("the counter flags a note that is too long in bytes before the character limit", async ({ page }) => {
+  await openPairedSender(page);
+  await page.getByLabel("Message").fill("爱".repeat(1400));
+
+  await expect(page.locator("#char-counter")).toHaveText("1400 / 2000 too long");
+});

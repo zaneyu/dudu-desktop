@@ -28,7 +28,16 @@ export interface ComposerElements {
 
 export interface ComposerCallbacks {
   onUnauthorized: () => void;
+  /** Fired after the relay accepts a note, so the page can show it in "recent" right away. */
+  onSent?: () => void;
 }
+
+/**
+ * The relay rejects an envelope whose `createdUtc` is more than an hour old (422). An unchanged
+ * retry normally resends the identical envelope so the relay can dedupe it; past this age that
+ * resend can only ever fail, so the retry re-encrypts under a fresh id instead.
+ */
+const STALE_RETRY_ENVELOPE_MS = 50 * 60 * 1000;
 
 export class MessageComposer {
   private recipient: { publicKey: string; deviceId: string } | null = null;
@@ -59,6 +68,11 @@ export class MessageComposer {
     this.elements.textArea.value = "";
     this.elements.sendLaterInput.value = "";
     this.elements.scheduleStatus.textContent = "";
+    // The reaction is part of the note, so a fresh note starts from "none" like the page does,
+    // rather than silently carrying the previous note's heart or hug.
+    for (const input of this.elements.reactionInputs) {
+      input.checked = input.value === "none";
+    }
     this.invalidateDraft();
     this.updateCounter();
   }
@@ -87,7 +101,10 @@ export class MessageComposer {
       this.updateCounter();
     });
     for (const input of this.elements.reactionInputs) {
-      input.addEventListener("change", () => this.invalidateDraft());
+      input.addEventListener("change", () => {
+        this.invalidateDraft();
+        this.updateCounter();
+      });
     }
     this.elements.sendLaterInput.addEventListener("input", () => this.invalidateDraft());
     this.elements.previewButton.addEventListener("click", () => {
@@ -102,8 +119,25 @@ export class MessageComposer {
     });
   }
 
+  /**
+   * Shows the character count against the 2000-character limit, and flags the note as too long
+   * when either real limit is exceeded: the character count, or the 4096-byte encoded payload that
+   * CJK text and emoji reach well before 2000 characters. The counter used to read "1349 / 2000"
+   * for a Chinese note that was already too long to send.
+   */
   private updateCounter(): void {
-    this.elements.counter.textContent = `${Array.from(this.elements.textArea.value).length} / ${MAXIMUM_TEXT_SCALAR_VALUES}`;
+    const text = this.elements.textArea.value;
+    const characters = Array.from(text).length;
+    const tooLong = characters > MAXIMUM_TEXT_SCALAR_VALUES || this.payloadByteLength(text) > MAXIMUM_PAYLOAD_UTF8_BYTES;
+    this.elements.counter.textContent = tooLong
+      ? `${characters} / ${MAXIMUM_TEXT_SCALAR_VALUES} too long`
+      : `${characters} / ${MAXIMUM_TEXT_SCALAR_VALUES}`;
+    this.elements.counter.dataset.overLimit = tooLong ? "true" : "false";
+  }
+
+  private payloadByteLength(text: string): number {
+    const payload: RemoteMessagePayloadV1 = { kind: "note", text, reaction: this.currentReaction() };
+    return new TextEncoder().encode(JSON.stringify(payload)).byteLength;
   }
 
   private currentReaction(): Reaction {
@@ -135,6 +169,12 @@ export class MessageComposer {
   private async send(): Promise<void> {
     const recipient = this.recipient;
     if (!recipient || this.busy) return;
+    if (
+      this.pendingEnvelope &&
+      Date.now() - Date.parse(this.pendingEnvelope.createdUtc) > STALE_RETRY_ENVELOPE_MS
+    ) {
+      this.pendingEnvelope = null;
+    }
     const deliverAfterUtc = this.pendingEnvelope?.deliverAfterUtc ?? this.resolveDeliverAfterUtc();
     if (deliverAfterUtc === undefined) return;
     const text = this.elements.textArea.value;
@@ -171,12 +211,18 @@ export class MessageComposer {
       addRecentStatus(result.messageId, result.status);
       if (revision === this.revision) this.reset();
       this.elements.sendStatus.textContent = result.status === "delivered" ? "Delivered" : "Queued securely";
+      this.callbacks.onSent?.();
     } catch (error) {
       if (generation !== this.generation) return;
       if (error instanceof ApiUnauthorizedError || (error instanceof ApiHttpError && error.status === 412)) {
         this.clearRecipient();
         this.callbacks.onUnauthorized();
         return;
+      }
+      if (error instanceof ApiHttpError && error.status === 422) {
+        // The relay refused this exact envelope (for example it is now too old to accept);
+        // resending it unchanged can never succeed, so the next tap re-encrypts.
+        this.pendingEnvelope = null;
       }
       this.elements.sendStatus.textContent =
         error instanceof ApiHttpError && error.status === 413 ? "aiyo too long trim it abit" :

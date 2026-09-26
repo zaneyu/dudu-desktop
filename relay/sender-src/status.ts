@@ -13,6 +13,8 @@ const POLL_INTERVAL_MS = 30_000;
 export interface RecentStatus {
   messageId: string;
   status: MessageState | "unavailable";
+  /** When this browser sent it; optional so entries written before this field still load. */
+  sentAtMs?: number | null;
 }
 
 function isRecentStatus(value: unknown): value is RecentStatus {
@@ -20,7 +22,11 @@ function isRecentStatus(value: unknown): value is RecentStatus {
     return false;
   }
   const candidate = value as Record<string, unknown>;
-  return typeof candidate.messageId === "string" && typeof candidate.status === "string";
+  return (
+    typeof candidate.messageId === "string" &&
+    typeof candidate.status === "string" &&
+    (candidate.sentAtMs === undefined || candidate.sentAtMs === null || typeof candidate.sentAtMs === "number")
+  );
 }
 
 function loadRecent(): RecentStatus[] {
@@ -37,17 +43,33 @@ function loadRecent(): RecentStatus[] {
 }
 
 function saveRecent(entries: RecentStatus[]): void {
-  sessionStorage.setItem(STORAGE_KEY, JSON.stringify(entries.slice(0, MAX_RECENT)));
+  try {
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(entries.slice(0, MAX_RECENT)));
+  } catch {
+    // Storage full or blocked (private mode): the list is a convenience, never worth failing a
+    // send over after the relay already accepted the note.
+  }
 }
 
-export function addRecentStatus(messageId: string, status: MessageState): void {
+export function addRecentStatus(messageId: string, status: MessageState, sentAtMs = Date.now()): void {
   const entries = loadRecent().filter((entry) => entry.messageId !== messageId);
-  entries.unshift({ messageId, status });
+  entries.unshift({ messageId, status, sentAtMs });
   saveRecent(entries);
 }
 
 export function clearRecent(): void {
-  sessionStorage.removeItem(STORAGE_KEY);
+  try {
+    sessionStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // Blocked storage has nothing to clear.
+  }
+}
+
+function sentAtLabel(sentAtMs: number | null | undefined): string {
+  if (typeof sentAtMs !== "number" || !Number.isFinite(sentAtMs)) {
+    return "";
+  }
+  return new Date(sentAtMs).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
 function statusLine(status: RecentStatus["status"]): string {
@@ -69,6 +91,7 @@ function statusLine(status: RecentStatus["status"]): string {
  * queued, every 30s while the tab is visible. */
 export class StatusTracker {
   private timer: ReturnType<typeof setInterval> | null = null;
+  private polling = false;
 
   constructor(
     private readonly listElement: HTMLElement,
@@ -80,15 +103,29 @@ export class StatusTracker {
     this.listElement.replaceChildren(
       ...entries.map((entry) => {
         const item = document.createElement("li");
-        item.textContent = statusLine(entry.status);
+        // Without the send time every entry read the same ("on the way", "on the way"), so there
+        // was no telling which note a status belonged to.
+        const sentAt = sentAtLabel(entry.sentAtMs);
+        item.textContent = sentAt ? `${sentAt} · ${statusLine(entry.status)}` : statusLine(entry.status);
         return item;
       }),
     );
   }
 
+  /** Starts polling, checking once immediately so a returning visit does not wait 30s. */
   start(): void {
     this.stop();
     this.timer = setInterval(() => void this.poll(), POLL_INTERVAL_MS);
+    void this.poll();
+  }
+
+  /** Re-renders now and checks queued statuses once, e.g. after a send or on tab return. */
+  refresh(): void {
+    if (this.timer === null) {
+      return;
+    }
+    this.render();
+    void this.poll();
   }
 
   stop(): void {
@@ -99,11 +136,23 @@ export class StatusTracker {
   }
 
   private async poll(): Promise<void> {
-    if (document.visibilityState !== "visible") {
+    if (document.visibilityState !== "visible" || this.polling) {
       return;
     }
+    this.polling = true;
+    try {
+      await this.pollQueued();
+    } finally {
+      this.polling = false;
+    }
+  }
+
+  private async pollQueued(): Promise<void> {
     const queued = loadRecent().filter((entry) => entry.status === "queued");
     for (const entry of queued) {
+      if (this.timer === null) {
+        return;
+      }
       try {
         const result = await getMessageStatus(entry.messageId);
         this.applyStatus(entry.messageId, result?.status ?? "unavailable");
@@ -123,7 +172,7 @@ export class StatusTracker {
     if (index === -1) {
       return;
     }
-    entries[index] = { messageId, status };
+    entries[index] = { ...entries[index], messageId, status };
     saveRecent(entries);
     this.render();
   }

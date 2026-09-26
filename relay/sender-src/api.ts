@@ -14,6 +14,7 @@ import type {
 } from "../src/protocol/types.js";
 
 const SEND_TIMEOUT_MS = 15_000;
+const REQUEST_TIMEOUT_MS = 15_000;
 
 /** The relay says the sender session is gone (401). Callers should drop to the unpaired state. */
 export class ApiUnauthorizedError extends Error {}
@@ -31,6 +32,23 @@ export class ApiHttpError extends Error {
   }
 }
 
+/**
+ * `fetch` with the same abort-based timeout the send path always had, so a stalled connection
+ * surfaces as `ApiNetworkError` ("couldnt reach it") instead of leaving "pairing" or
+ * "disconnecting" on screen, with its button disabled, for minutes.
+ */
+async function fetchWithTimeout(input: string, init: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch {
+    throw new ApiNetworkError("Could not reach the relay.");
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 async function parseErrorBody(response: Response): Promise<RelayErrorResponse | null> {
   try {
     return (await response.json()) as RelayErrorResponse;
@@ -40,17 +58,12 @@ async function parseErrorBody(response: Response): Promise<RelayErrorResponse | 
 }
 
 export async function redeemPairing(code: string): Promise<RedeemPairingResponse> {
-  let response: Response;
-  try {
-    response = await fetch("/v1/pairings/redeem", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code }),
-    });
-  } catch {
-    throw new ApiNetworkError("Could not reach the relay.");
-  }
+  const response = await fetchWithTimeout("/v1/pairings/redeem", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code }),
+  });
   if (response.status === 200) {
     return (await response.json()) as RedeemPairingResponse;
   }
@@ -59,12 +72,7 @@ export async function redeemPairing(code: string): Promise<RedeemPairingResponse
 
 /** Returns null when the relay reports 401 (no live session). Throws for any other failure. */
 export async function getSenderDevice(): Promise<GetSenderDeviceResponse | null> {
-  let response: Response;
-  try {
-    response = await fetch("/v1/sender/device", { method: "GET", credentials: "same-origin" });
-  } catch {
-    throw new ApiNetworkError("Could not reach the relay.");
-  }
+  const response = await fetchWithTimeout("/v1/sender/device", { method: "GET", credentials: "same-origin" });
   if (response.status === 401) {
     return null;
   }
@@ -74,15 +82,15 @@ export async function getSenderDevice(): Promise<GetSenderDeviceResponse | null>
   throw new ApiHttpError(response.status, await parseErrorBody(response));
 }
 
-/** Clears local pairing state only after the relay confirms revocation with HTTP 204. */
+/**
+ * Clears local pairing state only after the relay confirms revocation with HTTP 204, or answers
+ * 401: the session is already gone (the desktop rotated its key, or the session expired), so
+ * there is nothing left to revoke. Treating that as a failure left "Disconnect this phone"
+ * permanently stuck on "couldnt disconnect".
+ */
 export async function disconnectSender(): Promise<void> {
-  let response: Response;
-  try {
-    response = await fetch("/v1/sender/disconnect", { method: "POST", credentials: "same-origin" });
-  } catch {
-    throw new ApiNetworkError("Could not reach the relay.");
-  }
-  if (response.status === 204) {
+  const response = await fetchWithTimeout("/v1/sender/disconnect", { method: "POST", credentials: "same-origin" });
+  if (response.status === 204 || response.status === 401) {
     return;
   }
   throw new ApiHttpError(response.status, await parseErrorBody(response));
@@ -92,11 +100,9 @@ export async function postMessage(
   envelope: EncryptedEnvelopeV1,
   recipient: { deviceId: string; publicKey: string },
 ): Promise<PostMessageResponse> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);
-  let response: Response;
-  try {
-    response = await fetch("/v1/messages", {
+  const response = await fetchWithTimeout(
+    "/v1/messages",
+    {
       method: "POST",
       credentials: "same-origin",
       headers: {
@@ -105,13 +111,9 @@ export async function postMessage(
         "X-Dudu-Recipient-Key": recipient.publicKey,
       },
       body: JSON.stringify(envelope),
-      signal: controller.signal,
-    });
-  } catch {
-    throw new ApiNetworkError("Could not reach the relay.");
-  } finally {
-    clearTimeout(timeoutId);
-  }
+    },
+    SEND_TIMEOUT_MS,
+  );
   if (response.status === 401) {
     throw new ApiUnauthorizedError("The sender session is gone.");
   }
@@ -122,15 +124,10 @@ export async function postMessage(
 }
 
 export async function getMessageStatus(messageId: string): Promise<GetMessageStatusResponse | null> {
-  let response: Response;
-  try {
-    response = await fetch(`/v1/messages/${encodeURIComponent(messageId)}/status`, {
-      method: "GET",
-      credentials: "same-origin",
-    });
-  } catch {
-    throw new ApiNetworkError("Could not reach the relay.");
-  }
+  const response = await fetchWithTimeout(`/v1/messages/${encodeURIComponent(messageId)}/status`, {
+    method: "GET",
+    credentials: "same-origin",
+  });
   if (response.status === 401) {
     throw new ApiUnauthorizedError("The sender session is gone.");
   }

@@ -14,7 +14,9 @@
         <p class="lede">send a private note to your desktop</p>
       </header>
 
-      <section id="unpaired-section" class="card">
+      <p id="boot-status" class="status-line" aria-live="polite"></p>
+
+      <section id="unpaired-section" class="card" hidden>
         <form id="pairing-form" novalidate autocomplete="off">
           <div class="field">
             <label for="pairing-code">Pairing code</label>
@@ -27,19 +29,20 @@
               autocorrect="off"
               spellcheck="false"
               inputmode="text"
-              maxlength="8"
+              maxlength="32"
               pattern="[0-9A-HJKMNPQRSTVWXYZ]{8}"
+              aria-describedby="pairing-hint pairing-status"
               required
             />
-            <p class="hint">the 8-character code shown on the desktop app</p>
+            <p id="pairing-hint" class="hint">the 8-character code shown on the desktop app</p>
           </div>
-          <button type="submit">Pair privately</button>
+          <button type="submit" id="pairing-button">Pair privately</button>
           <p id="pairing-status" class="status-line" aria-live="polite"></p>
         </form>
       </section>
 
       <section id="paired-section" class="card" hidden>
-        <p class="lede" id="paired-greeting">paired le 🥰</p>
+        <p class="lede" id="paired-greeting" tabindex="-1">paired le 🥰</p>
 
         <form id="composer-form" autocomplete="off">
           <div class="field">
@@ -47,7 +50,6 @@
             <textarea
               id="message-text"
               name="message"
-              maxlength="2000"
               rows="5"
               aria-describedby="char-counter"
               required

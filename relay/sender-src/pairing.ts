@@ -9,6 +9,27 @@ import { importRecipientPublicKey } from "./crypto.js";
 import { base64UrlToBytes, sha256Hex } from "../src/security/tokens.js";
 
 const STORAGE_KEY = "dudu.sender.device.v1";
+const PAIRING_CODE_PATTERN = /^[0-9A-HJKMNP-TV-Z]{8}$/;
+
+/**
+ * Normalizes what a person types or pastes into the pairing field into the relay's 8-character
+ * Crockford-style code: upper-case, drop spaces and dashes (people copy "7K9M 2R4X" or
+ * "7K9M-2R4X"), and fold the look-alike letters the alphabet deliberately omits back to their
+ * digits (O to 0, I and L to 1). Every generated code is already in this form, so this only ever
+ * turns a near-miss into the code that was shown, never one code into a different valid one.
+ */
+export function normalizePairingCode(raw: string): string {
+  return raw
+    .toUpperCase()
+    .replace(/[\s-]+/g, "")
+    .replace(/O/g, "0")
+    .replace(/[IL]/g, "1");
+}
+
+/** True when a normalized code has the relay's exact length and alphabet. */
+export function isWellFormedPairingCode(normalized: string): boolean {
+  return PAIRING_CODE_PATTERN.test(normalized);
+}
 
 export interface StoredDevice {
   deviceId: string;

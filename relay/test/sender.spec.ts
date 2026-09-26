@@ -12,7 +12,9 @@ import { createRecipientForTest } from "../sender-src/crypto.js";
 import {
   clearStoredDevice,
   disconnect,
+  isWellFormedPairingCode,
   loadStoredDevice,
+  normalizePairingCode,
   pairWithCode,
   verifyStoredSession,
 } from "../sender-src/pairing.js";
@@ -60,6 +62,7 @@ class FakeElement {
   value = "";
   checked = false;
   disabled = false;
+  readonly dataset: Record<string, string> = {};
 
   addEventListener(type: string, handler: (event: unknown) => void): void {
     const existing = this.listeners.get(type) ?? [];
@@ -83,7 +86,7 @@ interface ComposerHarness {
   unauthorizedCount: () => number;
 }
 
-function buildComposer(): ComposerHarness {
+function buildComposer(reactionInputs: FakeElement[] = []): ComposerHarness {
   const named = [
     "form",
     "textArea",
@@ -104,7 +107,7 @@ function buildComposer(): ComposerHarness {
   }
   let unauthorized = 0;
   const composer = new MessageComposer(
-    { ...elements, reactionInputs: [] } as unknown as ComposerElements,
+    { ...elements, reactionInputs } as unknown as ComposerElements,
     { onUnauthorized: () => void (unauthorized += 1) },
   );
   composer.setRecipientPublicKey(RECIPIENT_PUBLIC_KEY, "device-1");
@@ -213,6 +216,35 @@ describe("sender disconnect", () => {
     await disconnect();
     expect(loadStoredDevice()).toBeNull();
   });
+
+  it("clears the paired state when the relay says the session is already gone", async () => {
+    // A key rotation on the desktop or the 180-day expiry revokes the session server-side; the
+    // relay then answers 401. Treating that as a failure left Disconnect permanently stuck.
+    const fingerprint = await sha256HexForPublicKey(RECIPIENT_PUBLIC_KEY);
+    installFetch(() => jsonOk({ deviceId: "device-1", publicKey: RECIPIENT_PUBLIC_KEY, publicKeyFingerprint: fingerprint }));
+    await pairWithCode("123456");
+    installFetch(() => new Response(null, { status: 401 }));
+
+    await disconnect();
+
+    expect(loadStoredDevice()).toBeNull();
+  });
+});
+
+describe("pairing code input", () => {
+  it("normalizes pasted spacing, dashes, case and look-alike letters", () => {
+    expect(normalizePairingCode(" 7k9m-2r4x ")).toBe("7K9M2R4X");
+    expect(normalizePairingCode("7K9M 2R4X")).toBe("7K9M2R4X");
+    expect(normalizePairingCode("O1lI")).toBe("0111");
+  });
+
+  it("accepts only the relay's 8-character alphabet", () => {
+    expect(isWellFormedPairingCode("7K9M2R4X")).toBe(true);
+    expect(isWellFormedPairingCode("")).toBe(false);
+    expect(isWellFormedPairingCode("7K9M2R4")).toBe(false);
+    expect(isWellFormedPairingCode("7K9M2R4XX")).toBe(false);
+    expect(isWellFormedPairingCode("7K9M2R4U")).toBe(false);
+  });
 });
 
 describe("composer draft id", () => {
@@ -286,6 +318,104 @@ describe("composer draft id", () => {
 
     expect(posted[1]).toEqual(posted[0]);
   });
+
+  it("re-encrypts after the relay refuses the envelope with 422 instead of resending it forever", async () => {
+    const posted: EncryptedEnvelopeV1[] = [];
+    let status = 422;
+    installFetch((url, init) => {
+      if (url === "/v1/messages") {
+        posted.push(JSON.parse(String(init?.body)) as EncryptedEnvelopeV1);
+        return status === 422
+          ? jsonOk({ code: "unprocessable", message: "createdUtc is outside the acceptable clock window." }, 422)
+          : jsonOk({ messageId: posted[posted.length - 1].messageId, status: "queued" }, 202);
+      }
+      throw new Error(`Unexpected request to ${url}`);
+    });
+    const harness = buildComposer();
+    harness.elements.textArea.value = "same note, unchanged";
+
+    harness.elements.form.dispatch("submit");
+    await waitFor(() => posted.length === 1 && !harness.elements.sendButton.disabled);
+    status = 202;
+    harness.elements.form.dispatch("submit");
+    await waitFor(() => posted.length === 2);
+
+    expect(posted[1].messageId).not.toBe(posted[0].messageId);
+  });
+
+  it("re-encrypts a retry whose envelope has grown too old for the relay to accept", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const posted: EncryptedEnvelopeV1[] = [];
+      let status = 500;
+      installFetch((url, init) => {
+        if (url === "/v1/messages") {
+          posted.push(JSON.parse(String(init?.body)) as EncryptedEnvelopeV1);
+          return status === 500
+            ? jsonOk({ code: "internal", message: "nope" }, 500)
+            : jsonOk({ messageId: posted[posted.length - 1].messageId, status: "queued" }, 202);
+        }
+        throw new Error(`Unexpected request to ${url}`);
+      });
+      const harness = buildComposer();
+      harness.elements.textArea.value = "same note, unchanged";
+
+      harness.elements.form.dispatch("submit");
+      await waitFor(() => posted.length === 1 && !harness.elements.sendButton.disabled);
+      vi.setSystemTime(Date.now() + 61 * 60 * 1000);
+      status = 202;
+      harness.elements.form.dispatch("submit");
+      await waitFor(() => posted.length === 2);
+
+      expect(posted[1].messageId).not.toBe(posted[0].messageId);
+      expect(Date.parse(posted[1].createdUtc)).toBeGreaterThan(Date.parse(posted[0].createdUtc));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("flags a note that fits in characters but not in the encoded payload", () => {
+    const harness = buildComposer();
+    // 1400 CJK characters: well under 2000 characters, but ~4.2 KB of UTF-8.
+    harness.elements.textArea.value = "爱".repeat(1400);
+    harness.elements.textArea.dispatch("input");
+
+    expect(harness.elements.counter.textContent).toBe("1400 / 2000 too long");
+    expect(harness.elements.counter.dataset.overLimit).toBe("true");
+
+    harness.elements.textArea.value = "爱".repeat(100);
+    harness.elements.textArea.dispatch("input");
+    expect(harness.elements.counter.textContent).toBe("100 / 2000");
+    expect(harness.elements.counter.dataset.overLimit).toBe("false");
+  });
+
+  it("resets the reaction to none and reports the send after a successful note", async () => {
+    installFetch((url, init) => {
+      if (url === "/v1/messages") {
+        const envelope = JSON.parse(String(init?.body)) as EncryptedEnvelopeV1;
+        return jsonOk({ messageId: envelope.messageId, status: "queued" }, 202);
+      }
+      throw new Error(`Unexpected request to ${url}`);
+    });
+    vi.stubGlobal("sessionStorage", { getItem: () => null, setItem: () => undefined, removeItem: () => undefined });
+    try {
+      const none = Object.assign(new FakeElement(), { value: "none" });
+      const heart = Object.assign(new FakeElement(), { value: "heart", checked: true });
+      const harness = buildComposer([none, heart]);
+      let sent = 0;
+      (harness.composer as unknown as { callbacks: { onSent?: () => void } }).callbacks.onSent = () => void (sent += 1);
+      harness.elements.textArea.value = "with a heart";
+
+      harness.elements.form.dispatch("submit");
+      await waitFor(() => harness.elements.sendStatus.textContent === "Queued securely");
+
+      expect(heart.checked).toBe(false);
+      expect(none.checked).toBe(true);
+      expect(sent).toBe(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe("sender status polling", () => {
@@ -306,11 +436,14 @@ describe("sender status polling", () => {
     const replaceChildren = vi.fn();
     const tracker = new StatusTracker({ replaceChildren } as unknown as HTMLElement, vi.fn());
     try {
-      addRecentStatus("test-message", "queued");
+      addRecentStatus("test-message", "queued", Number.NaN);
       tracker.start();
-      await vi.advanceTimersByTimeAsync(30_000);
+      // start() checks once immediately, so a returning visit does not wait a full interval.
+      await vi.advanceTimersByTimeAsync(0);
       expect(fetchStatus).toHaveBeenCalledTimes(1);
       expect(replaceChildren).toHaveBeenLastCalledWith({ textContent: "status no longer available" });
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(fetchStatus).toHaveBeenCalledTimes(1);
       await vi.advanceTimersByTimeAsync(60_000);
       expect(fetchStatus).toHaveBeenCalledTimes(1);
     } finally {
