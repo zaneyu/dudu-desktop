@@ -188,7 +188,7 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
             // temporary SKImage on every call, which the 300-frame allocation gate
             // in AnimationEngineTests measured at about 100 bytes per frame.
             _canvas.DrawImage(image, destination, SamplingOptions, _paint);
-            DrawPartnerClockPill(dimensions.Width, dimensions.Height);
+            var pillRegion = DrawPartnerClockPill(dimensions.Width, dimensions.Height);
             OverlaySurfaceSnapshot? overlaySnapshot = null;
             if (_actionSurface is not null)
             {
@@ -219,7 +219,12 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
                     overlaySnapshot?.Actions.Select(action => action.HitRegion).ToArray(),
                     overlaySnapshot?.GeometryVersion ?? 0,
                     overlaySnapshot,
-                    this);
+                    this)
+                {
+                    // An open action bubble owns the hit area; otherwise the
+                    // pill must not turn empty space above Dudu into a drag handle.
+                    ClickThroughRegion = overlaySnapshot is null ? pillRegion : null,
+                };
             }
             catch
             {
@@ -310,9 +315,9 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
         RequestRepaint();
     }
 
-    private void DrawPartnerClockPill(int width, int height)
+    private PixelRect? DrawPartnerClockPill(int width, int height)
     {
-        if (_partnerClockLabel is null) return;
+        if (_partnerClockLabel is null) return null;
         var key = new PartnerClockPillKey(_partnerClockLabel, _partnerClockIsNight, _overlayPalette, width, height);
         if (!key.Equals(_partnerClockPillKey))
         {
@@ -329,7 +334,10 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
             // Same paint as the pet frame, so the pill fades with Dudu.
             var destination = SKRect.Create(pill.X, pill.Y, pill.Image.Width, pill.Image.Height);
             _canvas!.DrawImage(pill.Image, destination, SamplingOptions, _paint);
+            return new PixelRect(pill.X, pill.Y, pill.Image.Width, pill.Image.Height);
         }
+
+        return null;
     }
 
     private void OnPartnerClockTick(object? state)

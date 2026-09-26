@@ -80,6 +80,15 @@ public sealed class LayeredFramePresenter : IFramePresenter, IDisposable
                 _hitTestBuffer = new byte[bytes.Length];
             }
             bytes.CopyTo(_hitTestBuffer);
+            if (frame.ClickThroughRegion is { } clickThrough)
+            {
+                OverlayHitTest.ClearAlpha(
+                    _hitTestBuffer.AsSpan(0, bytes.Length),
+                    frame.Width,
+                    frame.Height,
+                    frame.Stride,
+                    clickThrough);
+            }
             _presentedOverlayHitRegions = ScaleRegionsToClient(
                 frame.OverlayHitRegions,
                 frame.Width,

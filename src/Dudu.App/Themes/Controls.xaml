@@ -43,7 +43,8 @@
         <Setter Property="FontWeight" Value="SemiBold" />
     </Style>
 
-    <!-- Rounded card surfaces. Cards are never nested inside other cards. -->
+    <!-- Rounded card surfaces. Section cards are never nested inside each other;
+         only a ConfirmCardStyle panel may sit inside a section card. -->
     <Style x:Key="CardStyle" TargetType="Border">
         <Setter Property="Background" Value="{ThemeResource CardSurfaceBrush}" />
         <Setter Property="BorderBrush" Value="{ThemeResource SoftBorderBrush}" />

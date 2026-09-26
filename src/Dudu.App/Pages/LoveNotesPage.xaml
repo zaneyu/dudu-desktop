@@ -50,9 +50,10 @@
                             </Grid.RowDefinitions>
                             <Button Content="save note" Command="{x:Bind ViewModel.SaveLocalNoteCommand}" Style="{StaticResource PrimaryButtonStyle}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="LoveNotesSave" AutomationProperties.Name="save note" />
                             <Button Grid.Column="1" Content="new note" Command="{x:Bind ViewModel.NewNoteCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="LoveNotesNew" AutomationProperties.Name="new note" />
-                            <Button Grid.Row="1" Content="delete selected" Command="{x:Bind ViewModel.RequestDeleteLocalNoteCommand}" CommandParameter="{x:Bind ViewModel.SelectedNote, Mode=OneWay}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="LoveNotesDelete" AutomationProperties.Name="delete selected" />
-                            <Button Grid.Row="1" Grid.Column="1" Content="let dudu choose" Command="{x:Bind ViewModel.ShowLocalNoteCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="LoveNotesChoose" AutomationProperties.Name="let dudu choose" />
+                            <Button Grid.Row="1" Grid.ColumnSpan="2" Content="let dudu choose" Command="{x:Bind ViewModel.ShowLocalNoteCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="LoveNotesChoose" AutomationProperties.Name="let dudu choose" />
                         </Grid>
+                        <!-- Destructive: kept on its own row, away from save (DESIGN.md). -->
+                        <Button Content="delete selected" Command="{x:Bind ViewModel.RequestDeleteLocalNoteCommand}" CommandParameter="{x:Bind ViewModel.SelectedNote, Mode=OneWay}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="LoveNotesDelete" AutomationProperties.Name="delete selected" />
                         <Border Style="{StaticResource ConfirmCardStyle}" Visibility="{x:Bind ViewModel.IsConfirmingDeleteNote, Mode=OneWay}" AutomationProperties.AutomationId="LoveNotesDeleteConfirmationPanel" AutomationProperties.Name="delete note confirmation panel">
                             <StackPanel Spacing="8">
                                 <TextBlock Text="{x:Bind ViewModel.DeleteNotePrompt, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Assertive" AutomationProperties.AutomationId="LoveNotesDeleteConfirmationMessage" AutomationProperties.Name="{x:Bind ViewModel.DeleteNotePrompt, Mode=OneWay}" />

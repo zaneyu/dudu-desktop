@@ -113,6 +113,10 @@ public sealed class RenderedFrame : IDisposable
     /// The presenter snapshots and scales them with the exact frame it shows.</summary>
     public IReadOnlyList<Dudu.App.Overlay.PixelRect> OverlayHitRegions { get; }
     public long OverlayGeometryVersion { get; }
+
+    /// <summary>Painted but not part of Dudu (the UK clock pill): clicks
+    /// there pass through to the desktop, in this frame's source pixels.</summary>
+    public Dudu.App.Overlay.PixelRect? ClickThroughRegion { get; init; }
     public Dudu.App.Animation.OverlaySurfaceSnapshot? OverlaySurface { get; }
 
     public bool IsDisposed => Volatile.Read(ref _buffer) is null;

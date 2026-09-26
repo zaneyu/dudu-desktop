@@ -6,6 +6,28 @@ public static class OverlayHitTest
 
     public static bool IsInteractive(byte alpha) => alpha >= InteractiveAlphaThreshold;
 
+    /// <summary>Zeroes alpha inside <paramref name="region"/> (clamped to the
+    /// buffer) in a hit-test copy, so painted-but-decorative pixels there
+    /// stay click-through. Never touches the presented pixels.</summary>
+    public static void ClearAlpha(Span<byte> premultipliedBgra, int width, int height, int stride, PixelRect region)
+    {
+        if (!HasValidGeometry(width, height, stride) || !region.IsValid) return;
+        var left = Math.Max(0, region.X);
+        var top = Math.Max(0, region.Y);
+        var right = Math.Min(width, region.Right);
+        var bottom = Math.Min(height, region.Bottom);
+        for (var y = top; y < bottom; y++)
+        {
+            var row = (long)y * stride;
+            for (var x = left; x < right; x++)
+            {
+                var alphaOffset = row + (long)x * 4 + 3;
+                if (alphaOffset >= premultipliedBgra.Length) return;
+                premultipliedBgra[(int)alphaOffset] = 0;
+            }
+        }
+    }
+
     public static bool IsInteractive(
         ReadOnlySpan<byte> premultipliedBgra,
         int width,

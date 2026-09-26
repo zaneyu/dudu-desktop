@@ -166,6 +166,31 @@ public sealed class SkiaFrameComposerTests
     }
 
     [Fact]
+    public void Partner_clock_pill_stays_click_through_so_it_never_becomes_a_drag_handle()
+    {
+        using var fixture = ComposerFixture.Create();
+        fixture.Composer.SetPartnerClock(new PartnerClock(new FixedClock(
+            new DateTimeOffset(2026, 7, 1, 13, 5, 0, TimeSpan.Zero))));
+
+        using var frame = fixture.Composer.Compose(fixture.Pack, fixture.Animation, 0, scale: 200);
+        var region = Assert.IsType<Dudu.App.Overlay.PixelRect>(frame.ClickThroughRegion);
+        Assert.True(region.Contains(frame.Width / 2, 14));
+        Assert.False(region.Contains(frame.Width / 2, frame.Height - 10));
+
+        var hitCopy = frame.Bytes.ToArray();
+        Dudu.App.Overlay.OverlayHitTest.ClearAlpha(hitCopy, frame.Width, frame.Height, frame.Stride, region);
+        Assert.False(Dudu.App.Overlay.OverlayHitTest.IsInteractive(
+            hitCopy, frame.Width, frame.Height, frame.Stride, frame.Width, frame.Height, frame.Width / 2, 14));
+        Assert.True(Dudu.App.Overlay.OverlayHitTest.IsInteractive(
+            hitCopy, frame.Width, frame.Height, frame.Stride, frame.Width, frame.Height, frame.Width / 2, frame.Height - 10));
+        Assert.False(IsPureRed(frame, frame.Width / 2, 14), "the presented pixels keep the pill");
+
+        fixture.Composer.SetPartnerClock(null);
+        using var cleared = fixture.Composer.Compose(fixture.Pack, fixture.Animation, 0, scale: 200);
+        Assert.Null(cleared.ClickThroughRegion);
+    }
+
+    [Fact]
     public void Partner_clock_pill_is_skipped_on_a_tiny_canvas_and_when_cleared()
     {
         using var fixture = ComposerFixture.Create();

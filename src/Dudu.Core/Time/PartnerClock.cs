@@ -145,8 +145,10 @@ public readonly record struct PartnerClockReading(
             var magnitude = difference.Duration();
             var hours = (int)magnitude.TotalHours;
             var amount = magnitude.Minutes == 0
-                ? $"{hours} h"
-                : hours == 0 ? $"{magnitude.Minutes} min" : $"{hours} h {magnitude.Minutes} min";
+                ? string.Create(Invariant, $"{hours} h")
+                : hours == 0
+                    ? string.Create(Invariant, $"{magnitude.Minutes} min")
+                    : string.Create(Invariant, $"{hours} h {magnitude.Minutes} min");
             return difference < TimeSpan.Zero ? $"{amount} behind you" : $"{amount} ahead of you";
         }
     }
@@ -177,7 +179,7 @@ public readonly record struct PartnerClockReading(
         var sign = offset < TimeSpan.Zero ? "-" : "+";
         var magnitude = offset.Duration();
         return magnitude.Minutes == 0
-            ? $"{sign}{(int)magnitude.TotalHours}"
-            : $"{sign}{(int)magnitude.TotalHours}:{magnitude.Minutes:00}";
+            ? string.Create(Invariant, $"{sign}{(int)magnitude.TotalHours}")
+            : string.Create(Invariant, $"{sign}{(int)magnitude.TotalHours}:{magnitude.Minutes:00}");
     }
 }
