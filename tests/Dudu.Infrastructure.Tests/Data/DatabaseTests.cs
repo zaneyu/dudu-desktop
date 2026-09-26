@@ -368,6 +368,51 @@ public sealed class DatabaseTests
     }
 
     [Fact]
+    public async Task A_snooze_picked_after_the_reminder_fired_is_selected_once_it_expires()
+    {
+        // Regression: the engine advances next_due_utc before notifying, so a
+        // snooze she picks after a reminder fired leaves next_due_utc in the
+        // future (a recurring reminder) or NULL (a fired one-off). The old
+        // query required next_due_utc <= $now and never selected either row
+        // again, so snoozing a fired reminder did nothing.
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var repository = new ReminderRepository(fixture.Database);
+        var recurring = new Reminder("recurring", "Recurring", null, true,
+            new RecurrenceRule.Daily(new TimeOnly(9, 0)), "UTC",
+            QuietHoursBehavior.DeliverImmediately, MissedOccurrencePolicy.LatestOnly,
+            DateTimeOffset.Parse("2026-09-13T09:00:00Z"),
+            DateTimeOffset.Parse("2026-09-12T09:16:00Z"));
+        var firedOnce = new Reminder("fired-once", "Fired once", null, true, new RecurrenceRule.Once(), "UTC",
+            QuietHoursBehavior.DeliverImmediately, MissedOccurrencePolicy.LatestOnly,
+            null,
+            DateTimeOffset.Parse("2026-09-12T09:20:00Z"));
+        var disabled = firedOnce with { Id = "disabled-once", Enabled = false };
+        await repository.SaveAsync(recurring, cancellationToken);
+        await repository.SaveAsync(firedOnce, cancellationToken);
+        await repository.SaveAsync(disabled, cancellationToken);
+
+        Assert.Empty(await repository.LoadDueAsync(DateTimeOffset.Parse("2026-09-12T09:15:00Z"), cancellationToken));
+        Assert.Equal(["recurring"], (await repository.LoadDueAsync(
+            DateTimeOffset.Parse("2026-09-12T09:16:00Z"), cancellationToken)).Select(item => item.Id));
+        Assert.Equal(["recurring", "fired-once"], (await repository.LoadDueAsync(
+            DateTimeOffset.Parse("2026-09-12T09:30:00Z"), cancellationToken)).Select(item => item.Id));
+
+        // Delivering the snooze clears it while keeping the regular schedule,
+        // so the row is not selected again until its next occurrence.
+        Assert.True(await repository.RecordOccurrencesAndAdvanceAsync(
+            recurring,
+            [new ReminderOccurrence(recurring.Id, recurring.SnoozedUntilUtc!.Value)],
+            recurring.NextDueUtc,
+            cancellationToken));
+        var stored = (await repository.ListAsync(cancellationToken)).Single(item => item.Id == recurring.Id);
+        Assert.Null(stored.SnoozedUntilUtc);
+        Assert.Equal(recurring.NextDueUtc, stored.NextDueUtc);
+        Assert.Equal(["fired-once"], (await repository.LoadDueAsync(
+            DateTimeOffset.Parse("2026-09-12T09:30:00Z"), cancellationToken)).Select(item => item.Id));
+    }
+
+    [Fact]
     public async Task Consuming_a_remote_envelope_marks_and_removes_it_so_refresh_cannot_resurrect_it()
     {
         await using var fixture = await DatabaseFixture.CreateAsync();

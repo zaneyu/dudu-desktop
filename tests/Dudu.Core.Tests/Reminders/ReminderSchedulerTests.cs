@@ -23,6 +23,31 @@ public sealed class ReminderSchedulerTests
     }
 
     [Fact]
+    public void Due_snooze_reconciles_to_one_occurrence_and_keeps_the_regular_next_due()
+    {
+        var nextDue = DateTimeOffset.Parse("2026-09-12T09:00:00Z");
+        var snoozedUntil = DateTimeOffset.Parse("2026-09-11T09:16:00Z");
+        var reminder = ReminderBuilder.AtLocalTime(9, 0).Build() with
+        {
+            NextDueUtc = nextDue,
+            SnoozedUntilUtc = snoozedUntil,
+        };
+
+        Assert.Null(ReminderScheduler.ReconcileDueSnooze(
+            reminder, snoozedUntil.AddMinutes(-1), TimeZoneInfo.Utc));
+        var result = ReminderScheduler.ReconcileDueSnooze(
+            reminder, snoozedUntil.AddSeconds(30), TimeZoneInfo.Utc);
+
+        Assert.NotNull(result);
+        Assert.Equal(snoozedUntil, Assert.Single(result!.DueNow).DueUtc);
+        Assert.Equal(nextDue, result.NextUtc);
+        Assert.Null(ReminderScheduler.ReconcileDueSnooze(
+            reminder with { SnoozedUntilUtc = null }, snoozedUntil, TimeZoneInfo.Utc));
+        Assert.Null(ReminderScheduler.ReconcileDueSnooze(
+            reminder with { Enabled = false }, snoozedUntil, TimeZoneInfo.Utc));
+    }
+
+    [Fact]
     public void Zero_length_quiet_window_does_not_defer_a_due_reminder()
     {
         var reminder = ReminderBuilder.AtLocalTime(22, 30)

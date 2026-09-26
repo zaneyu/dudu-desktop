@@ -30,7 +30,18 @@ public sealed class ReminderRepository : SqliteRepository, IReminderRepository, 
         var result = new List<Reminder>();
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = Select + " WHERE enabled = 1 AND next_due_utc <= $now AND (snoozed_until_utc IS NULL OR snoozed_until_utc <= $now) ORDER BY next_due_utc;";
+        // Two ways a row becomes due: its regular next occurrence has arrived
+        // (and no still-future snooze postpones it), or a snooze has expired.
+        // The second arm is what makes a snooze picked AFTER the reminder
+        // fired work at all: the engine already advanced next_due_utc to the
+        // following occurrence (or cleared it, for a one-off), so the first
+        // arm alone never selected the snoozed row again.
+        command.CommandText = Select + """
+             WHERE enabled = 1
+               AND ((next_due_utc <= $now AND (snoozed_until_utc IS NULL OR snoozed_until_utc <= $now))
+                    OR snoozed_until_utc <= $now)
+             ORDER BY MIN(COALESCE(next_due_utc, snoozed_until_utc), COALESCE(snoozed_until_utc, next_due_utc)), id;
+            """;
         Add(command, "$now", Utc(utcNow));
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken)) result.Add(Read(reader));

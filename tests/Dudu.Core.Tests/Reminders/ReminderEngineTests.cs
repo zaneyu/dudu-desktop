@@ -176,6 +176,73 @@ public sealed class ReminderEngineTests
         Assert.Equal(Now.AddDays(1), repository.NextDueUtc);
     }
 
+    [Fact]
+    public async Task Tick_delivers_a_snooze_picked_after_a_daily_reminder_fired_and_keeps_its_next_due()
+    {
+        // Regression: the engine advances NextDueUtc before notifying, so a
+        // snooze she picks after the 09:00 toast sits BEFORE the new
+        // NextDueUtc (tomorrow 09:00). The regular Reconcile window starts at
+        // NextDueUtc and never saw it, so the snooze silently did nothing.
+        var tomorrow = Now.AddDays(1);
+        var snoozedUntil = Now.AddMinutes(15);
+        var events = new List<string>();
+        var repository = new FakeReminderRepository(
+            [DueReminder() with { NextDueUtc = tomorrow, SnoozedUntilUtc = snoozedUntil }],
+            events);
+        var sink = new FakeReminderDueSink(events);
+        var engine = new ReminderEngine(new FakeClock(snoozedUntil.AddSeconds(10)), repository, sink);
+
+        await engine.TickAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(["load", "record", "notify"], events);
+        var delivered = Assert.Single(sink.Notifications);
+        Assert.Equal(snoozedUntil, delivered.DueUtc);
+        Assert.Equal(tomorrow, repository.NextDueUtc);
+    }
+
+    [Fact]
+    public async Task Tick_delivers_a_snooze_of_a_fired_one_off_reminder()
+    {
+        // A fired Once reminder has NextDueUtc == null and used to be skipped
+        // outright, snooze or not.
+        var snoozedUntil = Now.AddMinutes(15);
+        var events = new List<string>();
+        var repository = new FakeReminderRepository(
+            [DueReminder() with { Rule = new RecurrenceRule.Once(), NextDueUtc = null, SnoozedUntilUtc = snoozedUntil }],
+            events);
+        var sink = new FakeReminderDueSink(events);
+        var engine = new ReminderEngine(new FakeClock(snoozedUntil), repository, sink);
+
+        await engine.TickAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(snoozedUntil, Assert.Single(sink.Notifications).DueUtc);
+        Assert.Null(repository.NextDueUtc);
+        Assert.Equal(snoozedUntil, Assert.Single(repository.RecordedOccurrences).DueUtc);
+    }
+
+    [Fact]
+    public async Task Tick_leaves_a_due_snooze_in_place_while_the_reminders_own_quiet_hours_hold_it()
+    {
+        var snoozedUntil = Now.AddMinutes(15);
+        var events = new List<string>();
+        var repository = new FakeReminderRepository(
+            [DueReminder() with
+            {
+                NextDueUtc = Now.AddDays(1),
+                SnoozedUntilUtc = snoozedUntil,
+                QuietHoursBehavior = QuietHoursBehavior.WaitUntilQuietHoursEnd,
+                QuietHours = new QuietHours(true, new TimeOnly(9, 10), new TimeOnly(10, 0)),
+            }],
+            events);
+        var sink = new FakeReminderDueSink(events);
+        var engine = new ReminderEngine(new FakeClock(snoozedUntil), repository, sink);
+
+        await engine.TickAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(["load"], events);
+        Assert.Empty(sink.Notifications);
+    }
+
     private static Reminder DueReminder()
     {
         return new Reminder(
