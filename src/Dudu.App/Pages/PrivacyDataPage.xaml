@@ -4,58 +4,95 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:viewModels="using:Dudu.App.ViewModels"
     Background="{ThemeResource WindowSurfaceBrush}">
-    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
-        <StackPanel MaxWidth="880" Margin="32" Spacing="24">
-            <StackPanel Spacing="8">
-                <TextBlock Text="privacy and data" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="PrivacyPageTitle" AutomationProperties.Name="privacy and data" />
-                <TextBlock Text="see what dudu stores keep or remove" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
-            </StackPanel>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
 
-            <StackPanel Spacing="12">
-                <TextBlock Text="stored on this pc" Style="{StaticResource SectionHeadingStyle}" />
-                <ItemsControl ItemsSource="{x:Bind ViewModel.StoredFields, Mode=OneWay}" AutomationProperties.AutomationId="PrivacyStoredFields" AutomationProperties.Name="stored fields list">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate x:DataType="viewModels:StoredFieldDescription">
-                            <StackPanel Margin="0,8" Spacing="2">
-                                <TextBlock Text="{x:Bind Name}" FontWeight="SemiBold" />
-                                <TextBlock Text="{x:Bind Description}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
-                                <TextBlock Text="{x:Bind LeavesThisPc}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
-                                <TextBlock Text="{x:Bind Retention}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
-                                <TextBlock Text="{x:Bind BackupAndDeletion}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
-                            </StackPanel>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-            </StackPanel>
+        <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+            <StackPanel MaxWidth="880" Margin="32,24,32,32" Spacing="20">
+                <StackPanel Spacing="4">
+                    <TextBlock Text="privacy and data" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="PrivacyPageTitle" AutomationProperties.Name="privacy and data" />
+                    <TextBlock Text="see exactly what dudu keeps, back it up, or remove it" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                </StackPanel>
 
-            <StackPanel Spacing="12">
-                <TextBlock Text="your data" Style="{StaticResource SectionHeadingStyle}" />
-                <TextBlock Text="backups stay local only five kept pc copy is ur call" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
-                <StackPanel Spacing="8">
-                    <Button Content="create backup" Command="{x:Bind ViewModel.BackupCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="PrivacyBackup" AutomationProperties.Name="create backup" />
-                    <Button Content="restore backup" Command="{x:Bind ViewModel.RequestRestoreCommand}" AutomationProperties.AutomationId="PrivacyRestore" AutomationProperties.Name="restore backup" />
-                </StackPanel>
-                <StackPanel Spacing="8">
-                    <Button Content="delete local data" Command="{x:Bind ViewModel.RequestDeleteLocalDataCommand}" AutomationProperties.AutomationId="PrivacyDeleteLocal" AutomationProperties.Name="delete local data" />
-                    <Button Content="delete remote device data" Command="{x:Bind ViewModel.RequestDeleteRemoteDataCommand}" AutomationProperties.AutomationId="PrivacyDeleteRemote" AutomationProperties.Name="delete remote device data" />
-                </StackPanel>
-                <Border Padding="16" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource WarningBrush}" Visibility="{x:Bind ViewModel.HasPendingConfirmation, Mode=OneWay}" AutomationProperties.AutomationId="PrivacyConfirmationPanel" AutomationProperties.Name="confirmation panel">
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="{x:Bind ViewModel.ConfirmationTitle, Mode=OneWay}" FontWeight="SemiBold" />
-                        <TextBlock Text="{x:Bind ViewModel.ConfirmationMessage, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Assertive" AutomationProperties.AutomationId="PrivacyConfirmationMessage" AutomationProperties.Name="{x:Bind ViewModel.ConfirmationMessage, Mode=OneWay}" />
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="12">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="💾" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
+                            <TextBlock Grid.Column="1" Text="stored on this pc" Style="{StaticResource SectionHeadingStyle}" />
+                        </Grid>
+                        <ItemsControl ItemsSource="{x:Bind ViewModel.StoredFields, Mode=OneWay}" AutomationProperties.AutomationId="PrivacyStoredFields" AutomationProperties.Name="stored fields list">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="viewModels:StoredFieldDescription">
+                                    <StackPanel Margin="0,8" Spacing="2">
+                                        <TextBlock Text="{x:Bind Name}" FontWeight="SemiBold" />
+                                        <TextBlock Text="{x:Bind Description}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{x:Bind LeavesThisPc}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{x:Bind Retention}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                                        <TextBlock Text="{x:Bind BackupAndDeletion}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="12">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="🔐" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
+                            <TextBlock Grid.Column="1" Text="your data" Style="{StaticResource SectionHeadingStyle}" />
+                        </Grid>
+                        <TextBlock Text="backups stay on this pc and only the newest five are kept. copying one somewhere else is ur call" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                        <Grid ColumnSpacing="8" RowSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Button Content="create backup" Command="{x:Bind ViewModel.BackupCommand}" Style="{StaticResource PrimaryButtonStyle}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="PrivacyBackup" AutomationProperties.Name="create backup" />
+                            <Button Grid.Column="1" Content="restore backup" Command="{x:Bind ViewModel.RequestRestoreCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="PrivacyRestore" AutomationProperties.Name="restore backup" />
+                        </Grid>
                         <StackPanel Spacing="8">
-                            <Button Content="{x:Bind ViewModel.ConfirmationButtonText, Mode=OneWay}" Command="{x:Bind ViewModel.ConfirmCommand}" AutomationProperties.AutomationId="PrivacyConfirm" AutomationProperties.Name="confirm action" />
-                            <Button Content="cancel" Command="{x:Bind ViewModel.CancelConfirmationCommand}" AutomationProperties.AutomationId="PrivacyCancel" AutomationProperties.Name="cancel" />
+                            <Button Content="delete local data" Command="{x:Bind ViewModel.RequestDeleteLocalDataCommand}" AutomationProperties.AutomationId="PrivacyDeleteLocal" AutomationProperties.Name="delete local data" />
+                            <Button Content="delete remote device data" Command="{x:Bind ViewModel.RequestDeleteRemoteDataCommand}" AutomationProperties.AutomationId="PrivacyDeleteRemote" AutomationProperties.Name="delete remote device data" />
                         </StackPanel>
+                        <Border Style="{StaticResource ConfirmCardStyle}" Visibility="{x:Bind ViewModel.HasPendingConfirmation, Mode=OneWay}" AutomationProperties.AutomationId="PrivacyConfirmationPanel" AutomationProperties.Name="confirmation panel">
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="{x:Bind ViewModel.ConfirmationTitle, Mode=OneWay}" FontWeight="SemiBold" />
+                                <TextBlock Text="{x:Bind ViewModel.ConfirmationMessage, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Assertive" AutomationProperties.AutomationId="PrivacyConfirmationMessage" AutomationProperties.Name="{x:Bind ViewModel.ConfirmationMessage, Mode=OneWay}" />
+                                <Grid ColumnSpacing="8" RowSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Button Content="{x:Bind ViewModel.ConfirmationButtonText, Mode=OneWay}" Command="{x:Bind ViewModel.ConfirmCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="PrivacyConfirm" AutomationProperties.Name="confirm action" />
+                                    <Button Grid.Column="1" Content="cancel" Command="{x:Bind ViewModel.CancelConfirmationCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="PrivacyCancel" AutomationProperties.Name="cancel" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </Border>
             </StackPanel>
+        </ScrollViewer>
 
-            <StackPanel Spacing="4" AutomationProperties.LiveSetting="Polite">
-                <StackPanel Orientation="Horizontal" Spacing="8" Visibility="{x:Bind ViewModel.IsBusy, Mode=OneWay}">
-                    <ProgressRing IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" Width="16" Height="16" AutomationProperties.AccessibilityView="Raw" />
-                    <TextBlock Text="working on it" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="PrivacyBusy" AutomationProperties.Name="working on it" />
-                </StackPanel>
+        <!-- Sticky feedback: what just happened stays in view at the bottom of the
+             page instead of landing below the fold. -->
+        <StackPanel Grid.Row="1" MaxWidth="880" Margin="32,0,32,16" Spacing="6" AutomationProperties.LiveSetting="Polite">
+            <StackPanel Orientation="Horizontal" Spacing="8" Visibility="{x:Bind ViewModel.IsBusy, Mode=OneWay}">
+                <ProgressRing IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" Width="16" Height="16" AutomationProperties.AccessibilityView="Raw" />
+                <TextBlock Text="working on it" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="PrivacyBusy" AutomationProperties.Name="working on it" />
+            </StackPanel>
+            <Border Style="{StaticResource StatusPillStyle}" Visibility="{x:Bind ViewModel.HasStatus, Mode=OneWay}">
                 <Grid ColumnSpacing="6" Visibility="{x:Bind ViewModel.HasStatus, Mode=OneWay}">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
@@ -64,6 +101,8 @@
                     <FontIcon Glyph="&#xE73E;" Foreground="{ThemeResource SuccessBrush}" AutomationProperties.AccessibilityView="Raw" VerticalAlignment="Top" Margin="0,3,0,0" />
                     <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" Foreground="{ThemeResource SuccessBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="PrivacyStatusMessage" AutomationProperties.Name="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" />
                 </Grid>
+            </Border>
+            <Border Style="{StaticResource StatusPillStyle}" Visibility="{x:Bind ViewModel.HasError, Mode=OneWay}">
                 <Grid ColumnSpacing="6" Visibility="{x:Bind ViewModel.HasError, Mode=OneWay}">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
@@ -72,7 +111,7 @@
                     <FontIcon Glyph="&#xEA39;" Foreground="{ThemeResource ErrorBrush}" AutomationProperties.AccessibilityView="Raw" VerticalAlignment="Top" Margin="0,3,0,0" />
                     <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" Foreground="{ThemeResource ErrorBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="PrivacyErrorMessage" AutomationProperties.Name="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" />
                 </Grid>
-            </StackPanel>
+            </Border>
         </StackPanel>
-    </ScrollViewer>
+    </Grid>
 </Page>

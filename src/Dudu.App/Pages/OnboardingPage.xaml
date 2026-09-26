@@ -5,19 +5,33 @@
     Background="{ThemeResource WindowSurfaceBrush}">
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel x:Name="PageRoot" MaxWidth="720" Padding="32" Spacing="16">
-            <TextBlock Text="calm start with dudu" Style="{StaticResource PageTitleStyle}" />
+            <TextBlock Text="hi, i'm dudu 🐻 let's set up a calm start" TextWrapping="Wrap" Style="{StaticResource PageTitleStyle}" />
             <TextBlock x:Name="OnboardingProgress" AutomationProperties.AutomationId="OnboardingProgress" AutomationProperties.Name="onboarding progress" AutomationProperties.LiveSetting="Polite" FontSize="14" Foreground="{ThemeResource TextSecondaryBrush}" />
-            <Border Background="{ThemeResource BlushSurfaceBrush}" BorderBrush="{ThemeResource LavenderBorderBrush}" BorderThickness="1" CornerRadius="12" Padding="24">
+            <Border Style="{StaticResource BlushCardStyle}">
                 <StackPanel Spacing="16">
                     <StackPanel x:Name="RecipientStep" Spacing="12">
-                        <TextBlock Text="what should dudu call you?" Style="{StaticResource SectionHeadingStyle}" />
-                        <TextBlock Text="use a name that feels natural" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="👋" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
+                            <TextBlock Grid.Column="1" Text="what should dudu call you?" Style="{StaticResource SectionHeadingStyle}" />
+                        </Grid>
+                        <TextBlock Text="whatever feels natural. dudu will use it in little greetings" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                         <TextBox x:Name="RecipientNameBox" Header="your name" AutomationProperties.AutomationId="OnboardingRecipientName" AutomationProperties.Name="your name" PlaceholderText="for example, mia" />
                         <Button x:Name="RecommendedDefaultsButton" Content="use recommended defaults" AutomationProperties.AutomationId="OnboardingRecommendedDefaults" AutomationProperties.Name="use recommended defaults" Click="RecommendedDefaultsButton_Click" />
                     </StackPanel>
 
                     <StackPanel x:Name="AppearanceStep" Spacing="12" Visibility="Collapsed">
-                        <TextBlock Text="choose a quiet look" Style="{StaticResource SectionHeadingStyle}" />
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="🎨" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
+                            <TextBlock Grid.Column="1" Text="choose a quiet look" Style="{StaticResource SectionHeadingStyle}" />
+                        </Grid>
                         <ComboBox x:Name="ThemeBox" Header="appearance" AutomationProperties.AutomationId="OnboardingTheme" AutomationProperties.Name="appearance" SelectedIndex="0">
                             <ComboBoxItem Content="use windows setting" Tag="System" />
                             <ComboBoxItem Content="light" Tag="Light" />
@@ -28,7 +42,14 @@
                     </StackPanel>
 
                     <StackPanel x:Name="QuietHoursStep" Spacing="12" Visibility="Collapsed">
-                        <TextBlock Text="set a quiet window" Style="{StaticResource SectionHeadingStyle}" />
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="🌙" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
+                            <TextBlock Grid.Column="1" Text="set a quiet window" Style="{StaticResource SectionHeadingStyle}" />
+                        </Grid>
                         <CheckBox x:Name="QuietHoursBox" Content="quiet hours on" AutomationProperties.AutomationId="OnboardingQuietHoursEnabled" AutomationProperties.Name="quiet hours on" IsChecked="True" />
                         <Grid ColumnSpacing="16">
                             <Grid.ColumnDefinitions>
@@ -38,19 +59,33 @@
                             <TextBox x:Name="QuietStartBox" Header="starts" Text="22:00" AutomationProperties.AutomationId="OnboardingQuietHoursStart" AutomationProperties.Name="starts" Grid.Column="0" />
                             <TextBox x:Name="QuietEndBox" Header="ends" Text="07:00" AutomationProperties.AutomationId="OnboardingQuietHoursEnd" AutomationProperties.Name="ends" Grid.Column="1" />
                         </Grid>
-                        <TextBlock Text="dudu waits here before non-urgent prompts" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                        <TextBlock Text="dudu keeps non-urgent prompts quiet during this window" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                     </StackPanel>
 
                     <StackPanel x:Name="RemindersStep" Spacing="12" Visibility="Collapsed">
-                        <TextBlock Text="keep reminders gentle" Style="{StaticResource SectionHeadingStyle}" />
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="💧" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
+                            <TextBlock Grid.Column="1" Text="keep reminders gentle" Style="{StaticResource SectionHeadingStyle}" />
+                        </Grid>
                         <CheckBox x:Name="HydrationBox" Content="suggest water breaks" AutomationProperties.AutomationId="OnboardingHydrationReminders" AutomationProperties.Name="suggest water breaks" IsChecked="True" />
                         <CheckBox x:Name="BreakBox" Content="suggest short breaks" AutomationProperties.AutomationId="OnboardingBreakReminders" AutomationProperties.Name="suggest short breaks" IsChecked="True" />
                         <NumberBox x:Name="NoteLimitBox" Header="daily local note limit" AutomationProperties.AutomationId="OnboardingLocalNoteLimit" AutomationProperties.Name="daily local note limit" Minimum="0" Maximum="12" Value="3" SpinButtonPlacementMode="Compact" />
                     </StackPanel>
 
                     <StackPanel x:Name="PlacementStep" Spacing="12" Visibility="Collapsed" AutomationProperties.AutomationId="OnboardingPlacementStep" AutomationProperties.Name="placement step">
-                        <TextBlock Text="place dudu" Style="{StaticResource SectionHeadingStyle}" />
-                        <TextBlock Text="drag dudu where u want it" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="🏡" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
+                            <TextBlock Grid.Column="1" Text="place dudu" Style="{StaticResource SectionHeadingStyle}" />
+                        </Grid>
+                        <TextBlock Text="drag dudu anywhere u like on screen, or use the cosy spot dudu picks" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                         <Button x:Name="RecommendedPlacementButton" Content="use recommended placement" AutomationProperties.AutomationId="OnboardingRecommendedPlacement" AutomationProperties.Name="use recommended placement" Click="RecommendedPlacementButton_Click" />
                         <!-- Slider.StepFrequency defaults to 1, which with Minimum 0.5 snapped every
                              drag to 50%, 150% or 200% and made the recommended 100% unreachable. -->
@@ -61,8 +96,15 @@
                     </StackPanel>
 
                     <StackPanel x:Name="PairingStep" Spacing="12" Visibility="Collapsed">
-                        <TextBlock Text="pair later if you want" Style="{StaticResource SectionHeadingStyle}" />
-                        <TextBlock Text="pairing lets someone send u encrypted notes. it's optional" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="🔗" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
+                            <TextBlock Grid.Column="1" Text="pair later if you want" Style="{StaticResource SectionHeadingStyle}" />
+                        </Grid>
+                        <TextBlock Text="pairing lets someone you trust send u encrypted notes. it's optional, and dudu works fine without it" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                         <TextBlock x:Name="PairingStatus" AutomationProperties.AutomationId="OnboardingPairingStatus" AutomationProperties.Name="pairing status" AutomationProperties.LiveSetting="Polite" Text="pairing is optional" TextWrapping="Wrap" />
                         <Button x:Name="PairingCheckButton" Content="check pairing availability" AutomationProperties.AutomationId="OnboardingPairingCheck" AutomationProperties.Name="check pairing availability" Click="PairingCheckButton_Click" />
                         <Button x:Name="SkipPairingButton" Content="skip for now" AutomationProperties.AutomationId="OnboardingSkipPairing" AutomationProperties.Name="skip for now" Click="SkipPairingButton_Click" />

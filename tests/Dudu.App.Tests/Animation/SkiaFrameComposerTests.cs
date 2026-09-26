@@ -1,5 +1,6 @@
 using Dudu.App.Animation;
 using Dudu.Core.Assets;
+using Dudu.Core.Time;
 using SkiaSharp;
 using Xunit;
 
@@ -148,6 +149,66 @@ public sealed class SkiaFrameComposerTests
         Assert.Equal(expectedGray, frame.Bytes.Span[1]);
         Assert.Equal(expectedGray, frame.Bytes.Span[2]);
         Assert.Equal(255, frame.Bytes.Span[3]);
+    }
+
+    [Fact]
+    public void Partner_clock_pill_is_painted_at_the_top_centre_and_leaves_the_rest_of_dudu_alone()
+    {
+        using var fixture = ComposerFixture.Create();
+        fixture.Composer.SetPartnerClock(new PartnerClock(new FixedClock(
+            new DateTimeOffset(2026, 7, 1, 13, 5, 0, TimeSpan.Zero))));
+
+        using var frame = fixture.Composer.Compose(fixture.Pack, fixture.Animation, 0, scale: 200);
+
+        Assert.False(IsPureRed(frame, frame.Width / 2, 14), "the UK pill should cover the top centre");
+        Assert.True(IsPureRed(frame, frame.Width / 2, frame.Height - 10));
+        Assert.True(IsPureRed(frame, 1, 1), "the pill is centred, never stretched to the edges");
+    }
+
+    [Fact]
+    public void Partner_clock_pill_is_skipped_on_a_tiny_canvas_and_when_cleared()
+    {
+        using var fixture = ComposerFixture.Create();
+        fixture.Composer.SetPartnerClock(new PartnerClock(new FixedClock(
+            new DateTimeOffset(2026, 1, 15, 22, 30, 0, TimeSpan.Zero))));
+
+        using (var tiny = fixture.Composer.Compose(fixture.Pack, fixture.Animation, 0, scale: 50))
+        {
+            Assert.True(IsPureRed(tiny, tiny.Width / 2, 6));
+        }
+
+        fixture.Composer.SetPartnerClock(null);
+        using var cleared = fixture.Composer.Compose(fixture.Pack, fixture.Animation, 0, scale: 200);
+        Assert.True(IsPureRed(cleared, cleared.Width / 2, 14));
+    }
+
+    [Fact]
+    public void Partner_clock_pill_renderer_never_returns_a_clipped_pill()
+    {
+        var palette = OverlaySurfacePalette.For(Dudu.Core.Models.AppTheme.Dark, highContrast: true);
+        foreach (var size in new[] { 96, 120, 200, 400, 1024 })
+        {
+            using var pill = PartnerClockPillRenderer.Render("UK 14:05", isNight: size % 2 == 0, palette, size, size);
+            if (pill is null) continue;
+            Assert.InRange(pill.X, 0, size - pill.Image.Width);
+            Assert.InRange(pill.Y, 0, size - pill.Image.Height);
+        }
+
+        Assert.Null(PartnerClockPillRenderer.Render("UK 14:05", false, palette, 95, 400));
+    }
+
+    private static bool IsPureRed(RenderedFrame frame, int x, int y)
+    {
+        var offset = y * frame.Stride + x * 4;
+        var pixel = frame.Bytes.Span.Slice(offset, 4);
+        return pixel[0] == 0 && pixel[1] == 0 && pixel[2] == 255 && pixel[3] == 255;
+    }
+
+    private sealed class FixedClock(DateTimeOffset utcNow) : IClock
+    {
+        public DateTimeOffset UtcNow { get; } = utcNow;
+
+        public TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
     }
 
     private static byte ExpectedGray(int frameIndex) => (byte)(20 + frameIndex * 25);

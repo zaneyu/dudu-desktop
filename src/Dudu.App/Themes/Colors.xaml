@@ -1,51 +1,75 @@
 <ResourceDictionary
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!--
+        Dudu palette: cream, latte, honey and blush surfaces around a warm cocoa
+        text colour, with one rose action accent. Every key exists in all four
+        theme dictionaries; HighContrast maps each one to a system colour so
+        Windows contrast themes always win over the decorative palette.
+        Text, status and accent colours are 4.5:1 or better on every surface.
+        LavenderBorderBrush is kept as an alias of SoftBorderBrush for older XAML.
+    -->
     <ResourceDictionary.ThemeDictionaries>
         <ResourceDictionary x:Key="Default">
-            <SolidColorBrush x:Key="WindowSurfaceBrush" Color="#FFF8F2" />
-            <SolidColorBrush x:Key="NavigationSurfaceBrush" Color="#F1EEF7" />
-            <SolidColorBrush x:Key="BlushSurfaceBrush" Color="#FFF0EC" />
-            <SolidColorBrush x:Key="LavenderBorderBrush" Color="#D5CEDC" />
-            <SolidColorBrush x:Key="CoralActionBrush" Color="#C95F55" />
+            <SolidColorBrush x:Key="WindowSurfaceBrush" Color="#FFF8F1" />
+            <SolidColorBrush x:Key="NavigationSurfaceBrush" Color="#F8EDE4" />
+            <SolidColorBrush x:Key="CardSurfaceBrush" Color="#FFFDFA" />
+            <SolidColorBrush x:Key="BlushSurfaceBrush" Color="#FDECEA" />
+            <SolidColorBrush x:Key="HoneySurfaceBrush" Color="#FFF0D2" />
+            <SolidColorBrush x:Key="SoftBorderBrush" Color="#EBDACD" />
+            <SolidColorBrush x:Key="LavenderBorderBrush" Color="#EBDACD" />
+            <SolidColorBrush x:Key="CocoaAccentBrush" Color="#8B5E3C" />
+            <SolidColorBrush x:Key="CoralActionBrush" Color="#B4506A" />
             <SolidColorBrush x:Key="PrimaryButtonForegroundBrush" Color="#FFFFFFFF" />
-            <SolidColorBrush x:Key="TextPrimaryBrush" Color="#2B2828" />
-            <SolidColorBrush x:Key="TextSecondaryBrush" Color="#696164" />
+            <SolidColorBrush x:Key="TextPrimaryBrush" Color="#3A2A24" />
+            <SolidColorBrush x:Key="TextSecondaryBrush" Color="#76625A" />
             <SolidColorBrush x:Key="SuccessBrush" Color="#3E765F" />
-            <SolidColorBrush x:Key="WarningBrush" Color="#936C31" />
-            <SolidColorBrush x:Key="ErrorBrush" Color="#A34747" />
+            <SolidColorBrush x:Key="WarningBrush" Color="#8A6428" />
+            <SolidColorBrush x:Key="ErrorBrush" Color="#A8434B" />
         </ResourceDictionary>
         <ResourceDictionary x:Key="Light">
-            <SolidColorBrush x:Key="WindowSurfaceBrush" Color="#FFF8F2" />
-            <SolidColorBrush x:Key="NavigationSurfaceBrush" Color="#F1EEF7" />
-            <SolidColorBrush x:Key="BlushSurfaceBrush" Color="#FFF0EC" />
-            <SolidColorBrush x:Key="LavenderBorderBrush" Color="#D5CEDC" />
-            <SolidColorBrush x:Key="CoralActionBrush" Color="#C95F55" />
+            <SolidColorBrush x:Key="WindowSurfaceBrush" Color="#FFF8F1" />
+            <SolidColorBrush x:Key="NavigationSurfaceBrush" Color="#F8EDE4" />
+            <SolidColorBrush x:Key="CardSurfaceBrush" Color="#FFFDFA" />
+            <SolidColorBrush x:Key="BlushSurfaceBrush" Color="#FDECEA" />
+            <SolidColorBrush x:Key="HoneySurfaceBrush" Color="#FFF0D2" />
+            <SolidColorBrush x:Key="SoftBorderBrush" Color="#EBDACD" />
+            <SolidColorBrush x:Key="LavenderBorderBrush" Color="#EBDACD" />
+            <SolidColorBrush x:Key="CocoaAccentBrush" Color="#8B5E3C" />
+            <SolidColorBrush x:Key="CoralActionBrush" Color="#B4506A" />
             <SolidColorBrush x:Key="PrimaryButtonForegroundBrush" Color="#FFFFFFFF" />
-            <SolidColorBrush x:Key="TextPrimaryBrush" Color="#2B2828" />
-            <SolidColorBrush x:Key="TextSecondaryBrush" Color="#696164" />
+            <SolidColorBrush x:Key="TextPrimaryBrush" Color="#3A2A24" />
+            <SolidColorBrush x:Key="TextSecondaryBrush" Color="#76625A" />
             <SolidColorBrush x:Key="SuccessBrush" Color="#3E765F" />
-            <SolidColorBrush x:Key="WarningBrush" Color="#936C31" />
-            <SolidColorBrush x:Key="ErrorBrush" Color="#A34747" />
+            <SolidColorBrush x:Key="WarningBrush" Color="#8A6428" />
+            <SolidColorBrush x:Key="ErrorBrush" Color="#A8434B" />
         </ResourceDictionary>
         <ResourceDictionary x:Key="Dark">
-            <SolidColorBrush x:Key="WindowSurfaceBrush" Color="#262323" />
-            <SolidColorBrush x:Key="NavigationSurfaceBrush" Color="#302D38" />
-            <SolidColorBrush x:Key="BlushSurfaceBrush" Color="#493839" />
-            <SolidColorBrush x:Key="LavenderBorderBrush" Color="#5A5260" />
-            <SolidColorBrush x:Key="CoralActionBrush" Color="#E88376" />
-            <SolidColorBrush x:Key="PrimaryButtonForegroundBrush" Color="#FF2B2828" />
-            <SolidColorBrush x:Key="TextPrimaryBrush" Color="#F4EDE8" />
-            <SolidColorBrush x:Key="TextSecondaryBrush" Color="#C6BDC0" />
-            <SolidColorBrush x:Key="SuccessBrush" Color="#83C3A7" />
-            <SolidColorBrush x:Key="WarningBrush" Color="#E4B96B" />
-            <SolidColorBrush x:Key="ErrorBrush" Color="#F08B8B" />
+            <SolidColorBrush x:Key="WindowSurfaceBrush" Color="#221C19" />
+            <SolidColorBrush x:Key="NavigationSurfaceBrush" Color="#2A221E" />
+            <SolidColorBrush x:Key="CardSurfaceBrush" Color="#2E2622" />
+            <SolidColorBrush x:Key="BlushSurfaceBrush" Color="#3D2B2D" />
+            <SolidColorBrush x:Key="HoneySurfaceBrush" Color="#3A2F1F" />
+            <SolidColorBrush x:Key="SoftBorderBrush" Color="#4B3D36" />
+            <SolidColorBrush x:Key="LavenderBorderBrush" Color="#4B3D36" />
+            <SolidColorBrush x:Key="CocoaAccentBrush" Color="#E0B089" />
+            <SolidColorBrush x:Key="CoralActionBrush" Color="#F0A3B4" />
+            <SolidColorBrush x:Key="PrimaryButtonForegroundBrush" Color="#FF2A1E1E" />
+            <SolidColorBrush x:Key="TextPrimaryBrush" Color="#F6ECE4" />
+            <SolidColorBrush x:Key="TextSecondaryBrush" Color="#CDBBB1" />
+            <SolidColorBrush x:Key="SuccessBrush" Color="#86C6A9" />
+            <SolidColorBrush x:Key="WarningBrush" Color="#E6BC70" />
+            <SolidColorBrush x:Key="ErrorBrush" Color="#F29497" />
         </ResourceDictionary>
         <ResourceDictionary x:Key="HighContrast">
             <SolidColorBrush x:Key="WindowSurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
             <SolidColorBrush x:Key="NavigationSurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="CardSurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
             <SolidColorBrush x:Key="BlushSurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="HoneySurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="SoftBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
             <SolidColorBrush x:Key="LavenderBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="CocoaAccentBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
             <SolidColorBrush x:Key="CoralActionBrush" Color="{ThemeResource SystemColorHighlightColor}" />
             <SolidColorBrush x:Key="PrimaryButtonForegroundBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
             <SolidColorBrush x:Key="TextPrimaryBrush" Color="{ThemeResource SystemColorWindowTextColor}" />

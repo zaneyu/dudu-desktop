@@ -1,6 +1,10 @@
 <ResourceDictionary
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Shape rhythm: cards 18, confirmation cards 16, status pills 14,
+         buttons fully rounded (20 on a 40 px minimum height). Spacing uses
+         the 4/8/12/16/20/24 scale. Only simple property setters live here;
+         every control keeps its native WinUI template and focus visuals. -->
     <Style TargetType="TextBlock">
         <Setter Property="FontFamily" Value="Segoe UI Variable" />
         <Setter Property="Foreground" Value="{ThemeResource TextPrimaryBrush}" />
@@ -9,26 +13,106 @@
         <Setter Property="FontFamily" Value="Segoe UI Variable" />
         <Setter Property="MinHeight" Value="40" />
         <Setter Property="Padding" Value="16,8" />
+        <Setter Property="CornerRadius" Value="20" />
     </Style>
     <!-- An explicit Style replaces the implicit Button style above rather than
-         layering on it, so the primary style repeats its font, minimum height and
-         padding. Without them the coral primary buttons rendered shorter and
-         tighter than the secondary buttons beside them. -->
+         layering on it, so the primary style repeats its font, minimum height,
+         padding and pill radius. -->
     <Style x:Key="PrimaryButtonStyle" TargetType="Button">
         <Setter Property="FontFamily" Value="Segoe UI Variable" />
         <Setter Property="MinHeight" Value="40" />
         <Setter Property="Padding" Value="16,8" />
+        <Setter Property="CornerRadius" Value="20" />
+        <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="Background" Value="{ThemeResource CoralActionBrush}" />
         <Setter Property="Foreground" Value="{ThemeResource PrimaryButtonForegroundBrush}" />
         <Setter Property="HorizontalContentAlignment" Value="Center" />
     </Style>
     <Style x:Key="SectionHeadingStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="Segoe UI Variable" />
+        <Setter Property="Foreground" Value="{ThemeResource TextPrimaryBrush}" />
         <Setter Property="FontSize" Value="20" />
         <Setter Property="FontWeight" Value="SemiBold" />
-        <Setter Property="Margin" Value="0,0,0,8" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
     <Style x:Key="PageTitleStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="Segoe UI Variable" />
+        <Setter Property="Foreground" Value="{ThemeResource TextPrimaryBrush}" />
         <Setter Property="FontSize" Value="28" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+
+    <!-- Rounded card surfaces. Cards are never nested inside other cards. -->
+    <Style x:Key="CardStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource CardSurfaceBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource SoftBorderBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="18" />
+        <Setter Property="Padding" Value="20" />
+    </Style>
+    <Style x:Key="BlushCardStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource BlushSurfaceBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource SoftBorderBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="18" />
+        <Setter Property="Padding" Value="20" />
+    </Style>
+    <Style x:Key="HoneyCardStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource HoneySurfaceBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource SoftBorderBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="18" />
+        <Setter Property="Padding" Value="20" />
+    </Style>
+    <!-- Destructive confirmation: warm blush fill plus a warning outline, so the
+         state is carried by the title text and border, never hue alone. -->
+    <Style x:Key="ConfirmCardStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource BlushSurfaceBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource WarningBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="16" />
+        <Setter Property="Padding" Value="16" />
+    </Style>
+    <Style x:Key="StatusPillStyle" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource CardSurfaceBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource SoftBorderBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="14" />
+        <Setter Property="Padding" Value="14,8" />
+    </Style>
+
+    <!-- Section header: a round honey chip holding a decorative emoji, beside
+         the heading text. The emoji is hidden from UI Automation at use sites. -->
+    <Style x:Key="IconChipStyle" TargetType="Border">
+        <Setter Property="Width" Value="36" />
+        <Setter Property="Height" Value="36" />
+        <Setter Property="CornerRadius" Value="18" />
+        <Setter Property="Background" Value="{ThemeResource HoneySurfaceBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource SoftBorderBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style x:Key="ChipEmojiStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="Segoe UI Emoji" />
+        <Setter Property="FontSize" Value="17" />
+        <Setter Property="HorizontalAlignment" Value="Center" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <!-- UK partner clock: the round day/night badge and the large time digits. -->
+    <Style x:Key="ClockBadgeStyle" TargetType="Border">
+        <Setter Property="Width" Value="64" />
+        <Setter Property="Height" Value="64" />
+        <Setter Property="CornerRadius" Value="32" />
+        <Setter Property="Background" Value="{ThemeResource CardSurfaceBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource SoftBorderBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+    <Style x:Key="ClockDigitsStyle" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="Segoe UI Variable" />
+        <Setter Property="Foreground" Value="{ThemeResource TextPrimaryBrush}" />
+        <Setter Property="FontSize" Value="40" />
         <Setter Property="FontWeight" Value="SemiBold" />
     </Style>
 </ResourceDictionary>

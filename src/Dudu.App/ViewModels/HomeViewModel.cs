@@ -4,6 +4,7 @@ using Dudu.App.System;
 using Dudu.Core.Models;
 using Dudu.Core.Pet;
 using Dudu.Core.Reminders;
+using Dudu.Core.Time;
 
 namespace Dudu.App.ViewModels;
 
@@ -21,6 +22,8 @@ public sealed class HomeViewModel : FeatureViewModelBase
     private MoodChoice _selectedMood = MoodChoice.Okay;
     private string? _checkInNote;
     private string _recipientName = string.Empty;
+    private readonly PartnerClock _partnerClock;
+    private PartnerClockReading _partnerReading;
 
     public HomeViewModel(CompanionFeatureContext context)
     {
@@ -39,6 +42,8 @@ public sealed class HomeViewModel : FeatureViewModelBase
         CancelDeleteCountdownCommand = new RelayCommand(() => PendingDeleteCountdown = null);
         RecordCheckInCommand = new AsyncRelayCommand((CancellationToken ct) =>
             RecordCheckInAsync(ct));
+        _partnerClock = new PartnerClock(_context.Clock);
+        _partnerReading = _partnerClock.Now();
     }
 
     public IAsyncRelayCommand RefreshCommand { get; }
@@ -56,6 +61,40 @@ public sealed class HomeViewModel : FeatureViewModelBase
     public ObservableCollection<MoodCheckIn> RecentCheckIns { get; } = [];
 
     public PetPresentation PetPresentation => _context.Pet.Current;
+
+    // Display-only UK partner clock for the Home card. HomePage ticks
+    // RefreshPartnerClock from a DispatcherTimer while the page is loaded.
+    public string PartnerTimeText => _partnerReading.TimeText;
+    public string PartnerSecondsText => _partnerReading.SecondsText;
+    public string PartnerDayPeriodEmoji => _partnerReading.DayPeriodEmoji;
+    public string PartnerDateLine => $"{_partnerReading.DateText} · {_partnerReading.DayText}";
+    public string PartnerOffsetLine => $"{_partnerReading.OffsetLabel} · {_partnerReading.DifferenceText}";
+    public string PartnerMoodText => _partnerReading.MoodText;
+    public string PartnerClockSpokenText => _partnerReading.SpokenText;
+
+    /// <summary>Re-reads the partner clock and raises change notifications only
+    /// for strings that actually changed, so a sub-second tick is cheap.</summary>
+    public void RefreshPartnerClock()
+    {
+        var previous = _partnerReading;
+        _partnerReading = _partnerClock.Now();
+        if (previous.SecondsText != _partnerReading.SecondsText) OnPropertyChanged(nameof(PartnerSecondsText));
+        if (previous.TimeText == _partnerReading.TimeText
+            && previous.OffsetLabel == _partnerReading.OffsetLabel
+            && previous.DifferenceText == _partnerReading.DifferenceText
+            && previous.DateText == _partnerReading.DateText
+            && previous.DayText == _partnerReading.DayText)
+        {
+            return;
+        }
+
+        OnPropertyChanged(nameof(PartnerTimeText));
+        OnPropertyChanged(nameof(PartnerDayPeriodEmoji));
+        OnPropertyChanged(nameof(PartnerDateLine));
+        OnPropertyChanged(nameof(PartnerOffsetLine));
+        OnPropertyChanged(nameof(PartnerMoodText));
+        OnPropertyChanged(nameof(PartnerClockSpokenText));
+    }
 
     public bool IsPaused => _context.GetPauseState().Mode != PauseMode.None;
 

@@ -12,14 +12,14 @@
 
         <Grid x:Name="AppTitleBar" Grid.Row="0" Padding="24,0" Background="{ThemeResource NavigationSurfaceBrush}"
               AutomationProperties.AutomationId="SettingsTitleBar">
-            <TextBlock Text="dudu settings" VerticalAlignment="Center" FontSize="14" FontWeight="SemiBold" />
+            <TextBlock Text="🐻 dudu settings" VerticalAlignment="Center" FontSize="14" FontWeight="SemiBold" />
         </Grid>
 
         <Border Grid.Row="1" Margin="24,12,24,0" Padding="12"
                 Background="{ThemeResource BlushSurfaceBrush}"
-                BorderBrush="{ThemeResource LavenderBorderBrush}"
+                BorderBrush="{ThemeResource SoftBorderBrush}"
                 BorderThickness="1"
-                CornerRadius="12"
+                CornerRadius="18"
                 AutomationProperties.AutomationId="DuduCompanionPanel"
                 AutomationProperties.Name="dudu companion panel">
             <Grid ColumnSpacing="14">
@@ -29,8 +29,8 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <Border Width="76" Height="76" CornerRadius="38"
-                        Background="{ThemeResource WindowSurfaceBrush}"
-                        BorderBrush="{ThemeResource LavenderBorderBrush}"
+                        Background="{ThemeResource HoneySurfaceBrush}"
+                        BorderBrush="{ThemeResource SoftBorderBrush}"
                         BorderThickness="1"
                         VerticalAlignment="Center">
                     <Image x:Name="DuduFrameImage"
@@ -47,15 +47,15 @@
                     <TextBlock x:Name="DuduCompanionStatus" Text="" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" AutomationProperties.AutomationId="DuduCompanionStatus" AutomationProperties.Name="dudu action status" />
                 </StackPanel>
                 <StackPanel Grid.Column="2" VerticalAlignment="Center" Spacing="6">
-                    <Button x:Name="DuduPetButton" Content="pet dudu" Click="DuduPetButton_Click"
+                    <Button x:Name="DuduPetButton" Content="🤲 pet dudu" Click="DuduPetButton_Click"
                             Background="{ThemeResource CoralActionBrush}"
                             Foreground="{ThemeResource PrimaryButtonForegroundBrush}"
                             HorizontalContentAlignment="Center"
                             AutomationProperties.AutomationId="DuduCompanionPet"
                             AutomationProperties.Name="pet dudu" />
                     <StackPanel Orientation="Horizontal" Spacing="6">
-                        <Button x:Name="DuduDrinkButton" Content="drink" Click="DuduDrinkButton_Click" AutomationProperties.AutomationId="DuduCompanionDrink" AutomationProperties.Name="ask dudu to drink water" />
-                        <Button x:Name="DuduComfortButton" Content="tiny hug" Click="DuduComfortButton_Click" AutomationProperties.AutomationId="DuduCompanionComfort" AutomationProperties.Name="give dudu a tiny hug" />
+                        <Button x:Name="DuduDrinkButton" Content="💧 drink" Click="DuduDrinkButton_Click" AutomationProperties.AutomationId="DuduCompanionDrink" AutomationProperties.Name="ask dudu to drink water" />
+                        <Button x:Name="DuduComfortButton" Content="🤗 hug" Click="DuduComfortButton_Click" AutomationProperties.AutomationId="DuduCompanionComfort" AutomationProperties.Name="give dudu a tiny hug" />
                     </StackPanel>
                 </StackPanel>
             </Grid>

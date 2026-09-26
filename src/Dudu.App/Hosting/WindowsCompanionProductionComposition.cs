@@ -479,6 +479,7 @@ public static class WindowsCompanionProductionComposition
             composer.SetOverlayPalette(OverlaySurfacePalette.For(
                 preferences.Theme,
                 OverlaySurfaceRenderer.IsHighContrastEnabled()));
+            composer.SetPartnerClock(new PartnerClock(services.GetRequiredService<IClock>()));
             presenter = new LayeredFramePresenter();
             // The live fullscreen reading lets "pause until fullscreen ends"
             // actually end once the fullscreen session it covered is over;
