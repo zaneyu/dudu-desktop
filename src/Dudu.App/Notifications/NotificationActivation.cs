@@ -6,12 +6,15 @@ public enum NotificationActivationAction
     OpenNote,
     ReminderDone,
     ReminderSnooze,
+
+    /// <summary>A click on a reminder toast's body (not a button).</summary>
+    OpenReminder,
 }
 
 /// <summary>
-/// A parsed toast activation. Executing Done/Snooze directly from the toast
-/// is out of scope for this milestone; this record only carries enough to
-/// navigate to the matching settings destination.
+/// A parsed toast activation: which action, plus the (constrained) id it
+/// applies to. Done/Snooze are carried out by <see cref="ReminderToastActions"/>;
+/// the rest navigate to the matching settings destination.
 /// </summary>
 public sealed record NotificationActivation(
     NotificationActivationAction Action,
@@ -84,6 +87,8 @@ public sealed record NotificationActivation(
                 new NotificationActivation(NotificationActivationAction.ReminderDone, null, reminderId),
             "reminder-snooze" when HasValue(values, "reminderId", out var reminderId) =>
                 new NotificationActivation(NotificationActivationAction.ReminderSnooze, null, reminderId),
+            "open-reminder" when HasValue(values, "reminderId", out var reminderId) =>
+                new NotificationActivation(NotificationActivationAction.OpenReminder, null, reminderId),
             _ => null,
         };
     }

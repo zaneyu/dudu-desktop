@@ -1,4 +1,8 @@
+using Dudu.App.Hosting;
 using Dudu.App.Notifications;
+using Dudu.Core.Abstractions;
+using Dudu.Core.Models;
+using Dudu.Core.Time;
 using Xunit;
 
 namespace Dudu.App.Tests.Notifications;
@@ -113,5 +117,232 @@ public sealed class NotificationActivationTests
         var activation = NotificationActivation.TryParse(arguments);
 
         Assert.Null(activation);
+    }
+
+    private static readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-09-12T10:00:00Z");
+
+    [Fact]
+    public void TryParse_resolves_an_open_reminder_body_activation()
+    {
+        var activation = NotificationActivation.TryParse("action=open-reminder;reminderId=reminder-3");
+
+        Assert.NotNull(activation);
+        Assert.Equal(NotificationActivationAction.OpenReminder, activation!.Action);
+        Assert.Equal("reminder-3", activation.ReminderId);
+        Assert.Null(NotificationActivation.TryParse("action=open-reminder&reminderId=../evil"));
+    }
+
+    [Fact]
+    public async Task Reminder_toast_body_carries_an_open_reminder_activation()
+    {
+        // The body used to carry no activation arguments at all, so a click
+        // on the toast itself did nothing.
+        var sink = new RecordingSink();
+        var service = new AppNotificationService(sink);
+
+        await service.ShowReminderAsync("reminder-1", "Stretch", TestContext.Current.CancellationToken);
+
+        var request = Assert.Single(sink.Shown);
+        Assert.Equal("action=open-reminder&reminderId=reminder-1", request.ActivationArguments);
+        var activation = NotificationActivation.TryParse(request.ActivationArguments);
+        Assert.Equal(NotificationActivationAction.OpenReminder, activation!.Action);
+        Assert.Equal("reminder-1", activation.ReminderId);
+    }
+
+    [Fact]
+    public async Task Reminder_toast_body_click_opens_the_reminders_page()
+    {
+        var fixture = new ToastFixture();
+
+        await fixture.HandleAsync("action=open-reminder&reminderId=reminder-1");
+
+        Assert.Equal(["reminders"], fixture.Destinations);
+        Assert.Empty(fixture.Reminders.Advanced);
+        Assert.Empty(fixture.Reminders.Saved);
+    }
+
+    [Fact]
+    public async Task Done_button_completes_the_reminder_without_opening_a_window()
+    {
+        // Done/Snooze used to only navigate to the Reminders page and leave
+        // the reminder exactly as it was.
+        var fixture = new ToastFixture();
+
+        await fixture.HandleAsync("action=reminder-done&reminderId=reminder-1");
+
+        var (reminder, occurrences, next) = Assert.Single(fixture.Reminders.Advanced);
+        Assert.Equal("reminder-1", reminder.Id);
+        Assert.Equal(Now, Assert.Single(occurrences).DueUtc);
+        Assert.Equal(Now.AddDays(1).Date, next!.Value.UtcDateTime.Date);
+        Assert.Equal(["reminder-1"], fixture.Sink.Removed);
+        Assert.Equal(["reminder-1"], fixture.DiscardedHeld);
+        Assert.Empty(fixture.Destinations);
+    }
+
+    [Fact]
+    public async Task Snooze_button_snoozes_the_reminder_for_fifteen_minutes()
+    {
+        var fixture = new ToastFixture();
+
+        await fixture.HandleAsync("action=reminder-snooze&reminderId=reminder-1");
+
+        var saved = Assert.Single(fixture.Reminders.Saved);
+        Assert.Equal("reminder-1", saved.Id);
+        Assert.Equal(Now + ReminderToastActions.SnoozeDuration, saved.SnoozedUntilUtc);
+        Assert.Equal(fixture.Reminders.Items[0].NextDueUtc, saved.NextDueUtc);
+        Assert.Equal(TimeSpan.FromMinutes(15), ReminderToastActions.SnoozeDuration);
+        Assert.Equal(["reminder-1"], fixture.Sink.Removed);
+        Assert.Equal(["reminder-1"], fixture.DiscardedHeld);
+        Assert.Empty(fixture.Destinations);
+    }
+
+    [Theory]
+    [InlineData("action=reminder-done&reminderId=missing")]
+    [InlineData("action=reminder-snooze&reminderId=missing")]
+    public async Task A_button_for_a_reminder_that_no_longer_exists_opens_the_reminders_page(string arguments)
+    {
+        var fixture = new ToastFixture();
+
+        await fixture.HandleAsync(arguments);
+
+        Assert.Empty(fixture.Reminders.Advanced);
+        Assert.Empty(fixture.Reminders.Saved);
+        Assert.Equal(["missing"], fixture.Sink.Removed);
+        Assert.Equal(["reminders"], fixture.Destinations);
+    }
+
+    [Fact]
+    public async Task A_failed_done_write_is_reported_and_falls_back_to_the_reminders_page()
+    {
+        var fixture = new ToastFixture();
+        fixture.Reminders.FailAdvance = true;
+
+        await fixture.HandleAsync("action=reminder-done&reminderId=reminder-1");
+
+        Assert.Contains(fixture.Reporter.Operations, operation => operation == "notification-reminder-action");
+        Assert.Equal(["reminders"], fixture.Destinations);
+    }
+
+    private sealed class ToastFixture
+    {
+        public ToastFixture()
+        {
+            Service = new AppNotificationService(Sink);
+            Actions = new CompanionUiActions(
+                _ => Task.CompletedTask,
+                (_, _) => Task.CompletedTask,
+                _ => Task.CompletedTask,
+                navigateSettingsDestination: (destination, _) =>
+                {
+                    Destinations.Add(destination);
+                    return Task.CompletedTask;
+                });
+            ToastActions = new ReminderToastActions(
+                new FixedClock(),
+                Reminders,
+                Reminders,
+                Service.DismissReminderAsync,
+                (reminderId, _) =>
+                {
+                    DiscardedHeld.Add(reminderId);
+                    return Task.CompletedTask;
+                },
+                Reporter);
+        }
+
+        public RecordingSink Sink { get; } = new();
+        public AppNotificationService Service { get; }
+        public CompanionUiActions Actions { get; }
+        public ReminderToastActions ToastActions { get; }
+        public FakeReminders Reminders { get; } = new();
+        public List<string> Destinations { get; } = [];
+        public List<string> DiscardedHeld { get; } = [];
+        public RecordingReporter Reporter { get; } = new();
+
+        public Task HandleAsync(string arguments) =>
+            WindowsCompanionProductionComposition.HandleNotificationActivationAsync(
+                Actions,
+                Service,
+                NotificationActivation.TryParse(arguments)!,
+                ToastActions,
+                Reporter,
+                TestContext.Current.CancellationToken);
+    }
+
+    private sealed class FixedClock : IClock
+    {
+        public DateTimeOffset UtcNow => Now;
+        public TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
+    }
+
+    private sealed class FakeReminders : IReminderRepository, IReminderWriter
+    {
+        public List<Reminder> Items { get; } =
+        [
+            new Reminder(
+                "reminder-1",
+                "Drink water",
+                null,
+                true,
+                new RecurrenceRule.Daily(new TimeOnly(10, 0)),
+                "UTC",
+                QuietHoursBehavior.DeliverImmediately,
+                MissedOccurrencePolicy.LatestOnly,
+                Now),
+        ];
+
+        public List<(Reminder Reminder, IReadOnlyList<ReminderOccurrence> Occurrences, DateTimeOffset? Next)> Advanced { get; } = [];
+        public List<Reminder> Saved { get; } = [];
+        public bool FailAdvance { get; set; }
+
+        public Task<IReadOnlyList<Reminder>> ListAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<Reminder>>(Items.ToArray());
+
+        public Task<IReadOnlyList<Reminder>> LoadDueAsync(DateTimeOffset utcNow, CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<Reminder>>([]);
+
+        public Task<bool> RecordOccurrencesAndAdvanceAsync(
+            Reminder reminder,
+            IReadOnlyList<ReminderOccurrence> occurrences,
+            DateTimeOffset? nextDueUtc,
+            CancellationToken cancellationToken)
+        {
+            if (FailAdvance) throw new InvalidOperationException("write failed");
+            Advanced.Add((reminder, occurrences, nextDueUtc));
+            return Task.FromResult(true);
+        }
+
+        public Task SaveAsync(Reminder reminder, CancellationToken cancellationToken = default)
+        {
+            Saved.Add(reminder);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class RecordingSink : INotificationSink
+    {
+        public List<NotificationRequest> Shown { get; } = [];
+        public List<string> Removed { get; } = [];
+
+        public Task<bool> TryRegisterAsync(CancellationToken cancellationToken) => Task.FromResult(true);
+
+        public Task ShowAsync(NotificationRequest request, CancellationToken cancellationToken)
+        {
+            Shown.Add(request);
+            return Task.CompletedTask;
+        }
+
+        public Task RemoveAsync(string tag, string group, CancellationToken cancellationToken)
+        {
+            Removed.Add(tag);
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class RecordingReporter : IAppHostErrorReporter
+    {
+        public List<string> Operations { get; } = [];
+
+        public void Report(string operation, Exception exception) => Operations.Add(operation);
     }
 }
