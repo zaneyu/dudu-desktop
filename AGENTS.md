@@ -623,7 +623,14 @@ authoritative for future changes.
   `presentation-held-remove`, `presentation-held-mark-toasted` (throttled
   once per kind/exception-type/Sqlite error code, see
   `PresentationCoordinator.ReportHeldFailureOnce`),
-  `audio-cue-playback`, `startup-chrome-attach`, `partial-startup-*` /
+  `audio-cue-playback`, `hotkey-saved-gesture` (the saved custom shortcut
+  could not be registered at startup; the default is used and the Appearance
+  page explains the fallback), `tray-label` (refreshing the pause/resume menu
+  label), `fullscreen-pause-observe` (ending a "pause until fullscreen ends"),
+  `pause-persist` (saving the pause state to Preferences),
+  `notification-reminder-action`, `reminder-toast-dismiss`,
+  `reminder-toast-discard-held` (a reminder toast's Done/Snooze and their
+  best-effort cleanup), `startup-chrome-attach`, `partial-startup-*` /
   `partial-runtime-*` / `runtime-*-shutdown` cleanup ops, `shutdown-host`,
   `shutdown-overlay`, `shutdown-tray`. All best-effort/fail-closed behavior
   is unchanged — logging only, report-and-(re)throw where the original
