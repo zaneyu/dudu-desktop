@@ -222,8 +222,37 @@ public sealed class StartupSettingsService
         catch (Exception exception)
         {
             _needsReconciliation = true;
-            _reconciliationError = "aiyo startup registration needs another try";
+            _reconciliationError = ReconciliationMessageFor(exception);
             throw new InvalidOperationException(_reconciliationError, exception);
         }
+    }
+
+    public const string RetryStartupMessage = "aiyo startup registration needs another try";
+
+    public const string StartupDisabledInWindowsMessage =
+        "dudu's startup is switched off in windows. turn it on in Settings › Apps › Startup";
+
+    public const string StartupDisabledByPolicyMessage =
+        "startup apps are turned off by a policy on this pc";
+
+    /// <summary>
+    /// A packaged startup task she switched off in Windows (Task Manager or
+    /// Settings › Apps › Startup) can only be switched back on there -- the
+    /// app's own request is silently refused every time, so "needs another
+    /// try" used to show forever. Point her at the switch instead.
+    /// </summary>
+    internal static string ReconciliationMessageFor(Exception exception)
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is StartupRegistrationBlockedException blocked)
+            {
+                return blocked.Reason == StartupRegistrationBlockReason.DisabledByUser
+                    ? StartupDisabledInWindowsMessage
+                    : StartupDisabledByPolicyMessage;
+            }
+        }
+
+        return RetryStartupMessage;
     }
 }
