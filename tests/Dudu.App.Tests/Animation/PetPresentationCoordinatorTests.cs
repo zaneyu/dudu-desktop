@@ -13,6 +13,15 @@ public sealed class PetPresentationCoordinatorTests
     [InlineData("greeting", AudioCueEvent.Greeting)]
     [InlineData("welcome-back", AudioCueEvent.Greeting)]
     [InlineData("celebrate", AudioCueEvent.Celebration)]
+    [InlineData("note-arrival", AudioCueEvent.RemoteNote)]
+    [InlineData("comfort-hug", AudioCueEvent.ManualInteraction)]
+    [InlineData("petted", AudioCueEvent.Petted)]
+    [InlineData("drink", AudioCueEvent.Drink)]
+    [InlineData("eat", AudioCueEvent.Eat)]
+    [InlineData("tantrum", AudioCueEvent.Tantrum)]
+    [InlineData("drag", AudioCueEvent.Drag)]
+    [InlineData("sticker-001", AudioCueEvent.Sticker)]
+    [InlineData("sticker-020", AudioCueEvent.Sticker)]
     public void Presentation_audio_mapping_uses_the_expected_cue(string animationKey, AudioCueEvent expected)
     {
         var presentation = new PetPresentation(
@@ -25,16 +34,136 @@ public sealed class PetPresentationCoordinatorTests
         Assert.Equal(expected, AudioCueSelection.ForPresentation(presentation));
     }
 
-    [Fact]
-    public void Presentation_audio_mapping_ignores_unknown_animation()
+    [Theory]
+    [InlineData("idle")]
+    [InlineData("focus")]
+    [InlineData("sticker-")]
+    [InlineData("sticker-abc")]
+    public void Presentation_audio_mapping_ignores_ambient_loops_and_unknown_keys(string animationKey)
     {
-        var presentation = new PetPresentation(PetState.Ambient, "idle", null, null, false);
+        var presentation = new PetPresentation(PetState.Ambient, animationKey, null, null, false);
 
         Assert.Null(AudioCueSelection.ForPresentation(presentation));
     }
 
+    [Theory]
+    [InlineData(PetState.Ambient, "greeting", AudioCueEvent.Greeting, AudioCuePriority.Interactive)]
+    [InlineData(PetState.Comfort, "comfort-hug", AudioCueEvent.ManualInteraction, AudioCuePriority.Interactive)]
+    [InlineData(PetState.Idle, "drink", AudioCueEvent.Drink, AudioCuePriority.Interactive)]
+    [InlineData(PetState.Idle, "drag", AudioCueEvent.Drag, AudioCuePriority.Interactive)]
+    [InlineData(PetState.RemoteNote, "note-arrival", AudioCueEvent.RemoteNote, AudioCuePriority.Background)]
+    [InlineData(PetState.WelcomeBack, "welcome-back", AudioCueEvent.Greeting, AudioCuePriority.Background)]
+    [InlineData(PetState.Reminder, "reminder", AudioCueEvent.Reminder, AudioCuePriority.Background)]
+    public void User_actions_get_interactive_priority_and_arrivals_stay_background(
+        PetState state,
+        string animationKey,
+        AudioCueEvent cue,
+        AudioCuePriority expected)
+    {
+        var presentation = new PetPresentation(state, animationKey, null, null, false);
+
+        Assert.Equal(expected, AudioCueSelection.PriorityFor(presentation, cue));
+    }
+
     [Fact]
-    public async Task One_shot_plays_audio_after_visual_and_before_ambient_restore()
+    public void Settling_events_are_silent_and_requests_are_not()
+    {
+        Assert.True(AudioCueSelection.IsSettlingEvent(new PetEvent.Dismissed("note-1")));
+        Assert.True(AudioCueSelection.IsSettlingEvent(new PetEvent.AmbientDismissed("greeting")));
+        Assert.True(AudioCueSelection.IsSettlingEvent(new PetEvent.WelcomeBackDismissed()));
+        Assert.True(AudioCueSelection.IsSettlingEvent(new PetEvent.ComfortDismissed()));
+        Assert.True(AudioCueSelection.IsSettlingEvent(new PetEvent.PresentationAcknowledged()));
+        Assert.True(AudioCueSelection.IsSettlingEvent(new PetEvent.PauseRequested()));
+        Assert.True(AudioCueSelection.IsSettlingEvent(new PetEvent.ResumeRequested()));
+        Assert.False(AudioCueSelection.IsSettlingEvent(new PetEvent.AmbientRequested("greeting")));
+        Assert.False(AudioCueSelection.IsSettlingEvent(new PetEvent.ComfortRequested()));
+    }
+
+    [Fact]
+    public async Task One_shot_audio_starts_with_the_visual_before_it_completes()
+    {
+        // Regression: the cue used to start only after the visual finished,
+        // so it trailed its animation by the whole clip.
+        var pet = PetStateMachine.CreateIdle();
+        var visual = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var audioStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var invocation = 0;
+        var coordinator = new PetPresentationCoordinator(
+            pet,
+            (_, _, _) => ++invocation == 1 ? visual.Task : Task.CompletedTask,
+            playAudioAsync: (_, _) =>
+            {
+                audioStarted.TrySetResult();
+                return Task.CompletedTask;
+            });
+
+        var present = coordinator.PresentOneShotAsync(
+            new PetEvent.AmbientRequested("greeting"),
+            "greeting",
+            TestContext.Current.CancellationToken);
+
+        await audioStarted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        Assert.False(present.IsCompleted);
+        visual.SetResult();
+        await present;
+    }
+
+    [Fact]
+    public async Task One_shot_audio_still_plays_when_the_visual_outlasts_the_maximum_duration()
+    {
+        // Regression: a looping or long clip (drag, eat) hit the 3 s bound
+        // and its cue was skipped outright.
+        var pet = PetStateMachine.CreateIdle();
+        var cues = new List<AudioCueEvent?>();
+        var invocation = 0;
+        var coordinator = new PetPresentationCoordinator(
+            pet,
+            (_, _, token) => ++invocation == 1
+                ? Task.Delay(Timeout.Infinite, token)
+                : Task.CompletedTask,
+            delayAsync: (_, _) => Task.CompletedTask,
+            maximumDuration: TimeSpan.FromMilliseconds(1),
+            playAudioAsync: (presentation, _) =>
+            {
+                cues.Add(AudioCueSelection.ForPresentation(presentation));
+                return Task.CompletedTask;
+            });
+
+        await coordinator.PresentOneShotAsync(
+            new PetEvent.AmbientRequested("greeting"),
+            "greeting",
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal([AudioCueEvent.Greeting], cues);
+    }
+
+    [Fact]
+    public async Task One_shot_skips_audio_when_the_visual_fails_immediately()
+    {
+        var pet = PetStateMachine.CreateIdle();
+        var audioCalls = 0;
+        var invocation = 0;
+        var coordinator = new PetPresentationCoordinator(
+            pet,
+            (_, _, _) => ++invocation == 1
+                ? Task.FromException(new InvalidOperationException("visual"))
+                : Task.CompletedTask,
+            playAudioAsync: (_, _) =>
+            {
+                audioCalls++;
+                return Task.CompletedTask;
+            });
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => coordinator.PresentOneShotAsync(
+            new PetEvent.AmbientRequested("greeting"),
+            "greeting",
+            TestContext.Current.CancellationToken));
+
+        Assert.Equal(0, audioCalls);
+    }
+
+    [Fact]
+    public async Task One_shot_starts_audio_with_the_visual_and_before_ambient_restore()
     {
         var pet = PetStateMachine.CreateIdle();
         var order = new List<string>();

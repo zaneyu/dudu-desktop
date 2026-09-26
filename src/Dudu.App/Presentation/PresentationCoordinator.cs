@@ -73,6 +73,16 @@ public sealed class PresentationCoordinator :
     private readonly HashSet<string> _presentingIds = new(StringComparer.Ordinal);
     private readonly HashSet<string> _toastedWhileHeldIds = new(StringComparer.Ordinal);
 
+    /// <summary>When each in-flight/failed item's cue was started: the audio
+    /// now starts with the visual, so a requeued retry of an attempt whose
+    /// playback then failed must not chirp again (every 30 s for a clip that
+    /// keeps failing). Removed when the item succeeds; an entry for an item
+    /// that is dropped instead simply ages out after
+    /// <see cref="AudioRetrySilence"/>, so a later item reusing the key is
+    /// never silenced for good.</summary>
+    private readonly Dictionary<string, DateTimeOffset> _audioStartedUtc = new(StringComparer.Ordinal);
+    private static readonly TimeSpan AudioRetrySilence = TimeSpan.FromMinutes(10);
+
     /// <summary>Keys discarded (<see cref="DiscardHeldAsync"/> /
     /// <see cref="DiscardHeldByKindAsync"/>) while still present in
     /// <see cref="_presentingIds"/> -- i.e. a presentation for that exact key
@@ -855,9 +865,17 @@ public sealed class PresentationCoordinator :
                     BubbleBody = item.Body,
                 };
             }
-            succeeded &= await ObserveAsync(
+            var playback = ObserveAsync(
                 () => PlayWithTimeoutAsync(presentation, cancellationToken),
                 "presentation-playback");
+            // Started with the visual (the call above has already handed the
+            // presentation to the animation engine), not after it: the cue
+            // used to trail its animation by the clip's whole length, up to
+            // the 5 s playback bound. Fire-and-forget: it runs outside the
+            // pet gate's critical work and never changes `succeeded`;
+            // ObserveAudioAsync observes and reports its failures.
+            StartPresentationAudio(item, playback, cancellationToken);
+            succeeded &= await playback;
         }
         finally
         {
@@ -888,17 +906,12 @@ public sealed class PresentationCoordinator :
             _petGate.Release();
         }
 
-        if (succeeded && _playAudioAsync is not null
-            && AudioCueSelection.ForNotification(item) is { } audioCue)
+        if (succeeded)
         {
-            // Fire-and-forget: this runs on the 30 s tick, after the pet
-            // gate above is already released, so nothing below depends on
-            // the cue's outcome (succeeded was fixed by the earlier
-            // presentation-playback observe and is not touched by audio).
-            // Awaiting it here would make ShowNotificationAsync below wait
-            // up to the cue's own bound for no reason. ObserveAudioAsync
-            // still observes and reports the cue's exceptions on its own.
-            _ = ObserveAudioAsync(() => _playAudioAsync(audioCue, cancellationToken));
+            lock (_gate)
+            {
+                _audioStartedUtc.Remove(item.Key);
+            }
         }
 
         bool alreadyToasted;
@@ -987,6 +1000,38 @@ public sealed class PresentationCoordinator :
         return succeeded;
     }
 
+    /// <summary>
+    /// Starts <paramref name="item"/>'s cue alongside its visual. Skipped when
+    /// the visual has already failed synchronously, and at most once per item
+    /// key across requeued retries (see <see cref="_audioStartedUtc"/>).
+    /// </summary>
+    private void StartPresentationAudio(
+        DurableNotification item,
+        Task<bool> playback,
+        CancellationToken cancellationToken)
+    {
+        if (_playAudioAsync is null
+            || AudioCueSelection.ForNotification(item) is not { } cue
+            || (playback.IsCompletedSuccessfully && !playback.Result))
+        {
+            return;
+        }
+
+        lock (_gate)
+        {
+            var now = _utcNow();
+            if (_audioStartedUtc.TryGetValue(item.Key, out var startedUtc)
+                && now - startedUtc < AudioRetrySilence)
+            {
+                return;
+            }
+
+            _audioStartedUtc[item.Key] = now;
+        }
+
+        _ = ObserveAudioAsync(() => _playAudioAsync(cue, cancellationToken));
+    }
+
     private async Task ObserveAudioAsync(Func<Task> operation)
     {
         try
@@ -998,7 +1043,7 @@ public sealed class PresentationCoordinator :
         }
         catch (Exception exception)
         {
-            ReportFailure("presentation-tick", exception);
+            ReportFailure("audio-cue-playback", exception);
         }
     }
 

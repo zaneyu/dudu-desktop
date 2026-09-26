@@ -25,6 +25,45 @@ public sealed class AudioManifestLoaderTests
     }
 
     [Fact]
+    public async Task Loaded_cues_carry_the_validated_wave_bytes_and_their_peak_level()
+    {
+        await using var fixture = await AudioManifestFixture.CreateAsync(
+            ["bubu-dudu-atata", "tata-lala", "dudu-lalala", "dudu-atatata", "dudu-yapapa"]);
+
+        var catalog = await AudioManifestLoader.LoadAsync(
+            fixture.ManifestPath,
+            TestContext.Current.CancellationToken);
+
+        var cue = catalog.Resolve("tata-lala").Cues[0];
+        var onDisk = await File.ReadAllBytesAsync(
+            Path.Combine(Path.GetDirectoryName(fixture.ManifestPath)!, cue.FilePath),
+            TestContext.Current.CancellationToken);
+        Assert.Equal(onDisk, cue.WaveData.ToArray());
+        // The fixture's samples are all zero: loading still succeeds (the
+        // startup diagnostics line reports it), but the cue is flagged.
+        Assert.Equal(0, cue.PeakLevel);
+        Assert.False(cue.IsAudible);
+    }
+
+    [Fact(Skip = "Known asset defect, not a code defect: atata-01, lalala-01 and tata-lala-01 are "
+        + "all-zero samples and atatata-01 / yapapa-01 peak at -42 / -59 dBFS. Unskip once the "
+        + "private-dudu WAVs are regenerated from their loud sources (manifest SHA/duration updated).")]
+    public async Task Shipped_private_cues_are_audible()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "PRODUCT.md")))
+            directory = directory.Parent;
+        Assert.NotNull(directory);
+
+        var catalog = await AudioManifestLoader.LoadAsync(
+            Path.Combine(directory.FullName, "src", "Dudu.App", "Assets", "Audio", "private-dudu", "manifest.json"),
+            TestContext.Current.CancellationToken);
+
+        Assert.All(catalog.Packs.SelectMany(pack => pack.Cues), cue =>
+            Assert.True(cue.IsAudible, $"{cue.FilePath} peak {cue.PeakLevel:0.0000}"));
+    }
+
+    [Fact]
     public async Task Rejects_malformed_manifests_without_leaking_urls_or_media_bytes()
     {
         var cases = new (string Name, Func<AudioManifestFixture, Task> Mutate)[]

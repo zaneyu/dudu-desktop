@@ -38,21 +38,27 @@ public static class AudioManifestLoader
         }
 
         var errors = AudioManifestContract.Validate(manifest).ToList();
+        var waves = new Dictionary<AudioCueManifest, byte[]>(ReferenceEqualityComparer.Instance);
         if (manifest is not null && errors.Count == 0)
-            await ValidateCueFilesAsync(fullManifestPath, manifest, errors, cancellationToken);
+            await ValidateCueFilesAsync(fullManifestPath, manifest, errors, waves, cancellationToken);
 
         if (errors.Count > 0)
             throw new AudioManifestException("Audio manifest validation failed: " + string.Join("; ", errors));
 
         return new AudioCatalog(manifest!.Packs.Select(pack => new AudioSoundPack(
             pack.PackId,
-            pack.Cues.Select(cue => new AudioCue(cue.FilePath, cue.DurationMs, cue.Sha256)).ToArray())).ToArray());
+            pack.Cues.Select(cue => new AudioCue(cue.FilePath, cue.DurationMs, cue.Sha256)
+            {
+                WaveData = waves[cue],
+                PeakLevel = WavPcm.PeakLevel(waves[cue]),
+            }).ToArray())).ToArray());
     }
 
     private static async Task ValidateCueFilesAsync(
         string manifestPath,
         AudioManifest manifest,
         ICollection<string> errors,
+        IDictionary<AudioCueManifest, byte[]> waves,
         CancellationToken cancellationToken)
     {
         var root = Path.GetDirectoryName(manifestPath)!;
@@ -112,6 +118,8 @@ public static class AudioManifestLoader
                     var actualHash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
                     if (!string.Equals(actualHash, cue.Sha256, StringComparison.Ordinal))
                         errors.Add($"cue '{cue.CueId}' hash mismatch.");
+                    else
+                        waves[cue] = bytes;
                 }
                 catch (IOException)
                 {
