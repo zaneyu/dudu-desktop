@@ -97,4 +97,119 @@ public sealed class PetWanderPathTests
         Assert.True(early < 100, $"early step {early} should be slower than linear");
         Assert.True(middle > 100, $"middle step {middle} should be faster than linear");
     }
+
+    [Fact]
+    public async Task Glide_walks_step_by_step_to_the_target_and_saves_the_placement()
+    {
+        var glide = new GlideRecorder();
+
+        var completed = await glide.RunAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(completed);
+        Assert.Equal(GlideRecorder.Plan.Start, glide.Steps[0].From);
+        Assert.Equal(GlideRecorder.Plan.Target, glide.Steps[^1].To);
+        for (var index = 1; index < glide.Steps.Count; index++)
+        {
+            Assert.Equal(glide.Steps[index - 1].To, glide.Steps[index].From);
+        }
+
+        Assert.Equal(1, glide.Commits);
+        Assert.Empty(glide.Failures);
+    }
+
+    [Fact]
+    public async Task Glide_stops_where_it_is_when_something_else_moves_the_pet()
+    {
+        var glide = new GlideRecorder { StepsAllowed = 2 };
+
+        var completed = await glide.RunAsync(TestContext.Current.CancellationToken);
+
+        Assert.False(completed);
+        Assert.Equal(3, glide.Steps.Count);
+        Assert.Equal(1, glide.Commits);
+        Assert.Empty(glide.Failures);
+    }
+
+    [Fact]
+    public async Task Glide_failure_is_reported_and_the_placement_is_still_saved()
+    {
+        var glide = new GlideRecorder { StepFailure = new InvalidOperationException("move") };
+
+        var completed = await glide.RunAsync(TestContext.Current.CancellationToken);
+
+        Assert.False(completed);
+        Assert.IsType<InvalidOperationException>(Assert.Single(glide.Failures));
+        Assert.Equal(1, glide.Commits);
+    }
+
+    [Fact]
+    public async Task Cancelled_glide_still_saves_the_placement()
+    {
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        var glide = new GlideRecorder { OnStep = cancellation.Cancel };
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => glide.RunAsync(cancellation.Token));
+
+        Assert.Equal(1, glide.Commits);
+        Assert.Empty(glide.Failures);
+    }
+
+    [Fact]
+    public async Task Glide_save_failure_goes_to_the_commit_reporter_only()
+    {
+        var glide = new GlideRecorder { CommitFailure = new InvalidOperationException("save") };
+
+        var completed = await glide.RunAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(completed);
+        Assert.Empty(glide.Failures);
+        Assert.IsType<InvalidOperationException>(Assert.Single(glide.CommitFailures));
+    }
+
+    private sealed class GlideRecorder
+    {
+        public static readonly OverlayWanderPlan Plan = new(
+            new PixelRect(800, 600, 384, 384),
+            new PixelRect(950, 600, 384, 384));
+
+        public List<(PixelRect From, PixelRect To)> Steps { get; } = [];
+
+        public List<Exception> Failures { get; } = [];
+
+        public List<Exception> CommitFailures { get; } = [];
+
+        public int Commits { get; private set; }
+
+        public int StepsAllowed { get; init; } = int.MaxValue;
+
+        public Exception? StepFailure { get; init; }
+
+        public Exception? CommitFailure { get; init; }
+
+        public Action? OnStep { get; init; }
+
+        public Task<bool> RunAsync(CancellationToken cancellationToken) =>
+            PetWanderPath.GlideAsync(
+                Plan,
+                // Long enough that even ~16 ms Windows timer steps give the
+                // interruption test its three steps before the walk ends.
+                TimeSpan.FromMilliseconds(250),
+                TimeSpan.FromMilliseconds(5),
+                (from, to, _) =>
+                {
+                    Steps.Add((from, to));
+                    OnStep?.Invoke();
+                    if (StepFailure is not null) throw StepFailure;
+                    return Task.FromResult(Steps.Count <= StepsAllowed);
+                },
+                () =>
+                {
+                    Commits++;
+                    return CommitFailure is null ? Task.CompletedTask : Task.FromException(CommitFailure);
+                },
+                Failures.Add,
+                CommitFailures.Add,
+                (delay, token) => Task.Delay(delay, token),
+                cancellationToken);
+    }
 }

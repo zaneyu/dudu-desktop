@@ -356,73 +356,37 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     /// walk stops where it is. Wherever Dudu ends up is persisted like a drag.
     /// Returns true only when the whole walk completed.
     /// </summary>
-    public async Task<bool> GlideAsync(
+    public Task<bool> GlideAsync(
         OverlayWanderPlan plan,
         TimeSpan duration,
         CancellationToken cancellationToken = default)
     {
-        if (duration <= TimeSpan.Zero)
-        {
-            throw new ArgumentOutOfRangeException(nameof(duration));
-        }
-
-        var stopwatch = Stopwatch.StartNew();
-        var expected = plan.Start;
         IReadOnlyList<MonitorInfo>? monitors = null;
-        try
-        {
-            while (true)
+        return PetWanderPath.GlideAsync(
+            plan,
+            duration,
+            WanderStepInterval,
+            (current, next, token) => InvokeOnOwnerAsync(() =>
             {
-                var progress = Math.Min(1d, stopwatch.Elapsed.TotalMilliseconds / duration.TotalMilliseconds);
-                var next = PetWanderPath.At(plan, progress);
-                var current = expected;
-                var moved = await InvokeOnOwnerAsync(() =>
-                {
-                    if (_dragging || !_desiredVisible || _windowBounds != current)
-                    {
-                        return false;
-                    }
-
-                    monitors ??= EnumerateMonitors();
-                    ApplyWindowState(next, _placement.Scale);
-                    _placement = MonitorPlacementService.Capture(
-                        next,
-                        _placement.Scale,
-                        _nominalSize,
-                        monitors);
-                    _placementDirty = true;
-                    return true;
-                }, cancellationToken);
-                if (!moved)
+                if (_dragging || !_desiredVisible || _windowBounds != current)
                 {
                     return false;
                 }
 
-                expected = next;
-                if (progress >= 1d)
-                {
-                    return true;
-                }
-
-                await Task.Delay(WanderStepInterval, cancellationToken);
-            }
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            ReportFailure("pet-wander", exception);
-            return false;
-        }
-        finally
-        {
-            try
-            {
-                await InvokeOnOwnerAsync(CommitWanderPlacement, CancellationToken.None);
-            }
-            catch (Exception exception)
-            {
-                ReportDiagnostic(exception);
-            }
-        }
+                monitors ??= EnumerateMonitors();
+                ApplyWindowState(next, _placement.Scale);
+                _placement = MonitorPlacementService.Capture(
+                    next,
+                    _placement.Scale,
+                    _nominalSize,
+                    monitors);
+                _placementDirty = true;
+                return true;
+            }, token),
+            () => InvokeOnOwnerAsync(CommitWanderPlacement, CancellationToken.None),
+            exception => ReportFailure("pet-wander", exception),
+            ReportDiagnostic,
+            cancellationToken: cancellationToken);
     }
 
     private void CommitWanderPlacement()

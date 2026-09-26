@@ -65,4 +65,77 @@ internal static class PetWanderPath
             MidpointRounding.AwayFromZero);
         return plan.Start with { X = plan.Start.X + offset };
     }
+
+    /// <summary>
+    /// Steps the window along <paramref name="plan"/> over
+    /// <paramref name="duration"/>. <paramref name="tryStepAsync"/> moves the
+    /// window from the position it should be at to the next one and returns
+    /// false when something else moved or hid it, which ends the walk where it
+    /// is. <paramref name="commitAsync"/> always runs afterwards so wherever
+    /// the pet stopped is saved. Returns true only when the whole walk completed.
+    /// </summary>
+    /// <remarks>
+    /// Lives here rather than on <see cref="OverlayWindowHost"/> because that
+    /// class is <c>unsafe</c> and C# cannot await in an unsafe context.
+    /// </remarks>
+    internal static async Task<bool> GlideAsync(
+        OverlayWanderPlan plan,
+        TimeSpan duration,
+        TimeSpan stepInterval,
+        Func<PixelRect, PixelRect, CancellationToken, Task<bool>> tryStepAsync,
+        Func<Task> commitAsync,
+        Action<Exception> reportFailure,
+        Action<Exception> reportCommitFailure,
+        Func<TimeSpan, CancellationToken, Task>? delayAsync = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(tryStepAsync);
+        ArgumentNullException.ThrowIfNull(commitAsync);
+        ArgumentNullException.ThrowIfNull(reportFailure);
+        ArgumentNullException.ThrowIfNull(reportCommitFailure);
+        if (duration <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(duration));
+        }
+
+        delayAsync ??= Task.Delay;
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var expected = plan.Start;
+        try
+        {
+            while (true)
+            {
+                var progress = Math.Min(1d, stopwatch.Elapsed.TotalMilliseconds / duration.TotalMilliseconds);
+                var next = At(plan, progress);
+                if (!await tryStepAsync(expected, next, cancellationToken).ConfigureAwait(false))
+                {
+                    return false;
+                }
+
+                expected = next;
+                if (progress >= 1d)
+                {
+                    return true;
+                }
+
+                await delayAsync(stepInterval, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            reportFailure(exception);
+            return false;
+        }
+        finally
+        {
+            try
+            {
+                await commitAsync().ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                reportCommitFailure(exception);
+            }
+        }
+    }
 }
