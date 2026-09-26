@@ -188,6 +188,7 @@ public sealed partial class App : Application
             throw new InvalidOperationException("Settings context is not ready.");
         }
 
+        var reopening = _settingsWindow is not null;
         if (_settingsWindow is null)
         {
             var view = new SettingsWindow(_settingsContext);
@@ -219,7 +220,39 @@ public sealed partial class App : Application
             };
         }
 
+        if (reopening)
+        {
+            // Activate() alone does not un-minimize a WinUI 3 window, so "open settings"
+            // from the tray or the pet did nothing visible while it sat minimized. The
+            // page on screen also kept whatever it loaded on its last visit (no Loaded
+            // fires for an already-shown page), so ask it for fresh data.
+            RestoreIfMinimized(_settingsWindow);
+            (_settingsWindow.Content as SettingsWindow)?.RefreshCurrentPage();
+        }
+
         _settingsWindow.Activate();
+    }
+
+    private static void RestoreIfMinimized(Window window)
+    {
+        try
+        {
+            if (window.AppWindow?.Presenter is Microsoft.UI.Windowing.OverlappedPresenter
+                {
+                    State: Microsoft.UI.Windowing.OverlappedPresenterState.Minimized,
+                } presenter)
+            {
+                presenter.Restore();
+            }
+        }
+        catch (Exception exception)
+        {
+            // Best effort: Activate() below still runs, as it did before this existed.
+            Trace.TraceWarning(
+                "Dudu settings restore failed: {0} 0x{1:X8}",
+                exception.GetType().Name,
+                exception.HResult);
+        }
     }
 
     private Task NavigateSettingsDestinationAsync(

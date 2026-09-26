@@ -159,6 +159,41 @@ public sealed partial class SettingsWindow : UserControl
         _tasksFocusPage?.ViewModel.DetachFocusExpiry();
     }
 
+    /// <summary>Called by App when an already-open settings window is shown again
+    /// (tray, pet, toast). Cached pages only refresh on Loaded, which does not fire for
+    /// the page already on screen, so it kept showing whatever it loaded on its last
+    /// visit -- a reminder that has since fired, a note that has since arrived. Re-runs
+    /// the same view-model refresh its Loaded handler does. Appearance is left alone
+    /// (its refresh would overwrite unsaved edits, and nothing else changes it) and
+    /// Privacy has no stored data to reload.</summary>
+    public async void RefreshCurrentPage()
+    {
+        if (!_featurePagesInitialized) return;
+        Func<Task>? refresh = ContentFrame.Content switch
+        {
+            HomePage { IsLoaded: true } page => () => page.ViewModel.RefreshAsync(),
+            RemindersPage { IsLoaded: true } page => () => page.ViewModel.RefreshAsync(),
+            TasksFocusPage { IsLoaded: true } page => () => page.ViewModel.RefreshAsync(),
+            LoveNotesPage { IsLoaded: true } page => () => page.ViewModel.RefreshAsync(),
+            ConnectionPage { IsLoaded: true } page => () => page.ViewModel.RefreshAsync(),
+            _ => null,
+        };
+        if (refresh is null) return;
+
+        try
+        {
+            await refresh();
+        }
+        catch (Exception exception)
+        {
+            // async void: never let a refresh failure escape to the dispatcher.
+            global::System.Diagnostics.Trace.TraceWarning(
+                "Dudu settings reopen refresh failed: {0} 0x{1:X8}",
+                exception.GetType().Name,
+                exception.HResult);
+        }
+    }
+
     /// <summary>Called by App from the hosting Window's Closed event, the one close signal
     /// WinUI 3 raises reliably (Unloaded is not guaranteed for a closed window's content).</summary>
     public void OnHostWindowClosed() => _tasksFocusPage?.ViewModel.DetachFocusExpiry();

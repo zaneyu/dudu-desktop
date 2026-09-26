@@ -2,6 +2,7 @@ using System.ComponentModel;
 using Dudu.App.ViewModels;
 using Dudu.Core.Models;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 
 namespace Dudu.App.Pages;
@@ -136,7 +137,7 @@ public sealed partial class RemindersPage : Page
             }
         }
 
-        RemindersLocalTimeValidation.Text = error ?? string.Empty;
+        SetValidationText(error ?? string.Empty);
         RemindersLocalTimeValidation.Visibility = error is null ? Visibility.Collapsed : Visibility.Visible;
         SaveReminderButton.IsEnabled = error is null;
     }
@@ -174,7 +175,7 @@ public sealed partial class RemindersPage : Page
             ThursdayBox.IsChecked = ViewModel.SelectedWeekdays.Contains(DayOfWeek.Thursday);
             FridayBox.IsChecked = ViewModel.SelectedWeekdays.Contains(DayOfWeek.Friday);
             SaturdayBox.IsChecked = ViewModel.SelectedWeekdays.Contains(DayOfWeek.Saturday);
-            RemindersLocalTimeValidation.Text = string.Empty;
+            SetValidationText(string.Empty);
             RemindersLocalTimeValidation.Visibility = Visibility.Collapsed;
             SaveReminderButton.IsEnabled = true;
         }
@@ -182,5 +183,13 @@ public sealed partial class RemindersPage : Page
         {
             _syncingEditor = false;
         }
+    }
+
+    // A fixed AutomationProperties.Name ("local time validation") overrides the
+    // TextBlock's text for screen readers, so the actual problem was never read out.
+    private void SetValidationText(string text)
+    {
+        RemindersLocalTimeValidation.Text = text;
+        AutomationProperties.SetName(RemindersLocalTimeValidation, text.Length == 0 ? "local time validation" : text);
     }
 }

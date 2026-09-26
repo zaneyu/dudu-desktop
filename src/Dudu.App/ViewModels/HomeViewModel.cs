@@ -197,27 +197,8 @@ public sealed class HomeViewModel : FeatureViewModelBase
     /// <summary>Plain-language focus line, worded like the Tasks and Focus page. The
     /// old copy lower-cased the raw enum ("focus is endedearly with 0 min left") and
     /// always spoke in minutes ("focus is running with 90 min left").</summary>
-    public static string DescribeFocus(FocusSnapshot? focus) => focus switch
-    {
-        null => "no focus running",
-        { Status: FocusStatus.Running } => $"focus is running with {FormatFocusRemaining(focus.Remaining)} left",
-        { Status: FocusStatus.Paused } => $"focus is paused with {FormatFocusRemaining(focus.Remaining)} left",
-        { Status: FocusStatus.Completed } => "last focus session completed le",
-        _ => "last focus session ended early",
-    };
-
-    /// <summary>Rounds up to whole minutes (never "0 min" while seconds remain) and
-    /// switches to hours past an hour, matching the Tasks and Focus page.</summary>
-    private static string FormatFocusRemaining(TimeSpan remaining)
-    {
-        var totalMinutes = remaining <= TimeSpan.Zero
-            ? 0
-            : (int)Math.Min(int.MaxValue, Math.Ceiling(remaining.TotalMinutes));
-        if (totalMinutes < 60) return $"{totalMinutes} min";
-        var hours = totalMinutes / 60;
-        var minutes = totalMinutes % 60;
-        return minutes == 0 ? $"{hours} hr" : $"{hours} hr {minutes} min";
-    }
+    public static string DescribeFocus(FocusSnapshot? focus) =>
+        FocusDisplay.Describe(focus, focus?.Remaining ?? TimeSpan.Zero);
 
     public string PetStateText => IsPaused
         ? "dudu is paused"

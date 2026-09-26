@@ -5,7 +5,7 @@
     xmlns:models="using:Dudu.Core.Models"
     xmlns:viewmodels="using:Dudu.App.ViewModels"
     Background="{ThemeResource WindowSurfaceBrush}">
-    <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
         <StackPanel MaxWidth="880" Margin="32" Spacing="24">
             <StackPanel Spacing="8">
                 <TextBlock Text="reminders" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="RemindersPageTitle" AutomationProperties.Name="reminders" />
@@ -38,8 +38,8 @@
                 </StackPanel>
                 <Border Padding="16" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource WarningBrush}" Visibility="{x:Bind ViewModel.IsConfirmingDeleteReminder, Mode=OneWay}" AutomationProperties.AutomationId="RemindersDeleteConfirmationPanel" AutomationProperties.Name="delete reminder confirmation panel">
                     <StackPanel Spacing="8">
-                        <TextBlock Text="{x:Bind ViewModel.DeleteReminderPrompt, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Assertive" AutomationProperties.AutomationId="RemindersDeleteConfirmationMessage" AutomationProperties.Name="delete reminder confirmation message" />
-                        <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Text="{x:Bind ViewModel.DeleteReminderPrompt, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Assertive" AutomationProperties.AutomationId="RemindersDeleteConfirmationMessage" AutomationProperties.Name="{x:Bind ViewModel.DeleteReminderPrompt, Mode=OneWay}" />
+                        <StackPanel Spacing="8">
                             <Button Content="confirm delete" Command="{x:Bind ViewModel.DeleteReminderCommand}" CommandParameter="{x:Bind ViewModel.PendingDeleteReminder, Mode=OneWay}" AutomationProperties.AutomationId="RemindersDeleteConfirm" AutomationProperties.Name="confirm delete reminder" />
                             <Button Content="cancel" Command="{x:Bind ViewModel.CancelDeleteReminderCommand}" AutomationProperties.AutomationId="RemindersDeleteCancel" AutomationProperties.Name="cancel delete reminder" />
                         </StackPanel>
@@ -103,14 +103,22 @@
             </StackPanel>
 
             <StackPanel Spacing="4" AutomationProperties.LiveSetting="Polite">
-                <StackPanel Orientation="Horizontal" Spacing="6" Visibility="{x:Bind ViewModel.HasStatus, Mode=OneWay}">
-                    <FontIcon Glyph="&#xE73E;" Foreground="{ThemeResource SuccessBrush}" AutomationProperties.AccessibilityView="Raw" />
-                    <TextBlock Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" Foreground="{ThemeResource SuccessBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="RemindersStatusMessage" AutomationProperties.Name="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" />
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" Spacing="6" Visibility="{x:Bind ViewModel.HasError, Mode=OneWay}">
-                    <FontIcon Glyph="&#xEA39;" Foreground="{ThemeResource ErrorBrush}" AutomationProperties.AccessibilityView="Raw" />
-                    <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" Foreground="{ThemeResource ErrorBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="RemindersErrorMessage" AutomationProperties.Name="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" />
-                </StackPanel>
+                <Grid ColumnSpacing="6" Visibility="{x:Bind ViewModel.HasStatus, Mode=OneWay}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon Glyph="&#xE73E;" Foreground="{ThemeResource SuccessBrush}" AutomationProperties.AccessibilityView="Raw" VerticalAlignment="Top" Margin="0,3,0,0" />
+                    <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" Foreground="{ThemeResource SuccessBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="RemindersStatusMessage" AutomationProperties.Name="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" />
+                </Grid>
+                <Grid ColumnSpacing="6" Visibility="{x:Bind ViewModel.HasError, Mode=OneWay}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon Glyph="&#xEA39;" Foreground="{ThemeResource ErrorBrush}" AutomationProperties.AccessibilityView="Raw" VerticalAlignment="Top" Margin="0,3,0,0" />
+                    <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" Foreground="{ThemeResource ErrorBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="RemindersErrorMessage" AutomationProperties.Name="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" />
+                </Grid>
             </StackPanel>
         </StackPanel>
     </ScrollViewer>

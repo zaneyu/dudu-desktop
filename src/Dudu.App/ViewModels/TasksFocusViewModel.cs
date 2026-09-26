@@ -128,14 +128,7 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
         }
     }
 
-    public string ActiveFocusText => ActiveFocus switch
-    {
-        null => "no focus running",
-        { Status: FocusStatus.Running } => $"focus is running with {FormatRemaining(ActiveFocusRemaining)} left",
-        { Status: FocusStatus.Paused } => $"focus is paused with {FormatRemaining(ActiveFocusRemaining)} left",
-        { Status: FocusStatus.Completed } => "last focus session completed le",
-        _ => "last focus session ended early",
-    };
+    public string ActiveFocusText => FocusDisplay.Describe(ActiveFocus, ActiveFocusRemaining);
 
     /// <summary>Called by the page's timer so the running countdown ticks down
     /// instead of freezing at whatever it showed when the page loaded.</summary>
@@ -444,19 +437,6 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
 
     private static string? Normalize(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
-    /// <summary>Rounds up to whole minutes (so a session never reads "0 min"
-    /// while seconds remain) and switches to hours past an hour.</summary>
-    private static string FormatRemaining(TimeSpan remaining)
-    {
-        var totalMinutes = remaining <= TimeSpan.Zero
-            ? 0
-            : (int)Math.Min(int.MaxValue, Math.Ceiling(remaining.TotalMinutes));
-        if (totalMinutes < 60) return $"{totalMinutes} min";
-        var hours = totalMinutes / 60;
-        var minutes = totalMinutes % 60;
-        return minutes == 0 ? $"{hours} hr" : $"{hours} hr {minutes} min";
-    }
-
     /// <summary>Projects a raw FocusSession into display-ready text: the enum
     /// name and UTC timestamp are framework/storage details, not something a
     /// non-technical user should read in the history list.</summary>
@@ -476,3 +456,32 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
 /// <summary>Display-ready projection of a FocusSession for the focus-history
 /// list, so the page never binds directly to the raw enum/UTC fields.</summary>
 public sealed record FocusHistoryEntry(string StatusText, string StartedText);
+
+/// <summary>The one focus status line shared by the Tasks and Focus page and Home, so
+/// both surfaces word a session the same way (and neither prints the raw enum).</summary>
+public static class FocusDisplay
+{
+    /// <param name="remaining">Time left to show; the Tasks page passes a live,
+    /// ticking value, Home the snapshot's own <see cref="FocusSnapshot.Remaining"/>.</param>
+    public static string Describe(FocusSnapshot? focus, TimeSpan remaining) => focus switch
+    {
+        null => "no focus running",
+        { Status: FocusStatus.Running } => $"focus is running with {FormatRemaining(remaining)} left",
+        { Status: FocusStatus.Paused } => $"focus is paused with {FormatRemaining(remaining)} left",
+        { Status: FocusStatus.Completed } => "last focus session completed le",
+        _ => "last focus session ended early",
+    };
+
+    /// <summary>Rounds up to whole minutes (so a session never reads "0 min"
+    /// while seconds remain) and switches to hours past an hour.</summary>
+    public static string FormatRemaining(TimeSpan remaining)
+    {
+        var totalMinutes = remaining <= TimeSpan.Zero
+            ? 0
+            : (int)Math.Min(int.MaxValue, Math.Ceiling(remaining.TotalMinutes));
+        if (totalMinutes < 60) return $"{totalMinutes} min";
+        var hours = totalMinutes / 60;
+        var minutes = totalMinutes % 60;
+        return minutes == 0 ? $"{hours} hr" : $"{hours} hr {minutes} min";
+    }
+}

@@ -103,20 +103,20 @@ public sealed partial class TasksFocusPage : Page
         if (string.IsNullOrWhiteSpace(box.Text))
         {
             SetDueFromView(null);
-            TaskDueValidation.Text = string.Empty;
+            SetDueValidationText(string.Empty);
             TaskDueValidation.Visibility = Visibility.Collapsed;
             SaveTaskButton.IsEnabled = true;
         }
         else if (DateTimeOffset.TryParse(box.Text, out var due))
         {
             SetDueFromView(due);
-            TaskDueValidation.Text = string.Empty;
+            SetDueValidationText(string.Empty);
             TaskDueValidation.Visibility = Visibility.Collapsed;
             SaveTaskButton.IsEnabled = true;
         }
         else
         {
-            TaskDueValidation.Text = $"use a date like {DateHintExample()}";
+            SetDueValidationText($"use a date like {DateHintExample()}");
             TaskDueValidation.Visibility = Visibility.Visible;
             SaveTaskButton.IsEnabled = false;
         }
@@ -163,7 +163,7 @@ public sealed partial class TasksFocusPage : Page
         try
         {
             TaskDueBox.Text = ViewModel.DueUtc?.ToLocalTime().ToString("g") ?? string.Empty;
-            TaskDueValidation.Text = string.Empty;
+            SetDueValidationText(string.Empty);
             TaskDueValidation.Visibility = Visibility.Collapsed;
             SaveTaskButton.IsEnabled = true;
         }
@@ -171,6 +171,14 @@ public sealed partial class TasksFocusPage : Page
         {
             _syncingTaskEditor = false;
         }
+    }
+
+    // A fixed AutomationProperties.Name ("due date validation") overrides the
+    // TextBlock's text for screen readers, so the date hint was never read out.
+    private void SetDueValidationText(string text)
+    {
+        TaskDueValidation.Text = text;
+        AutomationProperties.SetName(TaskDueValidation, text.Length == 0 ? "due date validation" : text);
     }
 
     private void RefreshFocusText()
