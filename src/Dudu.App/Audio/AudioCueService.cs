@@ -192,7 +192,12 @@ public sealed class AudioCueService : IAsyncDisposable
     private bool IsSuppressed()
     {
         var preferences = _preferences();
+        // Volume at 0 is muted, not "play silently": a silent cue still
+        // spun up a media player, started the global/pack cooldowns (so the
+        // first cue after she turned the volume back up was swallowed), and
+        // advanced the variant rotation for nothing.
         return !preferences.SoundsEnabled
+            || Preferences.ClampSoundVolume(preferences.SoundVolume) <= 0
             || _isQuietHours()
             || _isPaused()
             || _isFullscreen()

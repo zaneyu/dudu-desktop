@@ -4,7 +4,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:viewModels="using:Dudu.App.ViewModels"
     Background="{ThemeResource WindowSurfaceBrush}">
-    <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
         <StackPanel MaxWidth="880" Margin="32" Spacing="24">
             <StackPanel Spacing="8">
                 <TextBlock Text="privacy and data" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="PrivacyPageTitle" AutomationProperties.Name="privacy and data" />
@@ -39,11 +39,11 @@
                     <Button Content="delete local data" Command="{x:Bind ViewModel.RequestDeleteLocalDataCommand}" AutomationProperties.AutomationId="PrivacyDeleteLocal" AutomationProperties.Name="delete local data" />
                     <Button Content="delete remote device data" Command="{x:Bind ViewModel.RequestDeleteRemoteDataCommand}" AutomationProperties.AutomationId="PrivacyDeleteRemote" AutomationProperties.Name="delete remote device data" />
                 </StackPanel>
-                <Border Padding="16" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource WarningBrush}" AutomationProperties.AutomationId="PrivacyConfirmationPanel" AutomationProperties.Name="confirmation panel">
+                <Border Padding="16" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource WarningBrush}" Visibility="{x:Bind ViewModel.HasPendingConfirmation, Mode=OneWay}" AutomationProperties.AutomationId="PrivacyConfirmationPanel" AutomationProperties.Name="confirmation panel">
                     <StackPanel Spacing="8">
                         <TextBlock Text="{x:Bind ViewModel.ConfirmationTitle, Mode=OneWay}" FontWeight="SemiBold" />
-                        <TextBlock Text="{x:Bind ViewModel.ConfirmationMessage, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Assertive" AutomationProperties.AutomationId="PrivacyConfirmationMessage" AutomationProperties.Name="confirmation message" />
-                        <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Text="{x:Bind ViewModel.ConfirmationMessage, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Assertive" AutomationProperties.AutomationId="PrivacyConfirmationMessage" AutomationProperties.Name="{x:Bind ViewModel.ConfirmationMessage, Mode=OneWay}" />
+                        <StackPanel Spacing="8">
                             <Button Content="{x:Bind ViewModel.ConfirmationButtonText, Mode=OneWay}" Command="{x:Bind ViewModel.ConfirmCommand}" AutomationProperties.AutomationId="PrivacyConfirm" AutomationProperties.Name="confirm action" />
                             <Button Content="cancel" Command="{x:Bind ViewModel.CancelConfirmationCommand}" AutomationProperties.AutomationId="PrivacyCancel" AutomationProperties.Name="cancel" />
                         </StackPanel>
@@ -52,14 +52,26 @@
             </StackPanel>
 
             <StackPanel Spacing="4" AutomationProperties.LiveSetting="Polite">
-                <StackPanel Orientation="Horizontal" Spacing="6" Visibility="{x:Bind ViewModel.HasStatus, Mode=OneWay}">
-                    <FontIcon Glyph="&#xE73E;" Foreground="{ThemeResource SuccessBrush}" AutomationProperties.AccessibilityView="Raw" />
-                    <TextBlock Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" Foreground="{ThemeResource SuccessBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="PrivacyStatusMessage" AutomationProperties.Name="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" />
+                <StackPanel Orientation="Horizontal" Spacing="8" Visibility="{x:Bind ViewModel.IsBusy, Mode=OneWay}">
+                    <ProgressRing IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" Width="16" Height="16" AutomationProperties.AccessibilityView="Raw" />
+                    <TextBlock Text="working on it" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="PrivacyBusy" AutomationProperties.Name="working on it" />
                 </StackPanel>
-                <StackPanel Orientation="Horizontal" Spacing="6" Visibility="{x:Bind ViewModel.HasError, Mode=OneWay}">
-                    <FontIcon Glyph="&#xEA39;" Foreground="{ThemeResource ErrorBrush}" AutomationProperties.AccessibilityView="Raw" />
-                    <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" Foreground="{ThemeResource ErrorBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="PrivacyErrorMessage" AutomationProperties.Name="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" />
-                </StackPanel>
+                <Grid ColumnSpacing="6" Visibility="{x:Bind ViewModel.HasStatus, Mode=OneWay}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon Glyph="&#xE73E;" Foreground="{ThemeResource SuccessBrush}" AutomationProperties.AccessibilityView="Raw" VerticalAlignment="Top" Margin="0,3,0,0" />
+                    <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" Foreground="{ThemeResource SuccessBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="PrivacyStatusMessage" AutomationProperties.Name="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" />
+                </Grid>
+                <Grid ColumnSpacing="6" Visibility="{x:Bind ViewModel.HasError, Mode=OneWay}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon Glyph="&#xEA39;" Foreground="{ThemeResource ErrorBrush}" AutomationProperties.AccessibilityView="Raw" VerticalAlignment="Top" Margin="0,3,0,0" />
+                    <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" Foreground="{ThemeResource ErrorBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="PrivacyErrorMessage" AutomationProperties.Name="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" />
+                </Grid>
             </StackPanel>
         </StackPanel>
     </ScrollViewer>

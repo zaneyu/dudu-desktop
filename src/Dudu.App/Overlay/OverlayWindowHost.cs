@@ -25,6 +25,8 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private const uint WmMouseActivate = 0x0021;
     private const uint WmDpiChanged = 0x02E0;
     private const uint WmDisplayChange = 0x007E;
+    private const uint WmSettingChange = 0x001A;
+    private const nint SpiSetWorkArea = 0x002F;
     private const uint WmLButtonDown = 0x0201;
     private const uint WmLButtonUp = 0x0202;
     private const uint WmLButtonDoubleClick = 0x0203;
@@ -242,6 +244,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         else
         {
             _ = PInvoke.ShowWindow(_window, SHOW_WINDOW_CMD.SW_HIDE);
+            SettleDraggedWindow();
             CommitPlacementIfDirty();
             ReleasePointerCapture();
         }
@@ -592,12 +595,51 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             _currentDpi = dpi;
         }
 
-        ApplyWindowState(bounds, _placement.Scale);
-        _placement = MonitorPlacementService.Capture(
+        // The suggested RECT is used only for *where* the pet now sits. Its
+        // size is the old size rescaled by the DPI ratio, but PetPlacement's
+        // scale is DPI-independent (see MonitorPlacementService): applying
+        // that size made the pet visibly grow or shrink on a monitor hop and
+        // then snap back on the next wheel/display-change resolve, and the
+        // rescaled rectangle could also hang off the new monitor's edge.
+        var settled = MonitorPlacementService.Settle(
             bounds,
             _placement.Scale,
             _nominalSize,
             EnumerateMonitors());
+        ApplyWindowState(settled.WindowBounds, settled.Scale);
+        _placement = MonitorPlacementService.ToPlacement(settled);
+    }
+
+    /// <summary>
+    /// Moves a just-dropped pet fully back into the work area of the monitor
+    /// it was released on. ContinueDrag lets the window follow the cursor
+    /// freely (so it can cross between monitors smoothly), which also let it
+    /// be dropped half off-screen or over the taskbar; the persisted
+    /// placement was already clamped, so the pet only jumped into view on
+    /// the next restart. Best-effort: a failure here must never skip the
+    /// placement commit and capture release that follow it.
+    /// </summary>
+    private void SettleDraggedWindow()
+    {
+        if (!_dragging || !_placementDirty)
+        {
+            return;
+        }
+
+        try
+        {
+            var settled = MonitorPlacementService.Settle(
+                _windowBounds,
+                _placement.Scale,
+                _nominalSize,
+                EnumerateMonitors());
+            ApplyWindowState(settled.WindowBounds, settled.Scale);
+            _placement = MonitorPlacementService.ToPlacement(settled);
+        }
+        catch (Exception exception)
+        {
+            ReportDiagnostic(exception);
+        }
     }
 
     private void ApplyWindowState(PixelRect bounds, double scale)
@@ -794,6 +836,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                     && Math.Abs(releasedPoint.Y - _dragOriginY) <= 4;
                 _suppressPetBodyToggleOnNextUp = false;
                 _petBodyPointerArmed = false;
+                SettleDraggedWindow();
                 CommitPlacementIfDirty();
                 ReleasePointerCapture();
                 if (_actionSurfacePointerArmed)
@@ -847,8 +890,18 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             case WmDisplayChange:
                 ResolveAndMove();
                 break;
+            case WmSettingChange when IsWorkAreaChange((nint)wParam.Value):
+                // The taskbar moved, grew, or toggled auto-hide. Without a
+                // re-resolve the pet kept its old rectangle and could sit
+                // under (or on top of) the taskbar until the next restart.
+                if (!_dragging)
+                {
+                    ResolveAndMove();
+                }
+                break;
             case WmCancelMode:
             case WmCaptureChanged:
+                SettleDraggedWindow();
                 CommitPlacementIfDirty();
                 ReleasePointerCapture();
                 _actionSurfacePointerArmed = false;
@@ -944,6 +997,11 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             EnumerateMonitors());
         _placementDirty = true;
     }
+
+    /// <summary>True for the WM_SETTINGCHANGE broadcast Windows sends when
+    /// a monitor's work area changes (SPI_SETWORKAREA).</summary>
+    internal static bool IsWorkAreaChange(nint settingChangeWParam) =>
+        settingChangeWParam == SpiSetWorkArea;
 
     internal static PixelRect CalculateDraggedBounds(
         PixelRect startBounds,

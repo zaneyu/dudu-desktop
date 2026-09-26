@@ -202,7 +202,7 @@ public sealed class OverlayActionSurfaceController : IDisposable
 
     public async Task<bool> HandlePointerAsync(PixelPoint point, CancellationToken cancellationToken = default)
     {
-        if (IsCloseAt(point)) CancelBreathing();
+        if (IsCloseAt(point) || (IsBreathing && IsComfortActionAt(point))) CancelBreathing();
         await _dispatchGate.WaitAsync(cancellationToken);
         try
         {
@@ -259,7 +259,8 @@ public sealed class OverlayActionSurfaceController : IDisposable
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(action);
-        if (action.ComfortAction == Dudu.App.Overlay.ComfortAction.Close) CancelBreathing();
+        if (action.ComfortAction == Dudu.App.Overlay.ComfortAction.Close
+            || (action.ComfortAction is not null && IsBreathing)) CancelBreathing();
         await _dispatchGate.WaitAsync(cancellationToken);
         try
         {
@@ -292,11 +293,30 @@ public sealed class OverlayActionSurfaceController : IDisposable
         }
     }
 
+    public bool IsBreathing
+    {
+        get
+        {
+            OverlayCommandRouter? router;
+            lock (_gate) router = _router;
+            return router?.IsBreathing == true;
+        }
+    }
+
     public void CancelBreathing()
     {
         OverlayCommandRouter? router;
         lock (_gate) router = _router;
         router?.CancelBreathing();
+    }
+
+    private bool IsComfortActionAt(PixelPoint point)
+    {
+        lock (_gate)
+        {
+            return _kind == OverlayActionSurfaceKind.Comfort
+                && _comfortArrangement?.Actions.Any(item => item.HitRegion.Contains(point.X, point.Y)) == true;
+        }
     }
 
     private bool IsCloseAt(PixelPoint point)

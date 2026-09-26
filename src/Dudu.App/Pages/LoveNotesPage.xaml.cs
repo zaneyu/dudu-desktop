@@ -2,6 +2,7 @@ using System.ComponentModel;
 using Dudu.App.ViewModels;
 using Dudu.Core.Models;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 
 namespace Dudu.App.Pages;
@@ -49,15 +50,24 @@ public sealed partial class LoveNotesPage : Page
     private void RefreshCountText()
     {
         var dailyLimit = ViewModel.DailyLocalNoteLimit;
-        LoveNotesDailyLimit.Text = $"up to {dailyLimit} local note{(dailyLimit == 1 ? string.Empty : "s")} a day";
+        SetText(LoveNotesDailyLimit, $"up to {dailyLimit} local note{(dailyLimit == 1 ? string.Empty : "s")} a day");
 
         var unopened = ViewModel.UnopenedRemoteNoteCount;
-        LoveNotesPendingCount.Text = unopened switch
+        SetText(LoveNotesPendingCount, unopened switch
         {
             0 => "no notes yet ah",
             1 => "1 unopened remote note",
             _ => $"{unopened} unopened remote notes",
-        };
+        });
+    }
+
+    // The XAML's fixed AutomationProperties.Name ("pending notes count") overrides a
+    // TextBlock's text for screen readers, so Narrator never read the count itself.
+    // Keep the accessible name in step with what is on screen.
+    private static void SetText(TextBlock block, string text)
+    {
+        block.Text = text;
+        AutomationProperties.SetName(block, text);
     }
 
     private void LocalNoteList_SelectionChanged(object sender, SelectionChangedEventArgs args)

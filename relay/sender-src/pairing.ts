@@ -6,7 +6,12 @@
  */
 import { disconnectSender as apiDisconnectSender, getSenderDevice, redeemPairing } from "./api.js";
 import { importRecipientPublicKey } from "./crypto.js";
-import { base64UrlToBytes, sha256Hex } from "../src/security/tokens.js";
+import {
+  base64UrlToBytes,
+  PAIRING_CODE_CHARSET_PATTERN,
+  PAIRING_CODE_LENGTH,
+  sha256Hex,
+} from "../src/security/tokens.js";
 
 const STORAGE_KEY = "dudu.sender.device.v1";
 
@@ -48,6 +53,27 @@ function storeDevice(device: StoredDevice): void {
 
 export function clearStoredDevice(): void {
   localStorage.removeItem(STORAGE_KEY);
+}
+
+/**
+ * Cleans pairing-code input as the partner types or pastes it: drops spaces, dashes, and any
+ * other separator a copied code might carry ("7K9M-2R4X", " 7k9m 2r4x "), upper-cases it, and
+ * maps the Crockford look-alikes the code alphabet deliberately omits (O -> 0, I/L -> 1), so a
+ * misread character still redeems instead of burning one of the relay's rate-limited attempts.
+ * The result is capped at the code length. Pure, so the page can apply it on every keystroke.
+ */
+export function normalizePairingCodeTyping(raw: string): string {
+  return raw
+    .toUpperCase()
+    .replace(/[^0-9A-Z]/g, "")
+    .replace(/O/g, "0")
+    .replace(/[IL]/g, "1")
+    .slice(0, PAIRING_CODE_LENGTH);
+}
+
+/** Whether `code` (already normalized) is a well-formed pairing code worth sending at all. */
+export function isWellFormedPairingCode(code: string): boolean {
+  return PAIRING_CODE_CHARSET_PATTERN.test(code);
 }
 
 export async function pairWithCode(code: string): Promise<StoredDevice> {

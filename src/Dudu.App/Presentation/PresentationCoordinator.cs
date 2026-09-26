@@ -836,9 +836,14 @@ public sealed class PresentationCoordinator :
             var petEvent = ToPetEvent(item);
             presentation = _pet.Handle(petEvent);
             latched = true;
+            // Every reminder names itself in the bubble. This used to apply
+            // only to reminders carrying a body or animation (the evening
+            // check-in and bedtime routines), so an ordinary reminder --
+            // "stretch", "call mum" -- played its pose with no title at all
+            // and, whenever the Windows toast was unavailable, she could not
+            // tell which reminder had fired.
             if (item.Kind == PresentationItemKind.Reminder
-                && presentation.State == PetState.Reminder
-                && (item.Body is not null || item.AnimationKey is not null))
+                && presentation.State == PetState.Reminder)
             {
                 presentation = presentation with
                 {

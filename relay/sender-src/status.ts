@@ -13,6 +13,15 @@ const POLL_INTERVAL_MS = 30_000;
 export interface RecentStatus {
   messageId: string;
   status: MessageState | "unavailable";
+  /** When this browser sent it (ISO UTC). Optional: older entries predate it. */
+  sentUtc?: string;
+  /** The scheduled delivery time, when the note was sent for later (ISO UTC). */
+  deliverAfterUtc?: string | null;
+}
+
+export interface RecentStatusDetails {
+  sentUtc?: string;
+  deliverAfterUtc?: string | null;
 }
 
 function isRecentStatus(value: unknown): value is RecentStatus {
@@ -20,7 +29,14 @@ function isRecentStatus(value: unknown): value is RecentStatus {
     return false;
   }
   const candidate = value as Record<string, unknown>;
-  return typeof candidate.messageId === "string" && typeof candidate.status === "string";
+  return (
+    typeof candidate.messageId === "string" &&
+    typeof candidate.status === "string" &&
+    (candidate.sentUtc === undefined || typeof candidate.sentUtc === "string") &&
+    (candidate.deliverAfterUtc === undefined ||
+      candidate.deliverAfterUtc === null ||
+      typeof candidate.deliverAfterUtc === "string")
+  );
 }
 
 function loadRecent(): RecentStatus[] {
@@ -40,9 +56,9 @@ function saveRecent(entries: RecentStatus[]): void {
   sessionStorage.setItem(STORAGE_KEY, JSON.stringify(entries.slice(0, MAX_RECENT)));
 }
 
-export function addRecentStatus(messageId: string, status: MessageState): void {
+export function addRecentStatus(messageId: string, status: MessageState, details: RecentStatusDetails = {}): void {
   const entries = loadRecent().filter((entry) => entry.messageId !== messageId);
-  entries.unshift({ messageId, status });
+  entries.unshift({ messageId, status, ...details });
   saveRecent(entries);
 }
 
@@ -65,6 +81,38 @@ function statusLine(status: RecentStatus["status"]): string {
   }
 }
 
+function formatLocalTime(isoUtc: string, withDate: boolean): string | null {
+  const date = new Date(isoUtc);
+  if (!Number.isFinite(date.getTime())) {
+    return null;
+  }
+  return date.toLocaleString(
+    undefined,
+    withDate
+      ? { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }
+      : { hour: "numeric", minute: "2-digit" },
+  );
+}
+
+/**
+ * One line per recent note. Without the time it was sent (and, for a scheduled note, when it is
+ * due) every row read as an identical "on the way", so the sender could not tell which note a
+ * status belonged to. Entries without timing details keep the bare status line.
+ */
+export function describeRecentStatus(entry: RecentStatus): string {
+  const status = statusLine(entry.status);
+  const parts: string[] = [];
+  const sent = entry.sentUtc ? formatLocalTime(entry.sentUtc, false) : null;
+  if (sent) {
+    parts.push(`sent ${sent}`);
+  }
+  const due = entry.deliverAfterUtc ? formatLocalTime(entry.deliverAfterUtc, true) : null;
+  if (due) {
+    parts.push(`for ${due}`);
+  }
+  return parts.length > 0 ? `${parts.join(" ")} · ${status}` : status;
+}
+
 /** Renders the recent-status list and polls `GET /v1/messages/:id/status` for anything still
  * queued, every 30s while the tab is visible. */
 export class StatusTracker {
@@ -80,7 +128,7 @@ export class StatusTracker {
     this.listElement.replaceChildren(
       ...entries.map((entry) => {
         const item = document.createElement("li");
-        item.textContent = statusLine(entry.status);
+        item.textContent = describeRecentStatus(entry);
         return item;
       }),
     );
@@ -96,6 +144,12 @@ export class StatusTracker {
       clearInterval(this.timer);
       this.timer = null;
     }
+  }
+
+  /** Polls right away (e.g. when the tab comes back into view) instead of waiting for the next
+   * 30-second tick; still a no-op while the tab is hidden. */
+  refresh(): Promise<void> {
+    return this.timer === null ? Promise.resolve() : this.poll();
   }
 
   private async poll(): Promise<void> {

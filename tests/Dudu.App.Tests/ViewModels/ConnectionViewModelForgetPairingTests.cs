@@ -131,6 +131,35 @@ public sealed class ConnectionViewModelForgetPairingTests
         Assert.Equal(0, discardCalls);
     }
 
+    [Fact]
+    public async Task Forget_pairing_trace_fallback_carries_only_the_exception_type_never_its_message()
+    {
+        // AGENTS.md logging rules: Trace fallbacks carry type + HResult only, never the
+        // exception message or stack (a repository message can echo row data). The envelope
+        // check used to trace the whole exception.
+        var remoteEnvelopes = new FakeRemoteEnvelopeRepository { ThrowOnListPending = true };
+        var context = BuildContext(remoteEnvelopes, discardHeldRemoteNotesAsync: _ => Task.CompletedTask);
+        var vm = new ConnectionViewModel(context);
+        using var writer = new StringWriter();
+        var listener = new global::System.Diagnostics.TextWriterTraceListener(writer);
+        global::System.Diagnostics.Trace.Listeners.Add(listener);
+        try
+        {
+            vm.RequestForgetPairingCommand.Execute(null);
+            await vm.ConfirmCommand.ExecuteAsync(null);
+            listener.Flush();
+        }
+        finally
+        {
+            global::System.Diagnostics.Trace.Listeners.Remove(listener);
+        }
+
+        var traced = writer.ToString();
+        Assert.Contains("Dudu forget-pairing envelope check failed: IOException", traced);
+        Assert.DoesNotContain("injected envelope list failure", traced);
+        Assert.Null(vm.ErrorMessage);
+    }
+
     private static RemoteEnvelope MakeEnvelope(string messageId) => new(
         messageId,
         ciphertext: [1, 2, 3],

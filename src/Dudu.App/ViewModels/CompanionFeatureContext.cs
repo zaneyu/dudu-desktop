@@ -304,6 +304,11 @@ public abstract class FeatureViewModelBase : CommunityToolkit.Mvvm.ComponentMode
         }
         catch (Exception exception)
         {
+            // A success line left over from an earlier action ("backup created",
+            // "code ready") must not stay on screen next to this failure: the page
+            // would show a green tick and a red error at once, and the tick would
+            // read as if it described the action that just failed.
+            StatusMessage = null;
             ErrorMessage = ToUserMessage(exception);
             return false;
         }

@@ -141,17 +141,36 @@ public sealed partial class App : Application
         {
             await startupTask;
             _bootstrap = _startupRunner?.Bootstrap;
+            var notificationActivation = _notificationActivation;
+            var notificationRouter = _settingsContext?.NotificationRouter;
+            // A toast Done/Snooze that launched Dudu is carried out in the
+            // background like it is while running, so it does not also pull
+            // Home up (unless onboarding still has to happen). The router
+            // opens Reminders itself if the action could not be carried out.
+            var answeredInBackground = notificationRouter is not null
+                && NotificationInvocationRouter.ActsInBackground(notificationActivation)
+                && _settingsContext?.Profile?.OnboardingComplete == true;
             if (_settingsContext is not null
+                && !answeredInBackground
                 && CompanionLaunchOptions.Parse(_launchArguments)
                     .ShouldOpenSettings(_settingsContext.Profile))
             {
                 await OpenHome(CancellationToken.None);
             }
 
-            var notificationDestination = NotificationDestination(_notificationActivation);
-            if (notificationDestination is not null)
+            if (notificationActivation is not null)
             {
-                await NavigateSettingsDestinationAsync(notificationDestination, CancellationToken.None);
+                if (notificationRouter is not null)
+                {
+                    // Never throws; reports its own failures.
+                    await notificationRouter.HandleActivationAsync(notificationActivation, CancellationToken.None);
+                }
+                else
+                {
+                    await NavigateSettingsDestinationAsync(
+                        NotificationDestination(notificationActivation)!,
+                        CancellationToken.None);
+                }
             }
         }
         catch (Exception exception)
@@ -188,6 +207,7 @@ public sealed partial class App : Application
             throw new InvalidOperationException("Settings context is not ready.");
         }
 
+        var reopening = _settingsWindow is not null;
         if (_settingsWindow is null)
         {
             var view = new SettingsWindow(_settingsContext);
@@ -219,7 +239,39 @@ public sealed partial class App : Application
             };
         }
 
+        if (reopening)
+        {
+            // Activate() alone does not un-minimize a WinUI 3 window, so "open settings"
+            // from the tray or the pet did nothing visible while it sat minimized. The
+            // page on screen also kept whatever it loaded on its last visit (no Loaded
+            // fires for an already-shown page), so ask it for fresh data.
+            RestoreIfMinimized(_settingsWindow);
+            (_settingsWindow.Content as SettingsWindow)?.RefreshCurrentPage();
+        }
+
         _settingsWindow.Activate();
+    }
+
+    private static void RestoreIfMinimized(Window window)
+    {
+        try
+        {
+            if (window.AppWindow?.Presenter is Microsoft.UI.Windowing.OverlappedPresenter
+                {
+                    State: Microsoft.UI.Windowing.OverlappedPresenterState.Minimized,
+                } presenter)
+            {
+                presenter.Restore();
+            }
+        }
+        catch (Exception exception)
+        {
+            // Best effort: Activate() below still runs, as it did before this existed.
+            Trace.TraceWarning(
+                "Dudu settings restore failed: {0} 0x{1:X8}",
+                exception.GetType().Name,
+                exception.HResult);
+        }
     }
 
     private Task NavigateSettingsDestinationAsync(
@@ -447,14 +499,11 @@ public sealed partial class App : Application
                 (activation.Data as AppNotificationActivatedEventArgs)?.Arguments)
             : null;
 
+    // Every parsed activation has a page; a reminder body click
+    // (open-reminder) used to map to nothing here, so a toast click that
+    // launched Dudu opened Home instead of Reminders.
     private static string? NotificationDestination(NotificationActivation? activation) =>
-        activation?.Action switch
-        {
-            NotificationActivationAction.OpenNote => "notes",
-            NotificationActivationAction.ReminderDone => "reminders",
-            NotificationActivationAction.ReminderSnooze => "reminders",
-            _ => null,
-        };
+        activation?.Destination;
 
     private Task ExitApplicationAsync(CancellationToken cancellationToken) =>
         _uiDispatcher.InvokeAsync(ExitApplicationCore, cancellationToken);

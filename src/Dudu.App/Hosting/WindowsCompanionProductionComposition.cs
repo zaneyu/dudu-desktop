@@ -75,6 +75,21 @@ public sealed record CompanionSettingsContext(
     public IReadOnlyList<string> AvailableOutfitKeys { get; init; } = ["base"];
 
     /// <summary>
+    /// The one reminder Done/Snooze service shared by the toast buttons and
+    /// the Reminders page, so both follow the same rules and the page can
+    /// refresh when a toast answered a reminder while it was open. Null when
+    /// no feature runtime is composed (safe mode).
+    /// </summary>
+    public ReminderToastActions? ReminderActions { get; init; }
+
+    /// <summary>
+    /// Handles a toast click that launched Dudu (cold start) once the runtime
+    /// is composed, exactly like a click while running. Null when toast
+    /// activation is unavailable (safe mode); App then only opens the page.
+    /// </summary>
+    public NotificationInvocationRouter? NotificationRouter { get; init; }
+
+    /// <summary>
     /// True when this context was configured by <c>CreateSafeModeRuntimeAsync</c>:
     /// no tray and no overlay are composed, so the settings window is the only
     /// UI surface. App.xaml.cs uses this to exit when that window closes.
@@ -214,6 +229,13 @@ public static class WindowsCompanionProductionComposition
         // captures this variable and resolves the gateway lazily once the
         // rest of the runtime is ready.
         PresentationCoordinator? presentationGateway = null;
+        // Toast Done/Snooze handling; composed once the feature services
+        // exist (after the overlay), while the toast handler that uses it is
+        // registered earlier, inside initializeOverlay.
+        ReminderToastActions? reminderToastActions = null;
+        // Kept for a toast click that launched Dudu (handled by App once the
+        // runtime is composed); set inside initializeOverlay below.
+        NotificationInvocationRouter? composedNotificationRouter = null;
         IUnsolicitedPresentationGateway ResolveGateway() =>
             presentationGateway
                 ?? throw new InvalidOperationException("The presentation gateway is not ready.");
@@ -457,7 +479,14 @@ public static class WindowsCompanionProductionComposition
                 preferences.Theme,
                 OverlaySurfaceRenderer.IsHighContrastEnabled()));
             presenter = new LayeredFramePresenter();
-            var pause = new PauseStateStore();
+            // The live fullscreen reading lets "pause until fullscreen ends"
+            // actually end once the fullscreen session it covered is over;
+            // without it the pause (and every surface that reads it: Home,
+            // the tray check mark, muted sounds) stayed on until she resumed
+            // by hand. The gateway tracks fullscreen from the event source;
+            // before it is composed there is no fullscreen to have seen.
+            var pause = new PauseStateStore(
+                isFullscreen: () => presentationGateway?.IsFullscreen ?? false);
             var runtimePreferences = new RuntimePreferencesState(preferences);
             var audioManifestPath = ResolveAudioManifestPath(assetsRoot);
             AudioCatalog audioCatalog;
@@ -487,7 +516,19 @@ public static class WindowsCompanionProductionComposition
                     DateTimeOffset.UtcNow,
                     runtimePreferences.Current.QuietHours,
                     TimeZoneInfo.Local),
-                isPaused: () => pause.GetEffective(DateTimeOffset.UtcNow).Mode != PauseMode.None,
+                // Same pause gate the presentations use: "pause until
+                // fullscreen ends" only silences Dudu while fullscreen is on
+                // (and fullscreen already mutes on its own), so sounds are not
+                // muted before fullscreen starts while the pet keeps
+                // presenting, and resume as soon as that pause ends.
+                isPaused: () =>
+                {
+                    var now = DateTimeOffset.UtcNow;
+                    return PausePolicy.IsSuppressed(
+                        pause.GetEffective(now),
+                        now,
+                        presentationGateway?.IsFullscreen ?? false);
+                },
                 isFullscreen: () => presentationGateway?.IsFullscreen ?? false,
                 isSessionLocked: () => presentationGateway?.IsSessionLocked ?? false,
                 isSafeMode: () => safeMode,
@@ -553,10 +594,16 @@ public static class WindowsCompanionProductionComposition
                         new WindowsAppNotificationSink(),
                         errorReporter: host.ErrorReporter);
                     AppNotificationService invokedNotifications = notificationService;
+                    var notificationRouter = CreateNotificationInvocationRouter(
+                        actions,
+                        invokedNotifications,
+                        () => reminderToastActions,
+                        host.ErrorReporter);
+                    composedNotificationRouter = notificationRouter;
                     try
                     {
                         AppNotificationManager.Default.NotificationInvoked += (_, invokedArgs) =>
-                            HandleNotificationInvoked(actions, invokedNotifications, invokedArgs.Arguments);
+                            HandleNotificationInvoked(notificationRouter, invokedArgs.Arguments);
                     }
                     catch (Exception exception)
                     {
@@ -870,6 +917,20 @@ public static class WindowsCompanionProductionComposition
                         throw new NotSupportedException(result.ErrorMessage ?? "Remote-device deletion is unavailable.");
                     }
                 });
+            reminderToastActions = new ReminderToastActions(
+                featureContext.Clock,
+                featureContext.Reminders,
+                featureContext.DismissReminderNotificationAsync,
+                featureContext.DiscardHeldReminderAsync,
+                featureContext.PresentPetAsync,
+                host.ErrorReporter);
+            // The row alone cannot tell an announced occurrence from a pending
+            // one once the engine has advanced it; the engine reports each
+            // announcement so Done/Snooze from the page answer that occurrence
+            // instead of consuming the next one. Subscribed before the host
+            // starts ticking (the runtime is only started after this returns).
+            services.GetRequiredService<Dudu.Core.Reminders.ReminderEngine>().OccurrenceDelivered +=
+                reminderToastActions.RecordAnnounced;
             var overlayRouter = new OverlayCommandRouter(
                 featureContext,
                 (destination, token) => DispatchSettingsDestinationAsync(actions, destination, token));
@@ -893,6 +954,8 @@ public static class WindowsCompanionProductionComposition
                 Features = featureContext,
                 ActionSurface = actionSurface,
                 OverlayCommands = overlayRouter,
+                ReminderActions = reminderToastActions,
+                NotificationRouter = composedNotificationRouter,
                 AvailableOutfitKeys = pack.Manifest.Outfits.Keys
                     .OrderBy(key => key, StringComparer.Ordinal)
                     .ToArray(),
@@ -1231,44 +1294,32 @@ public static class WindowsCompanionProductionComposition
     }
 
     /// <summary>
-    /// Resolves a toast activation to a settings destination and navigates
-    /// there. Executing Done/Snooze directly from the toast is out of scope
-    /// for this milestone; a malformed or unknown activation is ignored
-    /// rather than throwing.
+    /// Builds the toast click handler: a body click opens the matching page,
+    /// and a reminder's Done/Snooze buttons complete or snooze the reminder
+    /// (see <see cref="NotificationInvocationRouter"/>). A malformed or
+    /// unknown activation is ignored rather than throwing.
     /// </summary>
-    private static void HandleNotificationInvoked(
+    internal static NotificationInvocationRouter CreateNotificationInvocationRouter(
         CompanionUiActions actions,
         AppNotificationService notifications,
+        Func<ReminderToastActions?> reminderActions,
+        IAppHostErrorReporter? errorReporter) =>
+        new(
+            (destination, token) => DispatchSettingsDestinationAsync(actions, destination, token),
+            reminderActions,
+            notifications.DismissReminderAsync,
+            errorReporter);
+
+    private static void HandleNotificationInvoked(
+        NotificationInvocationRouter router,
         IEnumerable<KeyValuePair<string, string>>? arguments)
     {
         // Review I2: this used to re-parse invokedArgs.Argument, the raw string, with a
         // parser that split on '&' while the Windows App SDK writes ';' -- so every click
         // resolved to null. invokedArgs.Arguments is the SDK's own parsed map, which needs
-        // no separator convention at all.
-        var activation = NotificationActivation.TryParse(arguments);
-        var destination = activation?.Action switch
-        {
-            NotificationActivationAction.OpenNote => "notes",
-            NotificationActivationAction.ReminderDone => "reminders",
-            NotificationActivationAction.ReminderSnooze => "reminders",
-            _ => null,
-        };
-        if (destination is null)
-        {
-            return;
-        }
-
-        if (activation!.ReminderId is { } reminderId)
-        {
-            // Acting on the toast acknowledges it; drop the Action Center copy.
-            _ = ObserveNativeCallbackAsync(
-                notifications.DismissReminderAsync(reminderId, CancellationToken.None),
-                "notification-dismiss");
-        }
-
-        _ = ObserveNativeCallbackAsync(
-            DispatchSettingsDestinationAsync(actions, destination, CancellationToken.None),
-            "notification-invoked");
+        // no separator convention at all. The router never throws; it reports its own
+        // failures (notification-invoked / reminder-toast-action).
+        _ = router.HandleAsync(arguments, CancellationToken.None);
     }
 
     private static async Task ObserveAnimationAsync(Task playback)

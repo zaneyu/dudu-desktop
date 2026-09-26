@@ -71,7 +71,53 @@ public sealed record HotkeyGesture
             throw new FormatException("A global hotkey requires one or more modifiers and one key.");
         }
 
-        return Create(modifiers, key);
+        var gesture = Create(modifiers, key);
+        if (IsReservedByWindowsOrEveryApp(gesture.Modifiers, gesture.Key))
+        {
+            // RegisterHotKey happily accepts these (nothing else registers
+            // them as *global* hotkeys), so there was no conflict feedback at
+            // all -- and the global registration then swallowed the key
+            // everywhere: Shift+A stopped typing a capital A, Ctrl+C stopped
+            // copying, Alt+F4 stopped closing windows. A conflict (not a
+            // FormatException) so callers that replace format errors with
+            // generic "use modifiers plus one key" copy still show why this
+            // well-formed shortcut was refused.
+            throw new HotkeyConflictException(
+                $"alala {gesture} is used by windows or everyday typing, try one with Ctrl+Alt like Ctrl+Alt+D");
+        }
+
+        return gesture;
+    }
+
+    /// <summary>
+    /// Shortcuts that must never be claimed system-wide: Shift alone only
+    /// changes what a key types, and the listed Ctrl/Alt combinations are
+    /// the universal editing and window-management shortcuts every Windows
+    /// app relies on.
+    /// </summary>
+    internal static bool IsReservedByWindowsOrEveryApp(HotkeyModifiers modifiers, uint key)
+    {
+        if (modifiers == HotkeyModifiers.Shift)
+        {
+            // Shift+letter/digit/space/enter/tab/arrow is plain typing and
+            // selection; only Shift+F-key is left alone.
+            return key is not (>= 0x70 and <= 0x87);
+        }
+
+        if (modifiers == HotkeyModifiers.Ctrl)
+        {
+            // A, C, F, P, S, V, X, Y, Z (select all, copy, find, print,
+            // save, paste, cut, redo, undo) and Esc (Start menu).
+            return key is 0x41 or 0x43 or 0x46 or 0x50 or 0x53 or 0x56 or 0x58 or 0x59 or 0x5A
+                or 0x1B;
+        }
+
+        if (modifiers == HotkeyModifiers.Alt)
+        {
+            return key is 0x73 /* F4 */ or 0x09 /* Tab */ or 0x1B /* Esc */ or 0x20 /* Space */;
+        }
+
+        return false;
     }
 
     public bool IsValid => Modifiers != HotkeyModifiers.None && Key != 0;
@@ -409,8 +455,18 @@ internal sealed unsafe class WindowsGlobalHotkeyNativeApi : IGlobalHotkeyNativeA
         PInvoke.RegisterHotKey(
             new HWND((void*)ownerWindow),
             id,
-            (HOT_KEY_MODIFIERS)(uint)modifiers,
+            (HOT_KEY_MODIFIERS)ToNativeModifiers(modifiers),
             key);
+
+    /// <summary>
+    /// Always adds MOD_NOREPEAT: without it Windows auto-repeats WM_HOTKEY
+    /// while the chord is held, and the show/hide toggle flickered the pet
+    /// on and off for as long as the keys stayed down.
+    /// </summary>
+    internal static uint ToNativeModifiers(HotkeyModifiers modifiers) =>
+        (uint)modifiers | ModNoRepeat;
+
+    private const uint ModNoRepeat = 0x4000;
 
     public bool Unregister(nint ownerWindow, int id) =>
         PInvoke.UnregisterHotKey(new HWND((void*)ownerWindow), id);

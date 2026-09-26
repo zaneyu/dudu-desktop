@@ -2,12 +2,14 @@ using System.ComponentModel;
 using Dudu.App.ViewModels;
 using Dudu.Core.Models;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 
 namespace Dudu.App.Pages;
 
 public sealed partial class RemindersPage : Page
 {
+    private readonly Microsoft.UI.Dispatching.DispatcherQueue _uiQueue;
     private bool _syncingEditor;
 
     public RemindersPage(RemindersViewModel viewModel)
@@ -15,7 +17,9 @@ public sealed partial class RemindersPage : Page
         ViewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         InitializeComponent();
         DataContext = ViewModel;
+        _uiQueue = DispatcherQueue;
         Loaded += Page_Loaded;
+        Unloaded += Page_Unloaded;
     }
 
     public RemindersViewModel ViewModel { get; }
@@ -24,8 +28,27 @@ public sealed partial class RemindersPage : Page
     {
         ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
         ViewModel.PropertyChanged += ViewModel_PropertyChanged;
+        // A toast Done/Snooze (or the reminder tick) changes a row while this
+        // page is open; without this the page kept the stale copy and its next
+        // action on that row could fail with "reminder changed".
+        ViewModel.ReminderActions.ReminderChanged -= ReminderActions_ReminderChanged;
+        ViewModel.ReminderActions.ReminderChanged += ReminderActions_ReminderChanged;
         await ViewModel.RefreshAsync();
         SyncEditorFromViewModel();
+    }
+
+    private void Page_Unloaded(object sender, RoutedEventArgs args) => DetachLiveUpdates();
+
+    /// <summary>Stops following reminder changes (the shared actions service
+    /// outlives this page). The next Loaded re-attaches and refreshes.</summary>
+    public void DetachLiveUpdates() =>
+        ViewModel.ReminderActions.ReminderChanged -= ReminderActions_ReminderChanged;
+
+    private void ReminderActions_ReminderChanged(string reminderId)
+    {
+        // Raised from the reminder tick or a toast click, off the UI thread.
+        // ReloadReminderAsync never throws.
+        _uiQueue.TryEnqueue(async () => await ViewModel.ReloadReminderAsync(reminderId));
     }
 
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs args)
@@ -37,10 +60,7 @@ public sealed partial class RemindersPage : Page
         if (args.PropertyName == nameof(RemindersViewModel.SelectedReminder))
         {
             SyncEditorFromViewModel();
-            if (!Equals(ReminderList.SelectedItem, ViewModel.SelectedReminder))
-            {
-                ReminderList.SelectedItem = ViewModel.SelectedReminder;
-            }
+            SyncListSelectionFromViewModel();
         }
     }
 
@@ -48,7 +68,35 @@ public sealed partial class RemindersPage : Page
     {
         // Editor sync happens in ViewModel_PropertyChanged so programmatic
         // selection clears (save, new reminder) sync the form too.
-        if (sender is ListView list) ViewModel.SelectedReminder = list.SelectedItem as Reminder;
+        if (sender is not ListView list) return;
+
+        // Replacing a row (complete, snooze, save) or reloading the list drops
+        // the ListView's highlight even though the user never deselected
+        // anything. Pushing that null into the view model used to leave the
+        // editor pointing at nothing (so "save" made a duplicate and
+        // "complete" said "select one first"). The view model keeps its own
+        // selection on the fresh row; just restore the highlight from it once
+        // the collection change has settled.
+        if (list.SelectedItem is null && args.RemovedItems.Count > 0
+            && !args.RemovedItems.Any(removed => ViewModel.Reminders.Any(item => ReferenceEquals(item, removed))))
+        {
+            DispatcherQueue.TryEnqueue(SyncListSelectionFromViewModel);
+            return;
+        }
+
+        ViewModel.SelectedReminder = list.SelectedItem as Reminder;
+    }
+
+    private void SyncListSelectionFromViewModel()
+    {
+        var selected = ViewModel.SelectedReminder;
+        var match = selected is null
+            ? null
+            : ViewModel.Reminders.FirstOrDefault(item => item.Id == selected.Id);
+        if (!ReferenceEquals(ReminderList.SelectedItem, match))
+        {
+            ReminderList.SelectedItem = match;
+        }
     }
 
     private void ScheduleBox_SelectionChanged(object sender, SelectionChangedEventArgs args)
@@ -62,6 +110,9 @@ public sealed partial class RemindersPage : Page
             3 => ReminderScheduleKind.Interval,
             _ => ReminderScheduleKind.Once,
         };
+        // An interval reminder ignores the local time, so a half-typed time
+        // must not keep "save reminder" disabled (and vice versa).
+        ValidateLocalTime();
     }
 
     private void QuietHoursBox_SelectionChanged(object sender, SelectionChangedEventArgs args)
@@ -85,28 +136,32 @@ public sealed partial class RemindersPage : Page
 
     private void LocalTimeBox_TextChanged(object sender, TextChangedEventArgs args)
     {
-        if (_syncingEditor || sender is not TextBox box) return;
-        if (string.IsNullOrWhiteSpace(box.Text))
+        if (_syncingEditor) return;
+        ValidateLocalTime();
+    }
+
+    private void ValidateLocalTime()
+    {
+        string? error = null;
+        if (ViewModel.UsesLocalTime)
         {
-            RemindersLocalTimeValidation.Text = "aiyo enter a time or use 09:00";
-            RemindersLocalTimeValidation.Visibility = Visibility.Visible;
-            SaveReminderButton.IsEnabled = false;
-            return;
+            if (string.IsNullOrWhiteSpace(LocalTimeBox.Text))
+            {
+                error = "aiyo enter a time or use 09:00";
+            }
+            else if (TimeOnly.TryParse(LocalTimeBox.Text, out var localTime))
+            {
+                ViewModel.LocalTime = localTime;
+            }
+            else
+            {
+                error = "oh no use a time like 09:00";
+            }
         }
 
-        if (TimeOnly.TryParse(box.Text, out var localTime))
-        {
-            ViewModel.LocalTime = localTime;
-            RemindersLocalTimeValidation.Text = string.Empty;
-            RemindersLocalTimeValidation.Visibility = Visibility.Collapsed;
-            SaveReminderButton.IsEnabled = true;
-        }
-        else
-        {
-            RemindersLocalTimeValidation.Text = "oh no use a time like 09:00";
-            RemindersLocalTimeValidation.Visibility = Visibility.Visible;
-            SaveReminderButton.IsEnabled = false;
-        }
+        SetValidationText(error ?? string.Empty);
+        RemindersLocalTimeValidation.Visibility = error is null ? Visibility.Collapsed : Visibility.Visible;
+        SaveReminderButton.IsEnabled = error is null;
     }
 
     private void WeekdayBox_Changed(object sender, RoutedEventArgs args)
@@ -142,7 +197,7 @@ public sealed partial class RemindersPage : Page
             ThursdayBox.IsChecked = ViewModel.SelectedWeekdays.Contains(DayOfWeek.Thursday);
             FridayBox.IsChecked = ViewModel.SelectedWeekdays.Contains(DayOfWeek.Friday);
             SaturdayBox.IsChecked = ViewModel.SelectedWeekdays.Contains(DayOfWeek.Saturday);
-            RemindersLocalTimeValidation.Text = string.Empty;
+            SetValidationText(string.Empty);
             RemindersLocalTimeValidation.Visibility = Visibility.Collapsed;
             SaveReminderButton.IsEnabled = true;
         }
@@ -150,5 +205,13 @@ public sealed partial class RemindersPage : Page
         {
             _syncingEditor = false;
         }
+    }
+
+    // A fixed AutomationProperties.Name ("local time validation") overrides the
+    // TextBlock's text for screen readers, so the actual problem was never read out.
+    private void SetValidationText(string text)
+    {
+        RemindersLocalTimeValidation.Text = text;
+        AutomationProperties.SetName(RemindersLocalTimeValidation, text.Length == 0 ? "local time validation" : text);
     }
 }

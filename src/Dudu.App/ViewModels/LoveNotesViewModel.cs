@@ -28,6 +28,7 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
         RevealRemoteNoteCommand = new AsyncRelayCommand<RemoteEnvelope>((item, ct) => RevealRemoteNoteAsync(item, ct));
         SaveOpenedNoteCommand = new AsyncRelayCommand<object?>((item, ct) => SaveOpenedNoteAsync(item, ct));
         ShowLocalNoteCommand = new AsyncRelayCommand((CancellationToken ct) => ShowLocalNoteAsync(ct));
+        LocalNotes.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoLocalNotes));
     }
 
     public IAsyncRelayCommand RefreshCommand { get; }
@@ -84,7 +85,21 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
             }
         }
     }
-    public RemoteEnvelope? OpenedRemoteEnvelope { get => _openedRemoteEnvelope; private set => SetProperty(ref _openedRemoteEnvelope, value); }
+    public RemoteEnvelope? OpenedRemoteEnvelope
+    {
+        get => _openedRemoteEnvelope;
+        private set
+        {
+            if (SetProperty(ref _openedRemoteEnvelope, value)) OnPropertyChanged(nameof(CanSaveOpenedNote));
+        }
+    }
+
+    /// <summary>"save opened note" only applies to a revealed incoming note -- not
+    /// to nothing, and not to a jar note shown by "let dudu choose".</summary>
+    public bool CanSaveOpenedNote => OpenedRemoteEnvelope is not null;
+
+    /// <summary>Drives the jar's empty-state copy.</summary>
+    public bool HasNoLocalNotes => LocalNotes.Count == 0;
     public string? OpenedRemoteNoteText { get => _openedRemoteNoteText; private set => SetProperty(ref _openedRemoteNoteText, value); }
     public string DraftText { get => _draftText; set => SetProperty(ref _draftText, value); }
     public bool DraftEnabled { get => _draftEnabled; set => SetProperty(ref _draftEnabled, value); }
@@ -105,14 +120,38 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
             var envelopes = await _context.RemoteEnvelopes.ListPendingAsync(ct);
             await MutateAsync(() =>
             {
+                // Capture before clearing: the list's TwoWay SelectedItem binding
+                // writes null back into SelectedRemoteEnvelope as soon as the
+                // rows it points at are removed.
+                var selectedMessageId = SelectedRemoteEnvelope?.MessageId;
                 LocalNotes.Clear();
                 foreach (var note in notes) LocalNotes.Add(note);
                 PendingRemoteNotes.Clear();
                 foreach (var envelope in envelopes) PendingRemoteNotes.Add(envelope);
-                if (SelectedRemoteEnvelope is not null
-                    && PendingRemoteNotes.All(item => item.MessageId != SelectedRemoteEnvelope.MessageId))
+                // RemoteEnvelope carries byte[] fields, so a reloaded row never
+                // equals the old instance: re-point the selection at the fresh
+                // row (by message id) so the list highlight and the reveal
+                // button keep working after a revisit.
+                SelectedRemoteEnvelope = selectedMessageId is null
+                    ? null
+                    : PendingRemoteNotes.FirstOrDefault(item => item.MessageId == selectedMessageId);
+
+                // A note that was opened here but then saved or removed elsewhere
+                // (the pet, another window) is no longer pending: drop the stale
+                // opened copy instead of letting "save" fail on it.
+                if (OpenedRemoteEnvelope is { } opened)
                 {
-                    SelectedRemoteEnvelope = null;
+                    var fresh = PendingRemoteNotes.FirstOrDefault(item => item.MessageId == opened.MessageId);
+                    if (fresh is null)
+                    {
+                        OpenedRemoteEnvelope = null;
+                        OpenedRemoteNoteText = null;
+                        OnPropertyChanged(nameof(HasOpenedRemoteNote));
+                    }
+                    else
+                    {
+                        OpenedRemoteEnvelope = fresh;
+                    }
                 }
                 OnPropertyChanged(nameof(UnopenedRemoteNoteCount));
                 OnPropertyChanged(nameof(UnopenedRemoteNoteCountText));
@@ -227,7 +266,11 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
             await MutateAsync(() =>
             {
                 Replace(note);
-                PendingRemoteNotes.Remove(envelope);
+                // By message id: after a refresh the list holds new instances
+                // (byte[] fields make record equality reference-based), and
+                // Remove(envelope) silently left the saved note listed.
+                var pending = PendingRemoteNotes.FirstOrDefault(item => item.MessageId == envelope.MessageId);
+                if (pending is not null) PendingRemoteNotes.Remove(pending);
                 if (SelectedRemoteEnvelope?.MessageId == envelope.MessageId) SelectedRemoteEnvelope = null;
             }, cancellationToken);
             OpenedRemoteEnvelope = null;
@@ -242,7 +285,7 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
         RunAsync(async () =>
         {
             var note = await _context.NoteSelector.SelectAsync(true, cancellationToken)
-                ?? throw new InvalidOperationException("cannot add a local note first");
+                ?? throw new InvalidOperationException("add a note to the jar or turn one on first");
             OpenedRemoteEnvelope = null;
             OpenedRemoteNoteText = note.Text;
             OnPropertyChanged(nameof(HasOpenedRemoteNote));
@@ -289,4 +332,15 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
 
         return text[..cutLength].TrimEnd() + "…";
     }
+}
+
+/// <summary>Display helpers for the incoming-notes list, bound from the item
+/// template with x:Bind function bindings.</summary>
+public static class LoveNoteDisplay
+{
+    /// <summary>Every row used to read the identical "encrypted note received", so
+    /// neither sighted nor screen-reader users could tell notes apart. The local
+    /// arrival time distinguishes them without exposing any note content.</summary>
+    public static string DescribeEnvelope(DateTimeOffset receivedUtc) =>
+        $"encrypted note received {receivedUtc.ToLocalTime().ToString("g", global::System.Globalization.CultureInfo.CurrentCulture)}";
 }

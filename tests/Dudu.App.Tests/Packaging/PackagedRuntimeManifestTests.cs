@@ -70,7 +70,8 @@ public sealed class PackagedRuntimeManifestTests
         Assert.Contains("ExtendedActivationKind.AppNotification", app);
         Assert.Contains("AppNotificationActivatedEventArgs", app);
         Assert.Contains("NotificationActivation.TryParse", app);
-        Assert.Contains("NotificationDestination(_notificationActivation)", app);
+        Assert.Contains("var notificationActivation = _notificationActivation;", app);
+        Assert.Contains("NotificationDestination(notificationActivation)", app);
         Assert.Contains("ExtendedActivationKind.StartupTask", app);
     }
 

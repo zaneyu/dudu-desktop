@@ -120,6 +120,10 @@ public sealed class CompanionCompositionTests
         Assert.Equal(PauseMode.UntilTomorrowAtSeven, pause.Current.Mode);
         await router.HandleAsync(TrayCommand.PauseUntilFullscreenEnds, TestContext.Current.CancellationToken);
         Assert.Equal(PauseMode.UntilFullscreenEnds, pause.Current.Mode);
+        // "pause indefinitely or resume" resumes whatever pause is active
+        // (here: until fullscreen ends), and pauses indefinitely otherwise.
+        await router.HandleAsync(TrayCommand.PauseIndefinitelyOrResume, TestContext.Current.CancellationToken);
+        Assert.Equal(PauseMode.None, pause.Current.Mode);
         await router.HandleAsync(TrayCommand.PauseIndefinitelyOrResume, TestContext.Current.CancellationToken);
         Assert.Equal(PauseMode.Indefinite, pause.Current.Mode);
         await router.HandleAsync(TrayCommand.PauseIndefinitelyOrResume, TestContext.Current.CancellationToken);

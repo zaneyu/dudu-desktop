@@ -18,7 +18,8 @@ public sealed record FullscreenWindowSnapshot(
     bool IsCloaked = false,
     bool IsMinimized = false,
     bool IsDuduWindow = false,
-    bool IsMaximized = false);
+    bool IsMaximized = false,
+    bool IsDesktopSurface = false);
 
 public interface IFullscreenNativeApi
 {
@@ -31,6 +32,11 @@ public interface IFullscreenNativeApi
     bool TryGetCloaked(nint hwnd, out bool cloaked);
     bool TryGetExtendedFrameBounds(nint hwnd, out PixelRect bounds);
     bool TryGetMonitorBounds(nint hwnd, out PixelRect monitorBounds, out PixelRect workArea);
+
+    /// <summary>True for the desktop's own surfaces ("Progman", and the
+    /// "WorkerW" that hosts the wallpaper after Show desktop / Win+D). They
+    /// cover the whole monitor but are the desktop, not a fullscreen app.</summary>
+    bool IsDesktopSurface(nint hwnd) => false;
 }
 
 public sealed class FullscreenDetector
@@ -77,6 +83,7 @@ public sealed class FullscreenDetector
             }
 
             var isDudu = _native.IsDuduWindow(foreground);
+            var isDesktopSurface = _native.IsDesktopSurface(foreground);
             Interlocked.Exchange(ref _consecutiveFailures, 0);
             return IsForegroundFullscreen(new FullscreenWindowSnapshot(
                 foreground,
@@ -88,7 +95,8 @@ public sealed class FullscreenDetector
                 isCloaked,
                 isMinimized,
                 isDudu,
-                isMaximized));
+                isMaximized,
+                isDesktopSurface));
         }
         catch
         {
@@ -113,6 +121,11 @@ public sealed class FullscreenDetector
             || snapshot.IsMinimized
             || snapshot.IsDuduWindow
             || snapshot.IsMaximized
+            // Clicking the desktop after Show desktop (Win+D) focuses a
+            // monitor-sized "WorkerW" that is not the shell window; it used
+            // to read as a fullscreen app and hid the pet (and held every
+            // reminder) until she clicked some other window.
+            || snapshot.IsDesktopSurface
             || !snapshot.ExtendedFrameBounds.IsValid
             || !snapshot.MonitorBounds.IsValid)
         {
@@ -121,6 +134,10 @@ public sealed class FullscreenDetector
 
         return WithinTolerance(snapshot.ExtendedFrameBounds, snapshot.MonitorBounds);
     }
+
+    internal static bool IsDesktopSurfaceClassName(string? className) =>
+        string.Equals(className, "WorkerW", StringComparison.Ordinal)
+        || string.Equals(className, "Progman", StringComparison.Ordinal);
 
     private static bool WithinTolerance(PixelRect actual, PixelRect expected)
     {
@@ -144,6 +161,15 @@ internal sealed unsafe class WindowsFullscreenNativeApi : IFullscreenNativeApi
     public bool IsMaximized(nint hwnd) => PInvoke.IsZoomed(ToHwnd(hwnd));
 
     public bool IsDuduWindow(nint hwnd) => OverlayWindowHost.IsDuduWindowHandle(hwnd);
+
+    public bool IsDesktopSurface(nint hwnd)
+    {
+        const int capacity = 64;
+        var buffer = stackalloc char[capacity];
+        var length = PInvoke.GetClassName(ToHwnd(hwnd), new PWSTR(buffer), capacity);
+        return length > 0
+            && FullscreenDetector.IsDesktopSurfaceClassName(new string(buffer, 0, length));
+    }
 
     public bool TryGetCloaked(nint hwnd, out bool cloaked)
     {

@@ -24,6 +24,7 @@ IsIconic
 DwmGetWindowAttribute
 DWMWINDOWATTRIBUTE
 GetFocus
+GetClassName
 TrackMouseEvent
 SetCapture
 GetCapture

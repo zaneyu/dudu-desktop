@@ -5,7 +5,7 @@
     xmlns:models="using:Dudu.Core.Models"
     xmlns:viewmodels="using:Dudu.App.ViewModels"
     Background="{ThemeResource WindowSurfaceBrush}">
-    <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
         <StackPanel MaxWidth="880" Margin="32" Spacing="24">
             <StackPanel Spacing="8">
                 <TextBlock Text="reminders" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="RemindersPageTitle" AutomationProperties.Name="reminders" />
@@ -14,6 +14,7 @@
 
             <StackPanel Spacing="12">
                 <TextBlock Text="your reminders" Style="{StaticResource SectionHeadingStyle}" />
+                <TextBlock Text="no reminders yet. add one below" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" Visibility="{x:Bind ViewModel.HasNoReminders, Mode=OneWay}" />
                 <ListView x:Name="ReminderList" ItemsSource="{x:Bind ViewModel.Reminders, Mode=OneWay}" SelectionChanged="ReminderList_SelectionChanged" MaxHeight="260" AutomationProperties.AutomationId="RemindersList" AutomationProperties.Name="reminders list">
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="models:Reminder">
@@ -23,8 +24,8 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <StackPanel Spacing="2">
-                                    <TextBlock Text="{x:Bind Title}" />
-                                    <TextBlock Text="{x:Bind viewmodels:ReminderScheduleSummary.Describe(Rule)}" Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" />
+                                    <TextBlock Text="{x:Bind Title}" TextWrapping="Wrap" />
+                                    <TextBlock Text="{x:Bind viewmodels:ReminderScheduleSummary.DescribeWithState(Rule, Enabled)}" Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" />
                                 </StackPanel>
                             </Grid>
                         </DataTemplate>
@@ -33,7 +34,17 @@
                 <StackPanel Spacing="8">
                     <Button Content="complete selected" Command="{x:Bind ViewModel.CompleteCommand}" CommandParameter="{x:Bind ViewModel.SelectedReminder, Mode=OneWay}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="RemindersComplete" AutomationProperties.Name="complete selected" />
                     <Button Content="snooze 15 min" Command="{x:Bind ViewModel.SnoozeCommand}" CommandParameter="{x:Bind ViewModel.SelectedReminder, Mode=OneWay}" AutomationProperties.AutomationId="RemindersSnooze" AutomationProperties.Name="snooze 15 min" />
+                    <Button Content="delete selected" Command="{x:Bind ViewModel.RequestDeleteReminderCommand}" CommandParameter="{x:Bind ViewModel.SelectedReminder, Mode=OneWay}" AutomationProperties.AutomationId="RemindersDelete" AutomationProperties.Name="delete selected reminder" />
                 </StackPanel>
+                <Border Padding="16" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource WarningBrush}" Visibility="{x:Bind ViewModel.IsConfirmingDeleteReminder, Mode=OneWay}" AutomationProperties.AutomationId="RemindersDeleteConfirmationPanel" AutomationProperties.Name="delete reminder confirmation panel">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="{x:Bind ViewModel.DeleteReminderPrompt, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Assertive" AutomationProperties.AutomationId="RemindersDeleteConfirmationMessage" AutomationProperties.Name="{x:Bind ViewModel.DeleteReminderPrompt, Mode=OneWay}" />
+                        <StackPanel Spacing="8">
+                            <Button Content="confirm delete" Command="{x:Bind ViewModel.DeleteReminderCommand}" CommandParameter="{x:Bind ViewModel.PendingDeleteReminder, Mode=OneWay}" AutomationProperties.AutomationId="RemindersDeleteConfirm" AutomationProperties.Name="confirm delete reminder" />
+                            <Button Content="cancel" Command="{x:Bind ViewModel.CancelDeleteReminderCommand}" AutomationProperties.AutomationId="RemindersDeleteCancel" AutomationProperties.Name="cancel delete reminder" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
             </StackPanel>
 
             <StackPanel Spacing="12">
@@ -46,7 +57,7 @@
                     <ComboBoxItem Content="selected weekdays" />
                     <ComboBoxItem Content="every interval" />
                 </ComboBox>
-                <TextBox x:Name="LocalTimeBox" Header="local time" TextChanged="LocalTimeBox_TextChanged" PlaceholderText="09:00" AutomationProperties.AutomationId="RemindersLocalTime" AutomationProperties.Name="local time" />
+                <TextBox x:Name="LocalTimeBox" Header="local time" IsEnabled="{x:Bind ViewModel.UsesLocalTime, Mode=OneWay}" TextChanged="LocalTimeBox_TextChanged" PlaceholderText="09:00" AutomationProperties.AutomationId="RemindersLocalTime" AutomationProperties.Name="local time" />
                 <TextBlock x:Name="RemindersLocalTimeValidation" TextWrapping="Wrap" Foreground="{ThemeResource ErrorBrush}" Visibility="Collapsed" AutomationProperties.AutomationId="RemindersLocalTimeValidation" AutomationProperties.Name="local time validation" />
                 <StackPanel Spacing="8">
                     <TextBlock Text="weekdays" />
@@ -61,17 +72,17 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
-                        <CheckBox x:Name="SundayBox" Content="sun" Tag="Sunday" Checked="WeekdayBox_Changed" Unchecked="WeekdayBox_Changed" AutomationProperties.AutomationId="RemindersSunday" AutomationProperties.Name="sun" Grid.Row="0" Grid.Column="0" />
-                        <CheckBox x:Name="MondayBox" Content="mon" Tag="Monday" Checked="WeekdayBox_Changed" Unchecked="WeekdayBox_Changed" AutomationProperties.AutomationId="RemindersMonday" AutomationProperties.Name="mon" Grid.Row="0" Grid.Column="1" />
-                        <CheckBox x:Name="TuesdayBox" Content="tue" Tag="Tuesday" Checked="WeekdayBox_Changed" Unchecked="WeekdayBox_Changed" AutomationProperties.AutomationId="RemindersTuesday" AutomationProperties.Name="tue" Grid.Row="0" Grid.Column="2" />
-                        <CheckBox x:Name="WednesdayBox" Content="wed" Tag="Wednesday" Checked="WeekdayBox_Changed" Unchecked="WeekdayBox_Changed" AutomationProperties.AutomationId="RemindersWednesday" AutomationProperties.Name="wed" Grid.Row="0" Grid.Column="3" />
-                        <CheckBox x:Name="ThursdayBox" Content="thu" Tag="Thursday" Checked="WeekdayBox_Changed" Unchecked="WeekdayBox_Changed" AutomationProperties.AutomationId="RemindersThursday" AutomationProperties.Name="thu" Grid.Row="1" Grid.Column="0" />
-                        <CheckBox x:Name="FridayBox" Content="fri" Tag="Friday" Checked="WeekdayBox_Changed" Unchecked="WeekdayBox_Changed" AutomationProperties.AutomationId="RemindersFriday" AutomationProperties.Name="fri" Grid.Row="1" Grid.Column="1" />
-                        <CheckBox x:Name="SaturdayBox" Content="sat" Tag="Saturday" Checked="WeekdayBox_Changed" Unchecked="WeekdayBox_Changed" AutomationProperties.AutomationId="RemindersSaturday" AutomationProperties.Name="sat" Grid.Row="1" Grid.Column="2" />
+                        <CheckBox x:Name="SundayBox" Content="sun" Tag="Sunday" IsEnabled="{x:Bind ViewModel.UsesWeekdays, Mode=OneWay}" Checked="WeekdayBox_Changed" Unchecked="WeekdayBox_Changed" AutomationProperties.AutomationId="RemindersSunday" AutomationProperties.Name="sun" Grid.Row="0" Grid.Column="0" />
+                        <CheckBox x:Name="MondayBox" Content="mon" Tag="Monday" IsEnabled="{x:Bind ViewModel.UsesWeekdays, Mode=OneWay}" Checked="WeekdayBox_Changed" Unchecked="WeekdayBox_Changed" AutomationProperties.AutomationId="RemindersMonday" AutomationProperties.Name="mon" Grid.Row="0" Grid.Column="1" />
+                        <CheckBox x:Name="TuesdayBox" Content="tue" Tag="Tuesday" IsEnabled="{x:Bind ViewModel.UsesWeekdays, Mode=OneWay}" Checked="WeekdayBox_Changed" Unchecked="WeekdayBox_Changed" AutomationProperties.AutomationId="RemindersTuesday" AutomationProperties.Name="tue" Grid.Row="0" Grid.Column="2" />
+                        <CheckBox x:Name="WednesdayBox" Content="wed" Tag="Wednesday" IsEnabled="{x:Bind ViewModel.UsesWeekdays, Mode=OneWay}" Checked="WeekdayBox_Changed" Unchecked="WeekdayBox_Changed" AutomationProperties.AutomationId="RemindersWednesday" AutomationProperties.Name="wed" Grid.Row="0" Grid.Column="3" />
+                        <CheckBox x:Name="ThursdayBox" Content="thu" Tag="Thursday" IsEnabled="{x:Bind ViewModel.UsesWeekdays, Mode=OneWay}" Checked="WeekdayBox_Changed" Unchecked="WeekdayBox_Changed" AutomationProperties.AutomationId="RemindersThursday" AutomationProperties.Name="thu" Grid.Row="1" Grid.Column="0" />
+                        <CheckBox x:Name="FridayBox" Content="fri" Tag="Friday" IsEnabled="{x:Bind ViewModel.UsesWeekdays, Mode=OneWay}" Checked="WeekdayBox_Changed" Unchecked="WeekdayBox_Changed" AutomationProperties.AutomationId="RemindersFriday" AutomationProperties.Name="fri" Grid.Row="1" Grid.Column="1" />
+                        <CheckBox x:Name="SaturdayBox" Content="sat" Tag="Saturday" IsEnabled="{x:Bind ViewModel.UsesWeekdays, Mode=OneWay}" Checked="WeekdayBox_Changed" Unchecked="WeekdayBox_Changed" AutomationProperties.AutomationId="RemindersSaturday" AutomationProperties.Name="sat" Grid.Row="1" Grid.Column="2" />
                     </Grid>
-                    <TextBlock Text="used when schedule is set to selected weekdays" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                    <TextBlock Text="used when schedule is set to selected weekdays. pick at least one day" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                 </StackPanel>
-                <NumberBox x:Name="IntervalBox" Header="interval in minutes" Value="60" Minimum="1" Maximum="10080" SpinButtonPlacementMode="Compact" ValueChanged="IntervalBox_ValueChanged" AutomationProperties.AutomationId="RemindersInterval" AutomationProperties.Name="interval in minutes" />
+                <NumberBox x:Name="IntervalBox" Header="interval in minutes" IsEnabled="{x:Bind ViewModel.UsesInterval, Mode=OneWay}" Value="60" Minimum="1" Maximum="10080" SpinButtonPlacementMode="Compact" ValueChanged="IntervalBox_ValueChanged" AutomationProperties.AutomationId="RemindersInterval" AutomationProperties.Name="interval in minutes" />
                 <ComboBox x:Name="QuietHoursBox" Header="quiet hours behavior" SelectedIndex="1" SelectionChanged="QuietHoursBox_SelectionChanged" AutomationProperties.AutomationId="RemindersQuietHoursBehavior" AutomationProperties.Name="quiet hours behavior">
                     <ComboBoxItem Content="send now" Tag="DeliverImmediately" />
                     <ComboBoxItem Content="wait till quiet hours end" Tag="WaitUntilQuietHoursEnd" />
@@ -92,14 +103,22 @@
             </StackPanel>
 
             <StackPanel Spacing="4" AutomationProperties.LiveSetting="Polite">
-                <StackPanel Orientation="Horizontal" Spacing="6" Visibility="{x:Bind ViewModel.HasStatus, Mode=OneWay}">
-                    <FontIcon Glyph="&#xE73E;" Foreground="{ThemeResource SuccessBrush}" AutomationProperties.AccessibilityView="Raw" />
-                    <TextBlock Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" Foreground="{ThemeResource SuccessBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="RemindersStatusMessage" AutomationProperties.Name="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" />
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" Spacing="6" Visibility="{x:Bind ViewModel.HasError, Mode=OneWay}">
-                    <FontIcon Glyph="&#xEA39;" Foreground="{ThemeResource ErrorBrush}" AutomationProperties.AccessibilityView="Raw" />
-                    <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" Foreground="{ThemeResource ErrorBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="RemindersErrorMessage" AutomationProperties.Name="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" />
-                </StackPanel>
+                <Grid ColumnSpacing="6" Visibility="{x:Bind ViewModel.HasStatus, Mode=OneWay}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon Glyph="&#xE73E;" Foreground="{ThemeResource SuccessBrush}" AutomationProperties.AccessibilityView="Raw" VerticalAlignment="Top" Margin="0,3,0,0" />
+                    <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" Foreground="{ThemeResource SuccessBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="RemindersStatusMessage" AutomationProperties.Name="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" />
+                </Grid>
+                <Grid ColumnSpacing="6" Visibility="{x:Bind ViewModel.HasError, Mode=OneWay}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon Glyph="&#xEA39;" Foreground="{ThemeResource ErrorBrush}" AutomationProperties.AccessibilityView="Raw" VerticalAlignment="Top" Margin="0,3,0,0" />
+                    <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" Foreground="{ThemeResource ErrorBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="RemindersErrorMessage" AutomationProperties.Name="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" />
+                </Grid>
             </StackPanel>
         </StackPanel>
     </ScrollViewer>

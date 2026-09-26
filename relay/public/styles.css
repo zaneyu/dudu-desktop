@@ -8,7 +8,10 @@
   --ink: #2b2620;
   --muted: #6b6255;
   --border: #e4dccd;
-  --focus-ring: #b9a7e6;
+  /* Form-field outlines and the focus ring must reach 3:1 against the card/cream (WCAG 1.4.11);
+     the decorative --border (1.4:1) and the lavender --accent (2.2:1) do not. */
+  --field-border: #948a7b;
+  --focus-ring: #7b5fd0;
   --accent: #b9a7e6;
   --danger: #9a4a3a;
   --radius: 14px;
@@ -80,10 +83,18 @@ textarea {
   font: inherit;
   color: inherit;
   background: var(--cream);
-  border: 1px solid var(--border);
+  border: 1px solid var(--field-border);
   border-radius: 10px;
   padding: 10px 12px;
   min-height: 44px;
+  /* iOS Safari gives date/time inputs an intrinsic min width that can push past a 320px card. */
+  min-width: 0;
+  max-width: 100%;
+}
+
+input[aria-invalid="true"],
+textarea[aria-invalid="true"] {
+  border-color: var(--danger);
 }
 
 textarea {
@@ -111,7 +122,13 @@ button:focus-visible {
   text-align: right;
 }
 
+.counter[data-over-limit] {
+  color: var(--danger);
+  font-weight: 600;
+}
+
 fieldset.reaction-field {
+  min-width: 0;
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 10px 12px;
@@ -168,6 +185,11 @@ button:disabled {
   cursor: not-allowed;
 }
 
+/* A second tap during a slow redemption/send is already ignored; say so visually too. */
+form[aria-busy="true"] button[type="submit"] {
+  cursor: progress;
+}
+
 #send-button,
 #disconnect-button,
 button[type="submit"] {
@@ -212,6 +234,11 @@ dialog::backdrop {
 
 .recent {
   margin-top: 20px;
+}
+
+/* Nothing sent yet in this tab: no bare "recent" heading over an empty list. */
+.recent:has(> ul:empty) {
+  display: none;
 }
 
 .recent h2 {

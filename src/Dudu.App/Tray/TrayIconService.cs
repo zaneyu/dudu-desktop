@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Dudu.App.Hosting;
+using Dudu.App.System;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.UI.Shell;
@@ -18,12 +19,25 @@ public enum TrayCommand
     Exit,
 }
 
+/// <summary>
+/// What the tray menu needs to know to describe the current state instead of
+/// offering ambiguous "show or hide" / "pause indefinitely or resume" items.
+/// </summary>
+public sealed record TrayMenuState(bool PetVisible, PauseMode PauseMode);
+
+/// <summary>One tray menu row: its command, the label shown for it right
+/// now, and whether it carries a check mark (the active pause).</summary>
+public sealed record TrayMenuItem(TrayCommand Command, string Label, bool Checked = false);
+
 public interface ITrayNativeApi
 {
     bool Add(nint ownerWindow, uint callbackMessage, string tooltip);
     bool Remove(nint ownerWindow);
     bool Recreate(nint ownerWindow, uint callbackMessage, string tooltip);
     TrayCommand? TrackPopupMenu(nint ownerWindow, IReadOnlyList<TrayCommand> commands) => null;
+
+    TrayCommand? TrackPopupMenu(nint ownerWindow, IReadOnlyList<TrayMenuItem> items) =>
+        TrackPopupMenu(ownerWindow, items.Select(item => item.Command).ToArray());
 }
 
 public sealed class TrayIconService : IDisposable, IAsyncDisposable
@@ -41,6 +55,7 @@ public sealed class TrayIconService : IDisposable, IAsyncDisposable
     private readonly IAppHostErrorReporter? _errorReporter;
     private readonly object _gate = new();
     private readonly string _tooltip;
+    private readonly Func<TrayMenuState>? _menuState;
     private Func<Action, Task>? _ownerDispatcher;
     private nint _ownerWindow;
     private int _ownerThreadId;
@@ -51,13 +66,45 @@ public sealed class TrayIconService : IDisposable, IAsyncDisposable
         ITrayNativeApi? native = null,
         Action<TrayCommand>? commandHandler = null,
         string tooltip = "dudu",
-        IAppHostErrorReporter? errorReporter = null)
+        IAppHostErrorReporter? errorReporter = null,
+        Func<TrayMenuState>? menuState = null)
     {
         _native = native ?? new WindowsTrayNativeApi();
         _commandHandler = commandHandler
             ?? throw new ArgumentNullException(nameof(commandHandler));
         _tooltip = tooltip;
         _errorReporter = errorReporter;
+        _menuState = menuState;
+    }
+
+    /// <summary>
+    /// The rows the popup menu shows right now. With a state provider the
+    /// two toggles say what they will actually do ("hide dudu" vs "show
+    /// dudu", "resume dudu" while any pause is active) and the active pause
+    /// is checked; without one (or if reading it fails) the neutral
+    /// either-way labels are kept.
+    /// </summary>
+    public IReadOnlyList<TrayMenuItem> BuildMenu()
+    {
+        TrayMenuState? state = null;
+        if (_menuState is not null)
+        {
+            try
+            {
+                state = _menuState();
+            }
+            catch (Exception exception)
+            {
+                ReportFailure("tray-menu-state", exception);
+            }
+        }
+
+        return Commands
+            .Select(command => new TrayMenuItem(
+                command,
+                TrayMenuLabels.For(command, state),
+                state is not null && TrayMenuLabels.IsChecked(command, state)))
+            .ToArray();
     }
 
     public IReadOnlyList<TrayCommand> Commands { get; } =
@@ -102,8 +149,8 @@ public sealed class TrayIconService : IDisposable, IAsyncDisposable
     {
         TrayCommand? command = null;
         var recreate = false;
+        var showMenu = false;
         nint ownerWindow = 0;
-        IReadOnlyList<TrayCommand>? commands = null;
         lock (_gate)
         {
             if (_disposed) return false;
@@ -125,7 +172,16 @@ public sealed class TrayIconService : IDisposable, IAsyncDisposable
                 && unchecked((uint)lParam) == 0x0205 /* WM_RBUTTONUP */)
             {
                 ownerWindow = _ownerWindow;
-                commands = Commands.ToArray();
+                showMenu = true;
+            }
+            else if (message == CallbackMessage
+                && unchecked((uint)lParam) == 0x0202 /* WM_LBUTTONUP */)
+            {
+                // A plain click on the tray icon used to do nothing at all;
+                // the only way in was the right-click menu. Open Dudu's
+                // window, the one thing a click on an app's tray icon is
+                // expected to do.
+                command = TrayCommand.OpenSettings;
             }
             else if (message == CallbackMessage) return false;
         }
@@ -147,14 +203,38 @@ public sealed class TrayIconService : IDisposable, IAsyncDisposable
             return true;
         }
 
-        if (commands is not null)
+        if (showMenu)
         {
             // TrackPopupMenuEx runs a nested native message loop. Never hold
-            // the service lock while Windows or the command callback runs.
-            command = _native.TrackPopupMenu(ownerWindow, commands);
+            // the service lock while Windows or the command callback runs
+            // (BuildMenu's state callback included).
+            command = _native.TrackPopupMenu(ownerWindow, BuildMenu());
         }
 
         if (command is { } selected)
+        {
+            ExecuteCommand(selected);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Shows the same menu a right-click on the tray icon shows, for other
+    /// surfaces that should offer it (a right-click on the pet itself).
+    /// Must run on the owner thread, like the tray callback it mirrors.
+    /// Returns false when the tray is not attached or already disposed.
+    /// </summary>
+    public bool ShowMenu()
+    {
+        nint ownerWindow;
+        lock (_gate)
+        {
+            if (_disposed || _ownerWindow == 0) return false;
+            ownerWindow = _ownerWindow;
+        }
+
+        if (_native.TrackPopupMenu(ownerWindow, BuildMenu()) is { } selected)
         {
             ExecuteCommand(selected);
         }
@@ -333,7 +413,43 @@ internal sealed class WindowsTrayNativeApi : ITrayNativeApi
     }
 
     public TrayCommand? TrackPopupMenu(nint ownerWindow, IReadOnlyList<TrayCommand> commands) =>
-        NativeTrayMenu.Show(ownerWindow, commands);
+        NativeTrayMenu.Show(
+            ownerWindow,
+            commands.Select(command => new TrayMenuItem(command, TrayMenuLabels.For(command, null))).ToArray());
+
+    public TrayCommand? TrackPopupMenu(nint ownerWindow, IReadOnlyList<TrayMenuItem> items) =>
+        NativeTrayMenu.Show(ownerWindow, items);
+}
+
+/// <summary>Tray menu copy, kept apart from the native menu so it can be
+/// tested without Windows.</summary>
+public static class TrayMenuLabels
+{
+    public static string For(TrayCommand command, TrayMenuState? state) => command switch
+    {
+        TrayCommand.ShowOrHide => state is null
+            ? "show or hide dudu"
+            : state.PetVisible ? "hide dudu" : "show dudu",
+        TrayCommand.PauseOneHour => "pause for one hour",
+        TrayCommand.PauseUntilTomorrowAtSeven => "pause until tomorrow at 07:00",
+        TrayCommand.PauseUntilFullscreenEnds => "pause until fullscreen ends",
+        TrayCommand.PauseIndefinitelyOrResume => state is null
+            ? "pause indefinitely or resume"
+            : state.PauseMode == PauseMode.None ? "pause until i resume" : "resume dudu",
+        TrayCommand.OpenSettings => "open settings",
+        TrayCommand.Exit => "exit",
+        _ => command.ToString(),
+    };
+
+    /// <summary>Checks the pause row matching the active pause, so the menu
+    /// shows that (and how) Dudu is paused.</summary>
+    public static bool IsChecked(TrayCommand command, TrayMenuState state) => command switch
+    {
+        TrayCommand.PauseOneHour => state.PauseMode == PauseMode.OneHour,
+        TrayCommand.PauseUntilTomorrowAtSeven => state.PauseMode == PauseMode.UntilTomorrowAtSeven,
+        TrayCommand.PauseUntilFullscreenEnds => state.PauseMode == PauseMode.UntilFullscreenEnds,
+        _ => false,
+    };
 }
 
 internal static unsafe class NativeShellNotifyIcon
@@ -351,7 +467,7 @@ internal static unsafe class NativeShellNotifyIcon
                 | NOTIFY_ICON_DATA_FLAGS.NIF_ICON,
             uCallbackMessage = callbackMessage,
             szTip = tooltip,
-            hIcon = PInvoke.LoadIcon(HINSTANCE.Null, new PCWSTR((char*)32512)),
+            hIcon = LoadTrayIcon(),
         };
         return PInvoke.Shell_NotifyIcon(
             add ? NOTIFY_ICON_MESSAGE.NIM_ADD : NOTIFY_ICON_MESSAGE.NIM_DELETE,
@@ -359,14 +475,35 @@ internal static unsafe class NativeShellNotifyIcon
     }
 
     public static bool Remove(nint ownerWindow) => Change(ownerWindow, 0, string.Empty, add: false);
+
+    /// <summary>
+    /// The tray used to show the stock Windows application icon, so Dudu
+    /// could not be told apart from any other program in the notification
+    /// area. The SDK embeds ApplicationIcon (dudu.ico) as the executable's
+    /// icon group 32512; fall back to the stock icon only if it is missing.
+    /// </summary>
+    private static HICON LoadTrayIcon()
+    {
+        var idiApplication = new PCWSTR((char*)32512);
+        using var module = PInvoke.GetModuleHandle((string?)null);
+        HICON icon = default;
+        if (!module.IsInvalid)
+        {
+            icon = PInvoke.LoadIcon(new HINSTANCE(module.DangerousGetHandle()), idiApplication);
+        }
+
+        return icon.IsNull ? PInvoke.LoadIcon(HINSTANCE.Null, idiApplication) : icon;
+    }
 }
 
 internal static unsafe class NativeTrayMenu
 {
     private const uint MfString = 0x0000;
+    private const uint MfChecked = 0x0008;
     private const uint TpmRightButton = 0x0002;
+    private const uint WmNull = 0x0000;
 
-    public static TrayCommand? Show(nint ownerWindow, IReadOnlyList<TrayCommand> commands)
+    public static TrayCommand? Show(nint ownerWindow, IReadOnlyList<TrayMenuItem> items)
     {
         if (!OperatingSystem.IsWindows())
         {
@@ -376,39 +513,36 @@ internal static unsafe class NativeTrayMenu
         using var menu = PInvoke.CreatePopupMenu_SafeHandle();
         if (menu.IsInvalid) return null;
 
-        for (var index = 0; index < commands.Count; index++)
+        // WM_COMMAND ids are the item's index in TrayIconService.Commands
+        // (+1), which is what HandleWindowMessage maps back.
+        for (var index = 0; index < items.Count; index++)
         {
-            var label = GetLabel(commands[index]);
+            var item = items[index];
             if (!PInvoke.AppendMenu(
                     menu,
-                    (MENU_ITEM_FLAGS)MfString,
+                    (MENU_ITEM_FLAGS)(MfString | (item.Checked ? MfChecked : 0)),
                     (nuint)(index + 1),
-                    label))
+                    item.Label))
             {
                 return null;
             }
         }
 
         if (!PInvoke.GetCursorPos(out var point)) return null;
+        var owner = new HWND((void*)ownerWindow);
+        // Documented TrackPopupMenu requirement for notification-icon menus:
+        // the owner must be the foreground window first, or the menu never
+        // closes when she clicks anywhere else and just hangs on screen. The
+        // WM_NULL afterwards lets the menu dismiss cleanly on the next click.
+        _ = PInvoke.SetForegroundWindow(owner);
         _ = PInvoke.TrackPopupMenuEx(
             menu,
             TpmRightButton,
             point.X,
             point.Y,
-            new HWND((void*)ownerWindow),
+            owner,
             null);
+        _ = PInvoke.PostMessage(owner, WmNull, 0, 0);
         return null;
     }
-
-    private static string GetLabel(TrayCommand command) => command switch
-    {
-        TrayCommand.ShowOrHide => "show or hide dudu",
-        TrayCommand.PauseOneHour => "pause for one hour",
-        TrayCommand.PauseUntilTomorrowAtSeven => "pause until tomorrow at 07:00",
-        TrayCommand.PauseUntilFullscreenEnds => "pause until fullscreen ends",
-        TrayCommand.PauseIndefinitelyOrResume => "pause indefinitely or resume",
-        TrayCommand.OpenSettings => "open settings",
-        TrayCommand.Exit => "exit",
-        _ => command.ToString(),
-    };
 }

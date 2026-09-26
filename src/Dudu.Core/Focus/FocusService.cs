@@ -334,8 +334,19 @@ public sealed class FocusService
         }
     }
 
+    // User-facing (shown on the Tasks & Focus page): name the state in plain
+    // words instead of the raw enum ("in EndedEarly").
     private static InvalidOperationException InvalidTransition(string transition, FocusStatus status) =>
-        new($"aiyo cant {transition} focus session in {status}");
+        new($"aiyo cant {transition} focus while it is {DescribeStatus(status)}");
+
+    private static string DescribeStatus(FocusStatus status) => status switch
+    {
+        FocusStatus.Running => "running",
+        FocusStatus.Paused => "paused",
+        FocusStatus.Completed => "already completed",
+        FocusStatus.EndedEarly => "already ended",
+        _ => "not running",
+    };
 
     private static InvalidOperationException TransitionConflict(string transition) =>
         new("oh no that session changed before saving");

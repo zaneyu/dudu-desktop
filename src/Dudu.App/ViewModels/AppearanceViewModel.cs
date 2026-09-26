@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.Input;
+using Dudu.App.System;
 using Dudu.Core.Assets;
 using Dudu.Core.Models;
 
@@ -39,6 +40,7 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
         _hideDuringFullscreen = preferences.HidePetDuringFullscreen;
         _soundsEnabled = preferences.SoundsEnabled;
         _soundVolume = Preferences.ClampSoundVolume(preferences.SoundVolume);
+        _globalShortcut = DisplayShortcut(preferences.GlobalShortcut);
         _petScale = 1;
         _loadedPetScale = _petScale;
         _monitorDeviceName = "current monitor";
@@ -79,12 +81,26 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
         }
     }
     public bool ReducedMotion { get => _reducedMotion; set => SetProperty(ref _reducedMotion, value); }
-    public double PetScale { get => _petScale; set => SetProperty(ref _petScale, Math.Clamp(value, 0.5, 2)); }
+    public double PetScale
+    {
+        get => _petScale;
+        set
+        {
+            if (SetProperty(ref _petScale, Math.Clamp(value, 0.5, 2))) OnPropertyChanged(nameof(PetScaleLabel));
+        }
+    }
+    /// <summary>The pet-size slider had no readout at all (the volume slider does), so she
+    /// could not tell what size she was picking or get back to the default 100%.</summary>
+    public string PetScaleLabel => $"{Math.Round(PetScale * 100):0}%";
     public string MonitorDeviceName
     {
         get => _monitorDeviceName;
         set
         {
+            // The monitor ComboBox's SelectedItem is bound TwoWay; RefreshAsync clearing
+            // MonitorOptions makes the ComboBox push null back, which used to wipe the chosen
+            // monitor so every revisit silently jumped back to the first one.
+            if (value is null) return;
             if (!SetProperty(ref _monitorDeviceName, value)) return;
             // Each monitor can have its own saved pet size. Reload it from
             // whatever RefreshAsync already loaded into _placements -- no
@@ -195,6 +211,9 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
                 HideDuringFullscreen = preferences.HidePetDuringFullscreen;
                 SoundsEnabled = preferences.SoundsEnabled;
                 SoundVolume = preferences.SoundVolume;
+                // The shortcut box always showed Ctrl+Alt+D on open, whatever
+                // was actually saved; show the stored one.
+                GlobalShortcut = DisplayShortcut(preferences.GlobalShortcut);
                 _automaticSeasonalMode = preferences.AutomaticSeasonalMode;
                 OnPropertyChanged(nameof(AutomaticSeasonalMode));
                 _selectedOutfit = preferences.AutomaticSeasonalMode
@@ -210,6 +229,9 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
                     string.Equals(item.MonitorDeviceName, MonitorDeviceName, StringComparison.Ordinal))
                     ?? placements.FirstOrDefault();
                 MonitorDeviceName = selectedPlacement?.MonitorDeviceName ?? MonitorOptions[0];
+                // Re-announce even when the name did not change: repopulating the options left
+                // the ComboBox with no selection, and an unchanged value raises no event.
+                OnPropertyChanged(nameof(MonitorDeviceName));
                 if (selectedPlacement is not null)
                 {
                     PetScale = selectedPlacement.Scale;
@@ -293,8 +315,66 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
         RunAsync(async () =>
         {
             if (string.IsNullOrWhiteSpace(GlobalShortcut)) throw new ArgumentException("wait type a shortcut first", nameof(GlobalShortcut));
-            await _context.SetGlobalShortcutAsync(GlobalShortcut.Trim(), cancellationToken);
+            // A malformed shortcut ("D", "Ctrl+Ctrl+D") used to surface only as the generic
+            // "cannot finish that try again" (FormatException is not user copy), with no hint of
+            // what shape is wanted. Check it here and say so.
+            HotkeyGesture gesture;
+            try
+            {
+                gesture = HotkeyGesture.Parse(GlobalShortcut.Trim());
+            }
+            catch (Exception exception) when (exception is FormatException or ArgumentException)
+            {
+                throw new ArgumentException("use ctrl alt shift or win plus one key like Ctrl+Alt+D", nameof(GlobalShortcut));
+            }
+
+            var canonical = gesture.ToString();
+            // The default is stored as "no custom shortcut" so typing Ctrl+Alt+D is the way
+            // back to the default.
+            var stored = gesture == HotkeyGesture.Default ? null : canonical;
+            // Register first and persist only once Windows accepted the chord: this used to
+            // re-register at runtime only, so the next start silently went back to Ctrl+Alt+D
+            // even though the page had said "shortcut set". A refused chord (already taken)
+            // throws before anything is saved, leaving the previous shortcut both registered
+            // and stored; a failed save re-registers the previous one.
+            await _context.PreferenceMutations.ApplyThenPersistAsync(
+                current => current with { GlobalShortcut = stored },
+                async (previous, _, token) =>
+                {
+                    try
+                    {
+                        await _context.SetGlobalShortcutAsync(canonical, token);
+                    }
+                    catch (HotkeyConflictException conflict)
+                    {
+                        // Say which shortcut still works, not just that this one failed.
+                        throw new HotkeyConflictException(
+                            $"{conflict.Message}, still using {DisplayShortcut(previous.GlobalShortcut)}");
+                    }
+                },
+                (previous, _, token) => _context.SetGlobalShortcutAsync(
+                    DisplayShortcut(previous.GlobalShortcut), token),
+                cancellationToken);
+            // Show the shortcut the way it is registered ("ctrl + alt + k" becomes Ctrl+Alt+K).
+            GlobalShortcut = canonical;
         }, "otayyy shortcut set");
+
+    /// <summary>The stored shortcut in the canonical form it is registered with; the default
+    /// when none is stored or the stored text no longer parses (startup registers the default
+    /// in that case too).</summary>
+    private static string DisplayShortcut(string? stored)
+    {
+        var normalized = Preferences.NormalizeGlobalShortcut(stored);
+        if (normalized is null) return HotkeyGesture.Default.ToString();
+        try
+        {
+            return HotkeyGesture.Parse(normalized).ToString();
+        }
+        catch (Exception exception) when (exception is FormatException or ArgumentException or InvalidOperationException)
+        {
+            return HotkeyGesture.Default.ToString();
+        }
+    }
 
     private string BuildOutfitAvailabilityMessage()
     {
@@ -318,14 +398,17 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
     private static MonthDay? ToMonthDay(DateTimeOffset? date) =>
         date is { } value ? new MonthDay(value.Month, value.Day) : null;
 
-    private static DateTimeOffset? ToDate(MonthDay? monthDay)
+    // Built at local midnight (with the local offset), not midnight UTC: CalendarDatePicker
+    // shows a DateTimeOffset in the PC's time zone, so a UTC-midnight value displayed as the
+    // previous day anywhere west of UTC (a 14 Feb anniversary appeared as 13 Feb).
+    private DateTimeOffset? ToDate(MonthDay? monthDay)
     {
         if (monthDay is not { } value || value.Month is < 1 or > 12 || value.Day is < 1 or > 31)
         {
             return null;
         }
 
-        var year = DateTime.Now.Year;
+        var year = LocalDate.Year;
         if (value.Month == 2 && value.Day == 29)
         {
             while (!DateTime.IsLeapYear(year))
@@ -339,6 +422,7 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
             return null;
         }
 
-        return new DateTimeOffset(year, value.Month, value.Day, 0, 0, 0, TimeSpan.Zero);
+        var localMidnight = new DateTime(year, value.Month, value.Day, 0, 0, 0, DateTimeKind.Unspecified);
+        return new DateTimeOffset(localMidnight, _context.Clock.LocalTimeZone.GetUtcOffset(localMidnight));
     }
 }

@@ -11,6 +11,7 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
     private TaskItem? _selectedTask;
     private TaskItem? _pendingDeleteTask;
     private FocusSnapshot? _activeFocus;
+    private DateTimeOffset _activeFocusCapturedUtc;
     private string _title = string.Empty;
     private string? _notes;
     private DateTimeOffset? _dueUtc;
@@ -29,11 +30,17 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
         DeleteTaskCommand = new AsyncRelayCommand<TaskItem>((item, ct) => DeleteTaskAsync(item, ct));
         RequestDeleteTaskCommand = new RelayCommand<TaskItem>(RequestDeleteTask);
         CancelDeleteTaskCommand = new RelayCommand(() => PendingDeleteTask = null);
-        StartFocusCommand = new AsyncRelayCommand((CancellationToken ct) => StartFocusAsync(ct));
-        PauseFocusCommand = new AsyncRelayCommand((CancellationToken ct) => PauseFocusAsync(ct));
-        ResumeFocusCommand = new AsyncRelayCommand((CancellationToken ct) => ResumeFocusAsync(ct));
-        ExtendFocusCommand = new AsyncRelayCommand((CancellationToken ct) => ExtendFocusAsync(ct));
-        EndFocusCommand = new AsyncRelayCommand((CancellationToken ct) => EndFocusAsync(ct));
+        // Each focus button is only enabled in a state where its transition can
+        // succeed; they used to be enabled all the time, so "pause" while paused
+        // or "start" while running just produced an error.
+        StartFocusCommand = new AsyncRelayCommand((CancellationToken ct) => StartFocusAsync(ct), () => !IsFocusActive);
+        PauseFocusCommand = new AsyncRelayCommand((CancellationToken ct) => PauseFocusAsync(ct), () => ActiveFocus is { Status: FocusStatus.Running });
+        ResumeFocusCommand = new AsyncRelayCommand((CancellationToken ct) => ResumeFocusAsync(ct), () => ActiveFocus is { Status: FocusStatus.Paused });
+        ExtendFocusCommand = new AsyncRelayCommand((CancellationToken ct) => ExtendFocusAsync(ct), () => IsFocusActive);
+        EndFocusCommand = new AsyncRelayCommand((CancellationToken ct) => EndFocusAsync(ct), () => IsFocusActive);
+        ActiveTasks.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoActiveTasks));
+        CompletedTasks.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoCompletedTasks));
+        FocusHistory.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoFocusHistory));
     }
 
     public IAsyncRelayCommand RefreshCommand { get; }
@@ -53,6 +60,9 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
     public ObservableCollection<TaskItem> CompletedTasks { get; } = [];
     public ObservableCollection<FocusHistoryEntry> FocusHistory { get; } = [];
     public IReadOnlyList<int> FocusPresets { get; } = [15, 25, 45, 60];
+    public bool HasNoActiveTasks => ActiveTasks.Count == 0;
+    public bool HasNoCompletedTasks => CompletedTasks.Count == 0;
+    public bool HasNoFocusHistory => FocusHistory.Count == 0;
 
     public TaskItem? SelectedTask
     {
@@ -89,12 +99,35 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
         get => _activeFocus;
         private set
         {
-            if (SetProperty(ref _activeFocus, value)) OnPropertyChanged(nameof(ActiveFocusText));
+            // A snapshot's Remaining is only true at the moment it was read, so
+            // remember when that was: the on-screen countdown is derived from it.
+            _activeFocusCapturedUtc = _context.Clock.UtcNow.ToUniversalTime();
+            SetProperty(ref _activeFocus, value);
+            OnPropertyChanged(nameof(ActiveFocusText));
+            StartFocusCommand.NotifyCanExecuteChanged();
+            PauseFocusCommand.NotifyCanExecuteChanged();
+            ResumeFocusCommand.NotifyCanExecuteChanged();
+            ExtendFocusCommand.NotifyCanExecuteChanged();
+            EndFocusCommand.NotifyCanExecuteChanged();
         }
     }
-    public string ActiveFocusText => ActiveFocus is null
-        ? "no focus running ah"
-        : $"focus is {ActiveFocus.Status.ToString().ToLowerInvariant()} with {FormatDuration(ActiveFocus.Remaining)} remaining";
+
+    /// <summary>Time left right now: a running session counts down from its
+    /// snapshot; a paused one holds still. Never negative.</summary>
+    public TimeSpan ActiveFocusRemaining
+    {
+        get => FocusDisplay.RemainingAt(ActiveFocus, _activeFocusCapturedUtc, _context.Clock.UtcNow);
+    }
+
+    public string ActiveFocusText => FocusDisplay.Describe(ActiveFocus, ActiveFocusRemaining);
+
+    /// <summary>Called by the page's timer so the running countdown ticks down
+    /// instead of freezing at whatever it showed when the page loaded.</summary>
+    public void RefreshFocusCountdown()
+    {
+        OnPropertyChanged(nameof(ActiveFocusRemaining));
+        OnPropertyChanged(nameof(ActiveFocusText));
+    }
     public string Title { get => _title; set => SetProperty(ref _title, value); }
     public string? Notes { get => _notes; set => SetProperty(ref _notes, value); }
     public DateTimeOffset? DueUtc
@@ -114,7 +147,17 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
             else if (DateTimeOffset.TryParse(value, out var parsed)) DueUtc = parsed;
         }
     }
-    public int SelectedDurationMinutes { get => _selectedDurationMinutes; set => SetProperty(ref _selectedDurationMinutes, value); }
+    public int SelectedDurationMinutes
+    {
+        get => _selectedDurationMinutes;
+        set
+        {
+            if (SetProperty(ref _selectedDurationMinutes, value)) OnPropertyChanged(nameof(IsCustomDuration));
+        }
+    }
+
+    /// <summary>The custom-minutes box only matters for the "custom" preset.</summary>
+    public bool IsCustomDuration => SelectedDurationMinutes <= 0;
     public int CustomDurationMinutes { get => _customDurationMinutes; set => SetProperty(ref _customDurationMinutes, Math.Clamp(value, 1, 240)); }
     public bool IsFocusActive => ActiveFocus is { Status: FocusStatus.Running or FocusStatus.Paused };
 
@@ -194,7 +237,9 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
                 var existingCompleted = CompletedTasks.FirstOrDefault(item => item.Id == completed.Id);
                 if (existingCompleted is not null) CompletedTasks[CompletedTasks.IndexOf(existingCompleted)] = completed;
                 else CompletedTasks.Insert(0, completed);
-                if (SelectedTask?.Id == task.Id) SelectedTask = null;
+                // Clear the editor too: leaving the completed task's title in it
+                // meant the next "save task" created a duplicate active copy.
+                if (SelectedTask?.Id == task.Id) SelectTask(null);
                 if (PendingDeleteTask?.Id == task.Id) PendingDeleteTask = null;
             }, cancellationToken);
         }, "okkk task done");
@@ -383,12 +428,6 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
 
     private static string? Normalize(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
-    private static string FormatDuration(TimeSpan duration)
-    {
-        var roundedMinutes = Math.Max(0, (int)Math.Ceiling(duration.TotalMinutes));
-        return roundedMinutes == 1 ? "1 minute" : $"{roundedMinutes} minutes";
-    }
-
     /// <summary>Projects a raw FocusSession into display-ready text: the enum
     /// name and UTC timestamp are framework/storage details, not something a
     /// non-technical user should read in the history list.</summary>
@@ -408,3 +447,45 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
 /// <summary>Display-ready projection of a FocusSession for the focus-history
 /// list, so the page never binds directly to the raw enum/UTC fields.</summary>
 public sealed record FocusHistoryEntry(string StatusText, string StartedText);
+
+/// <summary>The one focus status line shared by the Tasks and Focus page and Home, so
+/// both surfaces word a session the same way (and neither prints the raw enum).</summary>
+public static class FocusDisplay
+{
+    /// <param name="remaining">Time left to show; the Tasks page passes a live,
+    /// ticking value, Home the snapshot's own <see cref="FocusSnapshot.Remaining"/>.</param>
+    public static string Describe(FocusSnapshot? focus, TimeSpan remaining) => focus switch
+    {
+        null => "no focus running",
+        { Status: FocusStatus.Running } => $"focus is running with {FormatRemaining(remaining)} left",
+        { Status: FocusStatus.Paused } => $"focus is paused with {FormatRemaining(remaining)} left",
+        { Status: FocusStatus.Completed } => "last focus session completed le",
+        _ => "last focus session ended early",
+    };
+
+    /// <summary>Time left right now for a snapshot read at <paramref name="capturedUtc"/>:
+    /// a running session counts down from it; a paused one holds still. Never negative.</summary>
+    public static TimeSpan RemainingAt(FocusSnapshot? focus, DateTimeOffset capturedUtc, DateTimeOffset nowUtc)
+    {
+        if (focus is null) return TimeSpan.Zero;
+        if (focus.Status == FocusStatus.Paused) return focus.Remaining;
+        if (focus.Status != FocusStatus.Running) return TimeSpan.Zero;
+        var elapsed = nowUtc.ToUniversalTime() - capturedUtc.ToUniversalTime();
+        if (elapsed < TimeSpan.Zero) elapsed = TimeSpan.Zero;
+        var remaining = focus.Remaining - elapsed;
+        return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
+    }
+
+    /// <summary>Rounds up to whole minutes (so a session never reads "0 min"
+    /// while seconds remain) and switches to hours past an hour.</summary>
+    public static string FormatRemaining(TimeSpan remaining)
+    {
+        var totalMinutes = remaining <= TimeSpan.Zero
+            ? 0
+            : (int)Math.Min(int.MaxValue, Math.Ceiling(remaining.TotalMinutes));
+        if (totalMinutes < 60) return $"{totalMinutes} min";
+        var hours = totalMinutes / 60;
+        var minutes = totalMinutes % 60;
+        return minutes == 0 ? $"{hours} hr" : $"{hours} hr {minutes} min";
+    }
+}

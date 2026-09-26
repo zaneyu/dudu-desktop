@@ -53,7 +53,10 @@ public sealed partial class SettingsWindow : UserControl
             placementCapture: context.CapturePlacementAsync,
             placementPreviewer: context.ApplyPlacementAsync);
         InitializeComponent();
-        RootNavigation.SelectedItem = RootNavigation.MenuItems[0];
+        // No initial SelectedItem here: ShowDestination selects the real
+        // destination once the pages exist. Selecting Home up front raised a
+        // SelectionChanged that could land after App's NavigateTo(...) from a toast
+        // or the overlay and overwrite the pending destination with "home".
         _duduTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
         _duduTimer.Tick += DuduTimer_Tick;
         Loaded += OnLoaded;
@@ -74,7 +77,15 @@ public sealed partial class SettingsWindow : UserControl
             return;
         }
 
+        var previous = ContentFrame.Content;
         ShowDestination(destination);
+        if (!ReferenceEquals(previous, ContentFrame.Content))
+        {
+            // An external navigation (a Home action button, the overlay, a toast)
+            // swapped the page out from under keyboard focus; park focus on the
+            // destination's nav item instead of losing it.
+            FocusSelectedNavigationItem();
+        }
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs args)
@@ -105,11 +116,13 @@ public sealed partial class SettingsWindow : UserControl
             {
                 var error = new TextBlock
                 {
-                    Text = "aiyo couldnt load settings try again",
+                    // There is no in-window retry; say how to actually try again.
+                    Text = "aiyo couldnt load settings. close this window and open it again",
                     Margin = new Thickness(32),
                     TextWrapping = TextWrapping.Wrap,
                 };
                 AutomationProperties.SetAutomationId(error, "SettingsLoadError");
+                AutomationProperties.SetName(error, error.Text);
                 AutomationProperties.SetLiveSetting(error, AutomationLiveSetting.Assertive);
                 ContentFrame.Content = error;
                 global::System.Diagnostics.Trace.TraceError("Dudu settings load failed: {0}", exception);
@@ -124,7 +137,7 @@ public sealed partial class SettingsWindow : UserControl
         }
         catch (Exception exception)
         {
-            DuduCompanionStatus.Text = "dudu art unavailable this run";
+            SetCompanionStatus("dudu art unavailable this run");
             global::System.Diagnostics.Trace.TraceError("Dudu settings companion visual failed: {0}", exception);
         }
     }
@@ -144,11 +157,56 @@ public sealed partial class SettingsWindow : UserControl
         // already detached), and safe if feature pages were never created
         // (e.g. closed mid-onboarding).
         _tasksFocusPage?.ViewModel.DetachFocusExpiry();
+        // The shared reminder actions outlive this window; stop refreshing a
+        // page nobody can see (Unloaded does not always run on window close).
+        _remindersPage?.DetachLiveUpdates();
+    }
+
+    /// <summary>Called by App when an already-open settings window is shown again
+    /// (tray, pet, toast). Cached pages only refresh on Loaded, which does not fire for
+    /// the page already on screen, so it kept showing whatever it loaded on its last
+    /// visit -- a reminder that has since fired, a note that has since arrived. Re-runs
+    /// the same view-model refresh its Loaded handler does. Appearance is left alone
+    /// (its refresh would overwrite unsaved edits, and nothing else changes it) and
+    /// Privacy has no stored data to reload.</summary>
+    public async void RefreshCurrentPage()
+    {
+        if (!_featurePagesInitialized) return;
+        Func<Task>? refresh = ContentFrame.Content switch
+        {
+            HomePage { IsLoaded: true } page => () => page.ViewModel.RefreshAsync(),
+            RemindersPage { IsLoaded: true } page => () => page.ViewModel.RefreshAsync(),
+            TasksFocusPage { IsLoaded: true } page => () => page.ViewModel.RefreshAsync(),
+            LoveNotesPage { IsLoaded: true } page => () => page.ViewModel.RefreshAsync(),
+            ConnectionPage { IsLoaded: true } page => () => page.ViewModel.RefreshAsync(),
+            _ => null,
+        };
+        if (refresh is null) return;
+
+        try
+        {
+            await refresh();
+        }
+        catch (Exception exception)
+        {
+            // async void: never let a refresh failure escape to the dispatcher.
+            global::System.Diagnostics.Trace.TraceWarning(
+                "Dudu settings reopen refresh failed: {0} 0x{1:X8}",
+                exception.GetType().Name,
+                exception.HResult);
+        }
     }
 
     /// <summary>Called by App from the hosting Window's Closed event, the one close signal
     /// WinUI 3 raises reliably (Unloaded is not guaranteed for a closed window's content).</summary>
-    public void OnHostWindowClosed() => _tasksFocusPage?.ViewModel.DetachFocusExpiry();
+    public void OnHostWindowClosed()
+    {
+        _tasksFocusPage?.ViewModel.DetachFocusExpiry();
+        // The page countdown timers run on the app's UI thread, which outlives this
+        // window; left running they would tick (and keep the pages alive) forever.
+        _tasksFocusPage?.StopFocusCountdown();
+        _homePage?.StopFocusCountdown();
+    }
 
     private async Task EnsureDuduPackAsync()
     {
@@ -178,7 +236,7 @@ public sealed partial class SettingsWindow : UserControl
             // A throw on a DispatcherTimer tick is unhandled and repeats every
             // 150 ms. Freeze on the last good frame instead of crashing the app.
             _duduTimer.Stop();
-            DuduCompanionStatus.Text = "dudu art unavailable this run";
+            SetCompanionStatus("dudu art unavailable this run");
             global::System.Diagnostics.Trace.TraceError("Dudu settings companion tick failed: {0}", exception);
         }
     }
@@ -244,7 +302,9 @@ public sealed partial class SettingsWindow : UserControl
         DuduFrameImage.Source = image;
         DuduCompanionTitle.Text = DuduTitle(presentation);
         DuduCompanionMessage.Text = DuduMessage(presentation);
-        DuduCompanionState.Text = $"{presentation.State.ToString().ToLowerInvariant()} · {presentation.AnimationKey}";
+        // Plain language shared with Home's pet status; the raw enum and asset key
+        // ("remotenote · note-hold") meant nothing to the person using the app.
+        DuduCompanionState.Text = HomeViewModel.DescribePetState(presentation.State);
         AutomationProperties.SetName(DuduFrameImage, $"dudu {presentation.AnimationKey} pose");
         _duduTimer.Interval = TimeSpan.FromMilliseconds(Math.Clamp(frame.DurationMs, 80, 1000));
     }
@@ -296,18 +356,18 @@ public sealed partial class SettingsWindow : UserControl
         var features = _context.Features;
         if (features is null)
         {
-            DuduCompanionStatus.Text = "dudu is still getting ready";
+            SetCompanionStatus("dudu is still getting ready");
             return;
         }
 
-        DuduCompanionStatus.Text = status;
+        SetCompanionStatus(status);
         try
         {
             await features.PresentOneShotPetAsync(petEvent, dismissalId, CancellationToken.None);
         }
         catch (Exception exception)
         {
-            DuduCompanionStatus.Text = "aiyo dudu couldnt do that yet";
+            SetCompanionStatus("aiyo dudu couldnt do that yet");
             global::System.Diagnostics.Trace.TraceError("Dudu settings action failed: {0}", exception);
         }
     }
@@ -318,7 +378,9 @@ public sealed partial class SettingsWindow : UserControl
     {
         if (args.SelectedItem is NavigationViewItem item && item.Tag is string tag)
         {
-            NavigateTo(tag);
+            // User-driven: focus is already on the nav item, so skip NavigateTo's
+            // focus hand-off. ShowDestination records it as pending before load.
+            ShowDestination(tag);
         }
     }
 
@@ -332,7 +394,7 @@ public sealed partial class SettingsWindow : UserControl
             new HomeViewModel(features),
             _context.StartupSettings,
             _context.OverlayCommands);
-        _remindersPage = new RemindersPage(new RemindersViewModel(features));
+        _remindersPage = new RemindersPage(new RemindersViewModel(features, _context.ReminderActions));
         _tasksFocusPage = new TasksFocusPage(new TasksFocusViewModel(features)
         {
             // FocusService.SessionExpired (a naturally-expired session, see
@@ -384,11 +446,68 @@ public sealed partial class SettingsWindow : UserControl
 
     private void OnboardingCompleted()
     {
-        ApplyRequestedTheme();
-        EnsureFeaturePages();
-        OnboardingFrame.Visibility = Visibility.Collapsed;
-        RootNavigation.Visibility = Visibility.Visible;
-        ShowDestination(_pendingDestination ?? "home");
+        // Setup is already committed when this runs. A failure building the
+        // feature pages must not surface as "cant finish setup" on the onboarding
+        // page (which would invite re-running a completed setup), and must not
+        // escape into the page's async void click handler.
+        try
+        {
+            ApplyRequestedTheme();
+            EnsureFeaturePages();
+            OnboardingFrame.Visibility = Visibility.Collapsed;
+            OnboardingFrame.Content = null;
+            RootNavigation.Visibility = Visibility.Visible;
+            ShowDestination(_pendingDestination ?? "home");
+            FocusSelectedNavigationItem();
+
+            // The onboarding page -- the only place these were shown -- is gone
+            // now, so a live-apply or startup-registration failure recorded during
+            // completion would otherwise vanish silently.
+            var followUp = _onboarding.RuntimeApplyError ?? _onboarding.StartupRegistrationError;
+            if (followUp is not null)
+            {
+                SetCompanionStatus(followUp);
+            }
+        }
+        catch (Exception exception)
+        {
+            RootNavigation.Visibility = Visibility.Visible;
+            OnboardingFrame.Visibility = Visibility.Collapsed;
+            SetCompanionStatus("setup saved. close this window and open it again to finish loading");
+            global::System.Diagnostics.Trace.TraceError("Dudu settings failed to open after onboarding: {0}", exception);
+        }
+    }
+
+    private void FocusSelectedNavigationItem()
+    {
+        if (RootNavigation.SelectedItem is not Control item) return;
+        var queue = DispatcherQueue;
+        if (queue is null || !queue.TryEnqueue(() => item.Focus(FocusState.Programmatic)))
+        {
+            item.Focus(FocusState.Programmatic);
+        }
+    }
+
+    /// <summary>The status line is a polite live region; its UIA name must be the
+    /// message itself (a static "dudu action status" name hid the text from screen
+    /// readers) and a LiveRegionChanged event is what makes Narrator announce it.
+    /// Neutral colour: it carries errors as well as confirmations.</summary>
+    private void SetCompanionStatus(string text)
+    {
+        DuduCompanionStatus.Text = text;
+        AutomationProperties.SetName(DuduCompanionStatus, text);
+        try
+        {
+            var peer = FrameworkElementAutomationPeer.FromElement(DuduCompanionStatus)
+                ?? FrameworkElementAutomationPeer.CreatePeerForElement(DuduCompanionStatus);
+            peer?.RaiseAutomationEvent(AutomationEvents.LiveRegionChanged);
+        }
+        catch (Exception exception)
+        {
+            global::System.Diagnostics.Trace.TraceInformation(
+                "Dudu companion status announcement failed: {0}",
+                exception.GetType().Name);
+        }
     }
 
     private void ApplyRequestedTheme()

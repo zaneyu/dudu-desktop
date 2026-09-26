@@ -14,7 +14,22 @@ public interface IPauseStateStore
 public sealed class PauseStateStore : IPauseStateStore
 {
     private readonly object _gate = new();
+    private readonly Func<bool>? _isFullscreen;
     private PauseState _current = PauseState.None;
+    private bool _fullscreenSeenDuringPause;
+
+    /// <param name="isFullscreen">
+    /// Optional live fullscreen reading. When supplied, a
+    /// <see cref="PauseMode.UntilFullscreenEnds"/> pause actually ends once
+    /// a fullscreen session that began while it was active is over. Without
+    /// it that pause never expired: Home kept saying Dudu was resting
+    /// "till fullscreen done" and anything that treats every non-None pause
+    /// as paused (audio cues) stayed muted until she resumed by hand.
+    /// </param>
+    public PauseStateStore(Func<bool>? isFullscreen = null)
+    {
+        _isFullscreen = isFullscreen;
+    }
 
     public PauseState Current
     {
@@ -24,14 +39,56 @@ public sealed class PauseStateStore : IPauseStateStore
     public void Set(PauseState state)
     {
         ArgumentNullException.ThrowIfNull(state);
-        lock (_gate) _current = state;
+        lock (_gate)
+        {
+            _current = state;
+            _fullscreenSeenDuringPause = false;
+        }
     }
 
     public PauseState GetEffective(DateTimeOffset now)
     {
+        PauseState observed;
         lock (_gate)
         {
             _current = PausePolicy.ExpireIfNeeded(_current, now);
+            if (_current.Mode != PauseMode.UntilFullscreenEnds || _isFullscreen is null)
+            {
+                return _current;
+            }
+
+            observed = _current;
+        }
+
+        // Read outside the lock: the probe may take other components' locks.
+        bool fullscreen;
+        try
+        {
+            fullscreen = _isFullscreen();
+        }
+        catch
+        {
+            // Fail closed: an unreadable fullscreen state keeps the pause.
+            fullscreen = true;
+        }
+
+        lock (_gate)
+        {
+            if (!ReferenceEquals(_current, observed))
+            {
+                return _current;
+            }
+
+            if (fullscreen)
+            {
+                _fullscreenSeenDuringPause = true;
+            }
+            else if (_fullscreenSeenDuringPause)
+            {
+                _current = PauseState.None;
+                _fullscreenSeenDuringPause = false;
+            }
+
             return _current;
         }
     }
@@ -82,8 +139,13 @@ public sealed class CompanionCommandRouter
                     cancellationToken);
                 break;
             case TrayCommand.PauseIndefinitelyOrResume:
+                // "...or resume" must resume *any* active pause. Only an
+                // indefinite pause used to resume here: after "pause for one
+                // hour" the same item turned the timed pause into an
+                // indefinite one instead, so resuming early took two clicks
+                // through an item whose label promised one.
                 await SetPauseAsync(
-                    _pause.GetEffective(_clock()).Mode == PauseMode.Indefinite
+                    _pause.GetEffective(_clock()).Mode != PauseMode.None
                         ? PauseState.None
                         : new PauseState(PauseMode.Indefinite, null),
                     cancellationToken);

@@ -30,6 +30,12 @@ export interface MockRelay {
   sentMessageIds: string[];
   /** Failure returned by the next sender disconnect, for local-state retention coverage. */
   failNextDisconnect: "abort" | number | null;
+  /** How many `POST /v1/pairings/redeem` requests reached the mock. */
+  redeemCount: number;
+  /** Milliseconds to hold each redeem response, to observe the page's busy state. */
+  redeemDelayMs: number;
+  /** When true, every `GET /v1/sender/device` aborts (the relay is unreachable on load). */
+  failDeviceCheck: boolean;
 }
 
 const VALID_PAIRING_CODE = "7K9M2R4X";
@@ -59,6 +65,9 @@ export async function mockRelay(page: Page): Promise<MockRelay> {
     failNextSend: null,
     sentMessageIds: [],
     failNextDisconnect: null,
+    redeemCount: 0,
+    redeemDelayMs: 0,
+    failDeviceCheck: false,
   };
 
   await page.route("**/v1/**", async (route) => {
@@ -67,6 +76,10 @@ export async function mockRelay(page: Page): Promise<MockRelay> {
     const method = request.method();
 
     if (method === "POST" && url.pathname === "/v1/pairings/redeem") {
+      state.redeemCount += 1;
+      if (state.redeemDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, state.redeemDelayMs));
+      }
       let code: unknown;
       try {
         code = (JSON.parse(request.postData() ?? "{}") as { code?: unknown }).code;
@@ -91,6 +104,10 @@ export async function mockRelay(page: Page): Promise<MockRelay> {
     }
 
     if (method === "GET" && url.pathname === "/v1/sender/device") {
+      if (state.failDeviceCheck) {
+        await route.abort("failed");
+        return;
+      }
       if (state.paired) {
         await route.fulfill({
           status: 200,
@@ -99,7 +116,9 @@ export async function mockRelay(page: Page): Promise<MockRelay> {
             publicKey: publicKeySpki,
             deviceId,
             deviceCreatedUtc: new Date().toISOString(),
-            publicKeyFingerprint: "mock-fingerprint",
+            // The real relay reports the key's actual fingerprint; a placeholder here would make
+            // every reload look like a key change to the page's trust-on-first-use pin.
+            publicKeyFingerprint,
           }),
         });
       } else {

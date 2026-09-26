@@ -41,7 +41,16 @@ public sealed class WindowsAudioCuePlayer : IAudioCuePlayer, IAudioCuePlayerLife
         // Not a `using`: on the TimeoutException path below, teardown is
         // deliberately deferred to a background Task.Run instead of running
         // here, so `player` must survive past this method returning.
-        var player = new MediaPlayer { Volume = Math.Clamp(volume, 0.0, 1.0) };
+        var player = new MediaPlayer
+        {
+            Volume = Math.Clamp(volume, 0.0, 1.0),
+            // A cue is a short sound effect, not media: without these every
+            // chirp registered as a media session, popped the Windows media
+            // flyout next to the volume overlay, and could capture the
+            // keyboard play/pause keys away from her music player.
+            AudioCategory = MediaPlayerAudioCategory.SoundEffects,
+        };
+        player.CommandManager.IsEnabled = false;
         var completion = new TaskCompletionSource<AudioPlaybackState>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         TypedEventHandler<MediaPlayer, object> ended = (_, _) =>
