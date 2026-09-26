@@ -214,6 +214,18 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     public static bool IsDuduWindowHandle(nint hwnd) =>
         hwnd != 0 && Hosts.ContainsKey(hwnd);
 
+    /// <summary>A live pet overlay window handle, or 0 when none exists.
+    /// Lets fullscreen detection compare monitors without extra wiring.</summary>
+    internal static nint GetAnyLiveWindowHandle()
+    {
+        foreach (var entry in Hosts)
+        {
+            return entry.Key;
+        }
+
+        return 0;
+    }
+
     public static bool TrySetForegroundWindow(nint hwnd) =>
         hwnd != 0 && PInvoke.SetForegroundWindow(new HWND((void*)hwnd));
 
