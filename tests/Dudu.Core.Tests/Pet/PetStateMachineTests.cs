@@ -310,6 +310,33 @@ public sealed class PetStateMachineTests
                 machine.Handle(new PetEvent.FocusStarted("f-2"));
                 Assert.NotEqual(PetState.Focus, machine.Handle(new PetEvent.FocusEnded("f-2")).State);
             },
+
+            // Interaction: cleared by InteractionDismissed(key), fired by the
+            // one-shot coordinator once the petted/drink clip finishes.
+            [PetState.Interaction] = () =>
+            {
+                var machine = PetStateMachine.CreateIdle();
+                machine.Handle(new PetEvent.InteractionRequested("petted"));
+                Assert.Equal(PetState.Idle, machine.Handle(new PetEvent.InteractionDismissed("petted")).State);
+            },
+
+            // Dragging: cleared by DragEnded, raised by the overlay host on
+            // release, capture loss, hide, and shutdown.
+            [PetState.Dragging] = () =>
+            {
+                var machine = PetStateMachine.CreateIdle();
+                machine.Handle(new PetEvent.DragStarted());
+                Assert.Equal(PetState.Idle, machine.Handle(new PetEvent.DragEnded()).State);
+            },
+
+            // Eating: cleared by EatingEnded(id), raised by "done eating" or
+            // automatically once the meal timer runs out.
+            [PetState.Eating] = () =>
+            {
+                var machine = PetStateMachine.CreateIdle();
+                machine.Handle(new PetEvent.EatingStarted("meal-1"));
+                Assert.Equal(PetState.Idle, machine.Handle(new PetEvent.EatingEnded("meal-1")).State);
+            },
         };
 
         foreach (var state in Enum.GetValues<PetState>().Where(state => state != PetState.Idle))

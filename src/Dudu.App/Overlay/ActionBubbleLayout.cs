@@ -2,7 +2,7 @@ using Dudu.Core.Assets;
 
 namespace Dudu.App.Overlay;
 
-public enum OverlayAction { Pet, DrinkWater, StartFocus, Tasks, LoveNote, ComfortMe }
+public enum OverlayAction { Pet, DrinkWater, StartFocus, Tasks, LoveNote, ComfortMe, EatTogether }
 
 public enum ComfortAction { BreatheWithMe, TinyHug, ReadALoveNote, TakeAFiveMinuteBreak, Close }
 
@@ -36,6 +36,12 @@ public static class ActionBubbleLayout
     private const int DetailGap = 4;
     private const int DetailHeight = 28;
     private const int MinimumSurfaceWidth = 16;
+
+    /// <summary>Upper bound on painted primary rows. A surface too short
+    /// for all of them (the 128 px fallback pack fits six) keeps the first
+    /// rows in <see cref="OverlayCommandRouter.PrimaryActions"/> order, so
+    /// eat-together, listed last, is the one that drops.</summary>
+    public const int MaximumPrimaryActions = 7;
     private static readonly OverlayAction[] AllowedActions = Enum.GetValues<OverlayAction>();
 
     public static IReadOnlyList<ComfortAction> ComfortActions { get; } =
@@ -64,7 +70,7 @@ public static class ActionBubbleLayout
         var selected = actions
             .Where(action => AllowedActions.Contains(action))
             .Distinct()
-            .Take(6)
+            .Take(MaximumPrimaryActions)
             .ToArray();
         if (selected.Length == 0) selected = [OverlayAction.Pet];
 
@@ -103,6 +109,9 @@ public static class ActionBubbleLayout
         OverlayAction.Tasks => "tasks",
         OverlayAction.LoveNote => "love note",
         OverlayAction.ComfortMe => "comfort me",
+        // No emoji here: the overlay paints labels with Segoe UI, which has
+        // no emoji glyphs.
+        OverlayAction.EatTogether => "eat together",
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "oh no unknown overlay action"),
     };
 
@@ -116,6 +125,7 @@ public static class ActionBubbleLayout
         OverlayAction.Tasks => "OverlayActionTasks",
         OverlayAction.LoveNote => "OverlayActionLoveNote",
         OverlayAction.ComfortMe => "OverlayActionComfortMe",
+        OverlayAction.EatTogether => "OverlayActionEatTogether",
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "alala unknown overlay action"),
     };
 

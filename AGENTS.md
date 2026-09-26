@@ -623,7 +623,9 @@ authoritative for future changes.
   `presentation-held-remove`, `presentation-held-mark-toasted` (throttled
   once per kind/exception-type/Sqlite error code, see
   `PresentationCoordinator.ReportHeldFailureOnce`),
-  `audio-cue-playback`, `startup-chrome-attach`, `partial-startup-*` /
+  `audio-cue-playback`, `overlay-drag` (drag-loop start/stop),
+  `focus-restore` (re-latching a focus session still running at startup),
+  `startup-chrome-attach`, `partial-startup-*` /
   `partial-runtime-*` / `runtime-*-shutdown` cleanup ops, `shutdown-host`,
   `shutdown-overlay`, `shutdown-tray`. All best-effort/fail-closed behavior
   is unchanged — logging only, report-and-(re)throw where the original

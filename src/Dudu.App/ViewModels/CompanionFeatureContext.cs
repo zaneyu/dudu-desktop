@@ -54,7 +54,8 @@ public sealed class CompanionFeatureContext
         Func<string, CancellationToken, Task>? discardHeldReminderAsync = null,
         Func<string, CancellationToken, Task>? discardHeldLocalNoteAsync = null,
         Func<string, CancellationToken, Task>? discardHeldRemoteNoteAsync = null,
-        Func<CancellationToken, Task>? discardHeldRemoteNotesAsync = null)
+        Func<CancellationToken, Task>? discardHeldRemoteNotesAsync = null,
+        AffectionTracker? affection = null)
     {
         Clock = clock ?? throw new ArgumentNullException(nameof(clock));
         PreferenceMutations = preferenceMutations ?? throw new ArgumentNullException(nameof(preferenceMutations));
@@ -75,6 +76,7 @@ public sealed class CompanionFeatureContext
         Pairing = pairing ?? throw new ArgumentNullException(nameof(pairing));
         FeatureTransactions = featureTransactions ?? throw new ArgumentNullException(nameof(featureTransactions));
         Pet = pet ?? throw new ArgumentNullException(nameof(pet));
+        Affection = affection ?? new AffectionTracker(Clock);
         ApplyPlacementAsync = applyPlacementAsync ?? ((_, _) => Task.CompletedTask);
         SetUserVisibleAsync = setUserVisibleAsync ?? ((_, _) => Task.CompletedTask);
         GetPauseState = getPauseState ?? (() => PauseState.None);
@@ -154,6 +156,10 @@ public sealed class CompanionFeatureContext
     public IPairingService Pairing { get; }
     public ICompanionFeatureTransactions FeatureTransactions { get; }
     public PetStateMachine Pet { get; }
+
+    /// <summary>Petting record shared with the presentation tick's tantrum
+    /// check, so a pet from any surface resets the same neglect clock.</summary>
+    public AffectionTracker Affection { get; }
     public Func<PetPlacement, CancellationToken, Task> ApplyPlacementAsync { get; }
     public Func<bool, CancellationToken, Task> SetUserVisibleAsync { get; }
     public Func<PauseState> GetPauseState { get; }

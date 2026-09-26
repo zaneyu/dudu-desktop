@@ -36,6 +36,7 @@
                     <Button Content="open tasks" Tag="Tasks" Click="OverlayAction_Click" AutomationProperties.AutomationId="OverlayActionTasks" AutomationProperties.Name="open tasks" />
                     <Button Content="open love notes" Tag="LoveNote" Click="OverlayAction_Click" AutomationProperties.AutomationId="OverlayActionLoveNote" AutomationProperties.Name="open love notes" />
                     <Button Content="comfort me" Tag="ComfortMe" Click="OverlayAction_Click" AutomationProperties.AutomationId="OverlayActionComfortMe" AutomationProperties.Name="comfort me" />
+                    <Button Content="eat together 🍚" Tag="EatTogether" Click="OverlayAction_Click" AutomationProperties.AutomationId="OverlayActionEatTogether" AutomationProperties.Name="eat together or done eating" />
                 </StackPanel>
                 <TextBlock x:Name="HomeActionStatus" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" AutomationProperties.AutomationId="HomeActionStatus" AutomationProperties.Name="action status" />
             </StackPanel>

@@ -7,14 +7,15 @@ namespace Dudu.App.Tests.Overlay;
 public sealed class ActionBubbleLayoutTests
 {
     [Fact]
-    public void Action_bubble_never_exposes_more_than_six_primary_actions()
+    public void Action_bubble_never_exposes_more_than_seven_primary_actions()
     {
         var actions = Enum.GetValues<OverlayAction>();
         var workArea = new PixelRect(0, 0, 1920, 1040);
 
         var layout = ActionBubbleLayout.Arrange(actions, workArea, new PixelPoint(1800, 900));
 
-        Assert.InRange(layout.PrimaryActions.Count, 1, 6);
+        Assert.InRange(layout.PrimaryActions.Count, 1, ActionBubbleLayout.MaximumPrimaryActions);
+        Assert.Equal(7, ActionBubbleLayout.MaximumPrimaryActions);
         Assert.True(workArea.Contains(layout.Bounds));
         Assert.All(layout.PrimaryActions, placement => Assert.True(layout.Bounds.Contains(placement.HitRegion)));
         Assert.True(layout.Bounds.Contains(layout.DetailRegion));
@@ -22,14 +23,29 @@ public sealed class ActionBubbleLayoutTests
     }
 
     [Fact]
-    public void Fallback_128_pixel_surface_keeps_all_six_actions_and_reserved_detail_text()
+    public void Fallback_128_pixel_surface_keeps_the_first_six_actions_and_reserved_detail_text()
     {
         var layout = ActionBubbleLayout.Arrange(
             OverlayCommandRouter.PrimaryActions,
             new PixelRect(0, 0, 128, 128),
             new PixelPoint(96, 112));
 
-        Assert.Equal(6, layout.PrimaryActions.Count);
+        // Seven rows do not fit 128 px; eat together, listed last, drops.
+        Assert.Equal(OverlayCommandRouter.PrimaryActions.Take(6), layout.PrimaryActions.Select(item => item.Action));
+        Assert.All(layout.PrimaryActions, action =>
+            Assert.False(Overlaps(action.HitRegion, layout.DetailRegion)));
+    }
+
+    [Fact]
+    public void Private_pack_surface_paints_all_seven_actions_including_eat_together()
+    {
+        // Private pack nominal size: 512 px at the default 0.75 scale.
+        var layout = ActionBubbleLayout.Arrange(
+            OverlayCommandRouter.PrimaryActions,
+            new PixelRect(0, 0, 384, 384),
+            new PixelPoint(192, 360));
+
+        Assert.Equal(OverlayCommandRouter.PrimaryActions, layout.PrimaryActions.Select(item => item.Action));
         Assert.All(layout.PrimaryActions, action =>
             Assert.False(Overlaps(action.HitRegion, layout.DetailRegion)));
     }
