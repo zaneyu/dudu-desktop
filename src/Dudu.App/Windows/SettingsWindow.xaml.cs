@@ -157,6 +157,9 @@ public sealed partial class SettingsWindow : UserControl
         // already detached), and safe if feature pages were never created
         // (e.g. closed mid-onboarding).
         _tasksFocusPage?.ViewModel.DetachFocusExpiry();
+        // The shared reminder actions outlive this window; stop refreshing a
+        // page nobody can see (Unloaded does not always run on window close).
+        _remindersPage?.DetachLiveUpdates();
     }
 
     /// <summary>Called by App when an already-open settings window is shown again
@@ -391,7 +394,7 @@ public sealed partial class SettingsWindow : UserControl
             new HomeViewModel(features),
             _context.StartupSettings,
             _context.OverlayCommands);
-        _remindersPage = new RemindersPage(new RemindersViewModel(features));
+        _remindersPage = new RemindersPage(new RemindersViewModel(features, _context.ReminderActions));
         _tasksFocusPage = new TasksFocusPage(new TasksFocusViewModel(features)
         {
             // FocusService.SessionExpired (a naturally-expired session, see

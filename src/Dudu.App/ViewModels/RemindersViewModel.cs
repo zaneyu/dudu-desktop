@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.Input;
+using Dudu.App.Notifications;
 using Dudu.Core.Models;
 using Dudu.Core.Policies;
 using Dudu.Core.Reminders;
@@ -32,9 +33,19 @@ public sealed class RemindersViewModel : FeatureViewModelBase
     private bool _bedtimeRitualEnabled;
     private IReadOnlySet<DayOfWeek> _selectedWeekdays = DefaultWeekdays();
 
-    public RemindersViewModel(CompanionFeatureContext context)
+    /// <param name="reminderActions">The Done/Snooze service shared with the
+    /// toast buttons (production passes the composed one, which knows which
+    /// occurrences the engine already announced). When null, one is built from
+    /// <paramref name="context"/>.</param>
+    public RemindersViewModel(CompanionFeatureContext context, ReminderToastActions? reminderActions = null)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
+        ReminderActions = reminderActions ?? new ReminderToastActions(
+            context.Clock,
+            context.Reminders,
+            context.DismissReminderNotificationAsync,
+            context.DiscardHeldReminderAsync,
+            context.PresentPetAsync);
         _hydrationEnabled = context.CurrentPreferences.HydrationRemindersEnabled;
         _breakEnabled = context.CurrentPreferences.BreakRemindersEnabled;
         _eveningCheckInEnabled = context.CurrentPreferences.EveningCheckInEnabled;
@@ -63,6 +74,10 @@ public sealed class RemindersViewModel : FeatureViewModelBase
     public IRelayCommand CancelDeleteReminderCommand { get; }
 
     public ObservableCollection<Reminder> Reminders { get; } = [];
+
+    /// <summary>Shared with the toast buttons; the page listens to its
+    /// <see cref="ReminderToastActions.ReminderChanged"/> to stay fresh.</summary>
+    public ReminderToastActions ReminderActions { get; }
 
     /// <summary>Drives the list's empty-state copy.</summary>
     public bool HasNoReminders => Reminders.Count == 0;
@@ -366,13 +381,7 @@ public sealed class RemindersViewModel : FeatureViewModelBase
             }
 
             await _context.ReminderWriter.DeleteAsync(reminder.Id, cancellationToken);
-            await MutateAsync(() =>
-            {
-                var existing = Reminders.FirstOrDefault(item => item.Id == reminder.Id);
-                if (existing is not null) Reminders.Remove(existing);
-                if (PendingDeleteReminder?.Id == reminder.Id) PendingDeleteReminder = null;
-                if (SelectedReminder?.Id == reminder.Id) NewReminder();
-            }, cancellationToken);
+            await MutateAsync(() => RemoveRow(reminder.Id), cancellationToken);
 
             // The row is already gone; the rest is best-effort cleanup so a toast
             // or a held copy of a deleted reminder never surfaces later.
@@ -401,113 +410,112 @@ public sealed class RemindersViewModel : FeatureViewModelBase
         id is "default-hydration" or "default-break"
             or LocalReminderDefaults.EveningCheckInId or LocalReminderDefaults.BedtimeId;
 
+    /// <summary>
+    /// Done. Uses the same rules as the toast's Done (see
+    /// <see cref="ReminderToastActions"/>): a reminder that already fired is
+    /// only acknowledged -- this used to complete it again, which consumed
+    /// the next, not-yet-due occurrence too (an hourly reminder skipped an
+    /// hour) -- while one that has not fired yet is completed ahead of time so
+    /// its pending occurrence no longer fires. The row is re-read by id, so a
+    /// copy made stale by the reminder tick or a toast click no longer fails
+    /// with "reminder changed".
+    /// </summary>
     public Task CompleteAsync(Reminder? reminder, CancellationToken cancellationToken = default)
     {
         return RunAsync(async () =>
         {
             ArgumentNullException.ThrowIfNull(reminder);
-            var now = _context.Clock.UtcNow.ToUniversalTime();
-            var zone = ResolveTimeZone(reminder.LocalTimeZoneId);
-            var next = ReminderScheduler.NextOccurrenceAfterCompletion(reminder, now, zone);
-            var occurrence = new ReminderOccurrence(reminder.Id, now);
-            if (!await _context.Reminders.RecordOccurrencesAndAdvanceAsync(reminder, [occurrence], next, cancellationToken))
+            var result = await ReminderActions.CompleteFromPageAsync(reminder.Id, cancellationToken);
+            await ApplyResultAsync(reminder.Id, result, cancellationToken);
+            if (result.Answer == ReminderAnswer.Missing)
             {
-                throw new InvalidOperationException("oh no reminder changed before saving");
-            }
-            // The reminder is already durably completed above -- everything
-            // from here on is best-effort cleanup of other subsystems'
-            // notion of this reminder, and must not turn a completion that
-            // already succeeded into a reported failure.
-            try
-            {
-                await _context.PresentPetAsync(new Dudu.Core.Pet.PetEvent.Dismissed(reminder.Id), cancellationToken);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-            catch (Exception exception)
-            {
-                global::System.Diagnostics.Trace.TraceError("Dudu reminder-complete pet present failed: {0}", exception);
-            }
-
-            var updated = reminder with { NextDueUtc = next, SnoozedUntilUtc = null };
-            await MutateAsync(() => Replace(updated), cancellationToken);
-
-            try
-            {
-                await _context.DismissReminderNotificationAsync(reminder.Id, cancellationToken);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-            catch (Exception exception)
-            {
-                global::System.Diagnostics.Trace.TraceError("Dudu reminder-complete notification dismiss failed: {0}", exception);
-            }
-
-            try
-            {
-                // Completing here is a direct advance of the reminder row, not a
-                // PresentationCoordinator.PresentAsync call -- so a copy that was
-                // separately queued or held back (e.g. it became due while she
-                // had Dudu hidden, or during quiet hours) would otherwise still
-                // be sitting in that gateway's queue/persisted row and surface
-                // again on a later tick or the next app launch, even though it
-                // was just completed here.
-                await _context.DiscardHeldReminderAsync(reminder.Id, cancellationToken);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-            catch (Exception exception)
-            {
-                global::System.Diagnostics.Trace.TraceError("Dudu reminder-complete held-copy discard failed: {0}", exception);
+                throw new InvalidOperationException(ReminderGoneMessage);
             }
         }, "yayyy done le good job");
     }
 
-    public Task SnoozeAsync(Reminder? reminder, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// Snooze. Uses the same rescheduling as the toast's Snooze: the
+    /// occurrence becomes pending again in 15 minutes (NextDueUtc), which the
+    /// scheduler honours. It used to only set SnoozedUntilUtc, which the
+    /// scheduler ignores once the engine has advanced NextDueUtc past it -- a
+    /// snoozed one-time reminder never came back at all.
+    /// </summary>
+    public async Task SnoozeAsync(Reminder? reminder, CancellationToken cancellationToken = default)
     {
-        return RunAsync(async () =>
+        ReminderAnswer? answer = null;
+        var succeeded = await RunAsync(async () =>
         {
             ArgumentNullException.ThrowIfNull(reminder);
-            var snoozeUntil = _context.Clock.UtcNow.ToUniversalTime().AddMinutes(15);
-            var snoozed = reminder with { SnoozedUntilUtc = snoozeUntil };
-            await _context.ReminderWriter.SaveAsync(snoozed, cancellationToken);
-            await MutateAsync(() => Replace(snoozed), cancellationToken);
+            var result = await ReminderActions.SnoozeFromPageAsync(reminder.Id, cancellationToken);
+            await ApplyResultAsync(reminder.Id, result, cancellationToken);
+            answer = result.Answer;
+            switch (result.Answer)
+            {
+                case ReminderAnswer.Missing:
+                    throw new InvalidOperationException(ReminderGoneMessage);
+                case ReminderAnswer.SwitchedOff:
+                    throw new InvalidOperationException("this reminder is off, turn it on to snooze it");
+            }
+        }, SnoozedMessage);
 
-            // The snooze is already durably saved above -- everything from
-            // here on is best-effort cleanup of other subsystems' notion of
-            // this reminder, and must not turn a snooze that already
-            // succeeded into a reported failure (and a dismiss failure must
-            // not skip the discard check below).
-            try
+        if (succeeded)
+        {
+            StatusMessage = answer switch
             {
-                await _context.DismissReminderNotificationAsync(reminder.Id, cancellationToken);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-            catch (Exception exception)
-            {
-                global::System.Diagnostics.Trace.TraceError("Dudu reminder-snooze notification dismiss failed: {0}", exception);
-            }
+                ReminderAnswer.NextComesSooner => "oki the next one comes within 15 min anyway",
+                ReminderAnswer.NotDueYet => "not due yet, nothing to snooze",
+                _ => SnoozedMessage,
+            };
+        }
+    }
 
-            // Unlike CompleteAsync, this can't unconditionally discard the held
-            // copy. The scheduling engine advances NextDueUtc *before*
-            // notifying, so once an occurrence is held, that held row is the
-            // only record of it. If NextDueUtc is already later than this
-            // snooze resolves, the snooze is "dead" -- SnoozedUntilUtc <
-            // NextDueUtc is ignored by LoadDueAsync/Reconcile -- and discarding
-            // the held copy here would make the reminder vanish instead of
-            // resurfacing once the hold clears. Only discard when the snooze
-            // is "live", i.e. it reaches at least as far as NextDueUtc and so
-            // will actually govern re-delivery on its own.
-            if (reminder.NextDueUtc is { } due && due.ToUniversalTime() <= snoozeUntil)
+    private const string SnoozedMessage = "otayyy snoozed for 15 min";
+    private const string ReminderGoneMessage = "oh no this reminder is gone";
+
+    /// <summary>Re-reads one reminder and updates its row (or drops it if it
+    /// was deleted), keeping the selection and any unsaved editor text. The
+    /// page calls this when a toast Done/Snooze or the reminder tick changed
+    /// the row while the page was open, so a later action never works from a
+    /// stale copy. Best-effort: never throws.</summary>
+    public async Task ReloadReminderAsync(string reminderId, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(reminderId)) return;
+        try
+        {
+            var fresh = (await _context.Reminders.ListAsync(cancellationToken))
+                .FirstOrDefault(item => string.Equals(item.Id, reminderId, StringComparison.Ordinal));
+            await MutateAsync(() =>
             {
-                try
-                {
-                    await _context.DiscardHeldReminderAsync(reminder.Id, cancellationToken);
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-                catch (Exception exception)
-                {
-                    global::System.Diagnostics.Trace.TraceError("Dudu reminder-snooze held-copy discard failed: {0}", exception);
-                }
-            }
-        }, "otayyy snoozed for 15 min");
+                if (fresh is not null) Replace(fresh);
+                else RemoveRow(reminderId);
+            }, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            global::System.Diagnostics.Trace.TraceError(
+                "Dudu reminder-page reload failed: {0} (0x{1:X8})",
+                exception.GetType().FullName,
+                exception.HResult);
+        }
+    }
+
+    private Task ApplyResultAsync(string reminderId, ReminderActionResult result, CancellationToken cancellationToken) =>
+        MutateAsync(() =>
+        {
+            if (result.Answer == ReminderAnswer.Missing) RemoveRow(reminderId);
+            else if (result.Updated is not null) Replace(result.Updated);
+        }, cancellationToken);
+
+    private void RemoveRow(string reminderId)
+    {
+        var existing = Reminders.FirstOrDefault(item => item.Id == reminderId);
+        if (existing is not null) Reminders.Remove(existing);
+        if (PendingDeleteReminder?.Id == reminderId) PendingDeleteReminder = null;
+        if (SelectedReminder?.Id == reminderId) NewReminder();
     }
 
     public Task SaveReminderPreferencesAsync(CancellationToken cancellationToken = default) =>

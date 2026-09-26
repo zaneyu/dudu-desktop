@@ -190,7 +190,12 @@ public sealed class RemindersTasksLoveNotesUxTests
 
         await viewModel.SnoozeCommand.ExecuteAsync(viewModel.SelectedReminder);
         Assert.Null(viewModel.ErrorMessage);
-        Assert.NotNull(viewModel.SelectedReminder!.SnoozedUntilUtc);
+        // Page snooze now reschedules NextDueUtc like the toast does, instead
+        // of writing a SnoozedUntilUtc the scheduler ignored. This reminder is
+        // not due for hours, so there is nothing to snooze yet and the row is
+        // left as it was (see ReminderPageActionTests).
+        Assert.Equal("not due yet, nothing to snooze", viewModel.StatusMessage);
+        Assert.Null(viewModel.SelectedReminder!.SnoozedUntilUtc);
 
         await viewModel.CompleteCommand.ExecuteAsync(viewModel.SelectedReminder);
         Assert.Null(viewModel.ErrorMessage);

@@ -623,7 +623,9 @@ authoritative for future changes.
   `notification-invoked` (a toast click could not open its page),
   `reminder-toast-action` (a reminder toast's Done/Snooze could not be
   carried out -- Snooze then opens the Reminders page instead; exception
-  only, never the reminder text),
+  only, never the reminder text), `reminder-page-action` (a best-effort
+  cleanup step -- pet/toast/held copy -- after a Reminders page Done/Snooze
+  that itself succeeded; exception only),
   `reconcile-visibility` (both `AppLifecycleCoordinator.ReconcileVisibilityAsync`
   and `AppHost`'s wrapper around it report under this one name),
   `presentation-held-load`, `presentation-held-persist`,

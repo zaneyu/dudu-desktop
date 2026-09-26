@@ -46,7 +46,12 @@ internal sealed class SettingsDataPagesFixture
         Func<CancellationToken, Task>? deleteLocalDataAsync = null,
         Func<CancellationToken, Task>? deleteRemoteDataAsync = null,
         Func<string, CancellationToken, Task>? setGlobalShortcutAsync = null,
-        IFocusSessionRepository? focusSessions = null)
+        IFocusSessionRepository? focusSessions = null,
+        IReminderRepository? reminders = null,
+        IReminderWriter? reminderWriter = null,
+        Func<string, CancellationToken, Task>? dismissReminderNotificationAsync = null,
+        Func<string, CancellationToken, Task>? discardHeldReminderAsync = null,
+        Func<PetEvent, CancellationToken, Task>? presentPetAsync = null)
     {
         var clock = new MutableClock(
             DateTimeOffset.Parse("2026-09-19T08:00:00Z"),
@@ -65,8 +70,8 @@ internal sealed class SettingsDataPagesFixture
             preferenceMutations,
             new EmptyProfileRepository(),
             placements,
-            new EmptyReminderRepository(),
-            new EmptyReminderRepository(),
+            reminders ?? new EmptyReminderRepository(),
+            reminderWriter ?? new EmptyReminderRepository(),
             tasks,
             focusSessionRepository,
             localNotes,
@@ -84,7 +89,10 @@ internal sealed class SettingsDataPagesFixture
             restoreAsync: restoreAsync,
             deleteLocalDataAsync: deleteLocalDataAsync,
             deleteRemoteDataAsync: deleteRemoteDataAsync,
-            setGlobalShortcutAsync: setGlobalShortcutAsync);
+            setGlobalShortcutAsync: setGlobalShortcutAsync,
+            presentPetAsync: presentPetAsync,
+            dismissReminderNotificationAsync: dismissReminderNotificationAsync,
+            discardHeldReminderAsync: discardHeldReminderAsync);
         return new SettingsDataPagesFixture(context, clock, pairing, placements, preferenceRepository);
     }
 

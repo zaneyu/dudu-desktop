@@ -141,17 +141,36 @@ public sealed partial class App : Application
         {
             await startupTask;
             _bootstrap = _startupRunner?.Bootstrap;
+            var notificationActivation = _notificationActivation;
+            var notificationRouter = _settingsContext?.NotificationRouter;
+            // A toast Done/Snooze that launched Dudu is carried out in the
+            // background like it is while running, so it does not also pull
+            // Home up (unless onboarding still has to happen). The router
+            // opens Reminders itself if the action could not be carried out.
+            var answeredInBackground = notificationRouter is not null
+                && NotificationInvocationRouter.ActsInBackground(notificationActivation)
+                && _settingsContext?.Profile?.OnboardingComplete == true;
             if (_settingsContext is not null
+                && !answeredInBackground
                 && CompanionLaunchOptions.Parse(_launchArguments)
                     .ShouldOpenSettings(_settingsContext.Profile))
             {
                 await OpenHome(CancellationToken.None);
             }
 
-            var notificationDestination = NotificationDestination(_notificationActivation);
-            if (notificationDestination is not null)
+            if (notificationActivation is not null)
             {
-                await NavigateSettingsDestinationAsync(notificationDestination, CancellationToken.None);
+                if (notificationRouter is not null)
+                {
+                    // Never throws; reports its own failures.
+                    await notificationRouter.HandleActivationAsync(notificationActivation, CancellationToken.None);
+                }
+                else
+                {
+                    await NavigateSettingsDestinationAsync(
+                        NotificationDestination(notificationActivation)!,
+                        CancellationToken.None);
+                }
             }
         }
         catch (Exception exception)
@@ -480,14 +499,11 @@ public sealed partial class App : Application
                 (activation.Data as AppNotificationActivatedEventArgs)?.Arguments)
             : null;
 
+    // Every parsed activation has a page; a reminder body click
+    // (open-reminder) used to map to nothing here, so a toast click that
+    // launched Dudu opened Home instead of Reminders.
     private static string? NotificationDestination(NotificationActivation? activation) =>
-        activation?.Action switch
-        {
-            NotificationActivationAction.OpenNote => "notes",
-            NotificationActivationAction.ReminderDone => "reminders",
-            NotificationActivationAction.ReminderSnooze => "reminders",
-            _ => null,
-        };
+        activation?.Destination;
 
     private Task ExitApplicationAsync(CancellationToken cancellationToken) =>
         _uiDispatcher.InvokeAsync(ExitApplicationCore, cancellationToken);

@@ -9,6 +9,7 @@ namespace Dudu.App.Pages;
 
 public sealed partial class RemindersPage : Page
 {
+    private readonly Microsoft.UI.Dispatching.DispatcherQueue _uiQueue;
     private bool _syncingEditor;
 
     public RemindersPage(RemindersViewModel viewModel)
@@ -16,7 +17,9 @@ public sealed partial class RemindersPage : Page
         ViewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         InitializeComponent();
         DataContext = ViewModel;
+        _uiQueue = DispatcherQueue;
         Loaded += Page_Loaded;
+        Unloaded += Page_Unloaded;
     }
 
     public RemindersViewModel ViewModel { get; }
@@ -25,8 +28,27 @@ public sealed partial class RemindersPage : Page
     {
         ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
         ViewModel.PropertyChanged += ViewModel_PropertyChanged;
+        // A toast Done/Snooze (or the reminder tick) changes a row while this
+        // page is open; without this the page kept the stale copy and its next
+        // action on that row could fail with "reminder changed".
+        ViewModel.ReminderActions.ReminderChanged -= ReminderActions_ReminderChanged;
+        ViewModel.ReminderActions.ReminderChanged += ReminderActions_ReminderChanged;
         await ViewModel.RefreshAsync();
         SyncEditorFromViewModel();
+    }
+
+    private void Page_Unloaded(object sender, RoutedEventArgs args) => DetachLiveUpdates();
+
+    /// <summary>Stops following reminder changes (the shared actions service
+    /// outlives this page). The next Loaded re-attaches and refreshes.</summary>
+    public void DetachLiveUpdates() =>
+        ViewModel.ReminderActions.ReminderChanged -= ReminderActions_ReminderChanged;
+
+    private void ReminderActions_ReminderChanged(string reminderId)
+    {
+        // Raised from the reminder tick or a toast click, off the UI thread.
+        // ReloadReminderAsync never throws.
+        _uiQueue.TryEnqueue(async () => await ViewModel.ReloadReminderAsync(reminderId));
     }
 
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs args)

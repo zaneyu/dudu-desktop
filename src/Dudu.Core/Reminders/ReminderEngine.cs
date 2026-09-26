@@ -1,5 +1,6 @@
 using Dudu.Core.Abstractions;
 using Dudu.Core.Focus;
+using Dudu.Core.Models;
 using Dudu.Core.Time;
 
 namespace Dudu.Core.Reminders;
@@ -22,6 +23,18 @@ public sealed class ReminderEngine
         _dueSink = dueSink ?? throw new ArgumentNullException(nameof(dueSink));
         _focusService = focusService;
     }
+
+    /// <summary>
+    /// Raised for each occurrence the tick delivers, after the advance past it
+    /// has committed and just before it is handed to the due sink. Once that
+    /// commit lands, the reminder row already points at the NEXT occurrence,
+    /// so the row alone can no longer tell "announced, waiting for an answer"
+    /// apart from "not due yet"; this lets the app keep that distinction (a
+    /// "done" on an announced occurrence must not also consume the next one).
+    /// Handlers must be quick and must not throw: an exception from one is
+    /// ignored so it can never break the tick or suppress the notification.
+    /// </summary>
+    public event Action<ReminderOccurrence>? OccurrenceDelivered;
 
     public async Task TickAsync(CancellationToken cancellationToken = default)
     {
@@ -92,7 +105,28 @@ public sealed class ReminderEngine
 
             foreach (var occurrence in reconciliation.DueNow)
             {
+                RaiseOccurrenceDelivered(occurrence);
                 await _dueSink.NotifyAsync(occurrence, cancellationToken);
+            }
+        }
+    }
+
+    private void RaiseOccurrenceDelivered(ReminderOccurrence occurrence)
+    {
+        if (OccurrenceDelivered is not { } handlers)
+        {
+            return;
+        }
+
+        foreach (var handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                ((Action<ReminderOccurrence>)handler)(occurrence);
+            }
+            catch
+            {
+                // See OccurrenceDelivered: observers are advisory only.
             }
         }
     }

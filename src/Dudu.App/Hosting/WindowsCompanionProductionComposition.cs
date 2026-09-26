@@ -75,6 +75,21 @@ public sealed record CompanionSettingsContext(
     public IReadOnlyList<string> AvailableOutfitKeys { get; init; } = ["base"];
 
     /// <summary>
+    /// The one reminder Done/Snooze service shared by the toast buttons and
+    /// the Reminders page, so both follow the same rules and the page can
+    /// refresh when a toast answered a reminder while it was open. Null when
+    /// no feature runtime is composed (safe mode).
+    /// </summary>
+    public ReminderToastActions? ReminderActions { get; init; }
+
+    /// <summary>
+    /// Handles a toast click that launched Dudu (cold start) once the runtime
+    /// is composed, exactly like a click while running. Null when toast
+    /// activation is unavailable (safe mode); App then only opens the page.
+    /// </summary>
+    public NotificationInvocationRouter? NotificationRouter { get; init; }
+
+    /// <summary>
     /// True when this context was configured by <c>CreateSafeModeRuntimeAsync</c>:
     /// no tray and no overlay are composed, so the settings window is the only
     /// UI surface. App.xaml.cs uses this to exit when that window closes.
@@ -218,6 +233,9 @@ public static class WindowsCompanionProductionComposition
         // exist (after the overlay), while the toast handler that uses it is
         // registered earlier, inside initializeOverlay.
         ReminderToastActions? reminderToastActions = null;
+        // Kept for a toast click that launched Dudu (handled by App once the
+        // runtime is composed); set inside initializeOverlay below.
+        NotificationInvocationRouter? composedNotificationRouter = null;
         IUnsolicitedPresentationGateway ResolveGateway() =>
             presentationGateway
                 ?? throw new InvalidOperationException("The presentation gateway is not ready.");
@@ -581,6 +599,7 @@ public static class WindowsCompanionProductionComposition
                         invokedNotifications,
                         () => reminderToastActions,
                         host.ErrorReporter);
+                    composedNotificationRouter = notificationRouter;
                     try
                     {
                         AppNotificationManager.Default.NotificationInvoked += (_, invokedArgs) =>
@@ -905,6 +924,13 @@ public static class WindowsCompanionProductionComposition
                 featureContext.DiscardHeldReminderAsync,
                 featureContext.PresentPetAsync,
                 host.ErrorReporter);
+            // The row alone cannot tell an announced occurrence from a pending
+            // one once the engine has advanced it; the engine reports each
+            // announcement so Done/Snooze from the page answer that occurrence
+            // instead of consuming the next one. Subscribed before the host
+            // starts ticking (the runtime is only started after this returns).
+            services.GetRequiredService<Dudu.Core.Reminders.ReminderEngine>().OccurrenceDelivered +=
+                reminderToastActions.RecordAnnounced;
             var overlayRouter = new OverlayCommandRouter(
                 featureContext,
                 (destination, token) => DispatchSettingsDestinationAsync(actions, destination, token));
@@ -928,6 +954,8 @@ public static class WindowsCompanionProductionComposition
                 Features = featureContext,
                 ActionSurface = actionSurface,
                 OverlayCommands = overlayRouter,
+                ReminderActions = reminderToastActions,
+                NotificationRouter = composedNotificationRouter,
                 AvailableOutfitKeys = pack.Manifest.Outfits.Keys
                     .OrderBy(key => key, StringComparer.Ordinal)
                     .ToArray(),

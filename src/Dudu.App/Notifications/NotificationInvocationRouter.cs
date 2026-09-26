@@ -37,13 +37,24 @@ public sealed class NotificationInvocationRouter
         _errorReporter = errorReporter;
     }
 
-    public async Task HandleAsync(
+    public Task HandleAsync(
         IEnumerable<KeyValuePair<string, string>>? arguments,
+        CancellationToken cancellationToken = default) =>
+        HandleActivationAsync(NotificationActivation.TryParse(arguments), cancellationToken);
+
+    /// <summary>
+    /// Acts on an already parsed activation. Also used on a cold start, where
+    /// the click launched Dudu and is only acted on once the runtime is
+    /// composed: a Done/Snooze then works the same as while running instead of
+    /// only opening the Reminders page.
+    /// </summary>
+    public async Task HandleActivationAsync(
+        NotificationActivation? activation,
         CancellationToken cancellationToken = default)
     {
         try
         {
-            await HandleCoreAsync(NotificationActivation.TryParse(arguments), cancellationToken);
+            await HandleCoreAsync(activation, cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -54,6 +65,14 @@ public sealed class NotificationInvocationRouter
         }
     }
 
+    /// <summary>True for a reminder toast's Done/Snooze button, which is
+    /// carried out without opening the settings window (it only opens the
+    /// Reminders page if the action could not be carried out).</summary>
+    public static bool ActsInBackground(NotificationActivation? activation) =>
+        activation is { ReminderId: not null }
+        && activation.Action is NotificationActivationAction.ReminderDone
+            or NotificationActivationAction.ReminderSnooze;
+
     private async Task HandleCoreAsync(NotificationActivation? activation, CancellationToken cancellationToken)
     {
         if (activation is null)
@@ -61,9 +80,7 @@ public sealed class NotificationInvocationRouter
             return;
         }
 
-        if (activation.ReminderId is { } reminderId
-            && activation.Action is NotificationActivationAction.ReminderDone
-                or NotificationActivationAction.ReminderSnooze)
+        if (ActsInBackground(activation) && activation.ReminderId is { } reminderId)
         {
             var actions = _reminderActions();
             var handled = actions is not null && (activation.Action == NotificationActivationAction.ReminderDone
