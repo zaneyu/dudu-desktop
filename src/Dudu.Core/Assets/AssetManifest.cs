@@ -49,6 +49,34 @@ public static class AssetManifestContract
             "note-arrival",
         };
 
+    /// <summary>The motion clip played while Dudu wanders across the desktop.</summary>
+    public const string WalkAnimationKey = "walk";
+
+    /// <summary>
+    /// Optional one-shot motion clips derived from the sticker and GIF art. A pack
+    /// may ship any subset of them (the neutral fallback pack ships none), so callers
+    /// must only request keys the loaded pack actually has: a missing key silently
+    /// resolves to the idle loop.
+    /// </summary>
+    public static IReadOnlyList<string> MotionAnimationKeys { get; } =
+    [
+        WalkAnimationKey,
+        "hop",
+        "dance",
+        "wiggle",
+        "shy",
+        "sip",
+        "snack",
+        "nap",
+        "stomp",
+        "shiver",
+        "lounge",
+        "salute",
+    ];
+
+    public static bool IsMotionAnimationKey(string? key) =>
+        key is not null && MotionAnimationKeys.Contains(key, StringComparer.Ordinal);
+
     public static string StickerAnimationKey(int oneBasedIndex)
     {
         if (oneBasedIndex is < 1 or > StickerAnimationCount)
@@ -75,11 +103,13 @@ public static class AssetManifestContract
 
     public static bool IsSupportedAnimationKey(string? key) =>
         key is not null
-        && (RequiredAnimationKeys.Contains(key, StringComparer.Ordinal) || IsStickerAnimationKey(key));
+        && (RequiredAnimationKeys.Contains(key, StringComparer.Ordinal)
+            || IsStickerAnimationKey(key)
+            || IsMotionAnimationKey(key));
 
     public static bool IsOneShotAnimationKey(string? key) =>
         key is not null
-        && (OneShotAnimationKeys.Contains(key) || IsStickerAnimationKey(key));
+        && (OneShotAnimationKeys.Contains(key) || IsStickerAnimationKey(key) || IsMotionAnimationKey(key));
 
     public static IReadOnlyList<string> Validate(AssetManifest? manifest)
     {

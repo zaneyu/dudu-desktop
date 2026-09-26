@@ -45,10 +45,33 @@ public sealed class PetPresentationCoordinator
         _gate = gate ?? new SemaphoreSlim(1, 1);
     }
 
-    public async Task PresentOneShotAsync(
+    public Task PresentOneShotAsync(
         PetEvent petEvent,
         string dismissalId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        PresentOneShotCoreAsync(petEvent, dismissalId, requireIdle: false, companion: null, cancellationToken);
+
+    /// <summary>
+    /// Plays an unsolicited idle one-shot (a fidget or a wander) only if the pet is
+    /// still plainly idle once the shared gate is held, so it can never preempt or
+    /// replay a note, reminder, comfort, focus, or another one-shot. The optional
+    /// <paramref name="companion"/> (the overlay's sideways glide for a wander) starts
+    /// together with the clip and is cancelled with it if the clip hits the time cap.
+    /// </summary>
+    /// <returns>False when the pet was not idle and nothing was played.</returns>
+    public Task<bool> TryPresentIdleOneShotAsync(
+        PetEvent petEvent,
+        string dismissalId,
+        Func<CancellationToken, Task>? companion = null,
+        CancellationToken cancellationToken = default) =>
+        PresentOneShotCoreAsync(petEvent, dismissalId, requireIdle: true, companion, cancellationToken);
+
+    private async Task<bool> PresentOneShotCoreAsync(
+        PetEvent petEvent,
+        string dismissalId,
+        bool requireIdle,
+        Func<CancellationToken, Task>? companion,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(petEvent);
         ArgumentException.ThrowIfNullOrWhiteSpace(dismissalId);
@@ -63,17 +86,36 @@ public sealed class PetPresentationCoordinator
         await _gate.WaitAsync(cancellationToken);
         try
         {
+            if (requireIdle && _pet.Current.State != PetState.Idle)
+            {
+                return false;
+            }
+
             using var playbackCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             using var timeoutCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            Task? companionTask = null;
             try
             {
                 var oneShot = _pet.Handle(petEvent);
                 var playback = _playAsync(oneShot, _options(), playbackCancellation.Token);
+                if (companion is not null)
+                {
+                    companionTask = ObserveCompanionAsync(
+                        InvokeCompanionAsync(companion, playbackCancellation.Token));
+                }
+
                 var timeout = _delayAsync(_maximumDuration, timeoutCancellation.Token);
                 if (await Task.WhenAny(playback, timeout) == playback)
                 {
                     timeoutCancellation.Cancel();
                     await playback;
+                    if (companionTask is not null)
+                    {
+                        // Let a glide that runs a hair longer than the clip land
+                        // before idle is restored. Never throws (observed).
+                        await companionTask;
+                    }
+
                     if (_playAudioAsync is not null)
                     {
                         // Wrapped in ObserveAudioAsync eagerly, right here
@@ -97,6 +139,13 @@ public sealed class PetPresentationCoordinator
             }
             finally
             {
+                if (companionTask is not null && !companionTask.IsCompleted)
+                {
+                    // Timed out or faulted: stop the companion where it is.
+                    playbackCancellation.Cancel();
+                    await companionTask;
+                }
+
                 _pet.Handle(new PetEvent.PresentationAcknowledged());
                 _pet.Handle(completionEvent);
                 _ = ObserveAmbientAsync(_playAsync(
@@ -115,6 +164,28 @@ public sealed class PetPresentationCoordinator
             // Already wrapped in ObserveAudioAsync above; awaiting it here
             // never throws.
             await audioTask;
+        }
+
+        return true;
+    }
+
+    private static Task InvokeCompanionAsync(
+        Func<CancellationToken, Task> companion,
+        CancellationToken cancellationToken)
+    {
+        try { return companion(cancellationToken); }
+        catch (Exception exception) { return Task.FromException(exception); }
+    }
+
+    private static async Task ObserveCompanionAsync(Task task)
+    {
+        try { await task; }
+        catch (OperationCanceledException) { }
+        catch (Exception exception)
+        {
+            global::System.Diagnostics.Trace.TraceError(
+                "Dudu one-shot companion motion failed: {0}",
+                exception.GetType().FullName);
         }
     }
 

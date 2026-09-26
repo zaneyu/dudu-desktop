@@ -60,6 +60,8 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     /// </summary>
     internal const WNDCLASS_STYLES PetWindowClassStyle = WNDCLASS_STYLES.CS_DBLCLKS;
     private static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(5);
+    // ~30 window moves per second keeps an idle walk smooth without a busy loop.
+    private static readonly TimeSpan WanderStepInterval = TimeSpan.FromMilliseconds(33);
     private static readonly object ClassGate = new();
     public const string WindowClassName = "Dudu.DesktopCompanion.PetOverlay.v1";
     private static readonly string ClassName = WindowClassName;
@@ -301,6 +303,135 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                 _nominalSize,
                 monitors);
         }, cancellationToken);
+    }
+
+    /// <summary>
+    /// Plans a short idle walk of <paramref name="nominalDistance"/> art pixels
+    /// (scaled to the pet's current size) inside the pet's monitor work area.
+    /// Returns null -- Dudu stays put -- while the pet is hidden, being dragged,
+    /// has its action bubble open, sits under the pointer, or has no room.
+    /// </summary>
+    public Task<OverlayWanderPlan?> PlanWanderAsync(
+        int preferredDirection,
+        int nominalDistance,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return InvokeOnOwnerAsync<OverlayWanderPlan?>(() =>
+        {
+            if (!_desiredVisible
+                || _dragging
+                || _actionSurface?.IsOpen == true
+                || !_windowBounds.IsValid)
+            {
+                return null;
+            }
+
+            // Never walk out from under the pointer: the user may be about to
+            // click, pet, or drag Dudu.
+            bool hasCursor = PInvoke.GetCursorPos(out var cursor);
+            if (hasCursor && _windowBounds.Contains(cursor.X, cursor.Y))
+            {
+                return null;
+            }
+
+            var monitor = EnumerateMonitors().FirstOrDefault(item =>
+                string.Equals(item.DeviceName, _placement.MonitorDeviceName, StringComparison.Ordinal));
+            if (monitor is null)
+            {
+                return null;
+            }
+
+            var distance = (int)Math.Round(
+                nominalDistance * (double)_windowBounds.Width / _nominalSize.Width,
+                MidpointRounding.AwayFromZero);
+            return PetWanderPath.Plan(_windowBounds, monitor.WorkArea, preferredDirection, distance);
+        }, cancellationToken);
+    }
+
+    /// <summary>
+    /// Glides the pet window along <paramref name="plan"/> over
+    /// <paramref name="duration"/>. Anything else that moves or resizes the pet
+    /// meanwhile (a drag, the wheel, a display change, hiding it) wins and the
+    /// walk stops where it is. Wherever Dudu ends up is persisted like a drag.
+    /// Returns true only when the whole walk completed.
+    /// </summary>
+    public async Task<bool> GlideAsync(
+        OverlayWanderPlan plan,
+        TimeSpan duration,
+        CancellationToken cancellationToken = default)
+    {
+        if (duration <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(duration));
+        }
+
+        var stopwatch = Stopwatch.StartNew();
+        var expected = plan.Start;
+        IReadOnlyList<MonitorInfo>? monitors = null;
+        try
+        {
+            while (true)
+            {
+                var progress = Math.Min(1d, stopwatch.Elapsed.TotalMilliseconds / duration.TotalMilliseconds);
+                var next = PetWanderPath.At(plan, progress);
+                var current = expected;
+                var moved = await InvokeOnOwnerAsync(() =>
+                {
+                    if (_dragging || !_desiredVisible || _windowBounds != current)
+                    {
+                        return false;
+                    }
+
+                    monitors ??= EnumerateMonitors();
+                    ApplyWindowState(next, _placement.Scale);
+                    _placement = MonitorPlacementService.Capture(
+                        next,
+                        _placement.Scale,
+                        _nominalSize,
+                        monitors);
+                    _placementDirty = true;
+                    return true;
+                }, cancellationToken);
+                if (!moved)
+                {
+                    return false;
+                }
+
+                expected = next;
+                if (progress >= 1d)
+                {
+                    return true;
+                }
+
+                await Task.Delay(WanderStepInterval, cancellationToken);
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            ReportFailure("pet-wander", exception);
+            return false;
+        }
+        finally
+        {
+            try
+            {
+                await InvokeOnOwnerAsync(CommitWanderPlacement, CancellationToken.None);
+            }
+            catch (Exception exception)
+            {
+                ReportDiagnostic(exception);
+            }
+        }
+    }
+
+    private void CommitWanderPlacement()
+    {
+        // A drag that interrupted the walk commits its own placement on release.
+        if (!_dragging)
+        {
+            CommitPlacementIfDirty();
+        }
     }
 
     public Task InvokeOnOwnerAsync(

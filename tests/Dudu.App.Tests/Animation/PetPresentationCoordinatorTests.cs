@@ -240,6 +240,155 @@ public sealed class PetPresentationCoordinatorTests
         Assert.Equal(PetState.Idle, pet.Handle(new PetEvent.WelcomeBackDismissed()).State);
     }
 
+    [Fact]
+    public async Task Idle_one_shot_plays_the_motion_clip_silently_and_restores_idle()
+    {
+        var pet = PetStateMachine.CreateIdle();
+        var presentations = new List<PetPresentation>();
+        var audioCalls = 0;
+        var coordinator = new PetPresentationCoordinator(
+            pet,
+            (presentation, _, _) =>
+            {
+                presentations.Add(presentation);
+                return Task.CompletedTask;
+            },
+            playAudioAsync: (presentation, _) =>
+            {
+                if (AudioCueSelection.ForPresentation(presentation) is not null) audioCalls++;
+                return Task.CompletedTask;
+            });
+
+        var played = await coordinator.TryPresentIdleOneShotAsync(
+            new PetEvent.AmbientRequested("dance"),
+            "dance",
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.True(played);
+        Assert.Equal(PetState.Ambient, presentations[0].State);
+        Assert.Equal("dance", presentations[0].AnimationKey);
+        Assert.Equal(PetState.Idle, presentations[^1].State);
+        Assert.Equal(PetState.Idle, pet.Current.State);
+        Assert.Equal(0, audioCalls);
+    }
+
+    [Fact]
+    public async Task Idle_one_shot_never_preempts_a_pending_note_or_comfort()
+    {
+        var pet = PetStateMachine.CreateIdle();
+        pet.Handle(new PetEvent.RemoteNoteArrived("m-1"));
+        var played = 0;
+        var companionRan = false;
+        var coordinator = new PetPresentationCoordinator(
+            pet,
+            (_, _, _) =>
+            {
+                played++;
+                return Task.CompletedTask;
+            });
+
+        var result = await coordinator.TryPresentIdleOneShotAsync(
+            new PetEvent.AmbientRequested("walk"),
+            "walk",
+            _ =>
+            {
+                companionRan = true;
+                return Task.CompletedTask;
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.False(result);
+        Assert.Equal(0, played);
+        Assert.False(companionRan);
+        Assert.Equal(PetState.RemoteNote, pet.Current.State);
+    }
+
+    [Fact]
+    public async Task Idle_one_shot_runs_the_companion_with_the_clip_and_waits_for_it_before_restoring()
+    {
+        var pet = PetStateMachine.CreateIdle();
+        var order = new List<string>();
+        var releaseCompanion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var companionStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var coordinator = new PetPresentationCoordinator(
+            pet,
+            (presentation, _, _) =>
+            {
+                order.Add(presentation.State == PetState.Idle ? "restore" : $"clip:{presentation.AnimationKey}");
+                return Task.CompletedTask;
+            });
+
+        var presentTask = coordinator.TryPresentIdleOneShotAsync(
+            new PetEvent.AmbientRequested("walk"),
+            "walk",
+            async _ =>
+            {
+                order.Add("glide-start");
+                companionStarted.SetResult();
+                await releaseCompanion.Task;
+                order.Add("glide-end");
+            },
+            TestContext.Current.CancellationToken);
+
+        await companionStarted.Task.WaitAsync(TestContext.Current.CancellationToken);
+        Assert.False(presentTask.IsCompleted);
+        releaseCompanion.SetResult();
+
+        Assert.True(await presentTask);
+        Assert.Equal(["clip:walk", "glide-start", "glide-end", "restore"], order);
+    }
+
+    [Fact]
+    public async Task Idle_one_shot_cancels_the_companion_when_the_clip_hits_the_time_cap()
+    {
+        var pet = PetStateMachine.CreateIdle();
+        var companionCancelled = false;
+        var coordinator = new PetPresentationCoordinator(
+            pet,
+            (presentation, _, token) => presentation.State == PetState.Idle
+                ? Task.CompletedTask
+                : Task.Delay(Timeout.InfiniteTimeSpan, token),
+            delayAsync: (_, _) => Task.CompletedTask,
+            maximumDuration: TimeSpan.FromMilliseconds(1));
+
+        var played = await coordinator.TryPresentIdleOneShotAsync(
+            new PetEvent.AmbientRequested("walk"),
+            "walk",
+            async token =>
+            {
+                try
+                {
+                    await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                }
+                catch (OperationCanceledException)
+                {
+                    companionCancelled = true;
+                    throw;
+                }
+            },
+            TestContext.Current.CancellationToken);
+
+        Assert.True(played);
+        Assert.True(companionCancelled);
+        Assert.Equal(PetState.Idle, pet.Current.State);
+    }
+
+    [Fact]
+    public async Task Idle_one_shot_companion_failure_still_restores_idle()
+    {
+        var pet = PetStateMachine.CreateIdle();
+        var coordinator = new PetPresentationCoordinator(pet, (_, _, _) => Task.CompletedTask);
+
+        var played = await coordinator.TryPresentIdleOneShotAsync(
+            new PetEvent.AmbientRequested("walk"),
+            "walk",
+            _ => throw new InvalidOperationException("glide"),
+            TestContext.Current.CancellationToken);
+
+        Assert.True(played);
+        Assert.Equal(PetState.Idle, pet.Current.State);
+    }
+
     private sealed class RecordingTraceListener : TraceListener
     {
         public TaskCompletionSource<string> Recorded { get; } =

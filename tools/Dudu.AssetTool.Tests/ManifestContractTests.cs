@@ -55,6 +55,33 @@ public sealed class ManifestContractTests
     }
 
     [Fact]
+    public void Motion_animation_keys_are_optional_supported_one_shots()
+    {
+        var manifest = FixtureManifest.Create();
+        Assert.Empty(AssetManifestContract.Validate(manifest));
+
+        manifest.Outfits["base"].Animations["walk"] = FixtureManifest.Animation("walk");
+        manifest.Outfits["base"].Animations["dance"] = FixtureManifest.Animation("dance");
+
+        Assert.Empty(AssetManifestContract.Validate(manifest));
+
+        var once = manifest.Outfits["base"].Animations["dance"];
+        manifest.Outfits["base"].Animations["dance"] = new AssetAnimation
+        {
+            Frames = once.Frames,
+            Loop = "loop",
+            Anchor = once.Anchor,
+            NominalSize = once.NominalSize,
+            ReducedMotion = once.ReducedMotion,
+            ReducedMotionSha256 = once.ReducedMotionSha256,
+        };
+
+        Assert.Contains(
+            AssetManifestContract.Validate(manifest),
+            error => error.Contains("dance.loop must not be loop", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Manifest_rejects_non_positive_duration_traversal_and_bad_geometry()
     {
         var manifest = FixtureManifest.Create();

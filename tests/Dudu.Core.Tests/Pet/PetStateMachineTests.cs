@@ -125,6 +125,32 @@ public sealed class PetStateMachineTests
         Assert.Equal(PetState.Idle, machine.Handle(new PetEvent.AmbientDismissed("sticker-030")).State);
     }
 
+    [Theory]
+    [InlineData("walk")]
+    [InlineData("dance")]
+    [InlineData("hop")]
+    public void Ambient_motion_clip_is_a_dismissible_one_shot_presentation(string animationKey)
+    {
+        var machine = PetStateMachine.CreateIdle();
+
+        var result = machine.Handle(new PetEvent.AmbientRequested(animationKey));
+
+        Assert.Equal(PetState.Ambient, result.State);
+        Assert.Equal(animationKey, result.AnimationKey);
+
+        Assert.Equal(PetState.Idle, machine.Handle(new PetEvent.AmbientDismissed(animationKey)).State);
+    }
+
+    [Fact]
+    public void Unknown_ambient_clip_is_ignored()
+    {
+        var machine = PetStateMachine.CreateIdle();
+
+        var result = machine.Handle(new PetEvent.AmbientRequested("moonwalk"));
+
+        Assert.Equal(PetState.Idle, result.State);
+    }
+
     [Fact]
     public void Comfort_dismiss_event_clears_the_comfort_state()
     {

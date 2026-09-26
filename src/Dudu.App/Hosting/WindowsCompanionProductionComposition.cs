@@ -270,6 +270,7 @@ public static class WindowsCompanionProductionComposition
         var presenter = default(LayeredFramePresenter);
         AnimationEngine? animationEngine = null;
         PetPresentationCoordinator? presentationCoordinator = null;
+        PetActivityDirector? activityDirector = null;
         AppNotificationService? notificationService = null;
         AudioCueService? audioCueService = null;
         IAudioCuePlayer? audioPlayer = null;
@@ -697,6 +698,34 @@ public static class WindowsCompanionProductionComposition
                         // into a window that is not shown yet and delete
                         // its row on that "successful" presentation.
                         initialUserHidden: true);
+                    // Idle fidgets and short wanders between notes, built from the
+                    // pack's motion clips. Started with the runtime (see
+                    // ComposedPrimaryRuntime) and silent; reduced motion turns it off.
+                    var activityGateway = presentationGateway;
+                    activityDirector = new PetActivityDirector(
+                        new PetActivityScheduler(
+                            services.GetRequiredService<IClock>(),
+                            services.GetRequiredService<IRandomSource>(),
+                            PetActivityDirector.AvailableAnimationKeys(pack)),
+                        () =>
+                        {
+                            var now = DateTimeOffset.UtcNow;
+                            var current = runtimePreferences.Current;
+                            var fullscreen = activityGateway.IsFullscreen;
+                            return new PetActivityGate(
+                                ReducedMotion: current.ReducedMotion,
+                                Paused: PausePolicy.IsSuppressed(pause.GetEffective(now), now, fullscreen),
+                                Fullscreen: fullscreen,
+                                SessionLocked: activityGateway.IsSessionLocked,
+                                Hidden: activityGateway.IsUserHidden || !overlay.IsVisible,
+                                QuietHours: QuietHoursPolicy.IsQuiet(now, current.QuietHours, TimeZoneInfo.Local),
+                                Busy: pet.Current.State != PetState.Idle || actionSurface.IsOpen);
+                        },
+                        presentationCoordinator.TryPresentIdleOneShotAsync,
+                        overlay.PlanWanderAsync,
+                        overlay.GlideAsync,
+                        PetActivityDirector.WanderDurationFor(pack),
+                        host.ErrorReporter);
                     _ = StartAnimationPlayback(
                         animationEngine.PlayAsync(
                             pet.Current,
@@ -963,6 +992,7 @@ public static class WindowsCompanionProductionComposition
             await FixtureRemoteNoteInstaller.InstallIfRequestedAsync(services, cancellationToken);
             return new ComposedPrimaryRuntime(
                 runtime,
+                activityDirector,
                 animationEngine!,
                 presenter,
                 startup,
@@ -974,6 +1004,11 @@ public static class WindowsCompanionProductionComposition
         catch
         {
             startup?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            if (activityDirector is not null)
+            {
+                await activityDirector.DisposeAsync();
+            }
+
             if (animationEngine is not null)
             {
                 await animationEngine.DisposeAsync();
@@ -1368,6 +1403,7 @@ public static class WindowsCompanionProductionComposition
 
     private sealed class ComposedPrimaryRuntime(
         WindowsCompanionRuntime runtime,
+        PetActivityDirector? activityDirector,
         AnimationEngine animationEngine,
         LayeredFramePresenter presenter,
         StartupRegistrationService startup,
@@ -1383,6 +1419,7 @@ public static class WindowsCompanionProductionComposition
         {
             await runtime.StartAsync(cancellationToken);
             Volatile.Write(ref _started, 1);
+            activityDirector?.Start(_stopping.Token);
             _ = crashGuard.MarkCleanAfterAsync(StableRunPeriod, _stopping.Token);
         }
 
@@ -1398,6 +1435,12 @@ public static class WindowsCompanionProductionComposition
             {
                 // A started runtime reaching orderly disposal is a clean run.
                 crashGuard.MarkCleanRun();
+            }
+
+            if (activityDirector is not null)
+            {
+                // Before the engine and overlay: an in-flight walk plays through both.
+                await activityDirector.DisposeAsync();
             }
 
             await animationEngine.DisposeAsync();

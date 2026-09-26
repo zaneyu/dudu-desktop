@@ -7,6 +7,20 @@ release cadences.
 
 ## [Unreleased]
 
+### Added
+
+- More Dudu motion: twelve new clips built from the private sticker and GIF
+  art already in the pack (`walk`, `hop`, `dance`, `wiggle`, `shy`, `sip`,
+  `snack`, `nap`, `stomp`, `shiver`, `lounge`, `salute`) and a calmer idle
+  loop that breathes and blinks now and then instead of flickering.
+- Dudu now keeps moving between notes: every 25–75 seconds, while the pet
+  is idle, it plays a silent fidget clip or waddles a short way sideways
+  across its monitor (staying inside the work area and remembering where
+  it stopped). It never interrupts a note, reminder, comfort, focus, or a
+  drag, never walks out from under the pointer or with the action bubble
+  open, and stays still while paused, hidden, locked, fullscreen, in quiet
+  hours, or with reduced motion turned on.
+
 ### Fixed
 
 - Harden first-start reliability after install: the global shortcut and

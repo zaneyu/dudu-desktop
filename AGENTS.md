@@ -626,6 +626,10 @@ authoritative for future changes.
   only, never the reminder text), `reminder-page-action` (a best-effort
   cleanup step -- pet/toast/held copy -- after a Reminders page Done/Snooze
   that itself succeeded; exception only),
+  `pet-activity` (an idle fidget/wander could not be scheduled or played;
+  Dudu just stays idle), `pet-wander` (the overlay glide for a wander
+  failed part-way; the walk stops where it is and the placement is still
+  saved),
   `reconcile-visibility` (both `AppLifecycleCoordinator.ReconcileVisibilityAsync`
   and `AppHost`'s wrapper around it report under this one name),
   `presentation-held-load`, `presentation-held-persist`,

@@ -291,7 +291,8 @@ public sealed class PetStateMachine
     {
         return animationKey is "idle" or "blink" or "greeting" or "sleep"
             or "drink" or "celebrate"
-            || AssetManifestContract.IsStickerAnimationKey(animationKey);
+            || AssetManifestContract.IsStickerAnimationKey(animationKey)
+            || AssetManifestContract.IsMotionAnimationKey(animationKey);
     }
 
     private static PetPresentation Present(PetState state, string animationKey)

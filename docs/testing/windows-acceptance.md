@@ -36,6 +36,8 @@ under `artifacts/performance/` or `artifacts/stability/` exists in this reposito
 | Lock/unlock | pending | — | — | — | — |
 | Explorer restart | pending | — | — | — | — |
 | Fullscreen game/video suppression | pending | — | — | — | — |
+| Idle fidgets and wander (new motion clips play every 25–75 s; Dudu waddles sideways, turns at the screen edge, stays in the work area, keeps the new spot after restart) | pending | — | — | — | — |
+| Idle motion stays still with reduced motion, pause, quiet hours, fullscreen, lock, an open action bubble, or the pointer on the pet; a drag mid-walk wins | pending | — | — | — | — |
 | Notification enabled | pending | — | — | — | — |
 | Notification unavailable (fallback to bubble) | pending | — | — | — | — |
 | Offline launch | pending | — | — | — | — |

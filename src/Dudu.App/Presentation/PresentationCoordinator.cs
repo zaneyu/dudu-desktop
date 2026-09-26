@@ -204,6 +204,11 @@ public sealed class PresentationCoordinator :
         }
     }
 
+    public bool IsUserHidden
+    {
+        get { lock (_gate) return _userHidden; }
+    }
+
     public void SetUserVisible(bool visible)
     {
         lock (_gate)

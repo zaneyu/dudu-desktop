@@ -216,6 +216,8 @@ Version 1 includes these semantic animations:
 - Comfort or hug
 - Note arrival
 
+Optional motion clips (`walk`, `hop`, `dance`, `wiggle`, `shy`, `sip`, `snack`, `nap`, `stomp`, `shiver`, `lounge`, `salute`) are silent one-shots derived from the private sticker and GIF art. A pack may ship any subset; only clips the loaded pack ships are ever requested.
+
 An outfit may override individual animation frame sets. If an outfit does not provide a requested state, the engine uses that outfit's idle fallback and then the base pack's matching animation. Seasonal variants follow the same fallback chain.
 
 Animations are described by an asset manifest rather than hard-coded filenames. Each animation defines frame sources, frame timing, loop behavior, anchor point, nominal size, and optional reduced-motion fallback.
@@ -248,6 +250,8 @@ Quiet hours, global pause, fullscreen suppression, and reduced-motion preference
 ### 8.2 Idle behavior
 
 The ambient scheduler selects a behavior from those allowed by time, quiet hours, daily caps, reduced-motion settings, and recent history. It uses bounded randomness so behavior feels varied without becoming unpredictable. It must enforce a minimum silent interval after any unsolicited interaction.
+
+Between those note-backed ambient moments, `PetActivityScheduler` keeps the pet alive with frequent, silent idle activity: every 25–75 seconds it picks either a motion clip to play in place or a short sideways wander (the `walk` clip while `OverlayWindowHost` glides the window up to a few hundred pixels inside the monitor work area, turning around at an edge and persisting where it stops). `PetActivityDirector` plays these only through the shared one-shot path and only while the pet is plainly idle, so they never preempt a higher-priority state. Reduced motion, pause, quiet hours, fullscreen, session lock, a hidden pet, an open action bubble, a drag, or the pointer resting on the pet keep Dudu still, and any suppression holds the next activity at least 25 seconds out.
 
 ## 9. Desktop architecture
 

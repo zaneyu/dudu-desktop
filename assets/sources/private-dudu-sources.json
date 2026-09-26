@@ -1161,6 +1161,392 @@
         "normalizations": []
       },
       "notes": "Private-only winter snow-globe reference discovered through Tenor; rights are not verified, so do not distribute the pack."
+    },
+    {
+      "id": "derived-motion-walk",
+      "discoveryUrl": "https://getstickerpack.com/stickers/xiao-xiong-yi-er-he-bu-bu-credits-to-huang-xiaob",
+      "creator": "Huang Xiao B",
+      "privateUseOnly": true,
+      "accessedUtc": "2026-09-26T00:00:00Z",
+      "animationKeys": [
+        "walk"
+      ],
+      "status": "derived",
+      "mediaUrl": null,
+      "rawFile": null,
+      "sha256": null,
+      "transform": {
+        "outputFiles": [
+          "frames/base/walk/0000-dca22bcee847.png",
+          "frames/base/walk/0001-53e320dcc08b.png",
+          "frames/base/walk/0002-2e997d173094.png",
+          "frames/base/walk/0003-5b5a554f29b5.png"
+        ],
+        "outputSha256": [
+          "dca22bcee847d53835d03bc2bd7fd7443f26980a1aee003fc2973edb91ae5389",
+          "53e320dcc08bff922ba500aa5e3b6d789b268058ca6eefa1dd8fea904ebdc005",
+          "2e997d173094438359cd1c85afe6865e46e261b7c179fbb08bb8b939d7e26c8f",
+          "5b5a554f29b535cb8c38cfa8100e00e5ba1194e6cf9d2a3ce10a58f6c67eeb26"
+        ],
+        "normalizations": []
+      },
+      "notes": "Derived locally from the user-provided Telegram BUBU & DUDU sticker subset already in the private pack (sticker-004); no new media was imported. Motion: waddle cycle: sticker-004 alternated with its mirror, 10px lift. Frames are 512x512 8-bit RGBA PNGs resampled with small bottom-pivoted affine transforms; private use only."
+    },
+    {
+      "id": "derived-motion-hop",
+      "discoveryUrl": "https://tenor.com/view/dudu-cute-smile-photo-gif-3117522263724372729",
+      "creator": "Huang Xiao B",
+      "privateUseOnly": true,
+      "accessedUtc": "2026-09-26T00:00:00Z",
+      "animationKeys": [
+        "hop"
+      ],
+      "status": "derived",
+      "mediaUrl": null,
+      "rawFile": null,
+      "sha256": null,
+      "transform": {
+        "outputFiles": [
+          "frames/base/hop/0000-d628807b79f2.png",
+          "frames/base/hop/0001-dd6db2986725.png",
+          "frames/base/hop/0002-ce61272224ef.png",
+          "frames/base/hop/0003-1836586e74cb.png",
+          "frames/base/hop/0004-3a4221ec21ae.png",
+          "frames/base/hop/0005-4d9b7cb3dde2.png"
+        ],
+        "outputSha256": [
+          "d628807b79f269a2cec99530a7e639fc5b22bb5bd27fc64db24392532713833f",
+          "dd6db29867252a03bb08e48849b10dced90c8aff1bf2cf921991db49329d4312",
+          "ce61272224ef0d50e6bfea72f7c3a64b1cab62ea814b095efeeace289be3e0df",
+          "1836586e74cbb6dc4bb5e3d7d4898573d89a5193ff9a973db302ef0738fb0aea",
+          "3a4221ec21ae07a25fbf1cb5cce2c02799c017b8d97b7ae590d9bac02463fce2",
+          "4d9b7cb3dde2e192f1000392c965e1c4bda2bc32b454c1e8f72b4e80fc1cc69c"
+        ],
+        "normalizations": []
+      },
+      "notes": "Derived locally from tenor-dudu-smile; no new media was imported. Motion: two squash-and-stretch hops of the idle pose. Frames are 512x512 8-bit RGBA PNGs resampled with small bottom-pivoted affine transforms; private use only."
+    },
+    {
+      "id": "derived-motion-dance",
+      "discoveryUrl": "https://tenor.com/view/bubu-dudu-gif-25349847",
+      "creator": "Huang Xiao B",
+      "privateUseOnly": true,
+      "accessedUtc": "2026-09-26T00:00:00Z",
+      "animationKeys": [
+        "dance"
+      ],
+      "status": "derived",
+      "mediaUrl": null,
+      "rawFile": null,
+      "sha256": null,
+      "transform": {
+        "outputFiles": [
+          "frames/base/dance/0000-2628fcc0e262.png",
+          "frames/base/dance/0001-a10db746880b.png",
+          "frames/base/dance/0002-aeb4006f6fbd.png",
+          "frames/base/dance/0003-8754dc4fe08f.png",
+          "frames/base/dance/0004-a83dbb1a5479.png",
+          "frames/base/dance/0005-0caec08ff3d7.png",
+          "frames/base/dance/0006-3dfc0a5d3897.png",
+          "frames/base/dance/0007-40f658abf81b.png",
+          "frames/base/dance/0008-64f2ab45545d.png",
+          "frames/base/dance/0009-b08768dd5018.png",
+          "frames/base/dance/0010-fd5a682a9c33.png"
+        ],
+        "outputSha256": [
+          "2628fcc0e262f76fbfa26d3e006d47e5b1e80f4702389373a3c8c348845687b6",
+          "a10db746880b07dd77e750e4b043bdde6a7fe1a72c16d1ac3d957ab01e0ddcaa",
+          "aeb4006f6fbd5a0784c08e7130f6c26b50f53b0968399e3ec22386e6aecce8e2",
+          "8754dc4fe08f677f6e9821124e902f5a1ccc20def33f1cf73993c98a0160fbb9",
+          "a83dbb1a5479619e98b4d220324b4d33041d98b2f70d953a5d1427d92bef1d5e",
+          "0caec08ff3d701d9d5a2ac5eec511973ac2dd9bd15a3ef855c311f52073f024a",
+          "3dfc0a5d389753d9fa33e963298ade30559bf616b469bc842cc2d03bac147167",
+          "40f658abf81bb919dc767ee1137a7392d9f91213d7b86a82dafbbbf85405c41c",
+          "64f2ab45545de57380b1bffe45ea71fc360fae44268514ab7cd5b9ba238e8108",
+          "b08768dd5018ab3a4de486d811b943887fdb007b583e203b060ce8d547981a58",
+          "fd5a682a9c3336f4bf43add779f973b921e5553774aec2f9af6889cf9f0354ec"
+        ],
+        "normalizations": []
+      },
+      "notes": "Derived locally from tenor-bubu-dudu-thumbs-up; no new media was imported. Motion: celebrate frames forward, then every other frame mirrored. Frames are 512x512 8-bit RGBA PNGs resampled with small bottom-pivoted affine transforms; private use only."
+    },
+    {
+      "id": "derived-motion-wiggle",
+      "discoveryUrl": "https://getstickerpack.com/stickers/xiao-xiong-yi-er-he-bu-bu-credits-to-huang-xiaob",
+      "creator": "Huang Xiao B",
+      "privateUseOnly": true,
+      "accessedUtc": "2026-09-26T00:00:00Z",
+      "animationKeys": [
+        "wiggle"
+      ],
+      "status": "derived",
+      "mediaUrl": null,
+      "rawFile": null,
+      "sha256": null,
+      "transform": {
+        "outputFiles": [
+          "frames/base/wiggle/0000-daaad2ecccc4.png",
+          "frames/base/wiggle/0001-d5f009c047e8.png",
+          "frames/base/wiggle/0002-bc9377a8536d.png"
+        ],
+        "outputSha256": [
+          "daaad2ecccc4ef9ef97c3d1bab94e11b5d625a687a3fd06b054e86a38e0bb1ef",
+          "d5f009c047e82782f792dfd718384823bb750e530a38bd3ff716299905ad9f4a",
+          "bc9377a8536d827ac09f6edc9ccb2a90ca8af3b2ccc3280b1a1e2cb931cd7817"
+        ],
+        "normalizations": []
+      },
+      "notes": "Derived locally from the user-provided Telegram BUBU & DUDU sticker subset already in the private pack (sticker-016); no new media was imported. Motion: side-to-side shear wiggle of sticker-016. Frames are 512x512 8-bit RGBA PNGs resampled with small bottom-pivoted affine transforms; private use only."
+    },
+    {
+      "id": "derived-motion-shy",
+      "discoveryUrl": "https://getstickerpack.com/stickers/xiao-xiong-yi-er-he-bu-bu-credits-to-huang-xiaob",
+      "creator": "Huang Xiao B",
+      "privateUseOnly": true,
+      "accessedUtc": "2026-09-26T00:00:00Z",
+      "animationKeys": [
+        "shy"
+      ],
+      "status": "derived",
+      "mediaUrl": null,
+      "rawFile": null,
+      "sha256": null,
+      "transform": {
+        "outputFiles": [
+          "frames/base/shy/0000-f4d32ffffebc.png",
+          "frames/base/shy/0001-8acbf34a47b6.png",
+          "frames/base/shy/0002-c5be94c1f301.png"
+        ],
+        "outputSha256": [
+          "f4d32ffffebc797ac618589c15f61db1d5734fcfee57986d959b4e9f2348bb7d",
+          "8acbf34a47b6baa34d894b63352f4ce0746779bd72ac1f3528c18f5fcd41198a",
+          "c5be94c1f3014761d008578906d42721ad39bffa6706b246192c453f69a8dd62"
+        ],
+        "normalizations": []
+      },
+      "notes": "Derived locally from the user-provided Telegram BUBU & DUDU sticker subset already in the private pack (sticker-012); no new media was imported. Motion: slow bashful sway of sticker-012. Frames are 512x512 8-bit RGBA PNGs resampled with small bottom-pivoted affine transforms; private use only."
+    },
+    {
+      "id": "derived-motion-sip",
+      "discoveryUrl": "https://getstickerpack.com/stickers/xiao-xiong-yi-er-he-bu-bu-credits-to-huang-xiaob",
+      "creator": "Huang Xiao B",
+      "privateUseOnly": true,
+      "accessedUtc": "2026-09-26T00:00:00Z",
+      "animationKeys": [
+        "sip"
+      ],
+      "status": "derived",
+      "mediaUrl": null,
+      "rawFile": null,
+      "sha256": null,
+      "transform": {
+        "outputFiles": [
+          "frames/base/sip/0000-c6cdf6f02e30.png",
+          "frames/base/sip/0001-cabdc71ba236.png",
+          "frames/base/sip/0002-ca62a842c39d.png"
+        ],
+        "outputSha256": [
+          "c6cdf6f02e30854afe00347ba4197831896132c71cfa519f8788bb13c280daf8",
+          "cabdc71ba236f7585cee4772eeef16d5f2cd8f855db0a82ad2601197c029d02b",
+          "ca62a842c39d481874d36ec20e4e28a447b9168809e3a680189c0eaa81b22065"
+        ],
+        "normalizations": []
+      },
+      "notes": "Derived locally from the user-provided Telegram BUBU & DUDU sticker subset already in the private pack (sticker-002); no new media was imported. Motion: gentle sway with a sip squash of sticker-002. Frames are 512x512 8-bit RGBA PNGs resampled with small bottom-pivoted affine transforms; private use only."
+    },
+    {
+      "id": "derived-motion-snack",
+      "discoveryUrl": "https://getstickerpack.com/stickers/xiao-xiong-yi-er-he-bu-bu-credits-to-huang-xiaob",
+      "creator": "Huang Xiao B",
+      "privateUseOnly": true,
+      "accessedUtc": "2026-09-26T00:00:00Z",
+      "animationKeys": [
+        "snack"
+      ],
+      "status": "derived",
+      "mediaUrl": null,
+      "rawFile": null,
+      "sha256": null,
+      "transform": {
+        "outputFiles": [
+          "frames/base/snack/0000-7acd809bd5dd.png",
+          "frames/base/snack/0001-60a24ca8bf95.png"
+        ],
+        "outputSha256": [
+          "7acd809bd5ddfa2f2d89a38551f24ed240ad34d6524a3bb73ff6e4985e1ec672",
+          "60a24ca8bf95ca4811ec067a875ac307e1a0f6a515d98d7e24fbacf6e5a3401d"
+        ],
+        "normalizations": []
+      },
+      "notes": "Derived locally from the user-provided Telegram BUBU & DUDU sticker subset already in the private pack (sticker-029); no new media was imported. Motion: chewing squash of sticker-029. Frames are 512x512 8-bit RGBA PNGs resampled with small bottom-pivoted affine transforms; private use only."
+    },
+    {
+      "id": "derived-motion-nap",
+      "discoveryUrl": "https://getstickerpack.com/stickers/xiao-xiong-yi-er-he-bu-bu-credits-to-huang-xiaob",
+      "creator": "Huang Xiao B",
+      "privateUseOnly": true,
+      "accessedUtc": "2026-09-26T00:00:00Z",
+      "animationKeys": [
+        "nap"
+      ],
+      "status": "derived",
+      "mediaUrl": null,
+      "rawFile": null,
+      "sha256": null,
+      "transform": {
+        "outputFiles": [
+          "frames/base/nap/0000-c36d413adf97.png",
+          "frames/base/nap/0001-fa722f842207.png",
+          "frames/base/nap/0002-8f41702d76c4.png"
+        ],
+        "outputSha256": [
+          "c36d413adf9772e63961c3ed81b4c1060beed07218e0d9f6da4e47200b7fd568",
+          "fa722f842207ca740af2abe1478306ca299a5059116d7dfb6552f34a053cfb1e",
+          "8f41702d76c4c31bb0ac2457be508916459b6953ac38ed5ab39211d846858d6e"
+        ],
+        "normalizations": []
+      },
+      "notes": "Derived locally from the user-provided Telegram BUBU & DUDU sticker subset already in the private pack (sticker-020); no new media was imported. Motion: slow breathing of sticker-020. Frames are 512x512 8-bit RGBA PNGs resampled with small bottom-pivoted affine transforms; private use only."
+    },
+    {
+      "id": "derived-motion-stomp",
+      "discoveryUrl": "https://getstickerpack.com/stickers/xiao-xiong-yi-er-he-bu-bu-credits-to-huang-xiaob",
+      "creator": "Huang Xiao B",
+      "privateUseOnly": true,
+      "accessedUtc": "2026-09-26T00:00:00Z",
+      "animationKeys": [
+        "stomp"
+      ],
+      "status": "derived",
+      "mediaUrl": null,
+      "rawFile": null,
+      "sha256": null,
+      "transform": {
+        "outputFiles": [
+          "frames/base/stomp/0000-93696e6cd072.png",
+          "frames/base/stomp/0001-952779f9edfa.png",
+          "frames/base/stomp/0002-b948753c1213.png",
+          "frames/base/stomp/0003-656b0871d642.png"
+        ],
+        "outputSha256": [
+          "93696e6cd07242d655c0e72adecc1d2070b610040c9952e4d029c9eb168293b3",
+          "952779f9edfaf2308e06023d58ffe2dedab5316578eea474da15f22df9fc5044",
+          "b948753c1213d2a5af28c80eea19bc6b9c870e43f8c231f013db54be919bdd9d",
+          "656b0871d642e6a4f2c06ef506f2e0920d19c07e3349a239c4c888d35b95b420"
+        ],
+        "normalizations": []
+      },
+      "notes": "Derived locally from the user-provided Telegram BUBU & DUDU sticker subset already in the private pack (sticker-003); no new media was imported. Motion: quick stomp shake of sticker-003. Frames are 512x512 8-bit RGBA PNGs resampled with small bottom-pivoted affine transforms; private use only."
+    },
+    {
+      "id": "derived-motion-shiver",
+      "discoveryUrl": "https://getstickerpack.com/stickers/xiao-xiong-yi-er-he-bu-bu-credits-to-huang-xiaob",
+      "creator": "Huang Xiao B",
+      "privateUseOnly": true,
+      "accessedUtc": "2026-09-26T00:00:00Z",
+      "animationKeys": [
+        "shiver"
+      ],
+      "status": "derived",
+      "mediaUrl": null,
+      "rawFile": null,
+      "sha256": null,
+      "transform": {
+        "outputFiles": [
+          "frames/base/shiver/0000-292d8137ae18.png",
+          "frames/base/shiver/0001-77534460340f.png",
+          "frames/base/shiver/0002-946d0e0d67f3.png",
+          "frames/base/shiver/0003-911bb46841a5.png"
+        ],
+        "outputSha256": [
+          "292d8137ae185e4713ef81ec299855f7485dd66d3e6117f69dd546f1c08c7089",
+          "77534460340ff1254ab282c0a484517364d9499537477b2ac7a587451013028d",
+          "946d0e0d67f3b4c03c9bb621e465e017a3fbeb1939f9afde2abf0898fbbb7b1f",
+          "911bb46841a5782b41022e1378f68bb4e0b9884ac146dd2465f4b6bd6b41b3f0"
+        ],
+        "normalizations": []
+      },
+      "notes": "Derived locally from the user-provided Telegram BUBU & DUDU sticker subset already in the private pack (sticker-019); no new media was imported. Motion: fast tremble of sticker-019. Frames are 512x512 8-bit RGBA PNGs resampled with small bottom-pivoted affine transforms; private use only."
+    },
+    {
+      "id": "derived-motion-lounge",
+      "discoveryUrl": "https://getstickerpack.com/stickers/xiao-xiong-yi-er-he-bu-bu-credits-to-huang-xiaob",
+      "creator": "Huang Xiao B",
+      "privateUseOnly": true,
+      "accessedUtc": "2026-09-26T00:00:00Z",
+      "animationKeys": [
+        "lounge"
+      ],
+      "status": "derived",
+      "mediaUrl": null,
+      "rawFile": null,
+      "sha256": null,
+      "transform": {
+        "outputFiles": [
+          "frames/base/lounge/0000-044add15621c.png",
+          "frames/base/lounge/0001-eb184b982ec9.png",
+          "frames/base/lounge/0002-93bb670317f2.png"
+        ],
+        "outputSha256": [
+          "044add15621ca12ba4dd47f387d6109a59ccc21bba83019a27aa9946249cf8b5",
+          "eb184b982ec9784c3e546ef5a7f722a70e6610911d6b8328bf8a72de86bc5366",
+          "93bb670317f2e18b9a99e4544997f7a437da05ed0e785fc2f405974d47a65425"
+        ],
+        "normalizations": []
+      },
+      "notes": "Derived locally from the user-provided Telegram BUBU & DUDU sticker subset already in the private pack (sticker-026); no new media was imported. Motion: slow rocking-chair tilt of sticker-026. Frames are 512x512 8-bit RGBA PNGs resampled with small bottom-pivoted affine transforms; private use only."
+    },
+    {
+      "id": "derived-motion-salute",
+      "discoveryUrl": "https://getstickerpack.com/stickers/xiao-xiong-yi-er-he-bu-bu-credits-to-huang-xiaob",
+      "creator": "Huang Xiao B",
+      "privateUseOnly": true,
+      "accessedUtc": "2026-09-26T00:00:00Z",
+      "animationKeys": [
+        "salute"
+      ],
+      "status": "derived",
+      "mediaUrl": null,
+      "rawFile": null,
+      "sha256": null,
+      "transform": {
+        "outputFiles": [
+          "frames/base/salute/0000-d3b014bb2cf0.png",
+          "frames/base/salute/0001-6abea8202092.png",
+          "frames/base/salute/0002-2e6d48903964.png"
+        ],
+        "outputSha256": [
+          "d3b014bb2cf0ccfdbe1267f220ec1dece56dcea472ea297c27913734f9eb1dc0",
+          "6abea82020920c1b78a0bf0ffde49ae7c1f817de4f9e7237842b57faaa916c79",
+          "2e6d489039640809670f6a1ddddd0dcfaa9466afa11f3ab180730c84a3f5779e"
+        ],
+        "normalizations": []
+      },
+      "notes": "Derived locally from the user-provided Telegram BUBU & DUDU sticker subset already in the private pack (sticker-006); no new media was imported. Motion: proud squash-and-stretch bounce of sticker-006. Frames are 512x512 8-bit RGBA PNGs resampled with small bottom-pivoted affine transforms; private use only."
+    },
+    {
+      "id": "derived-motion-idle",
+      "discoveryUrl": "https://tenor.com/view/dudu-cute-smile-photo-gif-3117522263724372729",
+      "creator": "Huang Xiao B",
+      "privateUseOnly": true,
+      "accessedUtc": "2026-09-26T00:00:00Z",
+      "animationKeys": [
+        "idle"
+      ],
+      "status": "derived",
+      "mediaUrl": null,
+      "rawFile": null,
+      "sha256": null,
+      "transform": {
+        "outputFiles": [
+          "frames/base/idle/0002-bf6b53906805.png"
+        ],
+        "outputSha256": [
+          "bf6b53906805e3c4003440dd169bda4e313501b4282e9084cc4fbdf871c6403d"
+        ],
+        "normalizations": []
+      },
+      "notes": "Derived locally from tenor-dudu-smile; no new media was imported. Motion: breathing loop of the idle pose with an occasional blink. Frames are 512x512 8-bit RGBA PNGs resampled with small bottom-pivoted affine transforms; private use only."
     }
   ]
 }
