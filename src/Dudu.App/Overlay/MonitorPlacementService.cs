@@ -137,6 +137,52 @@ public static class MonitorPlacementService
             normalizedY);
     }
 
+    /// <summary>
+    /// Settles a window rectangle the pet ended up at outside of
+    /// <see cref="Resolve"/> -- the release point of a drag, or the
+    /// suggested RECT of a WM_DPICHANGED -- back into a fully visible spot:
+    /// the window keeps its logical size (nominal size times the user
+    /// scale, exactly like <see cref="Resolve"/>, so a DPI hop can no longer
+    /// leave it at a size the next wheel/display-change resolve then snaps
+    /// away from), stays centered where it was proposed, and is clamped into
+    /// the work area of the monitor holding that center (or the nearest
+    /// one). A drop partly off-screen or over the taskbar therefore lands
+    /// beside it instead of staying half-hidden until the next restart.
+    /// </summary>
+    public static PlacementResolution Settle(
+        PixelRect proposedBounds,
+        double scale,
+        PixelSize nominalSize,
+        IEnumerable<MonitorInfo> monitors)
+    {
+        ArgumentNullException.ThrowIfNull(monitors);
+        if (!proposedBounds.IsValid)
+        {
+            throw new ArgumentOutOfRangeException(nameof(proposedBounds));
+        }
+
+        if (nominalSize.Width <= 0 || nominalSize.Height <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(nominalSize));
+        }
+
+        var monitorList = monitors
+            .Where(monitor => monitor is not null && monitor.WorkArea.IsValid)
+            .ToArray();
+        var clampedScale = ClampScale(scale);
+        var width = ToDimension(nominalSize.Width, clampedScale);
+        var height = ToDimension(nominalSize.Height, clampedScale);
+        var centerX = (long)proposedBounds.X + proposedBounds.Width / 2L;
+        var centerY = (long)proposedBounds.Y + proposedBounds.Height / 2L;
+        var logicalBounds = new PixelRect(
+            SaturateToInt(centerX - width / 2L),
+            SaturateToInt(centerY - height / 2L),
+            width,
+            height);
+        var placement = Capture(logicalBounds, clampedScale, nominalSize, monitorList);
+        return Resolve(placement, nominalSize, monitorList);
+    }
+
     public static PetPlacement ToPlacement(PlacementResolution resolution) =>
         new(
             resolution.MonitorDeviceName,
@@ -238,6 +284,9 @@ public static class MonitorPlacementService
         var offset = (long)Math.Round(available * normalized, MidpointRounding.AwayFromZero);
         return checked((int)Math.Clamp((long)origin + offset, origin, (long)origin + available));
     }
+
+    private static int SaturateToInt(long value) =>
+        value > int.MaxValue ? int.MaxValue : value < int.MinValue ? int.MinValue : (int)value;
 
     private static double ClampNormalized(double value) =>
         double.IsFinite(value) ? Math.Clamp(value, 0, 1) : 0.5;

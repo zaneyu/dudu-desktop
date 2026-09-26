@@ -31,7 +31,18 @@ internal sealed class OverlayActionDispatchQueue : IDisposable
     {
         ArgumentNullException.ThrowIfNull(surface);
         ArgumentNullException.ThrowIfNull(action);
-        if (action.ComfortAction == ComfortAction.Close) surface.CancelBreathing();
+        // Dispatch is strictly serial and a breathing exercise occupies it
+        // for a full minute, so a click queued behind it only ran once the
+        // exercise ended -- "tiny hug" or "take a five-minute break" pressed
+        // mid-breath looked dead and then fired up to a minute later. Any
+        // comfort choice now interrupts the running exercise first (Close
+        // always did); choosing "breathe with me" again restarts it.
+        if (action.ComfortAction == ComfortAction.Close
+            || (action.ComfortAction is not null && surface.IsBreathing))
+        {
+            surface.CancelBreathing();
+        }
+
         EnqueueCore(token => surface.HandlePresentedActionAsync(action, token));
     }
 

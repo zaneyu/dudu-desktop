@@ -103,7 +103,11 @@ public sealed class ReminderDueSinkTests
             TestContext.Current.CancellationToken);
 
         var item = Assert.IsType<DurableNotification>(gateway.LastItem);
-        Assert.Null(item.Body);
+        // The reminder's own details (MakeReminder gives every non-bedtime
+        // reminder a details line) now ride along as the bubble body instead
+        // of being silently dropped; everything else about a generic
+        // reminder is unchanged.
+        Assert.Equal("a little space to reflect. your check-in stays on this device.", item.Body);
         Assert.Null(item.AnimationKey);
         Assert.Null(item.ExpiresUtc);
         Assert.True(gateway.LastBypass);

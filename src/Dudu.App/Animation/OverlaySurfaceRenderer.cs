@@ -79,13 +79,12 @@ internal static class OverlaySurfaceRenderer
                 && string.IsNullOrWhiteSpace(snapshot.ErrorMessage)
                 && !string.IsNullOrWhiteSpace(snapshot.ComfortPanel.Instruction))
             {
-                // Reduced motion has one stable, visible instruction rather
-                // than a breath phase that changes without an animation.
-                var detail = snapshot.IsReducedMotion
-                    ? $"reduced motion {snapshot.ComfortPanel.Instruction}"
-                    : snapshot.ComfortPanel.IsBreathing
-                        ? $"{snapshot.ComfortPanel.Phase} {snapshot.ComfortPanel.Instruction}"
-                        : snapshot.ComfortPanel.Instruction;
+                // The instruction already says what to do ("breathe in for
+                // 4"; reduced motion gets its own stable wording from the
+                // router). Prefixing the raw phase enum or the setting name
+                // painted "Inhale breathe in for 4" and "reduced motion
+                // breathe slowly..." into the bubble.
+                var detail = OverlaySurfaceText.ComfortDetail(snapshot.ComfortPanel);
                 DrawDetail(canvas, detail, snapshot.DetailRegion, detailPaint);
             }
 
@@ -257,4 +256,15 @@ public sealed record OverlaySurfacePalette(
                 new SKColor(255, 250, 246, 248), new SKColor(210, 194, 211),
                 SKColors.White, new SKColor(228, 214, 225),
                 new SKColor(46, 40, 48), new SKColor(94, 82, 96), new SKColor(170, 58, 55));
+}
+
+/// <summary>Text painted into the overlay's detail line, kept free of Skia so
+/// it can be tested without the native renderer.</summary>
+internal static class OverlaySurfaceText
+{
+    public static string ComfortDetail(ComfortPanelState panel)
+    {
+        ArgumentNullException.ThrowIfNull(panel);
+        return panel.Instruction;
+    }
 }

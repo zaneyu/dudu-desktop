@@ -124,13 +124,20 @@ public sealed class ReminderDueSink : IReminderDueSink
                 : LocalReminderDefaults.PersonalizeTitle(reminder.Id, reminder.Details, recipientName);
 
             var routine = reminder.Id is LocalReminderDefaults.EveningCheckInId or LocalReminderDefaults.BedtimeId;
+            // The "details" she typed into the reminder editor used to be
+            // dropped for every ordinary reminder, so they never appeared
+            // when it fired. They now ride along as the bubble body (the
+            // Windows toast still carries only the title). A blank details
+            // field on the evening check-in no longer leaves a stray leading
+            // space before the prompt.
+            var hasDetails = !string.IsNullOrWhiteSpace(details);
             var body = reminder.Id == LocalReminderDefaults.EveningCheckInId
-                ? $"{details} open Home to check in."
-                : details;
+                ? hasDetails ? $"{details!.TrimEnd()} open Home to check in." : "open Home to check in."
+                : hasDetails ? details : null;
             var item = DurableNotification.Reminder(
                 reminder.Id,
                 title,
-                body: routine ? body : null,
+                body: body,
                 animationKey: reminder.Id == LocalReminderDefaults.BedtimeId ? "sticker-025" : null,
                 expiresUtc: routine ? NextLocalMidnight(occurrence.DueUtc, reminder.LocalTimeZoneId) : null);
             var bypass = !routine && reminder.QuietHoursBehavior == QuietHoursBehavior.DeliverImmediately;
