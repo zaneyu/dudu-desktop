@@ -316,6 +316,12 @@ public sealed partial class SettingsWindow : UserControl
         NavigationView sender,
         NavigationViewSelectionChangedEventArgs args)
     {
+        // Before the feature pages exist, a selection change can only come from
+        // the constructor's initial "home" selection or the NavigationView
+        // applying its template -- never from her. Recording it as the pending
+        // destination would overwrite a tray/overlay deep link queued by
+        // NavigateTo, so it is ignored; ShowDestination selects the real item.
+        if (!_featurePagesInitialized) return;
         if (args.SelectedItem is NavigationViewItem item && item.Tag is string tag)
         {
             NavigateTo(tag);
@@ -389,6 +395,15 @@ public sealed partial class SettingsWindow : UserControl
         OnboardingFrame.Visibility = Visibility.Collapsed;
         RootNavigation.Visibility = Visibility.Visible;
         ShowDestination(_pendingDestination ?? "home");
+
+        // Setup was saved, but applying it live failed: onboarding navigates
+        // away immediately, so say so here instead of dropping the message.
+        // (A startup-registration failure already shows on Home's startup
+        // recovery panel.)
+        if (!string.IsNullOrWhiteSpace(_onboarding.RuntimeApplyError))
+        {
+            DuduCompanionStatus.Text = _onboarding.RuntimeApplyError;
+        }
     }
 
     private void ApplyRequestedTheme()

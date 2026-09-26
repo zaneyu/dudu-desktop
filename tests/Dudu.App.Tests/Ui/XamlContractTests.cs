@@ -267,6 +267,46 @@ public sealed class XamlContractTests
     }
 
     [Fact]
+    public void Compact_navigation_rail_gives_every_destination_an_icon()
+    {
+        // Audit regression: PaneDisplayMode="LeftCompact" collapses the pane to an
+        // icon rail, but no item had an Icon, so the rail showed seven blank buttons.
+        var root = FindRepositoryRoot();
+        var shell = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Windows", "SettingsWindow.xaml"));
+
+        Assert.Contains("PaneDisplayMode=\"LeftCompact\"", shell);
+        var items = Regex.Matches(
+            shell,
+            "<NavigationViewItem\\s[^>]*AutomationProperties\\.AutomationId=\"(?<id>Nav\\w+)\"[^>]*>(?<body>.*?)</NavigationViewItem>",
+            RegexOptions.Singleline);
+        Assert.Equal(7, items.Count);
+        foreach (Match item in items)
+        {
+            Assert.Matches("<NavigationViewItem\\.Icon>\\s*<FontIcon Glyph=\"&#x[0-9A-F]{4};\" />\\s*</NavigationViewItem\\.Icon>", item.Groups["body"].Value);
+        }
+    }
+
+    [Fact]
+    public void Navigation_selection_before_feature_pages_exist_does_not_overwrite_a_deep_link()
+    {
+        // Audit regression: the constructor's initial "home" selection (or the
+        // NavigationView applying its template) raised SelectionChanged while the
+        // feature pages were not built yet, recording "home" as the pending
+        // destination over a tray deep link queued by NavigateTo.
+        var root = FindRepositoryRoot();
+        var code = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Windows", "SettingsWindow.xaml.cs")).Replace("\r\n", "\n");
+        var start = code.IndexOf("private void RootNavigation_SelectionChanged(", StringComparison.Ordinal);
+        Assert.True(start >= 0);
+        var end = code.IndexOf("\n    }", start, StringComparison.Ordinal);
+        var body = code[start..end];
+
+        var guard = body.IndexOf("if (!_featurePagesInitialized) return;", StringComparison.Ordinal);
+        var navigate = body.IndexOf("NavigateTo(tag);", StringComparison.Ordinal);
+        Assert.True(guard >= 0, "SelectionChanged must ignore changes before the feature pages exist.");
+        Assert.True(navigate > guard);
+    }
+
+    [Fact]
     public void Every_painted_overlay_action_has_a_keyboard_accessible_settings_counterpart()
     {
         var root = FindRepositoryRoot();
