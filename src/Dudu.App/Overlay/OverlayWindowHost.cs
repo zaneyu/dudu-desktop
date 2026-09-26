@@ -1096,7 +1096,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             _windowBounds,
             _placement.Scale,
             _nominalSize,
-            EnumerateMonitors());
+            monitors);
         _placementDirty = true;
     }
 
