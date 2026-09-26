@@ -3,6 +3,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:models="using:Dudu.Core.Models"
+    xmlns:viewmodels="using:Dudu.App.ViewModels"
     Background="{ThemeResource WindowSurfaceBrush}">
     <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
         <StackPanel MaxWidth="880" Margin="32" Spacing="24">
@@ -14,6 +15,7 @@
             <StackPanel Spacing="12">
                 <TextBlock Text="local note jar" Style="{StaticResource SectionHeadingStyle}" />
                 <TextBlock x:Name="LoveNotesDailyLimit" TextWrapping="Wrap" AutomationProperties.AutomationId="LoveNotesDailyLimit" AutomationProperties.Name="daily note limit" />
+                <TextBlock Text="the jar is empty. write a note below to add one" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" Visibility="{x:Bind ViewModel.HasNoLocalNotes, Mode=OneWay}" />
                 <ListView ItemsSource="{x:Bind ViewModel.LocalNotes, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.SelectedNote, Mode=TwoWay}" SelectionChanged="LocalNoteList_SelectionChanged" MaxHeight="220" AutomationProperties.AutomationId="LoveNotesLocalList" AutomationProperties.Name="local note jar list">
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="models:LocalLoveNote">
@@ -46,13 +48,13 @@
                 <ListView ItemsSource="{x:Bind ViewModel.PendingRemoteNotes, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.SelectedRemoteEnvelope, Mode=TwoWay}" MaxHeight="180" AutomationProperties.AutomationId="LoveNotesRemoteList" AutomationProperties.Name="incoming notes list">
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="models:RemoteEnvelope">
-                            <TextBlock Text="encrypted note received" Margin="4" />
+                            <TextBlock Text="{x:Bind viewmodels:LoveNoteDisplay.DescribeEnvelope(ReceivedUtc)}" TextWrapping="Wrap" Margin="4" />
                         </DataTemplate>
                     </ListView.ItemTemplate>
                 </ListView>
                 <Button Content="reveal selected note" Command="{x:Bind ViewModel.RevealRemoteNoteCommand}" CommandParameter="{x:Bind ViewModel.SelectedRemoteEnvelope, Mode=OneWay}" IsEnabled="{x:Bind ViewModel.CanRevealRemoteNote, Mode=OneWay}" AutomationProperties.AutomationId="LoveNotesRevealSelected" AutomationProperties.Name="reveal selected note" HorizontalAlignment="Left" />
                 <TextBox Header="opened note" Text="{x:Bind ViewModel.OpenedRemoteNoteText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" AutomationProperties.AutomationId="LoveNotesOpened" AutomationProperties.Name="opened note" />
-                <Button Content="save opened note to local jar" Command="{x:Bind ViewModel.SaveOpenedNoteCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="LoveNotesSaveOpened" AutomationProperties.Name="save opened note to local jar" HorizontalAlignment="Left" />
+                <Button Content="save opened note to local jar" Command="{x:Bind ViewModel.SaveOpenedNoteCommand}" IsEnabled="{x:Bind ViewModel.CanSaveOpenedNote, Mode=OneWay}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="LoveNotesSaveOpened" AutomationProperties.Name="save opened note to local jar" HorizontalAlignment="Left" />
             </StackPanel>
 
             <StackPanel Spacing="4" AutomationProperties.LiveSetting="Polite">

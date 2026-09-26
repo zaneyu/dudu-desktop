@@ -73,7 +73,7 @@ public sealed class TaskService
 
         if (!await _repository.TryCompareAndSetAsync(task, updated, cancellationToken))
         {
-            throw new InvalidOperationException("Task changed before it could be saved.");
+            throw new InvalidOperationException("oh no that task changed before saving try again");
         }
         return updated;
     }
@@ -103,7 +103,7 @@ public sealed class TaskService
 
         if (!await _repository.TryCompareAndSetAsync(task, updated, cancellationToken))
         {
-            throw new InvalidOperationException("Task changed before it could be saved.");
+            throw new InvalidOperationException("oh no that task changed before saving try again");
         }
         return updated;
     }
@@ -126,7 +126,7 @@ public sealed class TaskService
 
         if (!await _repository.TryCompareAndSetAsync(task, completed, cancellationToken))
         {
-            throw new InvalidOperationException("Task changed before it could be completed.");
+            throw new InvalidOperationException("oh no that task changed before finishing try again");
         }
         return completed;
     }
@@ -143,7 +143,7 @@ public sealed class TaskService
     private async Task<TaskItem> GetRequiredAsync(Guid id, CancellationToken cancellationToken)
     {
         var task = await _repository.GetAsync(id, cancellationToken);
-        return task ?? throw new KeyNotFoundException($"Task '{id}' was not found.");
+        return task ?? throw new KeyNotFoundException("oh no that task is gone refresh and try again");
     }
 
     private DateTimeOffset UtcNow() => _clock.UtcNow.ToUniversalTime();
@@ -157,13 +157,13 @@ public sealed class TaskService
         var normalized = title.Trim();
         if (normalized.Length == 0)
         {
-            throw new ArgumentException("Task title cannot be empty.", nameof(title));
+            throw new ArgumentException("aiyo add a title first", nameof(title));
         }
 
         if (CountScalars(normalized) > MaxTitleScalars)
         {
             throw new ArgumentException(
-                $"Task title cannot exceed {MaxTitleScalars} Unicode scalar values.",
+                $"keep the title under {MaxTitleScalars} characters",
                 nameof(title));
         }
 
@@ -175,7 +175,7 @@ public sealed class TaskService
         if (notes is not null && CountScalars(notes) > MaxNotesScalars)
         {
             throw new ArgumentException(
-                $"Task notes cannot exceed {MaxNotesScalars} Unicode scalar values.",
+                $"keep the notes under {MaxNotesScalars} characters",
                 nameof(notes));
         }
     }

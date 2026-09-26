@@ -37,10 +37,7 @@ public sealed partial class RemindersPage : Page
         if (args.PropertyName == nameof(RemindersViewModel.SelectedReminder))
         {
             SyncEditorFromViewModel();
-            if (!Equals(ReminderList.SelectedItem, ViewModel.SelectedReminder))
-            {
-                ReminderList.SelectedItem = ViewModel.SelectedReminder;
-            }
+            SyncListSelectionFromViewModel();
         }
     }
 
@@ -48,7 +45,35 @@ public sealed partial class RemindersPage : Page
     {
         // Editor sync happens in ViewModel_PropertyChanged so programmatic
         // selection clears (save, new reminder) sync the form too.
-        if (sender is ListView list) ViewModel.SelectedReminder = list.SelectedItem as Reminder;
+        if (sender is not ListView list) return;
+
+        // Replacing a row (complete, snooze, save) or reloading the list drops
+        // the ListView's highlight even though the user never deselected
+        // anything. Pushing that null into the view model used to leave the
+        // editor pointing at nothing (so "save" made a duplicate and
+        // "complete" said "select one first"). The view model keeps its own
+        // selection on the fresh row; just restore the highlight from it once
+        // the collection change has settled.
+        if (list.SelectedItem is null && args.RemovedItems.Count > 0
+            && !args.RemovedItems.Any(removed => ViewModel.Reminders.Any(item => ReferenceEquals(item, removed))))
+        {
+            DispatcherQueue.TryEnqueue(SyncListSelectionFromViewModel);
+            return;
+        }
+
+        ViewModel.SelectedReminder = list.SelectedItem as Reminder;
+    }
+
+    private void SyncListSelectionFromViewModel()
+    {
+        var selected = ViewModel.SelectedReminder;
+        var match = selected is null
+            ? null
+            : ViewModel.Reminders.FirstOrDefault(item => item.Id == selected.Id);
+        if (!ReferenceEquals(ReminderList.SelectedItem, match))
+        {
+            ReminderList.SelectedItem = match;
+        }
     }
 
     private void ScheduleBox_SelectionChanged(object sender, SelectionChangedEventArgs args)
@@ -62,6 +87,9 @@ public sealed partial class RemindersPage : Page
             3 => ReminderScheduleKind.Interval,
             _ => ReminderScheduleKind.Once,
         };
+        // An interval reminder ignores the local time, so a half-typed time
+        // must not keep "save reminder" disabled (and vice versa).
+        ValidateLocalTime();
     }
 
     private void QuietHoursBox_SelectionChanged(object sender, SelectionChangedEventArgs args)
@@ -85,28 +113,32 @@ public sealed partial class RemindersPage : Page
 
     private void LocalTimeBox_TextChanged(object sender, TextChangedEventArgs args)
     {
-        if (_syncingEditor || sender is not TextBox box) return;
-        if (string.IsNullOrWhiteSpace(box.Text))
+        if (_syncingEditor) return;
+        ValidateLocalTime();
+    }
+
+    private void ValidateLocalTime()
+    {
+        string? error = null;
+        if (ViewModel.UsesLocalTime)
         {
-            RemindersLocalTimeValidation.Text = "aiyo enter a time or use 09:00";
-            RemindersLocalTimeValidation.Visibility = Visibility.Visible;
-            SaveReminderButton.IsEnabled = false;
-            return;
+            if (string.IsNullOrWhiteSpace(LocalTimeBox.Text))
+            {
+                error = "aiyo enter a time or use 09:00";
+            }
+            else if (TimeOnly.TryParse(LocalTimeBox.Text, out var localTime))
+            {
+                ViewModel.LocalTime = localTime;
+            }
+            else
+            {
+                error = "oh no use a time like 09:00";
+            }
         }
 
-        if (TimeOnly.TryParse(box.Text, out var localTime))
-        {
-            ViewModel.LocalTime = localTime;
-            RemindersLocalTimeValidation.Text = string.Empty;
-            RemindersLocalTimeValidation.Visibility = Visibility.Collapsed;
-            SaveReminderButton.IsEnabled = true;
-        }
-        else
-        {
-            RemindersLocalTimeValidation.Text = "oh no use a time like 09:00";
-            RemindersLocalTimeValidation.Visibility = Visibility.Visible;
-            SaveReminderButton.IsEnabled = false;
-        }
+        RemindersLocalTimeValidation.Text = error ?? string.Empty;
+        RemindersLocalTimeValidation.Visibility = error is null ? Visibility.Collapsed : Visibility.Visible;
+        SaveReminderButton.IsEnabled = error is null;
     }
 
     private void WeekdayBox_Changed(object sender, RoutedEventArgs args)

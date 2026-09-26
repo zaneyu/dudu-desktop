@@ -10,6 +10,8 @@ namespace Dudu.App.Pages;
 public sealed partial class TasksFocusPage : Page
 {
     private bool _syncingTaskEditor;
+    private bool _applyingDueFromView;
+    private DispatcherTimer? _focusCountdownTimer;
 
     public TasksFocusPage(TasksFocusViewModel viewModel)
     {
@@ -31,6 +33,7 @@ public sealed partial class TasksFocusPage : Page
         if (IsLoaded) return; // a re-load already won the out-of-order race
         ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
         ViewModel.DetachFocusExpiry();
+        _focusCountdownTimer?.Stop();
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs args)
@@ -38,6 +41,14 @@ public sealed partial class TasksFocusPage : Page
         ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
         ViewModel.PropertyChanged += ViewModel_PropertyChanged;
         ViewModel.AttachFocusExpiry();
+        // The focus status line used to be computed once per snapshot, so a
+        // running session sat at "25 min left" for its whole length. Tick it.
+        if (_focusCountdownTimer is null)
+        {
+            _focusCountdownTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+            _focusCountdownTimer.Tick += FocusCountdownTimer_Tick;
+        }
+        _focusCountdownTimer.Start();
 
         try
         {
@@ -55,9 +66,25 @@ public sealed partial class TasksFocusPage : Page
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs args)
     {
         if (args.PropertyName is nameof(TasksFocusViewModel.ActiveFocus)
-            or nameof(TasksFocusViewModel.IsFocusActive))
+            or nameof(TasksFocusViewModel.IsFocusActive)
+            or nameof(TasksFocusViewModel.ActiveFocusText))
         {
             RefreshFocusText();
+        }
+        else if (args.PropertyName == nameof(TasksFocusViewModel.DueUtc) && !_applyingDueFromView)
+        {
+            // The due box is not x:Bound: when the view model clears or loads the
+            // editor (after save, complete, delete) mirror it, or the box kept the
+            // previous task's due date while the next save silently dropped it.
+            SyncTaskEditor();
+        }
+    }
+
+    private void FocusCountdownTimer_Tick(object? sender, object args)
+    {
+        if (ViewModel.ActiveFocus is { Status: FocusStatus.Running })
+        {
+            ViewModel.RefreshFocusCountdown();
         }
     }
 
@@ -75,14 +102,14 @@ public sealed partial class TasksFocusPage : Page
         if (_syncingTaskEditor || sender is not TextBox box) return;
         if (string.IsNullOrWhiteSpace(box.Text))
         {
-            ViewModel.DueUtc = null;
+            SetDueFromView(null);
             TaskDueValidation.Text = string.Empty;
             TaskDueValidation.Visibility = Visibility.Collapsed;
             SaveTaskButton.IsEnabled = true;
         }
         else if (DateTimeOffset.TryParse(box.Text, out var due))
         {
-            ViewModel.DueUtc = due;
+            SetDueFromView(due);
             TaskDueValidation.Text = string.Empty;
             TaskDueValidation.Visibility = Visibility.Collapsed;
             SaveTaskButton.IsEnabled = true;
@@ -92,6 +119,19 @@ public sealed partial class TasksFocusPage : Page
             TaskDueValidation.Text = $"use a date like {DateHintExample()}";
             TaskDueValidation.Visibility = Visibility.Visible;
             SaveTaskButton.IsEnabled = false;
+        }
+    }
+
+    private void SetDueFromView(DateTimeOffset? due)
+    {
+        _applyingDueFromView = true;
+        try
+        {
+            ViewModel.DueUtc = due;
+        }
+        finally
+        {
+            _applyingDueFromView = false;
         }
     }
 
@@ -135,21 +175,9 @@ public sealed partial class TasksFocusPage : Page
 
     private void RefreshFocusText()
     {
-        var focusText = ViewModel.ActiveFocus switch
-        {
-            null => "nothing due now",
-            { Status: FocusStatus.Running } focus => $"focus is running with {RemainingMinutes(focus)} remaining",
-            { Status: FocusStatus.Paused } focus => $"focus is paused with {RemainingMinutes(focus)} remaining",
-            { Status: FocusStatus.Completed } => "last focus session completed le",
-            _ => "last focus session ended early",
-        };
+        var focusText = ViewModel.ActiveFocusText;
+        if (string.Equals(FocusCurrent.Text, focusText, StringComparison.Ordinal)) return;
         FocusCurrent.Text = focusText;
         AutomationProperties.SetName(FocusCurrent, focusText);
-    }
-
-    private static string RemainingMinutes(FocusSnapshot focus)
-    {
-        var minutes = Math.Max(0, (int)Math.Ceiling(focus.Remaining.TotalMinutes));
-        return $"{minutes} min left";
     }
 }

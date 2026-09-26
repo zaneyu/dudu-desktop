@@ -14,11 +14,12 @@
 
             <StackPanel Spacing="12">
                 <TextBlock Text="active tasks" Style="{StaticResource SectionHeadingStyle}" />
-                <ListView ItemsSource="{x:Bind ViewModel.ActiveTasks, Mode=OneWay}" SelectionChanged="TaskList_SelectionChanged" MaxHeight="260" AutomationProperties.AutomationId="TasksActiveList" AutomationProperties.Name="active tasks list">
+                <TextBlock Text="no active tasks. add one under task details" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" Visibility="{x:Bind ViewModel.HasNoActiveTasks, Mode=OneWay}" />
+                <ListView ItemsSource="{x:Bind ViewModel.ActiveTasks, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.SelectedTask, Mode=OneWay}" SelectionChanged="TaskList_SelectionChanged" MaxHeight="260" AutomationProperties.AutomationId="TasksActiveList" AutomationProperties.Name="active tasks list">
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="models:TaskItem">
                             <StackPanel Margin="4" Spacing="2">
-                                <TextBlock Text="{x:Bind Title}" />
+                                <TextBlock Text="{x:Bind Title}" TextWrapping="Wrap" />
                             </StackPanel>
                         </DataTemplate>
                     </ListView.ItemTemplate>
@@ -57,7 +58,7 @@
                     <ComboBoxItem Content="60 min" Tag="60" />
                     <ComboBoxItem Content="custom" Tag="0" />
                 </ComboBox>
-                <NumberBox Header="custom minutes" Value="30" Minimum="1" Maximum="240" SpinButtonPlacementMode="Compact" ValueChanged="CustomDurationBox_ValueChanged" AutomationProperties.AutomationId="FocusCustomDuration" AutomationProperties.Name="custom minutes" />
+                <NumberBox Header="custom minutes" IsEnabled="{x:Bind ViewModel.IsCustomDuration, Mode=OneWay}" Value="30" Minimum="1" Maximum="240" SpinButtonPlacementMode="Compact" ValueChanged="CustomDurationBox_ValueChanged" AutomationProperties.AutomationId="FocusCustomDuration" AutomationProperties.Name="custom minutes" />
                 <StackPanel Spacing="8">
                     <Button Content="start focus" Command="{x:Bind ViewModel.StartFocusCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="FocusStart" AutomationProperties.Name="start focus" />
                     <Button Content="pause" Command="{x:Bind ViewModel.PauseFocusCommand}" AutomationProperties.AutomationId="FocusPause" AutomationProperties.Name="pause" />
@@ -69,6 +70,7 @@
 
             <StackPanel Spacing="12">
                 <TextBlock Text="completed tasks" Style="{StaticResource SectionHeadingStyle}" />
+                <TextBlock Text="nothing completed yet" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" Visibility="{x:Bind ViewModel.HasNoCompletedTasks, Mode=OneWay}" />
                 <ListView ItemsSource="{x:Bind ViewModel.CompletedTasks, Mode=OneWay}" MaxHeight="180" AutomationProperties.AutomationId="TasksCompletedList" AutomationProperties.Name="completed tasks list">
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="models:TaskItem">
@@ -80,6 +82,7 @@
 
             <StackPanel Spacing="12">
                 <TextBlock Text="focus history" Style="{StaticResource SectionHeadingStyle}" />
+                <TextBlock Text="no focus sessions yet" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" Visibility="{x:Bind ViewModel.HasNoFocusHistory, Mode=OneWay}" />
                 <ItemsControl ItemsSource="{x:Bind ViewModel.FocusHistory, Mode=OneWay}" AutomationProperties.AutomationId="FocusHistoryList" AutomationProperties.Name="focus history list">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate x:DataType="viewModels:FocusHistoryEntry">
