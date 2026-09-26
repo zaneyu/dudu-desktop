@@ -14,7 +14,9 @@
         <p class="lede">send a private note to your desktop</p>
       </header>
 
-      <section id="unpaired-section" class="card">
+      <!-- Both states start hidden: main.ts reveals the right one once any cached pairing has been
+           checked, so a paired phone never flashes the pairing form on reload. -->
+      <section id="unpaired-section" class="card" hidden>
         <form id="pairing-form" novalidate autocomplete="off">
           <div class="field">
             <label for="pairing-code">Pairing code</label>
@@ -27,13 +29,13 @@
               autocorrect="off"
               spellcheck="false"
               inputmode="text"
-              maxlength="8"
-              pattern="[0-9A-HJKMNPQRSTVWXYZ]{8}"
+              enterkeyhint="go"
+              aria-describedby="pairing-hint pairing-status"
               required
             />
-            <p class="hint">the 8-character code shown on the desktop app</p>
+            <p id="pairing-hint" class="hint">the 8-character code shown on the desktop app</p>
           </div>
-          <button type="submit">Pair privately</button>
+          <button type="submit" id="pair-button">Pair privately</button>
           <p id="pairing-status" class="status-line" aria-live="polite"></p>
         </form>
       </section>
@@ -47,7 +49,6 @@
             <textarea
               id="message-text"
               name="message"
-              maxlength="2000"
               rows="5"
               aria-describedby="char-counter"
               required
@@ -72,7 +73,13 @@
 
           <div class="field">
             <label for="send-later">Send later</label>
-            <input id="send-later" name="sendLater" type="datetime-local" />
+            <input
+              id="send-later"
+              name="sendLater"
+              type="datetime-local"
+              aria-describedby="send-later-hint schedule-status"
+            />
+            <p id="send-later-hint" class="hint">optional, in your local time. leave empty to send now</p>
             <p id="schedule-status" class="status-line" aria-live="polite"></p>
           </div>
 
@@ -84,7 +91,7 @@
           <p id="send-status" data-testid="send-status" class="status-line" aria-live="polite"></p>
         </form>
 
-        <dialog id="preview-dialog">
+        <dialog id="preview-dialog" aria-label="Note preview">
           <p data-testid="preview" id="preview-text"></p>
           <p id="preview-reaction" class="hint"></p>
           <button type="button" id="preview-close">close</button>

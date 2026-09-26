@@ -5,6 +5,7 @@ import { mockRelay, VALID_PAIRING_CODE } from "./mock-relay.js";
 
 test("disconnect removes the paired composer", async ({ page }) => {
   await openPairedSender(page);
+  page.once("dialog", (dialog) => void dialog.accept());
   await page.getByRole("button", { name: "Disconnect this phone" }).click();
   await expect(page.getByRole("button", { name: "Pair privately" })).toBeVisible();
 });
@@ -12,6 +13,7 @@ test("disconnect removes the paired composer", async ({ page }) => {
 test("disconnect failure reports failure and keeps the paired composer", async ({ page }) => {
   const api = await openPairedSender(page);
   api.failNextDisconnect = "abort";
+  page.once("dialog", (dialog) => void dialog.accept());
 
   await page.getByRole("button", { name: "Disconnect this phone" }).click();
 
@@ -46,9 +48,8 @@ test("pairs and sends a note using only the keyboard", async ({ page, browserNam
 
   await expect(page.getByLabel("Message")).toBeVisible();
 
-  // The unpaired section is now hidden and out of the tab order, so a fresh Tab from the top
-  // reaches the paired composer's first focusable field.
-  await page.keyboard.press("Tab");
+  // The pairing button that had focus is now hidden, so the page moves focus straight into the
+  // paired composer's message field instead of leaving it on a vanished control.
   await expect(page.getByLabel("Message")).toBeFocused();
   await page.keyboard.type("keyboard only note");
 
