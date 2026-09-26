@@ -79,9 +79,9 @@ public sealed class XamlContractTests
         };
         var expectedNamedElements = new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
-            ["HomePage"] = ["HomeNextReminder", "HomeActiveFocus", "HomePetState", "HomePetAnimation", "HomeActionStatus", "HomeNextCountdown", "CountdownTargetBox", "CountdownTargetValidation", "HomeSaveCountdownButton", "HomeCheckInSummary", "HomeCheckInHistory", "StartupToggle", "StartupRecoveryPanel", "StartupRecoveryMessage", "RetryStartupButton"],
+            ["HomePage"] = ["HomeNextReminder", "HomeActiveFocus", "HomePetState", "HomePetAnimation", "HomeActionStatus", "HomeNextCountdown", "CountdownTargetBox", "CountdownTargetValidation", "HomeSaveCountdownButton", "CountdownList", "HomeCheckInSummary", "HomeCheckInHistory", "StartupToggle", "StartupRecoveryPanel", "StartupRecoveryMessage", "RetryStartupButton"],
             ["RemindersPage"] = ["ReminderList", "ScheduleBox", "LocalTimeBox", "RemindersLocalTimeValidation", "SundayBox", "MondayBox", "TuesdayBox", "WednesdayBox", "ThursdayBox", "FridayBox", "SaturdayBox", "IntervalBox", "QuietHoursBox", "SaveReminderButton"],
-            ["TasksFocusPage"] = ["TaskDueBox", "TaskDueValidation", "SaveTaskButton", "FocusCurrent"],
+            ["TasksFocusPage"] = ["ActiveTaskList", "TaskDueBox", "TaskDueValidation", "SaveTaskButton", "FocusCurrent"],
             ["LoveNotesPage"] = ["LoveNotesDailyLimit", "LoveNotesPendingCount"],
             ["AppearancePage"] = ["ThemeBox"],
             ["ConnectionPage"] = ["ConnectionAvailability", "ConnectionPairingCode", "ConnectionCodeExpiry", "ConnectionSessionCount"],
@@ -380,6 +380,44 @@ public sealed class XamlContractTests
         Assert.Contains("try", methodBody, StringComparison.Ordinal);
         Assert.Contains("catch (Exception exception)", methodBody, StringComparison.Ordinal);
         Assert.Contains("Trace.TraceError", methodBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Tasks_and_countdowns_offer_a_new_action_and_resync_their_unbound_date_boxes()
+    {
+        // Audit regressions: once an item was selected there was no way to start
+        // a fresh one (typing a new title overwrote it), and the unbound date
+        // boxes kept stale text after a save cleared the view-model value.
+        var root = FindRepositoryRoot();
+        var home = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml"));
+        var tasks = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "TasksFocusPage.xaml"));
+        var homeCode = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml.cs"));
+        var tasksCode = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "TasksFocusPage.xaml.cs"));
+
+        Assert.Contains("Command=\"{x:Bind ViewModel.NewCountdownCommand}\"", home);
+        Assert.Contains("AutomationProperties.AutomationId=\"HomeNewCountdown\"", home);
+        Assert.Contains("Command=\"{x:Bind ViewModel.NewTaskCommand}\"", tasks);
+        Assert.Contains("AutomationProperties.AutomationId=\"TasksNew\"", tasks);
+        Assert.Contains("case nameof(HomeViewModel.CountdownTargetUtc) when !_applyingCountdownTargetFromBox:", homeCode);
+        Assert.Contains("case nameof(TasksFocusViewModel.DueUtc) when !_applyingDueFromBox:", tasksCode);
+    }
+
+    [Fact]
+    public void Focus_controls_are_enabled_by_session_state_and_idle_copy_is_accurate()
+    {
+        var root = FindRepositoryRoot();
+        var tasks = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "TasksFocusPage.xaml"));
+        var tasksCode = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "TasksFocusPage.xaml.cs"));
+
+        Assert.Contains("IsEnabled=\"{x:Bind ViewModel.CanPauseFocus, Mode=OneWay}\" AutomationProperties.AutomationId=\"FocusPause\"", tasks);
+        Assert.Contains("IsEnabled=\"{x:Bind ViewModel.CanResumeFocus, Mode=OneWay}\" AutomationProperties.AutomationId=\"FocusResume\"", tasks);
+        Assert.Contains("IsEnabled=\"{x:Bind ViewModel.CanAdjustFocus, Mode=OneWay}\" AutomationProperties.AutomationId=\"FocusExtend\"", tasks);
+        Assert.Contains("IsEnabled=\"{x:Bind ViewModel.CanAdjustFocus, Mode=OneWay}\" AutomationProperties.AutomationId=\"FocusEnd\"", tasks);
+        Assert.DoesNotContain("nothing due now", tasksCode, StringComparison.Ordinal);
+        Assert.Contains("null => \"no focus running\"", tasksCode);
+        // The remaining time ticks while the page is visible and stops with it.
+        Assert.Contains("DispatcherQueue.CreateTimer()", tasksCode);
+        Assert.Contains("_focusTimer?.Stop();", tasksCode);
     }
 
     private static string FindRepositoryRoot()

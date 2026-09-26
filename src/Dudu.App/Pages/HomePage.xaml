@@ -61,8 +61,9 @@
                     <TextBox x:Name="CountdownTargetBox" Header="target" PlaceholderText="blank means tmrw" TextChanged="CountdownTarget_Changed" AutomationProperties.AutomationId="HomeCountdownTarget" AutomationProperties.Name="target" />
                     <TextBlock x:Name="CountdownTargetValidation" TextWrapping="Wrap" Foreground="{ThemeResource ErrorBrush}" Visibility="Collapsed" AutomationProperties.AutomationId="HomeCountdownTargetValidation" AutomationProperties.Name="countdown target validation" />
                     <Button x:Name="HomeSaveCountdownButton" Content="save" Command="{x:Bind ViewModel.CreateCountdownCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="HomeSaveCountdown" AutomationProperties.Name="save" />
+                    <Button Content="new countdown" Command="{x:Bind ViewModel.NewCountdownCommand}" AutomationProperties.AutomationId="HomeNewCountdown" AutomationProperties.Name="new countdown" />
                 </StackPanel>
-                <ListView ItemsSource="{x:Bind ViewModel.Countdowns, Mode=OneWay}" SelectionChanged="CountdownList_SelectionChanged" MaxHeight="220" AutomationProperties.AutomationId="HomeCountdownList" AutomationProperties.Name="countdowns list">
+                <ListView x:Name="CountdownList" ItemsSource="{x:Bind ViewModel.Countdowns, Mode=OneWay}" SelectionChanged="CountdownList_SelectionChanged" MaxHeight="220" AutomationProperties.AutomationId="HomeCountdownList" AutomationProperties.Name="countdowns list">
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="models:Countdown"><TextBlock Text="{x:Bind Title}" Margin="4" TextWrapping="Wrap" /></DataTemplate>
                     </ListView.ItemTemplate>

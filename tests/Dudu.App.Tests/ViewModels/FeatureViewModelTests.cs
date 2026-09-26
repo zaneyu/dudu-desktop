@@ -2384,6 +2384,148 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task New_countdown_clears_the_selection_so_the_next_save_creates_a_new_countdown()
+    {
+        // Audit regression: there was no "new" action, so once a countdown was
+        // selected, typing a new title overwrote it.
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        var viewModel = new HomeViewModel(fixture.Context)
+        {
+            CountdownTitle = "Visit",
+            CountdownTargetUtc = DateTimeOffset.Parse("2026-12-01T12:00:00Z"),
+        };
+        await viewModel.SaveCountdownAsync(ct);
+        viewModel.SelectCountdown(Assert.Single(fixture.Countdowns.Items));
+        var targetChanges = 0;
+        viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(HomeViewModel.CountdownTargetUtc)) targetChanges++;
+        };
+
+        viewModel.NewCountdownCommand.Execute(null);
+
+        Assert.Null(viewModel.SelectedCountdown);
+        Assert.Equal(string.Empty, viewModel.CountdownTitle);
+        Assert.Null(viewModel.CountdownTargetUtc);
+        // HomePage resyncs its unbound target box from this notification.
+        Assert.Equal(1, targetChanges);
+
+        viewModel.CountdownTitle = "Trip";
+        await viewModel.SaveCountdownAsync(ct);
+        Assert.Equal(2, fixture.Countdowns.Items.Count);
+    }
+
+    [Fact]
+    public async Task Saving_a_countdown_announces_the_cleared_target_so_the_date_box_resyncs()
+    {
+        // Audit regression: after a save the view model's target went back to
+        // null but the unbound date box kept the old text, so the next
+        // countdown saved with no/the wrong date. The page resyncs the box from
+        // this property change.
+        var fixture = FeatureFixture.Create();
+        var viewModel = new HomeViewModel(fixture.Context)
+        {
+            CountdownTitle = "Visit",
+            CountdownTargetUtc = DateTimeOffset.Parse("2026-12-01T12:00:00Z"),
+        };
+        var announced = false;
+        viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(HomeViewModel.CountdownTargetUtc) && viewModel.CountdownTargetUtc is null)
+            {
+                announced = true;
+            }
+        };
+
+        await viewModel.SaveCountdownAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(announced);
+        Assert.Equal(string.Empty, viewModel.CountdownTargetText);
+    }
+
+    [Fact]
+    public async Task New_task_clears_the_selection_so_the_next_save_creates_a_new_task()
+    {
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        var viewModel = new TasksFocusViewModel(fixture.Context)
+        {
+            Title = "Book dinner",
+            DueUtc = DateTimeOffset.Parse("2026-09-20T18:00:00Z"),
+        };
+        await viewModel.SaveTaskAsync(ct);
+        viewModel.SelectTask(Assert.Single(fixture.Tasks.Items));
+        var dueCleared = false;
+        viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(TasksFocusViewModel.DueUtc) && viewModel.DueUtc is null) dueCleared = true;
+        };
+
+        viewModel.NewTaskCommand.Execute(null);
+
+        Assert.Null(viewModel.SelectedTask);
+        Assert.Equal(string.Empty, viewModel.Title);
+        Assert.Null(viewModel.DueUtc);
+        Assert.True(dueCleared);
+
+        viewModel.Title = "Buy flowers";
+        await viewModel.SaveTaskAsync(ct);
+        Assert.Equal(2, fixture.Tasks.Items.Count);
+    }
+
+    [Fact]
+    public async Task Completing_the_selected_task_clears_the_editor_instead_of_leaving_its_title_behind()
+    {
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        var viewModel = new TasksFocusViewModel(fixture.Context) { Title = "Book dinner" };
+        await viewModel.SaveTaskAsync(ct);
+        var task = Assert.Single(fixture.Tasks.Items);
+        viewModel.SelectTask(task);
+
+        await viewModel.CompleteTaskAsync(task, ct);
+
+        Assert.Null(viewModel.SelectedTask);
+        Assert.Equal(string.Empty, viewModel.Title);
+    }
+
+    [Fact]
+    public async Task Focus_controls_follow_the_session_state_and_the_remaining_time_counts_down()
+    {
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        var viewModel = new TasksFocusViewModel(fixture.Context) { SelectedDurationMinutes = 25 };
+        Assert.False(viewModel.CanPauseFocus);
+        Assert.False(viewModel.CanResumeFocus);
+        Assert.False(viewModel.CanAdjustFocus);
+        Assert.Null(viewModel.ActiveFocusRemaining);
+
+        await viewModel.StartFocusOrThrowAsync(ct);
+        Assert.True(viewModel.CanPauseFocus);
+        Assert.False(viewModel.CanResumeFocus);
+        Assert.True(viewModel.CanAdjustFocus);
+        Assert.Equal(TimeSpan.FromMinutes(25), viewModel.ActiveFocusRemaining);
+
+        // The snapshot is fixed when read; the page re-reads this on a timer.
+        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddMinutes(10);
+        Assert.Equal(TimeSpan.FromMinutes(15), viewModel.ActiveFocusRemaining);
+
+        await viewModel.PauseFocusAsync(ct);
+        Assert.False(viewModel.CanPauseFocus);
+        Assert.True(viewModel.CanResumeFocus);
+        Assert.True(viewModel.CanAdjustFocus);
+        var pausedRemaining = viewModel.ActiveFocusRemaining;
+        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddMinutes(5);
+        Assert.Equal(pausedRemaining, viewModel.ActiveFocusRemaining);
+
+        await viewModel.EndFocusAsync(ct);
+        Assert.False(viewModel.CanPauseFocus);
+        Assert.False(viewModel.CanResumeFocus);
+        Assert.False(viewModel.CanAdjustFocus);
+    }
+
+    [Fact]
     public async Task Action_surface_toggles_from_pet_and_routes_primary_and_comfort_hits()
     {
         var fixture = FeatureFixture.Create();

@@ -36,6 +36,7 @@ public sealed class HomeViewModel : FeatureViewModelBase
         DeleteCountdownCommand = new AsyncRelayCommand<Countdown>((item, ct) => DeleteCountdownAsync(item, ct));
         RequestDeleteCountdownCommand = new RelayCommand<Countdown>(RequestDeleteCountdown);
         CancelDeleteCountdownCommand = new RelayCommand(() => PendingDeleteCountdown = null);
+        NewCountdownCommand = new RelayCommand(() => SelectCountdown(null));
         RecordCheckInCommand = new AsyncRelayCommand((CancellationToken ct) =>
             RecordCheckInAsync(ct));
     }
@@ -49,6 +50,9 @@ public sealed class HomeViewModel : FeatureViewModelBase
     public IAsyncRelayCommand<Countdown> DeleteCountdownCommand { get; }
     public IRelayCommand<Countdown> RequestDeleteCountdownCommand { get; }
     public IRelayCommand CancelDeleteCountdownCommand { get; }
+    /// <summary>Clears the countdown editor so the next save creates a new
+    /// countdown instead of overwriting the one selected in the list.</summary>
+    public IRelayCommand NewCountdownCommand { get; }
     public IAsyncRelayCommand RecordCheckInCommand { get; }
 
     public ObservableCollection<Countdown> Countdowns { get; } = [];

@@ -11,6 +11,7 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
     private TaskItem? _selectedTask;
     private TaskItem? _pendingDeleteTask;
     private FocusSnapshot? _activeFocus;
+    private DateTimeOffset _activeFocusCapturedUtc;
     private string _title = string.Empty;
     private string? _notes;
     private DateTimeOffset? _dueUtc;
@@ -29,6 +30,7 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
         DeleteTaskCommand = new AsyncRelayCommand<TaskItem>((item, ct) => DeleteTaskAsync(item, ct));
         RequestDeleteTaskCommand = new RelayCommand<TaskItem>(RequestDeleteTask);
         CancelDeleteTaskCommand = new RelayCommand(() => PendingDeleteTask = null);
+        NewTaskCommand = new RelayCommand(() => SelectTask(null));
         StartFocusCommand = new AsyncRelayCommand((CancellationToken ct) => StartFocusAsync(ct));
         PauseFocusCommand = new AsyncRelayCommand((CancellationToken ct) => PauseFocusAsync(ct));
         ResumeFocusCommand = new AsyncRelayCommand((CancellationToken ct) => ResumeFocusAsync(ct));
@@ -43,6 +45,9 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
     public IAsyncRelayCommand<TaskItem> DeleteTaskCommand { get; }
     public IRelayCommand<TaskItem> RequestDeleteTaskCommand { get; }
     public IRelayCommand CancelDeleteTaskCommand { get; }
+    /// <summary>Clears the task editor so the next save creates a new task
+    /// instead of overwriting the one selected in the list.</summary>
+    public IRelayCommand NewTaskCommand { get; }
     public IAsyncRelayCommand StartFocusCommand { get; }
     public IAsyncRelayCommand PauseFocusCommand { get; }
     public IAsyncRelayCommand ResumeFocusCommand { get; }
@@ -89,12 +94,43 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
         get => _activeFocus;
         private set
         {
-            if (SetProperty(ref _activeFocus, value)) OnPropertyChanged(nameof(ActiveFocusText));
+            // A fresh snapshot (even a value-equal one) was measured just now,
+            // so ActiveFocusRemaining counts down from this moment; re-assigning
+            // the same instance (the expiry reload keeping a newer session)
+            // must not restart that countdown.
+            if (!ReferenceEquals(_activeFocus, value)) _activeFocusCapturedUtc = _context.Clock.UtcNow;
+            if (!SetProperty(ref _activeFocus, value)) return;
+            OnPropertyChanged(nameof(ActiveFocusText));
+            OnPropertyChanged(nameof(ActiveFocusRemaining));
+            OnPropertyChanged(nameof(CanPauseFocus));
+            OnPropertyChanged(nameof(CanResumeFocus));
+            OnPropertyChanged(nameof(CanAdjustFocus));
         }
     }
+
+    /// <summary>Time left in the current session as of now. A snapshot's
+    /// Remaining is fixed at the moment it was read, so a running session
+    /// counts down from then; the page re-reads this on a light timer.</summary>
+    public TimeSpan? ActiveFocusRemaining
+    {
+        get
+        {
+            if (ActiveFocus is not { } focus) return null;
+            if (focus.Status != FocusStatus.Running) return focus.Remaining;
+            var elapsed = _context.Clock.UtcNow - _activeFocusCapturedUtc;
+            var remaining = focus.Remaining - (elapsed > TimeSpan.Zero ? elapsed : TimeSpan.Zero);
+            return remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
+        }
+    }
+
+    public bool CanPauseFocus => ActiveFocus is { Status: FocusStatus.Running };
+    public bool CanResumeFocus => ActiveFocus is { Status: FocusStatus.Paused };
+    /// <summary>Extend and end apply to a running or paused session.</summary>
+    public bool CanAdjustFocus => IsFocusActive;
+
     public string ActiveFocusText => ActiveFocus is null
         ? "no focus running ah"
-        : $"focus is {ActiveFocus.Status.ToString().ToLowerInvariant()} with {FormatDuration(ActiveFocus.Remaining)} remaining";
+        : $"focus is {ActiveFocus.Status.ToString().ToLowerInvariant()} with {FormatDuration(ActiveFocusRemaining ?? ActiveFocus.Remaining)} remaining";
     public string Title { get => _title; set => SetProperty(ref _title, value); }
     public string? Notes { get => _notes; set => SetProperty(ref _notes, value); }
     public DateTimeOffset? DueUtc
@@ -194,7 +230,9 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
                 var existingCompleted = CompletedTasks.FirstOrDefault(item => item.Id == completed.Id);
                 if (existingCompleted is not null) CompletedTasks[CompletedTasks.IndexOf(existingCompleted)] = completed;
                 else CompletedTasks.Insert(0, completed);
-                if (SelectedTask?.Id == task.Id) SelectedTask = null;
+                // Clear the editor too: leaving the completed task's title in
+                // the form made the next save quietly create a copy of it.
+                if (SelectedTask?.Id == task.Id) SelectTask(null);
                 if (PendingDeleteTask?.Id == task.Id) PendingDeleteTask = null;
             }, cancellationToken);
         }, "okkk task done");
