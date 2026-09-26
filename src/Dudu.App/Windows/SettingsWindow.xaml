@@ -48,7 +48,9 @@
                 </StackPanel>
                 <StackPanel Grid.Column="2" VerticalAlignment="Center" Spacing="6">
                     <Button x:Name="DuduPetButton" Content="pet dudu" Click="DuduPetButton_Click"
-                            Style="{StaticResource PrimaryButtonStyle}"
+                            Background="{ThemeResource CoralActionBrush}"
+                            Foreground="{ThemeResource PrimaryButtonForegroundBrush}"
+                            HorizontalContentAlignment="Center"
                             AutomationProperties.AutomationId="DuduCompanionPet"
                             AutomationProperties.Name="pet dudu" />
                     <StackPanel Orientation="Horizontal" Spacing="6">
