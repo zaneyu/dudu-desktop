@@ -71,3 +71,45 @@ public static class PausePolicy
             new DateTimeOffset(utcResume, TimeSpan.Zero));
     }
 }
+
+/// <summary>
+/// Maps a <see cref="PauseState"/> to and from the two plain preference
+/// fields it is persisted in (<c>Preferences.PauseMode</c> /
+/// <c>PauseExpiresUtc</c>), so a pause survives a restart instead of living
+/// only in memory.
+/// </summary>
+public static class PausePersistence
+{
+    public static (string? Mode, DateTimeOffset? ExpiresUtc) ToPreference(PauseState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        return state.Mode == PauseMode.None
+            ? (null, null)
+            : (state.Mode.ToString(), state.ExpiresAtUtc);
+    }
+
+    /// <summary>
+    /// The pause to resume with at startup. An unknown, missing or expired
+    /// value is no pause. "until fullscreen ends" is not restored: the
+    /// fullscreen session it was tied to belonged to the previous run.
+    /// </summary>
+    public static PauseState FromPreference(string? mode, DateTimeOffset? expiresUtc, DateTimeOffset now)
+    {
+        if (string.IsNullOrWhiteSpace(mode)
+            || !Enum.TryParse<PauseMode>(mode, ignoreCase: false, out var parsed)
+            || !Enum.IsDefined(parsed)
+            || !string.Equals(parsed.ToString(), mode, StringComparison.Ordinal))
+        {
+            return PauseState.None;
+        }
+
+        return parsed switch
+        {
+            PauseMode.Indefinite => new PauseState(PauseMode.Indefinite, null),
+            PauseMode.OneHour or PauseMode.FiveMinutes or PauseMode.UntilTomorrowAtSeven
+                when expiresUtc is { } expiry =>
+                PausePolicy.ExpireIfNeeded(new PauseState(parsed, expiry.ToUniversalTime()), now),
+            _ => PauseState.None,
+        };
+    }
+}

@@ -11,6 +11,54 @@ namespace Dudu.App.Tests.Hosting;
 public sealed class ProductionStartupContractTests
 {
     [Fact]
+    public void Saved_global_shortcut_is_registered_at_startup_and_persisted_only_after_registering()
+    {
+        // The custom shortcut used to live only in the running hotkey
+        // service: startup always registered Ctrl+Alt+D and Settings always
+        // showed it. Asserted from source because StartCoreAsync needs real
+        // Win32 window/hotkey handles.
+        var root = FindRepositoryRoot();
+        var composition = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.App", "Hosting", "WindowsCompanionProductionComposition.cs"));
+        var runtime = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.App", "Hosting", "WindowsCompanionBootstrap.cs"));
+
+        var attach = runtime.IndexOf("_hotkey.AttachOwnerWindow(_overlay.Handle);", StringComparison.Ordinal);
+        var register = runtime.IndexOf(
+            "RegisterStartupGesture(_lifecycle.CurrentPreferences.GlobalShortcut);", StringComparison.Ordinal);
+        Assert.True(attach >= 0 && register > attach, "Expected the saved gesture to be registered after attaching.");
+        var registerMethod = runtime[runtime.IndexOf("private void RegisterStartupGesture(string? saved)", StringComparison.Ordinal)..];
+        var savedAttempt = registerMethod.IndexOf("_hotkey.SetGesture(HotkeyGesture.Parse(saved));", StringComparison.Ordinal);
+        var fallback = registerMethod.IndexOf("_hotkey.SetGesture(HotkeyGesture.Default);", StringComparison.Ordinal);
+        Assert.True(savedAttempt >= 0 && fallback > savedAttempt, "Expected a default fallback after the saved gesture.");
+
+        var setStart = composition.IndexOf("setGlobalShortcutAsync: async (shortcut, token) =>", StringComparison.Ordinal);
+        Assert.True(setStart >= 0, "Expected a persisting setGlobalShortcutAsync composition site.");
+        var setBody = composition[setStart..composition.IndexOf("dismissReminderNotificationAsync:", setStart, StringComparison.Ordinal)];
+        var registerCall = setBody.IndexOf("await runtime.SetGlobalShortcutAsync(shortcut, token);", StringComparison.Ordinal);
+        var persistCall = setBody.IndexOf("await preferenceMutations.UpdateAsync(", StringComparison.Ordinal);
+        Assert.True(registerCall >= 0 && persistCall > registerCall, "Expected persistence only after a successful registration.");
+        Assert.Contains("GlobalShortcut =", setBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Production_pause_is_restored_from_and_persisted_to_preferences()
+    {
+        var root = FindRepositoryRoot();
+        var composition = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.App", "Hosting", "WindowsCompanionProductionComposition.cs"));
+
+        var store = composition.IndexOf("var pause = new PauseStateStore(", StringComparison.Ordinal);
+        var persist = composition.IndexOf("persist: changed =>", store, StringComparison.Ordinal);
+        var commit = composition.IndexOf("preferenceMutations.CommitAsync(", persist, StringComparison.Ordinal);
+        var restore = composition.IndexOf("pause.Restore(PausePersistence.FromPreference(", StringComparison.Ordinal);
+        var runtime = composition.IndexOf("WindowsCompanionRuntime.CreateAsync(", StringComparison.Ordinal);
+
+        Assert.True(store >= 0 && persist > store && commit > persist);
+        Assert.True(restore > store && runtime > restore, "Expected the pause restored before the runtime starts.");
+    }
+
+    [Fact]
     public void Safe_mode_returns_before_constructing_native_overlay_runtime()
     {
         var root = FindRepositoryRoot();

@@ -23,7 +23,7 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
     private bool _hideDuringFullscreen;
     private bool _soundsEnabled;
     private double _soundVolume;
-    private string _globalShortcut = "Ctrl+Alt+D";
+    private string _globalShortcut;
 
     public AppearanceViewModel(
         CompanionFeatureContext context,
@@ -39,6 +39,7 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
         _hideDuringFullscreen = preferences.HidePetDuringFullscreen;
         _soundsEnabled = preferences.SoundsEnabled;
         _soundVolume = Preferences.ClampSoundVolume(preferences.SoundVolume);
+        _globalShortcut = DisplayShortcut(preferences);
         _petScale = 1;
         _loadedPetScale = _petScale;
         _monitorDeviceName = "current monitor";
@@ -195,6 +196,7 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
                 HideDuringFullscreen = preferences.HidePetDuringFullscreen;
                 SoundsEnabled = preferences.SoundsEnabled;
                 SoundVolume = preferences.SoundVolume;
+                GlobalShortcut = DisplayShortcut(preferences);
                 _automaticSeasonalMode = preferences.AutomaticSeasonalMode;
                 OnPropertyChanged(nameof(AutomaticSeasonalMode));
                 _selectedOutfit = preferences.AutomaticSeasonalMode
@@ -295,6 +297,13 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
             if (string.IsNullOrWhiteSpace(GlobalShortcut)) throw new ArgumentException("wait type a shortcut first", nameof(GlobalShortcut));
             await _context.SetGlobalShortcutAsync(GlobalShortcut.Trim(), cancellationToken);
         }, "otayyy shortcut set");
+
+    /// <summary>The saved global shortcut (persisted in Preferences), or the
+    /// default gesture when none was ever saved.</summary>
+    private static string DisplayShortcut(Preferences preferences) =>
+        string.IsNullOrWhiteSpace(preferences.GlobalShortcut)
+            ? global::Dudu.App.System.HotkeyGesture.Default.ToString()
+            : preferences.GlobalShortcut.Trim();
 
     private string BuildOutfitAvailabilityMessage()
     {

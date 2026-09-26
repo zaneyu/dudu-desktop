@@ -460,7 +460,29 @@ public static class WindowsCompanionProductionComposition
             // Seeded with the live fullscreen reading so "pause until
             // fullscreen ends" chosen from inside a fullscreen session still
             // ends with that session (see PauseStateStore.OnFullscreenChanged).
-            var pause = new PauseStateStore(() => presentationGateway?.IsFullscreen ?? false);
+            PauseStateStore? pauseStore = null;
+            var pause = new PauseStateStore(
+                () => presentationGateway?.IsFullscreen ?? false,
+                // Persisted without a runtime re-apply (CommitAsync), reading
+                // the store's latest state at commit time so two quick
+                // changes can never leave the older one on disk.
+                persist: changed => _ = ObserveNativeCallbackAsync(
+                    preferenceMutations.CommitAsync(
+                        current =>
+                        {
+                            var (mode, expiresUtc) = PausePersistence.ToPreference(pauseStore!.Current);
+                            return current with { PauseMode = mode, PauseExpiresUtc = expiresUtc };
+                        },
+                        (_, updated, token) => preferencesRepository.SaveAsync(updated, token)),
+                    "pause-persist",
+                    host.ErrorReporter));
+            pauseStore = pause;
+            // The pause she chose in an earlier run (the tray/overlay pause
+            // used to be lost on every restart).
+            pause.Restore(PausePersistence.FromPreference(
+                preferences.PauseMode,
+                preferences.PauseExpiresUtc,
+                DateTimeOffset.UtcNow));
             var runtimePreferences = new RuntimePreferencesState(preferences);
             var audioManifestPath = ResolveAudioManifestPath(assetsRoot);
             AudioCatalog audioCatalog;
@@ -881,7 +903,22 @@ public static class WindowsCompanionProductionComposition
                         }, token));
                     return Task.CompletedTask;
                 },
-                setGlobalShortcutAsync: runtime.SetGlobalShortcutAsync,
+                setGlobalShortcutAsync: async (shortcut, token) =>
+                {
+                    // Register first: a gesture another app already owns
+                    // throws here and is never saved. Only a registered
+                    // gesture is persisted, so it survives a restart (it used
+                    // to live only in the running hotkey service, and startup
+                    // always re-registered Ctrl+Alt+D).
+                    await runtime.SetGlobalShortcutAsync(shortcut, token);
+                    var gesture = HotkeyGesture.Parse(shortcut);
+                    await preferenceMutations.UpdateAsync(
+                        current => current with
+                        {
+                            GlobalShortcut = gesture == HotkeyGesture.Default ? null : gesture.ToString(),
+                        },
+                        token);
+                },
                 dismissReminderNotificationAsync: (reminderId, token) =>
                     notificationService?.DismissReminderAsync(reminderId, token) ?? Task.CompletedTask,
                 discardHeldReminderAsync: (reminderId, token) =>

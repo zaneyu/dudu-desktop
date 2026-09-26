@@ -19,15 +19,32 @@ public sealed class PauseStateStore : IPauseStateStore
 {
     private readonly object _gate = new();
     private readonly Func<bool>? _isFullscreenNow;
+    private readonly Action<PauseState>? _persist;
     private PauseState _current = PauseState.None;
     private bool _fullscreenSeen;
 
     /// <param name="isFullscreenNow">Seeds whether fullscreen is already
     /// active when "pause until fullscreen ends" is chosen, so choosing it
     /// from inside a fullscreen session still ends with that session.</param>
-    public PauseStateStore(Func<bool>? isFullscreenNow = null)
+    /// <param name="persist">Called (outside the lock, never throwing into
+    /// the caller) after every change she makes, so the pause survives a
+    /// restart; <see cref="Restore"/> does not call it.</param>
+    public PauseStateStore(Func<bool>? isFullscreenNow = null, Action<PauseState>? persist = null)
     {
         _isFullscreenNow = isFullscreenNow;
+        _persist = persist;
+    }
+
+    /// <summary>Loads the pause persisted by an earlier run, without
+    /// persisting it again.</summary>
+    public void Restore(PauseState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        lock (_gate)
+        {
+            _current = state;
+            _fullscreenSeen = false;
+        }
     }
 
     public PauseState Current
@@ -44,6 +61,8 @@ public sealed class PauseStateStore : IPauseStateStore
             _current = state;
             _fullscreenSeen = fullscreenNow;
         }
+
+        Persist(state);
     }
 
     public PauseState GetEffective(DateTimeOffset now)
@@ -86,8 +105,17 @@ public sealed class PauseStateStore : IPauseStateStore
 
             _current = PauseState.None;
             _fullscreenSeen = false;
-            return true;
         }
+
+        Persist(PauseState.None);
+        return true;
+    }
+
+    private void Persist(PauseState state)
+    {
+        if (_persist is null) return;
+        try { _persist(state); }
+        catch { }
     }
 
     private bool ReadFullscreenNow()

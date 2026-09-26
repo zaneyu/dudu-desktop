@@ -882,11 +882,57 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         CancellationToken cancellationToken = default) =>
         _overlay.CapturePlacementSnapshotAsync(cancellationToken);
 
-    public Task SetGlobalShortcutAsync(string shortcut, CancellationToken cancellationToken = default)
+    /// <summary>Shown when no global shortcut could be registered at all.</summary>
+    public const string GlobalShortcutUnavailableMessage =
+        "aiyo the global shortcut is taken by another app, pick a different one";
+
+    /// <summary>
+    /// Null while the saved shortcut is registered; otherwise a short
+    /// user-facing explanation of what startup fell back to (the failure
+    /// itself is reported as hotkey-saved-gesture / hotkey-attach). Cleared
+    /// by the next successful <see cref="SetGlobalShortcutAsync"/>. Not yet
+    /// shown anywhere: the Appearance page has no channel to the runtime.
+    /// </summary>
+    public string? GlobalShortcutStatus { get; private set; }
+
+    public async Task SetGlobalShortcutAsync(string shortcut, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var gesture = HotkeyGesture.Parse(shortcut);
-        return _overlay.InvokeOnOwnerAsync(() => _hotkey.SetGesture(gesture), cancellationToken);
+        await _overlay.InvokeOnOwnerAsync(() => _hotkey.SetGesture(gesture), cancellationToken);
+        GlobalShortcutStatus = null;
+    }
+
+    /// <summary>
+    /// Registers the saved global shortcut at startup, falling back to
+    /// <see cref="HotkeyGesture.Default"/> when it is unparseable or already
+    /// taken by another app. The saved preference is left as it is -- it may
+    /// be free again on the next launch -- but the fallback is recorded in
+    /// <see cref="GlobalShortcutStatus"/>. Runs on the overlay owner thread.
+    /// </summary>
+    private void RegisterStartupGesture(string? saved)
+    {
+        if (!string.IsNullOrWhiteSpace(saved))
+        {
+            try
+            {
+                _hotkey.SetGesture(HotkeyGesture.Parse(saved));
+                GlobalShortcutStatus = null;
+                return;
+            }
+            catch (Exception exception) when (exception is FormatException or ArgumentException or HotkeyConflictException)
+            {
+                ReportFailure("hotkey-saved-gesture", exception);
+            }
+
+            _hotkey.SetGesture(HotkeyGesture.Default);
+            GlobalShortcutStatus =
+                $"aiyo your saved shortcut is unavailable, using {HotkeyGesture.Default} for now";
+            return;
+        }
+
+        _hotkey.SetGesture(HotkeyGesture.Default);
+        GlobalShortcutStatus = null;
     }
 
     public Task StartAsync(CancellationToken cancellationToken = default)
@@ -919,7 +965,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                 try
                 {
                     _hotkey.AttachOwnerWindow(_overlay.Handle);
-                    _hotkey.SetGesture(HotkeyGesture.Default);
+                    RegisterStartupGesture(_lifecycle.CurrentPreferences.GlobalShortcut);
                 }
                 catch (Exception exception)
                 {
@@ -927,6 +973,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                     // already own Ctrl+Alt+D. Losing it must never fail startup.
                     ReportFailure("hotkey-attach", exception);
                     Trace.TraceWarning("Dudu global hotkey unavailable: {0}", exception.Message);
+                    GlobalShortcutStatus = GlobalShortcutUnavailableMessage;
                 }
 
                 try
