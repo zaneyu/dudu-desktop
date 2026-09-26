@@ -296,10 +296,8 @@ public sealed class FeatureViewModelTests
         // Audit regression: CompleteAsync discards a reminder's held/queued
         // presentation via DiscardHeldReminderAsync, but SnoozeAsync did not
         // -- so a snoozed reminder that was currently held would still pop
-        // on the next unsuppressed tick. This is the safe case: NextDueUtc
-        // (10:00, the fixture clock's "now") is no later than the 15-minute
-        // snooze (10:15), so the snooze is "live" and will govern re-delivery
-        // on its own -- the held copy is redundant and can be discarded.
+        // on the next unsuppressed tick. The snooze governs re-delivery on its
+        // own, so the held copy is redundant and is discarded.
         var discarded = new List<string>();
         var fixture = FeatureFixture.Create(discardHeldReminderAsync: (id, _) =>
         {
@@ -316,17 +314,14 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
-    public async Task Snoozing_a_reminder_with_a_dead_snooze_does_not_discard_its_held_presentation()
+    public async Task Snoozing_a_reminder_after_it_fired_discards_its_held_presentation()
     {
-        // Audit regression: the scheduling engine advances NextDueUtc BEFORE
-        // notifying, so once an occurrence is held (e.g. a bedtime reminder
-        // during quiet hours), the held row is the ONLY record of it --
-        // NextDueUtc already points at the occurrence after this one. A
-        // 15-minute snooze that resolves before that later NextDueUtc is
-        // "dead" (SnoozedUntilUtc < NextDueUtc is ignored by
-        // LoadDueAsync/Reconcile), so discarding the held copy here would
-        // make the reminder vanish entirely instead of resurfacing once the
-        // hold clears.
+        // The engine advances NextDueUtc before notifying, so a snooze picked
+        // after the reminder fired resolves before NextDueUtc. That snooze used
+        // to be "dead" (never loaded again), so the held copy was kept as the
+        // only record. ReminderEngine now delivers a due snooze on its own, so
+        // keeping the held copy would present the reminder twice -- the page's
+        // Snooze must discard it, as the toast's Snooze action does.
         var discarded = new List<string>();
         var fixture = FeatureFixture.Create(discardHeldReminderAsync: (id, _) =>
         {
@@ -339,7 +334,7 @@ public sealed class FeatureViewModelTests
 
         await viewModel.SnoozeCommand.ExecuteAsync(reminder);
 
-        Assert.Empty(discarded);
+        Assert.Equal([reminder.Id], discarded);
     }
 
     [Fact]
@@ -516,6 +511,23 @@ public sealed class FeatureViewModelTests
 
         Assert.Equal("Ctrl+Shift+K", viewModel.GlobalShortcut);
         Assert.Equal("Ctrl+Shift+K", new AppearanceViewModel(fixture.Context).GlobalShortcut);
+    }
+
+    [Fact]
+    public async Task Appearance_explains_when_startup_fell_back_from_the_saved_shortcut()
+    {
+        // Regression: when another app owned the saved shortcut, startup fell
+        // back to Ctrl+Alt+D but the page still showed the saved one with no
+        // explanation, so she had no idea why her shortcut did nothing.
+        string? status = "aiyo your saved shortcut is unavailable, using Ctrl+Alt+D for now";
+        var fixture = FeatureFixture.Create(getGlobalShortcutStatus: () => status);
+        var viewModel = new AppearanceViewModel(fixture.Context);
+
+        Assert.Equal(status, viewModel.ShortcutStatus);
+
+        status = null;
+        await viewModel.RefreshAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(string.Empty, viewModel.ShortcutStatus);
     }
 
     [Fact]
@@ -2883,7 +2895,8 @@ public sealed class FeatureViewModelTests
             Func<RemoteEnvelope, CancellationToken, Task<RevealedRemoteNote>>? revealRemoteNoteAsync = null,
             IPairingService? pairing = null,
             Func<string, CancellationToken, Task>? discardHeldReminderAsync = null,
-            Func<string, CancellationToken, Task>? dismissReminderNotificationAsync = null)
+            Func<string, CancellationToken, Task>? dismissReminderNotificationAsync = null,
+            Func<string?>? getGlobalShortcutStatus = null)
         {
             var clock = new FakeClock("2026-09-12T10:00:00Z");
             var events = new List<string>();
@@ -2970,7 +2983,8 @@ public sealed class FeatureViewModelTests
                 deleteLocalDataAsync: deleteLocalDataAsync,
                 deleteRemoteDataAsync: deleteRemoteDataAsync,
                 discardHeldReminderAsync: discardHeldReminderAsync,
-                dismissReminderNotificationAsync: dismissReminderNotificationAsync);
+                dismissReminderNotificationAsync: dismissReminderNotificationAsync,
+                getGlobalShortcutStatus: getGlobalShortcutStatus);
             return new FeatureFixture(
                 clock,
                 reminders,

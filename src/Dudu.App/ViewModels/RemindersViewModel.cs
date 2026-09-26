@@ -361,27 +361,20 @@ public sealed class RemindersViewModel : FeatureViewModelBase
                 global::System.Diagnostics.Trace.TraceError("Dudu reminder-snooze notification dismiss failed: {0}", exception);
             }
 
-            // Unlike CompleteAsync, this can't unconditionally discard the held
-            // copy. The scheduling engine advances NextDueUtc *before*
-            // notifying, so once an occurrence is held, that held row is the
-            // only record of it. If NextDueUtc is already later than this
-            // snooze resolves, the snooze is "dead" -- SnoozedUntilUtc <
-            // NextDueUtc is ignored by LoadDueAsync/Reconcile -- and discarding
-            // the held copy here would make the reminder vanish instead of
-            // resurfacing once the hold clears. Only discard when the snooze
-            // is "live", i.e. it reaches at least as far as NextDueUtc and so
-            // will actually govern re-delivery on its own.
-            if (reminder.NextDueUtc is { } due && due.ToUniversalTime() <= snoozeUntil)
+            // The snooze always re-delivers the reminder now -- including one
+            // picked after the occurrence already fired, when NextDueUtc has
+            // moved past it (ReminderEngine delivers a due snooze on its own
+            // and keeps NextDueUtc). So any copy still held for quiet hours or
+            // fullscreen is redundant and would pop a second time: discard it,
+            // exactly as the toast's Snooze action does.
+            try
             {
-                try
-                {
-                    await _context.DiscardHeldReminderAsync(reminder.Id, cancellationToken);
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-                catch (Exception exception)
-                {
-                    global::System.Diagnostics.Trace.TraceError("Dudu reminder-snooze held-copy discard failed: {0}", exception);
-                }
+                await _context.DiscardHeldReminderAsync(reminder.Id, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception exception)
+            {
+                global::System.Diagnostics.Trace.TraceError("Dudu reminder-snooze held-copy discard failed: {0}", exception);
             }
         }, "otayyy snoozed for 15 min");
     }

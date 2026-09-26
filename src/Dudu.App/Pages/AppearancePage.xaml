@@ -56,6 +56,7 @@
             <StackPanel Spacing="12">
                 <TextBlock Text="shortcut" Style="{StaticResource SectionHeadingStyle}" />
                 <TextBox Header="shortcut to open dudu" Text="{x:Bind ViewModel.GlobalShortcut, Mode=TwoWay}" PlaceholderText="Ctrl+Alt+D" AutomationProperties.AutomationId="AppearanceShortcut" AutomationProperties.Name="shortcut to open dudu" />
+                <TextBlock Text="{x:Bind ViewModel.ShortcutStatus, Mode=OneWay}" Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="AppearanceShortcutStatus" AutomationProperties.Name="{x:Bind ViewModel.ShortcutStatus, Mode=OneWay}" />
                 <Button Content="save shortcut" Command="{x:Bind ViewModel.SaveShortcutCommand}" AutomationProperties.AutomationId="AppearanceSaveShortcut" AutomationProperties.Name="save shortcut" HorizontalAlignment="Left" />
             </StackPanel>
 

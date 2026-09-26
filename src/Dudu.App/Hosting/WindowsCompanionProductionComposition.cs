@@ -933,6 +933,7 @@ public static class WindowsCompanionProductionComposition
                 discardHeldRemoteNotesAsync: token =>
                     presentationGateway?.DiscardHeldByKindAsync(PresentationItemKind.RemoteNote, token)
                         ?? Task.CompletedTask,
+                getGlobalShortcutStatus: () => runtime.GlobalShortcutStatus,
                 deleteRemoteDataAsync: async token =>
                 {
                     var result = await services.GetRequiredService<IPairingService>()

@@ -890,8 +890,8 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
     /// Null while the saved shortcut is registered; otherwise a short
     /// user-facing explanation of what startup fell back to (the failure
     /// itself is reported as hotkey-saved-gesture / hotkey-attach). Cleared
-    /// by the next successful <see cref="SetGlobalShortcutAsync"/>. Not yet
-    /// shown anywhere: the Appearance page has no channel to the runtime.
+    /// by the next successful <see cref="SetGlobalShortcutAsync"/>. Shown on
+    /// the Appearance page under the shortcut box.
     /// </summary>
     public string? GlobalShortcutStatus { get; private set; }
 

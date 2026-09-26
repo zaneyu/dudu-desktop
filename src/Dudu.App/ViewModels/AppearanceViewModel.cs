@@ -24,6 +24,7 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
     private bool _soundsEnabled;
     private double _soundVolume;
     private string _globalShortcut;
+    private string _shortcutStatus;
 
     public AppearanceViewModel(
         CompanionFeatureContext context,
@@ -40,6 +41,7 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
         _soundsEnabled = preferences.SoundsEnabled;
         _soundVolume = Preferences.ClampSoundVolume(preferences.SoundVolume);
         _globalShortcut = DisplayShortcut(preferences);
+        _shortcutStatus = context.GetGlobalShortcutStatus() ?? string.Empty;
         _petScale = 1;
         _loadedPetScale = _petScale;
         _monitorDeviceName = "current monitor";
@@ -182,6 +184,11 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
     public string SoundVolumeLabel => $"{SoundVolume:P0}";
     public string GlobalShortcut { get => _globalShortcut; set => SetProperty(ref _globalShortcut, value); }
 
+    /// <summary>Why the saved shortcut is not the one in effect (startup fell
+    /// back to the default because another app owns it), or empty. Without
+    /// this the page showed the saved shortcut while a different one worked.</summary>
+    public string ShortcutStatus { get => _shortcutStatus; private set => SetProperty(ref _shortcutStatus, value); }
+
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
     {
         await RunRefreshAsync(async ct =>
@@ -201,6 +208,7 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
                 SoundsEnabled = preferences.SoundsEnabled;
                 SoundVolume = preferences.SoundVolume;
                 GlobalShortcut = DisplayShortcut(preferences);
+                ShortcutStatus = _context.GetGlobalShortcutStatus() ?? string.Empty;
                 _automaticSeasonalMode = preferences.AutomaticSeasonalMode;
                 OnPropertyChanged(nameof(AutomaticSeasonalMode));
                 _selectedOutfit = preferences.AutomaticSeasonalMode
@@ -311,6 +319,7 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
         {
             if (string.IsNullOrWhiteSpace(GlobalShortcut)) throw new ArgumentException("wait type a shortcut first", nameof(GlobalShortcut));
             await _context.SetGlobalShortcutAsync(GlobalShortcut.Trim(), cancellationToken);
+            await MutateAsync(() => ShortcutStatus = _context.GetGlobalShortcutStatus() ?? string.Empty, cancellationToken);
         }, "otayyy shortcut set");
 
     /// <summary>The saved global shortcut (persisted in Preferences), or the
