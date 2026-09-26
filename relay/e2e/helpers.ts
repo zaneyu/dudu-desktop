@@ -10,6 +10,9 @@ export async function openPairedSender(page: Page): Promise<MockRelay> {
   await page.goto("/");
   await page.getByLabel("Pairing code").fill(VALID_PAIRING_CODE);
   await page.getByRole("button", { name: "Pair privately" }).click();
-  await expect(page.getByLabel("Message")).toBeVisible();
+  // A cold browser (Firefox on the Windows runner has taken 20s+ for its first page) can spend
+  // longer than expect's 5s default on the first WebCrypto key import; allow the page's own 15s
+  // request timeout instead.
+  await expect(page.getByLabel("Message")).toBeVisible({ timeout: 15_000 });
   return api;
 }
