@@ -133,20 +133,13 @@ public sealed class NotificationActivationTests
     }
 
     [Fact]
-    public async Task Reminder_toast_body_carries_an_open_reminder_activation()
+    public async Task Note_toast_opens_the_notes_page()
     {
-        // The body used to carry no activation arguments at all, so a click
-        // on the toast itself did nothing.
-        var sink = new RecordingSink();
-        var service = new AppNotificationService(sink);
+        var fixture = new ToastFixture();
 
-        await service.ShowReminderAsync("reminder-1", "Stretch", TestContext.Current.CancellationToken);
+        await fixture.HandleAsync("action=open-note&messageId=11111111-1111-4111-8111-111111111111");
 
-        var request = Assert.Single(sink.Shown);
-        Assert.Equal("action=open-reminder&reminderId=reminder-1", request.ActivationArguments);
-        var activation = NotificationActivation.TryParse(request.ActivationArguments);
-        Assert.Equal(NotificationActivationAction.OpenReminder, activation!.Action);
-        Assert.Equal("reminder-1", activation.ReminderId);
+        Assert.Equal(["notes"], fixture.Destinations);
     }
 
     [Fact]
@@ -174,7 +167,7 @@ public sealed class NotificationActivationTests
         Assert.Equal("reminder-1", reminder.Id);
         Assert.Equal(Now, Assert.Single(occurrences).DueUtc);
         Assert.Equal(Now.AddDays(1).Date, next!.Value.UtcDateTime.Date);
-        Assert.Equal(["reminder-1"], fixture.Sink.Removed);
+        Assert.Equal(["reminder-1"], fixture.DismissedToasts);
         Assert.Equal(["reminder-1"], fixture.DiscardedHeld);
         Assert.Empty(fixture.Destinations);
     }
@@ -191,7 +184,7 @@ public sealed class NotificationActivationTests
         Assert.Equal(Now + ReminderToastActions.SnoozeDuration, saved.SnoozedUntilUtc);
         Assert.Equal(fixture.Reminders.Items[0].NextDueUtc, saved.NextDueUtc);
         Assert.Equal(TimeSpan.FromMinutes(15), ReminderToastActions.SnoozeDuration);
-        Assert.Equal(["reminder-1"], fixture.Sink.Removed);
+        Assert.Equal(["reminder-1"], fixture.DismissedToasts);
         Assert.Equal(["reminder-1"], fixture.DiscardedHeld);
         Assert.Empty(fixture.Destinations);
     }
@@ -207,7 +200,7 @@ public sealed class NotificationActivationTests
 
         Assert.Empty(fixture.Reminders.Advanced);
         Assert.Empty(fixture.Reminders.Saved);
-        Assert.Equal(["missing"], fixture.Sink.Removed);
+        Assert.Equal(["missing"], fixture.DismissedToasts);
         Assert.Equal(["reminders"], fixture.Destinations);
     }
 
@@ -227,21 +220,15 @@ public sealed class NotificationActivationTests
     {
         public ToastFixture()
         {
-            Service = new AppNotificationService(Sink);
-            Actions = new CompanionUiActions(
-                _ => Task.CompletedTask,
-                (_, _) => Task.CompletedTask,
-                _ => Task.CompletedTask,
-                navigateSettingsDestination: (destination, _) =>
-                {
-                    Destinations.Add(destination);
-                    return Task.CompletedTask;
-                });
             ToastActions = new ReminderToastActions(
                 new FixedClock(),
                 Reminders,
                 Reminders,
-                Service.DismissReminderAsync,
+                (reminderId, _) =>
+                {
+                    DismissedToasts.Add(reminderId);
+                    return Task.CompletedTask;
+                },
                 (reminderId, _) =>
                 {
                     DiscardedHeld.Add(reminderId);
@@ -250,20 +237,26 @@ public sealed class NotificationActivationTests
                 Reporter);
         }
 
-        public RecordingSink Sink { get; } = new();
-        public AppNotificationService Service { get; }
-        public CompanionUiActions Actions { get; }
         public ReminderToastActions ToastActions { get; }
         public FakeReminders Reminders { get; } = new();
         public List<string> Destinations { get; } = [];
+        public List<string> DismissedToasts { get; } = [];
         public List<string> DiscardedHeld { get; } = [];
         public RecordingReporter Reporter { get; } = new();
 
         public Task HandleAsync(string arguments) =>
-            WindowsCompanionProductionComposition.HandleNotificationActivationAsync(
-                Actions,
-                Service,
+            ToastActivationRouter.HandleAsync(
                 NotificationActivation.TryParse(arguments)!,
+                (destination, _) =>
+                {
+                    Destinations.Add(destination);
+                    return Task.CompletedTask;
+                },
+                (reminderId, _) =>
+                {
+                    DismissedToasts.Add(reminderId);
+                    return Task.CompletedTask;
+                },
                 ToastActions,
                 Reporter,
                 TestContext.Current.CancellationToken);
@@ -315,26 +308,6 @@ public sealed class NotificationActivationTests
         public Task SaveAsync(Reminder reminder, CancellationToken cancellationToken = default)
         {
             Saved.Add(reminder);
-            return Task.CompletedTask;
-        }
-    }
-
-    private sealed class RecordingSink : INotificationSink
-    {
-        public List<NotificationRequest> Shown { get; } = [];
-        public List<string> Removed { get; } = [];
-
-        public Task<bool> TryRegisterAsync(CancellationToken cancellationToken) => Task.FromResult(true);
-
-        public Task ShowAsync(NotificationRequest request, CancellationToken cancellationToken)
-        {
-            Shown.Add(request);
-            return Task.CompletedTask;
-        }
-
-        public Task RemoveAsync(string tag, string group, CancellationToken cancellationToken)
-        {
-            Removed.Add(tag);
             return Task.CompletedTask;
         }
     }

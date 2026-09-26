@@ -1266,12 +1266,11 @@ public static class WindowsCompanionProductionComposition
     }
 
     /// <summary>
-    /// Handles a toast activation. A reminder toast's Done/Snooze buttons
-    /// carry out the action directly through <see cref="ReminderToastActions"/>
-    /// (they used to only open the Reminders page and change nothing); its
-    /// body opens the Reminders page, as does a Done/Snooze that could not be
-    /// applied (reminder gone or changed, or a failed write). A malformed or
-    /// unknown activation is ignored rather than throwing.
+    /// Handles a toast activation through <see cref="ToastActivationRouter"/>:
+    /// a reminder toast's Done/Snooze buttons are carried out directly by
+    /// <see cref="ReminderToastActions"/> (they used to only open the
+    /// Reminders page and change nothing) and its body opens the Reminders
+    /// page. A malformed or unknown activation is ignored rather than throwing.
     /// </summary>
     private static void HandleNotificationInvoked(
         CompanionUiActions actions,
@@ -1291,89 +1290,15 @@ public static class WindowsCompanionProductionComposition
         }
 
         _ = ObserveNativeCallbackAsync(
-            HandleNotificationActivationAsync(
-                actions,
-                notifications,
+            ToastActivationRouter.HandleAsync(
                 activation,
+                (destination, token) => DispatchSettingsDestinationAsync(actions, destination, token),
+                notifications.DismissReminderAsync,
                 reminderActions,
                 errorReporter,
                 CancellationToken.None),
             "notification-invoked",
             errorReporter);
-    }
-
-    internal static async Task HandleNotificationActivationAsync(
-        CompanionUiActions actions,
-        AppNotificationService notifications,
-        NotificationActivation activation,
-        ReminderToastActions? reminderActions,
-        IAppHostErrorReporter? errorReporter,
-        CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(actions);
-        ArgumentNullException.ThrowIfNull(notifications);
-        ArgumentNullException.ThrowIfNull(activation);
-        switch (activation.Action)
-        {
-            case NotificationActivationAction.OpenNote:
-                await DispatchSettingsDestinationAsync(actions, "notes", cancellationToken);
-                return;
-            case NotificationActivationAction.OpenReminder:
-                await DispatchSettingsDestinationAsync(actions, "reminders", cancellationToken);
-                return;
-            case NotificationActivationAction.ReminderDone:
-            case NotificationActivationAction.ReminderSnooze:
-                break;
-            default:
-                return;
-        }
-
-        if (activation.ReminderId is not { } reminderId)
-        {
-            return;
-        }
-
-        var applied = false;
-        if (reminderActions is not null)
-        {
-            try
-            {
-                applied = activation.Action == NotificationActivationAction.ReminderDone
-                    ? await reminderActions.CompleteAsync(reminderId, cancellationToken)
-                    : await reminderActions.SnoozeAsync(reminderId, cancellationToken);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception exception)
-            {
-                WindowsCompanionRuntime.ReportStaticFailure(errorReporter, "notification-reminder-action", exception);
-            }
-        }
-
-        if (applied)
-        {
-            return;
-        }
-
-        // Could not apply it from the toast: acting on the toast still
-        // acknowledges it, so drop the Action Center copy, and open the
-        // Reminders page so she can finish it there.
-        try
-        {
-            await notifications.DismissReminderAsync(reminderId, cancellationToken);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception exception)
-        {
-            WindowsCompanionRuntime.ReportStaticFailure(errorReporter, "notification-dismiss", exception);
-        }
-
-        await DispatchSettingsDestinationAsync(actions, "reminders", cancellationToken);
     }
 
     private static async Task ObserveAnimationAsync(Task playback)

@@ -57,7 +57,6 @@ public sealed class ReminderToastActions
         var reminder = await FindAsync(reminderId, cancellationToken);
         if (reminder is null)
         {
-            await BestEffortAsync(_dismissNotificationAsync, reminderId, "reminder-toast-dismiss", cancellationToken);
             return false;
         }
 
@@ -93,7 +92,6 @@ public sealed class ReminderToastActions
         var reminder = await FindAsync(reminderId, cancellationToken);
         if (reminder is null || !reminder.Enabled)
         {
-            await BestEffortAsync(_dismissNotificationAsync, reminderId, "reminder-toast-dismiss", cancellationToken);
             return false;
         }
 

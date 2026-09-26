@@ -37,6 +37,13 @@ public sealed class NotificationPrivacyTests
         var notification = Assert.Single(sink.Items);
         Assert.Equal("Stretch", notification.Title);
         Assert.Null(notification.Body);
+        // The body used to carry no activation arguments at all, so a click
+        // on the toast itself did nothing; it now opens the Reminders page
+        // and still carries only the (constrained) reminder id.
+        Assert.Equal("action=open-reminder&reminderId=reminder-1", notification.ActivationArguments);
+        var bodyActivation = NotificationActivation.TryParse(notification.ActivationArguments);
+        Assert.Equal(NotificationActivationAction.OpenReminder, bodyActivation!.Action);
+        Assert.Equal("reminder-1", bodyActivation.ReminderId);
         Assert.Collection(
             notification.Buttons,
             button =>

@@ -28,6 +28,8 @@
     <Compile Include="../../src/Dudu.App/Animation/AssetManifestLoader.cs" Link="Animation/AssetManifestLoader.cs" />
     <Compile Include="../../src/Dudu.App/Notifications/NotificationActivation.cs" Link="Notifications/NotificationActivation.cs" />
     <Compile Include="../../src/Dudu.App/Notifications/NotificationArguments.cs" Link="Notifications/NotificationArguments.cs" />
+    <Compile Include="../../src/Dudu.App/Notifications/ReminderToastActions.cs" Link="Notifications/ReminderToastActions.cs" />
+    <Compile Include="../../src/Dudu.App/Notifications/ToastActivationRouter.cs" Link="Notifications/ToastActivationRouter.cs" />
     <!-- Dudu.App.Tests cannot execute on a non-Windows host, so the WinUI-free
          activation tests are linked here (same pattern as the App sources above)
          and really run as part of this project. -->
