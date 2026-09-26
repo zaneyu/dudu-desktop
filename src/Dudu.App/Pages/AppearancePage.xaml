@@ -3,7 +3,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Background="{ThemeResource WindowSurfaceBrush}">
-    <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
         <StackPanel MaxWidth="880" Margin="32" Spacing="24">
             <StackPanel Spacing="8">
                 <TextBlock Text="appearance" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="AppearancePageTitle" AutomationProperties.Name="appearance" />
