@@ -6,6 +6,9 @@ namespace Dudu.AssetTool;
 
 public sealed record AssetInputFrame(string Name, byte[] Bytes, int DurationMs);
 
+/// <summary>A source-pixel rectangle, e.g. baked-in caption text to erase before normalization.</summary>
+public sealed record ClipRect(int X, int Y, int Width, int Height);
+
 public sealed record NormalizedAssetFrame(
     string Name,
     byte[] PngBytes,
@@ -38,7 +41,8 @@ public static class AssetNormalizer
     public static IReadOnlyList<AssetInputFrame> DecodeFrames(
         byte[] bytes,
         string name,
-        int staticDurationMs)
+        int staticDurationMs,
+        IReadOnlyList<ClipRect>? eraseRects = null)
     {
         ArgumentNullException.ThrowIfNull(bytes);
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
@@ -71,6 +75,7 @@ public static class AssetNormalizer
             }
 
             var duration = frameInfo.Length > index ? Math.Max(1, frameInfo[index].Duration) : staticDurationMs;
+            EraseRectangles(bitmap, eraseRects);
             RemoveEdgeConnectedLightBackground(bitmap);
             frames.Add(new AssetInputFrame(name + $"-{index:D4}", EncodeBitmap(bitmap), duration));
         }
@@ -153,6 +158,181 @@ public static class AssetNormalizer
         return new NormalizedAssetSet(normalized, packAnchor, maxCanvasSize);
     }
 
+    /// <summary>
+    /// Selects a contiguous clip from decoded GIF frames. With <paramref name="frameStep"/> &gt; 1
+    /// only every n-th frame is kept, and each kept frame absorbs the durations of the frames it
+    /// skips, so the clip keeps the source GIF's own timing.
+    /// </summary>
+    public static IReadOnlyList<AssetInputFrame> SelectFrames(
+        IReadOnlyList<AssetInputFrame> frames,
+        int startFrame,
+        int? frameCount,
+        int frameStep)
+    {
+        ArgumentNullException.ThrowIfNull(frames);
+        if (startFrame < 0 || startFrame >= frames.Count)
+        {
+            throw new ArgumentOutOfRangeException(nameof(startFrame), $"Clip start frame {startFrame} is outside the {frames.Count} decoded frames.");
+        }
+
+        if (frameCount is < 1 || frameStep < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(frameStep), "Clip frame count and frame step must be positive.");
+        }
+
+        var end = frameCount is null ? frames.Count : Math.Min(frames.Count, startFrame + frameCount.Value);
+        var selected = new List<AssetInputFrame>();
+        for (var index = startFrame; index < end; index += frameStep)
+        {
+            var duration = 0;
+            for (var covered = index; covered < Math.Min(end, index + frameStep); covered++)
+            {
+                duration += frames[covered].DurationMs;
+            }
+
+            selected.Add(frames[index] with { DurationMs = duration });
+        }
+
+        return selected;
+    }
+
+    /// <summary>
+    /// Normalizes an animated clip with one shared transform: every frame is cropped to the union
+    /// of all frames' opaque bounds and scaled by the same factor, so the character does not jitter
+    /// between frames. When <paramref name="targetHeight"/> is set the union is scaled (up or down)
+    /// to that height, capped so it still fits the canvas; otherwise it is only ever downscaled.
+    /// With <paramref name="recenterFrames"/> a character that wanders across the source is kept in
+    /// place instead: the scale is still shared, but each frame's own bounds are horizontally
+    /// centred and bottom-aligned inside the shared box.
+    /// </summary>
+    public static NormalizedAssetSet NormalizeClip(
+        IEnumerable<AssetInputFrame> frames,
+        PixelPoint packAnchor,
+        int maxCanvasSize,
+        int? targetHeight,
+        bool recenterFrames = false)
+    {
+        ArgumentNullException.ThrowIfNull(frames);
+        if (maxCanvasSize is < 1 or > 512)
+        {
+            throw new ArgumentOutOfRangeException(nameof(maxCanvasSize), "The normalized canvas must be between 1 and 512 pixels.");
+        }
+
+        if (packAnchor.X < 0 || packAnchor.Y < 0 || packAnchor.X >= maxCanvasSize || packAnchor.Y >= maxCanvasSize)
+        {
+            throw new ArgumentOutOfRangeException(nameof(packAnchor), "The shared pack anchor must be inside the normalized canvas.");
+        }
+
+        if (targetHeight is < 1)
+        {
+            throw new ArgumentOutOfRangeException(nameof(targetHeight), "The clip target height must be positive.");
+        }
+
+        var inputs = frames.ToArray();
+        if (inputs.Length == 0)
+        {
+            throw new ArgumentException("At least one frame is required.", nameof(frames));
+        }
+
+        var bitmaps = new List<SKBitmap>(inputs.Length);
+        var frameBounds = new List<SKRectI?>(inputs.Length);
+        try
+        {
+            SKRectI? union = null;
+            var maxWidth = 0;
+            var maxHeight = 0;
+            foreach (var input in inputs)
+            {
+                if (input.DurationMs <= 0)
+                {
+                    throw new ArgumentException($"Frame '{input.Name}' has a non-positive duration.", nameof(frames));
+                }
+
+                var bitmap = Decode(input.Bytes, input.Name);
+                bitmaps.Add(bitmap);
+                var bounds = FindOpaqueBounds(bitmap);
+                frameBounds.Add(bounds);
+                if (bounds is not null)
+                {
+                    union = union is null ? bounds : SKRectI.Union(union.Value, bounds.Value);
+                    maxWidth = Math.Max(maxWidth, bounds.Value.Width);
+                    maxHeight = Math.Max(maxHeight, bounds.Value.Height);
+                }
+            }
+
+            var unionWidth = recenterFrames ? maxWidth : union?.Width ?? 0;
+            var unionHeight = recenterFrames ? maxHeight : union?.Height ?? 0;
+            var fitScale = union is null
+                ? 1d
+                : Math.Min((double)maxCanvasSize / unionWidth, (double)maxCanvasSize / unionHeight);
+            var scale = union is null
+                ? 1d
+                : targetHeight is null
+                    ? Math.Min(1d, fitScale)
+                    : Math.Min((double)targetHeight.Value / unionHeight, fitScale);
+            var outputWidth = Math.Max(1, (int)Math.Round(unionWidth * scale, MidpointRounding.ToEven));
+            var outputHeight = Math.Max(1, (int)Math.Round(unionHeight * scale, MidpointRounding.ToEven));
+            var left = Math.Clamp(packAnchor.X - outputWidth / 2, 0, maxCanvasSize - outputWidth);
+            var top = Math.Clamp(packAnchor.Y - outputHeight / 2, 0, maxCanvasSize - outputHeight);
+            var destination = new SKRect(left, top, left + outputWidth, top + outputHeight);
+            var sampling = scale > 1d
+                ? new SKSamplingOptions(SKCubicResampler.Mitchell)
+                : new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.None);
+
+            var normalized = new List<NormalizedAssetFrame>(inputs.Length);
+            for (var index = 0; index < inputs.Length; index++)
+            {
+                using var output = new SKBitmap(new SKImageInfo(maxCanvasSize, maxCanvasSize, SKColorType.Bgra8888, SKAlphaType.Premul));
+                output.Erase(SKColors.Transparent);
+                using (var canvas = new SKCanvas(output))
+                {
+                    var sourceBounds = recenterFrames ? frameBounds[index] : union;
+                    if (sourceBounds is { } bounds)
+                    {
+                        var sourceRect = new SKRect(bounds.Left, bounds.Top, bounds.Right, bounds.Bottom);
+                        var frameDestination = destination;
+                        if (recenterFrames)
+                        {
+                            var width = (float)(bounds.Width * scale);
+                            var height = (float)(bounds.Height * scale);
+                            var frameLeft = destination.MidX - width / 2f;
+                            frameDestination = new SKRect(frameLeft, destination.Bottom - height, frameLeft + width, destination.Bottom);
+                        }
+
+                        using var sourceImage = SKImage.FromBitmap(bitmaps[index]);
+                        canvas.DrawImage(sourceImage, sourceRect, frameDestination, sampling);
+                    }
+
+                    canvas.Flush();
+                }
+
+                using var image = SKImage.FromBitmap(output);
+                using var data = image.Encode(SKEncodedImageFormat.Png, 100)
+                    ?? throw new InvalidDataException($"Skia could not encode frame '{inputs[index].Name}'.");
+                var png = data.ToArray();
+                normalized.Add(new NormalizedAssetFrame(
+                    inputs[index].Name,
+                    png,
+                    Convert.ToHexString(SHA256.HashData(png)).ToLowerInvariant(),
+                    inputs[index].DurationMs,
+                    packAnchor,
+                    maxCanvasSize,
+                    new PixelSize(unionWidth, unionHeight),
+                    scale,
+                    "premultiplied BGRA8888 PNG"));
+            }
+
+            return new NormalizedAssetSet(normalized, packAnchor, maxCanvasSize);
+        }
+        finally
+        {
+            foreach (var bitmap in bitmaps)
+            {
+                bitmap.Dispose();
+            }
+        }
+    }
+
     public static byte[] CreateNeutralBearPng(int size = 128)
     {
         if (size is < 16 or > 512)
@@ -214,6 +394,29 @@ public static class AssetNormalizer
         using var data = image.Encode(SKEncodedImageFormat.Png, 100)
             ?? throw new InvalidDataException("Skia could not encode a decoded image frame.");
         return data.ToArray();
+    }
+
+    private static void EraseRectangles(SKBitmap bitmap, IReadOnlyList<ClipRect>? rectangles)
+    {
+        if (rectangles is null)
+        {
+            return;
+        }
+
+        foreach (var rectangle in rectangles)
+        {
+            var left = Math.Clamp(rectangle.X, 0, bitmap.Width);
+            var top = Math.Clamp(rectangle.Y, 0, bitmap.Height);
+            var right = Math.Clamp(rectangle.X + rectangle.Width, 0, bitmap.Width);
+            var bottom = Math.Clamp(rectangle.Y + rectangle.Height, 0, bitmap.Height);
+            for (var y = top; y < bottom; y++)
+            {
+                for (var x = left; x < right; x++)
+                {
+                    bitmap.SetPixel(x, y, SKColors.Transparent);
+                }
+            }
+        }
     }
 
     /// <summary>

@@ -506,8 +506,7 @@
       "privateUseOnly": true,
       "accessedUtc": "2026-09-11T00:00:00Z",
       "animationKeys": [
-        "sleep",
-        "focus"
+        "sleep"
       ],
       "status": "imported",
       "mediaUrl": "https://media1.tenor.com/m/y5981q7MuL8AAAAC/dudu-waiting-dudu-cute.gif",
@@ -516,45 +515,13 @@
       "transform": {
         "outputFiles": [
           "frames/base/sleep/0000-a26eca07da02.png",
-          "frames/base/sleep/0001-a26eca07da02.png",
-          "frames/base/focus/0000-a26eca07da02.png",
-          "frames/base/focus/0001-a26eca07da02.png"
+          "frames/base/sleep/0001-a26eca07da02.png"
         ],
         "outputSha256": [
-          "a26eca07da023c76ec071adff76f45739ffebccbc4ea0a243bb5ce37e1a1a7a8",
-          "a26eca07da023c76ec071adff76f45739ffebccbc4ea0a243bb5ce37e1a1a7a8",
           "a26eca07da023c76ec071adff76f45739ffebccbc4ea0a243bb5ce37e1a1a7a8",
           "a26eca07da023c76ec071adff76f45739ffebccbc4ea0a243bb5ce37e1a1a7a8"
         ],
         "normalizations": [
-          {
-            "frameIndex": 0,
-            "trimmedSize": {
-              "width": 417,
-              "height": 441
-            },
-            "scale": 1,
-            "canvasSize": 512,
-            "anchor": {
-              "x": 256,
-              "y": 400
-            },
-            "colorFormat": "premultiplied BGRA8888 PNG"
-          },
-          {
-            "frameIndex": 1,
-            "trimmedSize": {
-              "width": 417,
-              "height": 441
-            },
-            "scale": 1,
-            "canvasSize": 512,
-            "anchor": {
-              "x": 256,
-              "y": 400
-            },
-            "colorFormat": "premultiplied BGRA8888 PNG"
-          },
           {
             "frameIndex": 0,
             "trimmedSize": {
@@ -1033,37 +1000,12 @@
       "creator": "Huang Xiao B",
       "privateUseOnly": true,
       "accessedUtc": "2026-09-11T00:00:00Z",
-      "animationKeys": [
-        "drink"
-      ],
+      "animationKeys": [],
       "status": "imported",
-      "mediaUrl": "https://s3.getstickerpack.com/storage/uploads/sticker-pack/xiao-xiong-yi-er-he-bu-bu-credits-to-huang-xiaob/sticker_1.png?d=200x200\u0026db6eb9a5fef0a16b6f726be33dc2c934=",
+      "mediaUrl": "https://s3.getstickerpack.com/storage/uploads/sticker-pack/xiao-xiong-yi-er-he-bu-bu-credits-to-huang-xiaob/sticker_1.png?d=200x200&db6eb9a5fef0a16b6f726be33dc2c934=",
       "rawFile": "getstickerpack-xiao-xiong.png",
       "sha256": "4c8fa264b9ef4832d34a26b9c9e3ecee5e390fd841280c2b31a5ddae2a69bc5b",
-      "transform": {
-        "outputFiles": [
-          "frames/base/drink/0000-3689c7032264.png"
-        ],
-        "outputSha256": [
-          "3689c70322648d7aa2e138ae3263e4bed292f27e424ef025cf3fbeeeef1cf8ed"
-        ],
-        "normalizations": [
-          {
-            "frameIndex": 0,
-            "trimmedSize": {
-              "width": 503,
-              "height": 507
-            },
-            "scale": 1,
-            "canvasSize": 512,
-            "anchor": {
-              "x": 256,
-              "y": 400
-            },
-            "colorFormat": "premultiplied BGRA8888 PNG"
-          }
-        ]
-      },
+      "transform": null,
       "notes": "Imported after media signature and payload-size checks; SHA-256 recorded."
     },
     {
@@ -1547,6 +1489,1673 @@
         "normalizations": []
       },
       "notes": "Derived locally from tenor-dudu-smile; no new media was imported. Motion: breathing loop of the idle pose with an occasional blink. Frames are 512x512 8-bit RGBA PNGs resampled with small bottom-pivoted affine transforms; private use only."
+    },
+    {
+      "id": "tenor-dudu-drinking-milk",
+      "discoveryUrl": "https://tenor.com/view/dudu-drinking-milk-dudu-cute-milk-time-i-like-gif-14135938609223583390",
+      "creator": "Huang Xiao B",
+      "privateUseOnly": true,
+      "accessedUtc": "2026-09-26T00:00:00Z",
+      "animationKeys": [
+        "drink"
+      ],
+      "status": "imported",
+      "mediaUrl": "https://media1.tenor.com/m/xCzxRQmARp4AAAAC/dudu-drinking-milk-dudu-cute.gif",
+      "rawFile": "tenor-dudu-drinking-milk.gif",
+      "sha256": "89b55eef66a1b1eb984fd395be82fad3f2dbf8d14815b6c4da4fd23a623cd70c",
+      "transform": {
+        "outputFiles": [
+          "frames/base/drink/0000-6e5a477a883e.png",
+          "frames/base/drink/0001-0e4e45f4b523.png",
+          "frames/base/drink/0002-2cf6eb2a6ba9.png",
+          "frames/base/drink/0003-5dcc2e4835b3.png",
+          "frames/base/drink/0004-095e0656da20.png",
+          "frames/base/drink/0005-34509d5e2880.png",
+          "frames/base/drink/0006-da76573d606b.png",
+          "frames/base/drink/0007-aedd5cfb04d3.png",
+          "frames/base/drink/0008-ff82e4806837.png",
+          "frames/base/drink/0009-296d178551eb.png",
+          "frames/base/drink/0010-11db77a71648.png",
+          "frames/base/drink/0011-63c7d61cd9f7.png",
+          "frames/base/drink/0012-0b2e2ec1b2b5.png",
+          "frames/base/drink/0013-a6533181ab1e.png",
+          "frames/base/drink/0014-b16ca410ece7.png",
+          "frames/base/drink/0015-e8261d131fbb.png"
+        ],
+        "outputSha256": [
+          "6e5a477a883e19bd6b1863b8891e2c7848fa8c04c7b12147428bb8854504c104",
+          "0e4e45f4b5238fccbef5cf0a76861a74af8a736aed4be25514a12e384b3a3af5",
+          "2cf6eb2a6ba9f5d3fb51526872b144219d3cb76465ca3f57d751c06c3418e745",
+          "5dcc2e4835b39854f3d2c942d2aae3d4ac69c25a3f54a3c1c7aaa17584a3f564",
+          "095e0656da200afda8e53204096dffd5b293c1a967396cd93ed7a42bb49c000a",
+          "34509d5e288013b8e43152d8543aa180e86304c9dbb8f5391e96ce43d4723a78",
+          "da76573d606ba6ccc56571fe38775ed6a1d86510e700d09e7705c14c26869192",
+          "aedd5cfb04d3587a73fc2d6e7745cf958f337037cdb639a24b7259de2a07dc90",
+          "ff82e4806837956f27bc49f224198b3922c81a43a1946b3006471c7af8a3d6d1",
+          "296d178551eb436e479f2f17dc9e1ade9fa7d7fdf259c462888c48ad2fb79010",
+          "11db77a71648c63b940f5f48a12df30fb321e58b5d3042a38f8402d18ea0081f",
+          "63c7d61cd9f72adc0b334f5168516d094538c5428b64bc903795014a519ed9a6",
+          "0b2e2ec1b2b5bc9fd58ff2ae3a479371f66a52a53fda6b214d382eaff13f8cc5",
+          "a6533181ab1e6736c0492b5a999a4f59745140e24ade2c2cb5c10d92bcc238d9",
+          "b16ca410ece752b36638c87b9639d8ae3d7df34d3d902a8179facd46a93c6397",
+          "e8261d131fbb63fb6bcaabc0cb3c0e867b53704b880c9bd70d056e8e548e9295"
+        ],
+        "normalizations": [
+          {
+            "frameIndex": 0,
+            "trimmedSize": {
+              "width": 192,
+              "height": 195
+            },
+            "scale": 2.2564102564102564,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 1,
+            "trimmedSize": {
+              "width": 192,
+              "height": 195
+            },
+            "scale": 2.2564102564102564,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 2,
+            "trimmedSize": {
+              "width": 192,
+              "height": 195
+            },
+            "scale": 2.2564102564102564,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 3,
+            "trimmedSize": {
+              "width": 192,
+              "height": 195
+            },
+            "scale": 2.2564102564102564,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 4,
+            "trimmedSize": {
+              "width": 192,
+              "height": 195
+            },
+            "scale": 2.2564102564102564,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 5,
+            "trimmedSize": {
+              "width": 192,
+              "height": 195
+            },
+            "scale": 2.2564102564102564,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 6,
+            "trimmedSize": {
+              "width": 192,
+              "height": 195
+            },
+            "scale": 2.2564102564102564,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 7,
+            "trimmedSize": {
+              "width": 192,
+              "height": 195
+            },
+            "scale": 2.2564102564102564,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 8,
+            "trimmedSize": {
+              "width": 192,
+              "height": 195
+            },
+            "scale": 2.2564102564102564,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 9,
+            "trimmedSize": {
+              "width": 192,
+              "height": 195
+            },
+            "scale": 2.2564102564102564,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 10,
+            "trimmedSize": {
+              "width": 192,
+              "height": 195
+            },
+            "scale": 2.2564102564102564,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 11,
+            "trimmedSize": {
+              "width": 192,
+              "height": 195
+            },
+            "scale": 2.2564102564102564,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 12,
+            "trimmedSize": {
+              "width": 192,
+              "height": 195
+            },
+            "scale": 2.2564102564102564,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 13,
+            "trimmedSize": {
+              "width": 192,
+              "height": 195
+            },
+            "scale": 2.2564102564102564,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 14,
+            "trimmedSize": {
+              "width": 192,
+              "height": 195
+            },
+            "scale": 2.2564102564102564,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 15,
+            "trimmedSize": {
+              "width": 192,
+              "height": 195
+            },
+            "scale": 2.2564102564102564,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          }
+        ]
+      },
+      "notes": "Imported after media signature and payload-size checks; SHA-256 recorded. Dudu gulping a milk carton: first 31 frames sampled every 2nd (2.79 s, one-shot); the baked-in caption at top-left is erased.",
+      "clip": {
+        "startFrame": 0,
+        "frameCount": 31,
+        "frameStep": 2,
+        "targetHeight": 440,
+        "eraseRects": [
+          {
+            "x": 0,
+            "y": 0,
+            "width": 47,
+            "height": 88
+          }
+        ]
+      }
+    },
+    {
+      "id": "tenor-dudu-laptop",
+      "discoveryUrl": "https://tenor.com/view/dudu-bubu-gif-24741339",
+      "creator": "Huang Xiao B",
+      "privateUseOnly": true,
+      "accessedUtc": "2026-09-26T00:00:00Z",
+      "animationKeys": [
+        "focus"
+      ],
+      "status": "imported",
+      "mediaUrl": "https://media1.tenor.com/m/sujSELz2D24AAAAC/dudu-bubu.gif",
+      "rawFile": "tenor-dudu-laptop.gif",
+      "sha256": "62cb79b0d6229e2fd492812e1befca64b24faa5d6fd23373df2e3aa093351874",
+      "transform": {
+        "outputFiles": [
+          "frames/base/focus/0000-ae2ee4fe6b63.png",
+          "frames/base/focus/0001-9a993083088a.png",
+          "frames/base/focus/0002-c06bfdcea56d.png",
+          "frames/base/focus/0003-2de00edb2dc6.png",
+          "frames/base/focus/0004-c06bfdcea56d.png",
+          "frames/base/focus/0005-2de00edb2dc6.png",
+          "frames/base/focus/0006-c06bfdcea56d.png",
+          "frames/base/focus/0007-2de00edb2dc6.png"
+        ],
+        "outputSha256": [
+          "ae2ee4fe6b6353a6ca1739de54b7e8954aa2edddcca7da98209c88aa824512ff",
+          "9a993083088af8a6bb8c3ffbe1282397097159c53a97b6532ca45e0eae4c23e9",
+          "c06bfdcea56d4661f35eac7ca38db9f3c81587e2ac143abcd4846227851be2e2",
+          "2de00edb2dc6edd964a581af7406ca9c5d6ff741bee7d8c4ca11d885454b6348",
+          "c06bfdcea56d4661f35eac7ca38db9f3c81587e2ac143abcd4846227851be2e2",
+          "2de00edb2dc6edd964a581af7406ca9c5d6ff741bee7d8c4ca11d885454b6348",
+          "c06bfdcea56d4661f35eac7ca38db9f3c81587e2ac143abcd4846227851be2e2",
+          "2de00edb2dc6edd964a581af7406ca9c5d6ff741bee7d8c4ca11d885454b6348"
+        ],
+        "normalizations": [
+          {
+            "frameIndex": 0,
+            "trimmedSize": {
+              "width": 462,
+              "height": 432
+            },
+            "scale": 1.0185185185185186,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 1,
+            "trimmedSize": {
+              "width": 462,
+              "height": 432
+            },
+            "scale": 1.0185185185185186,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 2,
+            "trimmedSize": {
+              "width": 462,
+              "height": 432
+            },
+            "scale": 1.0185185185185186,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 3,
+            "trimmedSize": {
+              "width": 462,
+              "height": 432
+            },
+            "scale": 1.0185185185185186,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 4,
+            "trimmedSize": {
+              "width": 462,
+              "height": 432
+            },
+            "scale": 1.0185185185185186,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 5,
+            "trimmedSize": {
+              "width": 462,
+              "height": 432
+            },
+            "scale": 1.0185185185185186,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 6,
+            "trimmedSize": {
+              "width": 462,
+              "height": 432
+            },
+            "scale": 1.0185185185185186,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 7,
+            "trimmedSize": {
+              "width": 462,
+              "height": 432
+            },
+            "scale": 1.0185185185185186,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          }
+        ]
+      },
+      "notes": "Imported after media signature and payload-size checks; SHA-256 recorded. Dudu in a panda hoodie typing on a laptop; every 2nd of 16 frames (source timing kept), loops.",
+      "clip": {
+        "startFrame": 0,
+        "frameStep": 2,
+        "targetHeight": 440
+      }
+    },
+    {
+      "id": "tenor-dudu-flying",
+      "discoveryUrl": "https://tenor.com/view/dudu-flying-cute-gif-13058940524815653974",
+      "creator": "Huang Xiao B",
+      "privateUseOnly": true,
+      "accessedUtc": "2026-09-26T00:00:00Z",
+      "animationKeys": [
+        "drag"
+      ],
+      "status": "imported",
+      "mediaUrl": "https://media1.tenor.com/m/tTqtN9SXHFYAAAAC/dudu-flying-cute.gif",
+      "rawFile": "tenor-dudu-flying.gif",
+      "sha256": "37f0b2e93fd3c61f58e8e602c4879612745061d79e731f88aeada473d6c33229",
+      "transform": {
+        "outputFiles": [
+          "frames/base/drag/0000-cc7d2851b2f8.png",
+          "frames/base/drag/0001-cd82a9cc3d0a.png",
+          "frames/base/drag/0002-8dc230399895.png",
+          "frames/base/drag/0003-3f9148cb25fa.png",
+          "frames/base/drag/0004-752262e0c10a.png",
+          "frames/base/drag/0005-cd82a9cc3d0a.png",
+          "frames/base/drag/0006-5dec52d94d33.png",
+          "frames/base/drag/0007-cd82a9cc3d0a.png",
+          "frames/base/drag/0008-752262e0c10a.png",
+          "frames/base/drag/0009-fd49cfe0eb47.png",
+          "frames/base/drag/0010-b0fe3781b779.png",
+          "frames/base/drag/0011-cd82a9cc3d0a.png",
+          "frames/base/drag/0012-752262e0c10a.png",
+          "frames/base/drag/0013-c3d21b329c1b.png",
+          "frames/base/drag/0014-728296e4ccdc.png",
+          "frames/base/drag/0015-df81081b579f.png",
+          "frames/base/drag/0016-3e79d50a001c.png",
+          "frames/base/drag/0017-9abd343ac9da.png",
+          "frames/base/drag/0018-8dc230399895.png",
+          "frames/base/drag/0019-4dd3e9546d86.png"
+        ],
+        "outputSha256": [
+          "cc7d2851b2f8bea556256fc91f47bf2f39ec50900cc884132861c1f6fc292d75",
+          "cd82a9cc3d0a4bef6f6b3a101cc753c5e818b353e3a356cbd30195b7a68e9249",
+          "8dc2303998950c528fcf00ed54e0e7519ee0953725930120469b0ecae0ee0d35",
+          "3f9148cb25fa18b7e0c5e48966a8d790057d24168f8674d0884252e11ca7314b",
+          "752262e0c10a58e5f0a77ee8fd135443f703594029cb6fb3b0512839b6b15732",
+          "cd82a9cc3d0a4bef6f6b3a101cc753c5e818b353e3a356cbd30195b7a68e9249",
+          "5dec52d94d334679a6c1d095a886ade535962a832b8e7b1fea0f295e99da9300",
+          "cd82a9cc3d0a4bef6f6b3a101cc753c5e818b353e3a356cbd30195b7a68e9249",
+          "752262e0c10a58e5f0a77ee8fd135443f703594029cb6fb3b0512839b6b15732",
+          "fd49cfe0eb472881737f3cd84d60543fcdd20843daf1be5b5bdbbc535fb98d81",
+          "b0fe3781b779d1ea3d0875a4de98763987e19f50aaea70e895c4aa413bfb95f2",
+          "cd82a9cc3d0a4bef6f6b3a101cc753c5e818b353e3a356cbd30195b7a68e9249",
+          "752262e0c10a58e5f0a77ee8fd135443f703594029cb6fb3b0512839b6b15732",
+          "c3d21b329c1ba11f1052a8f10e5326bdcde86fa8b1d87e87666c09a66dd26da1",
+          "728296e4ccdcadcf89ebc622e126e60a0ae9ef292fb1e2be003aecb717373b30",
+          "df81081b579f881f7268030db99bfc4902f44e09ab958ffd124d26743975d8b9",
+          "3e79d50a001ce48f866bd99566d0cbd697feb1341b387eec3ac7511184f824cd",
+          "9abd343ac9da2e625406fb8073d850307e3ca9beb9bb5b1dd5f95824fb427e38",
+          "8dc2303998950c528fcf00ed54e0e7519ee0953725930120469b0ecae0ee0d35",
+          "4dd3e9546d8688cee7a1b4b288aa2a40a75f8587da23fc294d24780dae25e2f6"
+        ],
+        "normalizations": [
+          {
+            "frameIndex": 0,
+            "trimmedSize": {
+              "width": 339,
+              "height": 319
+            },
+            "scale": 1.3793103448275863,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 1,
+            "trimmedSize": {
+              "width": 339,
+              "height": 319
+            },
+            "scale": 1.3793103448275863,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 2,
+            "trimmedSize": {
+              "width": 339,
+              "height": 319
+            },
+            "scale": 1.3793103448275863,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 3,
+            "trimmedSize": {
+              "width": 339,
+              "height": 319
+            },
+            "scale": 1.3793103448275863,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 4,
+            "trimmedSize": {
+              "width": 339,
+              "height": 319
+            },
+            "scale": 1.3793103448275863,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 5,
+            "trimmedSize": {
+              "width": 339,
+              "height": 319
+            },
+            "scale": 1.3793103448275863,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 6,
+            "trimmedSize": {
+              "width": 339,
+              "height": 319
+            },
+            "scale": 1.3793103448275863,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 7,
+            "trimmedSize": {
+              "width": 339,
+              "height": 319
+            },
+            "scale": 1.3793103448275863,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 8,
+            "trimmedSize": {
+              "width": 339,
+              "height": 319
+            },
+            "scale": 1.3793103448275863,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 9,
+            "trimmedSize": {
+              "width": 339,
+              "height": 319
+            },
+            "scale": 1.3793103448275863,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 10,
+            "trimmedSize": {
+              "width": 339,
+              "height": 319
+            },
+            "scale": 1.3793103448275863,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 11,
+            "trimmedSize": {
+              "width": 339,
+              "height": 319
+            },
+            "scale": 1.3793103448275863,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 12,
+            "trimmedSize": {
+              "width": 339,
+              "height": 319
+            },
+            "scale": 1.3793103448275863,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 13,
+            "trimmedSize": {
+              "width": 339,
+              "height": 319
+            },
+            "scale": 1.3793103448275863,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 14,
+            "trimmedSize": {
+              "width": 339,
+              "height": 319
+            },
+            "scale": 1.3793103448275863,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 15,
+            "trimmedSize": {
+              "width": 339,
+              "height": 319
+            },
+            "scale": 1.3793103448275863,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 16,
+            "trimmedSize": {
+              "width": 339,
+              "height": 319
+            },
+            "scale": 1.3793103448275863,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 17,
+            "trimmedSize": {
+              "width": 339,
+              "height": 319
+            },
+            "scale": 1.3793103448275863,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 18,
+            "trimmedSize": {
+              "width": 339,
+              "height": 319
+            },
+            "scale": 1.3793103448275863,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 19,
+            "trimmedSize": {
+              "width": 339,
+              "height": 319
+            },
+            "scale": 1.3793103448275863,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          }
+        ]
+      },
+      "notes": "Imported after media signature and payload-size checks; SHA-256 recorded. Dudu flying with fluttering ribbons; all 20 frames loop while dragged.",
+      "clip": {
+        "startFrame": 0,
+        "frameStep": 1,
+        "targetHeight": 440
+      }
+    },
+    {
+      "id": "tenor-dudu-mad",
+      "discoveryUrl": "https://tenor.com/view/dudu-mad-gif-10902775803845855468",
+      "creator": "Huang Xiao B",
+      "privateUseOnly": true,
+      "accessedUtc": "2026-09-26T00:00:00Z",
+      "animationKeys": [
+        "tantrum"
+      ],
+      "status": "imported",
+      "mediaUrl": "https://media1.tenor.com/m/l05w1AX0yOwAAAAC/dudu-mad.gif",
+      "rawFile": "tenor-dudu-mad.gif",
+      "sha256": "d7e7b6fc597dc5c0aac96311d7df4bf176bee44fb7000499440b7a6a7f8211ff",
+      "transform": {
+        "outputFiles": [
+          "frames/base/tantrum/0000-71e90c70d058.png",
+          "frames/base/tantrum/0001-152cc39f441a.png",
+          "frames/base/tantrum/0002-83fed94891e9.png",
+          "frames/base/tantrum/0003-255611aba004.png",
+          "frames/base/tantrum/0004-f7e309c67459.png",
+          "frames/base/tantrum/0005-29eabedd98bd.png",
+          "frames/base/tantrum/0006-41b9c8bab2a6.png",
+          "frames/base/tantrum/0007-8c9103234060.png",
+          "frames/base/tantrum/0008-c4e749d152a5.png",
+          "frames/base/tantrum/0009-926e46865200.png",
+          "frames/base/tantrum/0010-1f8b249fca5d.png",
+          "frames/base/tantrum/0011-f4d57e3fb5ec.png",
+          "frames/base/tantrum/0012-603eb4652aa9.png",
+          "frames/base/tantrum/0013-28308a379f25.png",
+          "frames/base/tantrum/0014-4f24b7475e16.png",
+          "frames/base/tantrum/0015-c567b4ff670c.png"
+        ],
+        "outputSha256": [
+          "71e90c70d058136ac39281fc79e3e13a8d8b83c7b7d27c8876f9a1cfae6a0020",
+          "152cc39f441afb6bc5224c3f21a0b73b35636e96bb8cad92fc870b2aa14676e5",
+          "83fed94891e9acefaf3a1b09582539c69b7d3efa55016c15c31698e2bdd77c3b",
+          "255611aba004dd8d4cc067566556a704cb80b9125bb5fa4961f5c050e53b2c1c",
+          "f7e309c67459c30c20c19334169c2d1bac3995e835a3112e975931b83000f9f9",
+          "29eabedd98bd7532554fe985f1cd1a82a6f7d469126a259456bbcc9b0e7c15cb",
+          "41b9c8bab2a631e0c146845109b408e2e67fe4f0cbfe3b7d4a31a8eb5184f104",
+          "8c9103234060de4309547df7f4949c43b237fbd7773418a5beac15aff258c208",
+          "c4e749d152a5e0425e178deb96e8ada53987f76299f074012573f5384f5c6ec0",
+          "926e468652006a6ce64ea61b785f3c2a58eafa14ffd5039baaed64ef8a4ece32",
+          "1f8b249fca5ddcbb72af16e6b46d9ccbac80b1c01684e2ca8e8b730779ec1c2f",
+          "f4d57e3fb5ecd3eebc6bcf1b66ac340b922bb6e58b4bfc2f2f6297cf30d1d5c2",
+          "603eb4652aa94ef5c7d8e2c395a5d9916a7d40360d94dfb4ffa1bc9b8b9767f0",
+          "28308a379f25dc06d9bad3ddd813ead2567072861df3c765539f82f04fbfc8c9",
+          "4f24b7475e1651866f37e3b55628c29eea75cbde8319497cc9d08fe445b964b5",
+          "c567b4ff670c58f83fd61bbf74ca89ac95936ae35c2d614025ede021c1b5f6ad"
+        ],
+        "normalizations": [
+          {
+            "frameIndex": 0,
+            "trimmedSize": {
+              "width": 134,
+              "height": 203
+            },
+            "scale": 2.167487684729064,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 1,
+            "trimmedSize": {
+              "width": 134,
+              "height": 203
+            },
+            "scale": 2.167487684729064,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 2,
+            "trimmedSize": {
+              "width": 134,
+              "height": 203
+            },
+            "scale": 2.167487684729064,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 3,
+            "trimmedSize": {
+              "width": 134,
+              "height": 203
+            },
+            "scale": 2.167487684729064,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 4,
+            "trimmedSize": {
+              "width": 134,
+              "height": 203
+            },
+            "scale": 2.167487684729064,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 5,
+            "trimmedSize": {
+              "width": 134,
+              "height": 203
+            },
+            "scale": 2.167487684729064,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 6,
+            "trimmedSize": {
+              "width": 134,
+              "height": 203
+            },
+            "scale": 2.167487684729064,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 7,
+            "trimmedSize": {
+              "width": 134,
+              "height": 203
+            },
+            "scale": 2.167487684729064,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 8,
+            "trimmedSize": {
+              "width": 134,
+              "height": 203
+            },
+            "scale": 2.167487684729064,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 9,
+            "trimmedSize": {
+              "width": 134,
+              "height": 203
+            },
+            "scale": 2.167487684729064,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 10,
+            "trimmedSize": {
+              "width": 134,
+              "height": 203
+            },
+            "scale": 2.167487684729064,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 11,
+            "trimmedSize": {
+              "width": 134,
+              "height": 203
+            },
+            "scale": 2.167487684729064,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 12,
+            "trimmedSize": {
+              "width": 134,
+              "height": 203
+            },
+            "scale": 2.167487684729064,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 13,
+            "trimmedSize": {
+              "width": 134,
+              "height": 203
+            },
+            "scale": 2.167487684729064,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 14,
+            "trimmedSize": {
+              "width": 134,
+              "height": 203
+            },
+            "scale": 2.167487684729064,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 15,
+            "trimmedSize": {
+              "width": 134,
+              "height": 203
+            },
+            "scale": 2.167487684729064,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          }
+        ]
+      },
+      "notes": "Imported after media signature and payload-size checks; SHA-256 recorded. Angry stomping Dudu: first 31 frames sampled every 2nd (2.79 s, one-shot), re-centred so he stomps in place.",
+      "clip": {
+        "startFrame": 0,
+        "frameCount": 31,
+        "frameStep": 2,
+        "targetHeight": 440,
+        "recenterFrames": true
+      }
+    },
+    {
+      "id": "tenor-dudu-shy",
+      "discoveryUrl": "https://tenor.com/view/bubu-dudu-bubu-dudu-shy-dudu-shy-bubu-dudu-cute-gif-17902226312132427788",
+      "creator": "Huang Xiao B",
+      "privateUseOnly": true,
+      "accessedUtc": "2026-09-26T00:00:00Z",
+      "animationKeys": [
+        "petted"
+      ],
+      "status": "imported",
+      "mediaUrl": "https://media1.tenor.com/m/-HF7-xdOAAwAAAAC/bubu-dudu-bubu-dudu-shy.gif",
+      "rawFile": "tenor-dudu-shy.gif",
+      "sha256": "0bf9bf63ee8ba2175932dd7ce78427d7e12dd8b719cccb06215c07e9bd20833e",
+      "transform": {
+        "outputFiles": [
+          "frames/base/petted/0000-95bf568241d2.png",
+          "frames/base/petted/0001-8825e66c6c22.png",
+          "frames/base/petted/0002-f6c187a59270.png",
+          "frames/base/petted/0003-95bf568241d2.png",
+          "frames/base/petted/0004-6fa41547ebbc.png",
+          "frames/base/petted/0005-c6c6664a943f.png",
+          "frames/base/petted/0006-061630f23b71.png",
+          "frames/base/petted/0007-138b591d8751.png",
+          "frames/base/petted/0008-658d0b33439e.png",
+          "frames/base/petted/0009-76a65c5ba657.png",
+          "frames/base/petted/0010-3495db7f9c00.png",
+          "frames/base/petted/0011-d747d80b710d.png",
+          "frames/base/petted/0012-76a65c5ba657.png",
+          "frames/base/petted/0013-0eca1074cfd3.png",
+          "frames/base/petted/0014-cfbc4443f57e.png",
+          "frames/base/petted/0015-a7c68f4bc23c.png"
+        ],
+        "outputSha256": [
+          "95bf568241d2aba5207753aa3b63840e8a56d51b5a6dca7f2a4e4fe9c6607ba5",
+          "8825e66c6c226d5436758832fe95067269bd8eb416b366858b93f168e8ad62ca",
+          "f6c187a5927081552233734c19cd11c4c2511db30361940dbde49c4b80abaae4",
+          "95bf568241d2aba5207753aa3b63840e8a56d51b5a6dca7f2a4e4fe9c6607ba5",
+          "6fa41547ebbc998e56e564843a4317a5fd5a91be395cd756200229089d349f26",
+          "c6c6664a943fb632380a689219dc16514f6570a37ea9de1dfaaa3b60cad2a21d",
+          "061630f23b716ab75164932e820c410d621223291af9bb0215233bbb3863acea",
+          "138b591d875155b03a3115415d9f92921c3d3a83bb3b62fb69eb85e8d885e796",
+          "658d0b33439e3199c65260304d780f138d5d728ba81236ce598261b748bc5224",
+          "76a65c5ba65784c32bcc572988d66184f5a0baa6f4fbca993d8acb6a9dff9be9",
+          "3495db7f9c00a78a8c2b66ac21597d14ac8017a33a2a7495f58a2e5abbac7b68",
+          "d747d80b710d2b05f6249bce83c015d61c2f5cccf0c2db44d73a1d58195707e7",
+          "76a65c5ba65784c32bcc572988d66184f5a0baa6f4fbca993d8acb6a9dff9be9",
+          "0eca1074cfd33fbe6c3f148dcc84d7f3602fc08827d565d5adf74b6ac349d10e",
+          "cfbc4443f57e8aba1efb1454703cfe1b181fa8216bf0c9d9d7048f2a83cb727a",
+          "a7c68f4bc23c95e7293cf3f01c539bdf386bdcfd31bc6b2d953a94d90ccb69f6"
+        ],
+        "normalizations": [
+          {
+            "frameIndex": 0,
+            "trimmedSize": {
+              "width": 474,
+              "height": 455
+            },
+            "scale": 0.967032967032967,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 1,
+            "trimmedSize": {
+              "width": 474,
+              "height": 455
+            },
+            "scale": 0.967032967032967,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 2,
+            "trimmedSize": {
+              "width": 474,
+              "height": 455
+            },
+            "scale": 0.967032967032967,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 3,
+            "trimmedSize": {
+              "width": 474,
+              "height": 455
+            },
+            "scale": 0.967032967032967,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 4,
+            "trimmedSize": {
+              "width": 474,
+              "height": 455
+            },
+            "scale": 0.967032967032967,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 5,
+            "trimmedSize": {
+              "width": 474,
+              "height": 455
+            },
+            "scale": 0.967032967032967,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 6,
+            "trimmedSize": {
+              "width": 474,
+              "height": 455
+            },
+            "scale": 0.967032967032967,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 7,
+            "trimmedSize": {
+              "width": 474,
+              "height": 455
+            },
+            "scale": 0.967032967032967,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 8,
+            "trimmedSize": {
+              "width": 474,
+              "height": 455
+            },
+            "scale": 0.967032967032967,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 9,
+            "trimmedSize": {
+              "width": 474,
+              "height": 455
+            },
+            "scale": 0.967032967032967,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 10,
+            "trimmedSize": {
+              "width": 474,
+              "height": 455
+            },
+            "scale": 0.967032967032967,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 11,
+            "trimmedSize": {
+              "width": 474,
+              "height": 455
+            },
+            "scale": 0.967032967032967,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 12,
+            "trimmedSize": {
+              "width": 474,
+              "height": 455
+            },
+            "scale": 0.967032967032967,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 13,
+            "trimmedSize": {
+              "width": 474,
+              "height": 455
+            },
+            "scale": 0.967032967032967,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 14,
+            "trimmedSize": {
+              "width": 474,
+              "height": 455
+            },
+            "scale": 0.967032967032967,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 15,
+            "trimmedSize": {
+              "width": 474,
+              "height": 455
+            },
+            "scale": 0.967032967032967,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          }
+        ]
+      },
+      "notes": "Imported after media signature and payload-size checks; SHA-256 recorded. Blushing, shy Dudu with small flowers; all 31 frames sampled every 2nd (2.79 s, one-shot).",
+      "clip": {
+        "startFrame": 0,
+        "frameStep": 2,
+        "targetHeight": 440
+      }
+    },
+    {
+      "id": "tenor-dudu-eating",
+      "discoveryUrl": "https://tenor.com/view/dudu-gif-3511018756153302901",
+      "creator": "Huang Xiao B",
+      "privateUseOnly": true,
+      "accessedUtc": "2026-09-26T00:00:00Z",
+      "animationKeys": [
+        "eat"
+      ],
+      "status": "imported",
+      "mediaUrl": "https://media1.tenor.com/m/MLmk9OBAX3UAAAAC/dudu.gif",
+      "rawFile": "tenor-dudu-eating.gif",
+      "sha256": "c0394c8aed1a5a10ae13eb981eff4b5762cddf6053eeb512d02517a9548e3525",
+      "transform": {
+        "outputFiles": [
+          "frames/base/eat/0000-1c17b48a0700.png",
+          "frames/base/eat/0001-0ff749e58717.png",
+          "frames/base/eat/0002-d4d84c1e6379.png",
+          "frames/base/eat/0003-a1a0948ed7f1.png",
+          "frames/base/eat/0004-61cafc1d8d1f.png",
+          "frames/base/eat/0005-d589369d72d1.png",
+          "frames/base/eat/0006-1a46880d0428.png",
+          "frames/base/eat/0007-6da0436e92bb.png",
+          "frames/base/eat/0008-e4c5c2dada91.png",
+          "frames/base/eat/0009-4ff7dc734a41.png",
+          "frames/base/eat/0010-c05c33f9843a.png",
+          "frames/base/eat/0011-3618b6bae1f4.png",
+          "frames/base/eat/0012-60a5d865f695.png",
+          "frames/base/eat/0013-79073f09baf5.png",
+          "frames/base/eat/0014-46ab6f3b9352.png",
+          "frames/base/eat/0015-5d13da8ab447.png",
+          "frames/base/eat/0016-72603d4fe1f4.png"
+        ],
+        "outputSha256": [
+          "1c17b48a070071029854dde18438a0e4aecccac507d46ef3b9da7f298dc3123e",
+          "0ff749e5871716f172bebfc715b2ef882c47d6cd58fbb6af8f21253aeff33d23",
+          "d4d84c1e6379a69ff7727930cb8b0f54a8558ec8a6ea816e6fcb55eb9f57103e",
+          "a1a0948ed7f1841c44db280a91c8ea51771935db7b68e5532938d9ac3d7a51f2",
+          "61cafc1d8d1f92905f2aaf3078e3c1e6fb70cd59eafd8522c1f85801ec0e239c",
+          "d589369d72d10ee3ddbbaa666a18be698fd3f626813e9ee0419667c96b7f425a",
+          "1a46880d04289e8e959c6e4b4d720778a3a820833840f379360856cdad98c2a2",
+          "6da0436e92bbf3d7d23c64a76273f1fd274d82991180469fcecc0e888bdce034",
+          "e4c5c2dada91dc44457040df680d8e4028cf3909fb4801479a83a8cded6fba5d",
+          "4ff7dc734a4145fdfb15760a5edf7b48aa2e374680575cfb0f2feb35ed04199c",
+          "c05c33f9843af20b2798660cf129ca303c428b19f9a55b397cdf951319c96b93",
+          "3618b6bae1f489c2d95dcd4427d3a2dcdeb3d16089a77af6d839d7bb1dcacac5",
+          "60a5d865f69541ba5c004424d1ac14c126b9ddb97108ae36e5c9274afb4642bc",
+          "79073f09baf5f8bc30bc715ed70dfebe889b5eaae21a3fb20b6a175c73026fa4",
+          "46ab6f3b935248838d43ced3f67afb88552c750b4ad2e89a3fce707572de5653",
+          "5d13da8ab4479a5174b91b638406d25a966f60ede8a9f061af154d68a90c2c3d",
+          "72603d4fe1f4618525bb8b49a0c901ae3d1f3d1587c36d1686cdc421f91356b1"
+        ],
+        "normalizations": [
+          {
+            "frameIndex": 0,
+            "trimmedSize": {
+              "width": 196,
+              "height": 225
+            },
+            "scale": 1.9555555555555555,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 1,
+            "trimmedSize": {
+              "width": 196,
+              "height": 225
+            },
+            "scale": 1.9555555555555555,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 2,
+            "trimmedSize": {
+              "width": 196,
+              "height": 225
+            },
+            "scale": 1.9555555555555555,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 3,
+            "trimmedSize": {
+              "width": 196,
+              "height": 225
+            },
+            "scale": 1.9555555555555555,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 4,
+            "trimmedSize": {
+              "width": 196,
+              "height": 225
+            },
+            "scale": 1.9555555555555555,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 5,
+            "trimmedSize": {
+              "width": 196,
+              "height": 225
+            },
+            "scale": 1.9555555555555555,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 6,
+            "trimmedSize": {
+              "width": 196,
+              "height": 225
+            },
+            "scale": 1.9555555555555555,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 7,
+            "trimmedSize": {
+              "width": 196,
+              "height": 225
+            },
+            "scale": 1.9555555555555555,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 8,
+            "trimmedSize": {
+              "width": 196,
+              "height": 225
+            },
+            "scale": 1.9555555555555555,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 9,
+            "trimmedSize": {
+              "width": 196,
+              "height": 225
+            },
+            "scale": 1.9555555555555555,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 10,
+            "trimmedSize": {
+              "width": 196,
+              "height": 225
+            },
+            "scale": 1.9555555555555555,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 11,
+            "trimmedSize": {
+              "width": 196,
+              "height": 225
+            },
+            "scale": 1.9555555555555555,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 12,
+            "trimmedSize": {
+              "width": 196,
+              "height": 225
+            },
+            "scale": 1.9555555555555555,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 13,
+            "trimmedSize": {
+              "width": 196,
+              "height": 225
+            },
+            "scale": 1.9555555555555555,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 14,
+            "trimmedSize": {
+              "width": 196,
+              "height": 225
+            },
+            "scale": 1.9555555555555555,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 15,
+            "trimmedSize": {
+              "width": 196,
+              "height": 225
+            },
+            "scale": 1.9555555555555555,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          },
+          {
+            "frameIndex": 16,
+            "trimmedSize": {
+              "width": 196,
+              "height": 225
+            },
+            "scale": 1.9555555555555555,
+            "canvasSize": 512,
+            "anchor": {
+              "x": 256,
+              "y": 400
+            },
+            "colorFormat": "premultiplied BGRA8888 PNG"
+          }
+        ]
+      },
+      "notes": "Imported after media signature and payload-size checks; SHA-256 recorded. Dudu spooning food from a bowl; all 34 frames sampled every 2nd, loops.",
+      "clip": {
+        "startFrame": 0,
+        "frameStep": 2,
+        "targetHeight": 440
+      }
     }
   ]
 }
