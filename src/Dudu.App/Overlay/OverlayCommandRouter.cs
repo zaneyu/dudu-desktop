@@ -16,6 +16,8 @@ public sealed class OverlayCommandRouter
     private bool _isBreathing;
     private string _breathingInstruction = "breathe in for 4, out for 6";
     private ComfortPanelState _comfortPanel = ComfortPanelState.Closed;
+    private string? _mealId;
+    private CancellationTokenSource? _mealTimer;
 
     public OverlayCommandRouter(
         CompanionFeatureContext context,
@@ -35,7 +37,11 @@ public sealed class OverlayCommandRouter
         OverlayAction.Tasks,
         OverlayAction.LoveNote,
         OverlayAction.ComfortMe,
+        OverlayAction.EatTogether,
     ];
+
+    /// <summary>How long an eat-together meal lasts unless ended early.</summary>
+    public static readonly TimeSpan EatingDuration = TimeSpan.FromMinutes(20);
 
     public static IReadOnlyList<ComfortAction> ComfortActions => ActionBubbleLayout.ComfortActions;
 
@@ -62,6 +68,15 @@ public sealed class OverlayCommandRouter
     public bool IsBreathing { get { lock (_gate) return _isBreathing; } }
     public string BreathingInstruction { get { lock (_gate) return _breathingInstruction; } }
     public ComfortPanelState ComfortPanel { get { lock (_gate) return _comfortPanel; } }
+    public bool IsEating { get { lock (_gate) return _mealId is not null; } }
+
+    /// <summary>Painted label, reflecting live toggle state (eat together
+    /// becomes "done eating" while a meal runs).</summary>
+    public string LabelFor(OverlayAction action) =>
+        action == OverlayAction.EatTogether && IsEating
+            ? "done eating"
+            : ActionBubbleLayout.Label(action);
+
     public event EventHandler? ComfortPanelChanged;
 
     public Task ExecuteAsync(
@@ -74,6 +89,7 @@ public sealed class OverlayCommandRouter
             OverlayAction.Tasks => NavigateAsync("tasks", cancellationToken),
             OverlayAction.LoveNote => NavigateAsync("notes", cancellationToken),
             OverlayAction.ComfortMe => ExecuteComfortAsync(cancellationToken),
+            OverlayAction.EatTogether => ToggleEatTogetherAsync(cancellationToken),
             _ => throw new ArgumentOutOfRangeException(nameof(action), action, "alala unknown overlay action"),
         };
 
@@ -116,6 +132,9 @@ public sealed class OverlayCommandRouter
             case OverlayAction.ComfortMe:
                 await ExecuteComfortAsync(cancellationToken);
                 break;
+            case OverlayAction.EatTogether:
+                await ToggleEatTogetherAsync(cancellationToken);
+                break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(action), action, "hmm unknown overlay action");
         }
@@ -144,7 +163,7 @@ public sealed class OverlayCommandRouter
         OverlayAction.DrinkWater => "reminders",
         OverlayAction.StartFocus or OverlayAction.Tasks => "tasks",
         OverlayAction.LoveNote => "notes",
-        OverlayAction.ComfortMe => "home",
+        OverlayAction.ComfortMe or OverlayAction.EatTogether => "home",
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "oh no unknown overlay action"),
     };
 
@@ -156,17 +175,109 @@ public sealed class OverlayCommandRouter
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "alala unknown comfort action"),
     };
 
-    private Task ExecutePetAsync(CancellationToken cancellationToken) =>
-        _context.PresentOneShotPetAsync(
-            new PetEvent.AmbientRequested("greeting"),
-            "greeting",
+    /// <summary>Petting resets the tantrum clock; a third pet within a
+    /// minute celebrates instead of the ordinary <c>petted</c> clip. An
+    /// interaction (not an ambient) so it also plays during focus or a meal.</summary>
+    private Task ExecutePetAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var key = _context.Affection.RecordPet() == PetReaction.Delighted ? "celebrate" : "petted";
+        return _context.PresentOneShotPetAsync(
+            new PetEvent.InteractionRequested(key),
+            key,
             cancellationToken);
+    }
 
     private Task ExecuteDrinkWaterAsync(CancellationToken cancellationToken) =>
         _context.PresentOneShotPetAsync(
-            new PetEvent.AmbientRequested("drink"),
+            new PetEvent.InteractionRequested("drink"),
             "drink",
             cancellationToken);
+
+    /// <summary>Starts an in-memory eat-together meal (eat loop, notes and
+    /// reminders held back like focus) or, when one is running, ends it.
+    /// A running meal ends by itself after <see cref="EatingDuration"/>.</summary>
+    private async Task ToggleEatTogetherAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        string? endingMeal;
+        string? startingMeal = null;
+        CancellationTokenSource? timer = null;
+        lock (_gate)
+        {
+            endingMeal = _mealId;
+            _mealTimer?.Cancel();
+            _mealTimer = null;
+            _mealId = null;
+            if (endingMeal is null)
+            {
+                startingMeal = Guid.NewGuid().ToString("N");
+                timer = new CancellationTokenSource();
+                _mealId = startingMeal;
+                _mealTimer = timer;
+            }
+        }
+
+        if (endingMeal is not null)
+        {
+            await PresentAsync(new PetEvent.EatingEnded(endingMeal), cancellationToken);
+            return;
+        }
+
+        try
+        {
+            await PresentAsync(new PetEvent.EatingStarted(startingMeal!), cancellationToken);
+        }
+        catch
+        {
+            // Never leave the pet latched in a meal nothing can end.
+            lock (_gate)
+            {
+                if (_mealId == startingMeal)
+                {
+                    _mealId = null;
+                    _mealTimer = null;
+                }
+            }
+            timer!.Cancel();
+            _context.Pet.Handle(new PetEvent.EatingEnded(startingMeal!));
+            throw;
+        }
+
+        _ = EndMealWhenDueAsync(startingMeal!, timer!.Token);
+    }
+
+    private async Task EndMealWhenDueAsync(string mealId, CancellationToken timerToken)
+    {
+        try
+        {
+            await _delayAsync(EatingDuration, timerToken);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        lock (_gate)
+        {
+            if (_mealId != mealId) return;
+            _mealId = null;
+            _mealTimer = null;
+        }
+
+        try
+        {
+            await PresentAsync(new PetEvent.EatingEnded(mealId), CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            _context.Pet.Handle(new PetEvent.EatingEnded(mealId));
+            global::System.Diagnostics.Trace.TraceError(
+                "Dudu eat-together end failed: {0} (0x{1:X8})",
+                exception.GetType().FullName,
+                exception.HResult);
+        }
+    }
 
     private async Task ExecuteStartFocusAsync(CancellationToken cancellationToken)
     {

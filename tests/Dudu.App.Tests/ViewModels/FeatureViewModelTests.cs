@@ -1302,6 +1302,96 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Router_pet_plays_petted_and_a_third_quick_pet_celebrates()
+    {
+        var fixture = FeatureFixture.Create();
+        var router = new OverlayCommandRouter(fixture.Context);
+
+        for (var pet = 0; pet < 3; pet++)
+        {
+            await router.ExecuteAsync(OverlayAction.Pet, TestContext.Current.CancellationToken);
+            fixture.Clock.UtcNow += TimeSpan.FromSeconds(5);
+        }
+
+        Assert.Equal(
+            ["petted", "petted", "celebrate"],
+            fixture.OneShotPresentations.Select(item =>
+                Assert.IsType<PetEvent.InteractionRequested>(item.Event).AnimationKey));
+        Assert.Equal(["petted", "petted", "celebrate"], fixture.OneShotPresentations.Select(item => item.DismissalId));
+        Assert.Equal(TimeSpan.Zero, fixture.Context.Affection.NeglectedFor);
+        Assert.Equal(PetState.Idle, fixture.Context.Pet.Current.State);
+    }
+
+    [Fact]
+    public async Task Router_drink_plays_during_focus_and_hands_back_to_focus()
+    {
+        var fixture = FeatureFixture.Create();
+        fixture.Context.Pet.Handle(new PetEvent.FocusStarted("focus-1"));
+        var router = new OverlayCommandRouter(fixture.Context);
+
+        await router.ExecuteAsync(OverlayAction.DrinkWater, TestContext.Current.CancellationToken);
+
+        var drink = Assert.Single(fixture.OneShotPresentations);
+        Assert.Equal("drink", Assert.IsType<PetEvent.InteractionRequested>(drink.Event).AnimationKey);
+        Assert.Equal(PetState.Focus, fixture.Context.Pet.Current.State);
+    }
+
+    [Fact]
+    public async Task Router_eat_together_toggles_a_meal_that_holds_reminders_back()
+    {
+        var fixture = FeatureFixture.Create();
+        var router = new OverlayCommandRouter(
+            fixture.Context,
+            (_, _) => Task.CompletedTask,
+            (delay, token) => Task.Delay(Timeout.InfiniteTimeSpan, token));
+
+        await router.ExecuteAsync(OverlayAction.EatTogether, TestContext.Current.CancellationToken);
+
+        Assert.True(router.IsEating);
+        Assert.Equal("done eating", router.LabelFor(OverlayAction.EatTogether));
+        Assert.Equal("eat", fixture.Context.Pet.Current.AnimationKey);
+        Assert.Equal(PetState.Eating, fixture.Context.Pet.Handle(new PetEvent.ReminderDue("r-1")).State);
+
+        await router.ExecuteAsync(OverlayAction.EatTogether, TestContext.Current.CancellationToken);
+
+        Assert.False(router.IsEating);
+        Assert.Equal("eat together", router.LabelFor(OverlayAction.EatTogether));
+        Assert.False(fixture.Context.Pet.IsEatingActive);
+        Assert.Equal(PetState.Reminder, fixture.Context.Pet.Current.State);
+    }
+
+    [Fact]
+    public async Task Router_eat_together_ends_by_itself_after_twenty_minutes()
+    {
+        var fixture = FeatureFixture.Create();
+        var requested = new List<TimeSpan>();
+        var mealOver = new TaskCompletionSource();
+        var router = new OverlayCommandRouter(
+            fixture.Context,
+            (_, _) => Task.CompletedTask,
+            (delay, token) =>
+            {
+                requested.Add(delay);
+                return mealOver.Task.WaitAsync(token);
+            });
+
+        await router.ExecuteAsync(OverlayAction.EatTogether, TestContext.Current.CancellationToken);
+        Assert.Equal(PetState.Eating, fixture.Context.Pet.Current.State);
+
+        mealOver.SetResult();
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (fixture.Context.Pet.IsEatingActive && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal([OverlayCommandRouter.EatingDuration], requested);
+        Assert.Equal(TimeSpan.FromMinutes(20), OverlayCommandRouter.EatingDuration);
+        Assert.False(router.IsEating);
+        Assert.Equal(PetState.Idle, fixture.Context.Pet.Current.State);
+    }
+
+    [Fact]
     public async Task Breathing_publishes_a_finite_cycle_and_five_minute_pause()
     {
         var fixture = FeatureFixture.Create();

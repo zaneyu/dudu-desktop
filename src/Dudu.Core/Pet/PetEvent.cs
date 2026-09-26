@@ -70,6 +70,57 @@ public abstract record PetEvent
         }
     }
 
+    /// <summary>
+    /// A user-initiated one-shot (overlay "pet", "drink water", a delighted
+    /// pet streak). Unlike <see cref="AmbientRequested"/> it is not discarded
+    /// while focus or eating is active: the user asked for it explicitly.
+    /// </summary>
+    public sealed record InteractionRequested : PetEvent
+    {
+        public string AnimationKey { get; }
+
+        public InteractionRequested(string animationKey)
+        {
+            AnimationKey = RequireAnimation(animationKey);
+        }
+    }
+
+    public sealed record InteractionDismissed : PetEvent
+    {
+        public string AnimationKey { get; }
+
+        public InteractionDismissed(string animationKey)
+        {
+            AnimationKey = RequireAnimation(animationKey);
+        }
+    }
+
+    /// <summary>The pointer actually moved the overlay (past the click slop).</summary>
+    public sealed record DragStarted : PetEvent;
+
+    /// <summary>The drag ended (release, capture loss, hide, or shutdown).</summary>
+    public sealed record DragEnded : PetEvent;
+
+    public sealed record EatingStarted : PetEvent
+    {
+        public string SessionId { get; }
+
+        public EatingStarted(string sessionId)
+        {
+            SessionId = RequireId(sessionId, nameof(sessionId));
+        }
+    }
+
+    public sealed record EatingEnded : PetEvent
+    {
+        public string SessionId { get; }
+
+        public EatingEnded(string sessionId)
+        {
+            SessionId = RequireId(sessionId, nameof(sessionId));
+        }
+    }
+
     public sealed record Dismissed : PetEvent
     {
         public string ItemId { get; }
@@ -92,6 +143,7 @@ public abstract record PetEvent
         return presentationEvent switch
         {
             AmbientRequested ambient => new AmbientDismissed(ambient.AnimationKey),
+            InteractionRequested interaction => new InteractionDismissed(interaction.AnimationKey),
             WelcomeBackRequested => new WelcomeBackDismissed(),
             _ => new Dismissed(fallbackItemId),
         };

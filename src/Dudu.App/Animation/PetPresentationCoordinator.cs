@@ -10,7 +10,10 @@ namespace Dudu.App.Animation;
 /// </summary>
 public sealed class PetPresentationCoordinator
 {
-    private static readonly TimeSpan DefaultMaximumDuration = TimeSpan.FromSeconds(3);
+    /// <summary>Safety cap only, not a clip length: a one-shot normally
+    /// ends when its last frame plays. The drink/petted/celebrate clips run
+    /// about 2-3 s, so the cap sits well above that and never cuts one short.</summary>
+    private static readonly TimeSpan DefaultMaximumDuration = TimeSpan.FromSeconds(6);
     private readonly PetStateMachine _pet;
     private readonly Func<PetPresentation, AnimationOptions, CancellationToken, Task> _playAsync;
     private readonly Func<PetPresentation, CancellationToken, Task>? _playAudioAsync;

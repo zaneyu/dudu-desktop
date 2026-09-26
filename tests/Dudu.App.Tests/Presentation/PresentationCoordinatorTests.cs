@@ -599,6 +599,105 @@ public sealed class PresentationCoordinatorTests
         Assert.Equal(1, notes.ShownCount);
     }
 
+    [Fact]
+    public async Task Neglected_pet_throws_one_tantrum_through_the_tick_then_returns_to_idle()
+    {
+        var clock = new FixedClock(DateTimeOffset.Parse("2026-09-14T16:00:00Z"));
+        var affection = new AffectionTracker(clock);
+        var pet = PetStateMachine.CreateIdle();
+        var played = new List<PetPresentation>();
+        var audio = new List<AudioCueEvent>();
+        var locked = false;
+        var coordinator = new PresentationCoordinator(
+            new PresentationPolicy(TimeSpan.Zero),
+            new RecordingNotificationService(),
+            pet,
+            (presentation, _, _) =>
+            {
+                played.Add(presentation);
+                return Task.CompletedTask;
+            },
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            utcNow: () => clock.UtcNow,
+            playAudioAsync: (cue, _) =>
+            {
+                audio.Add(cue);
+                return Task.CompletedTask;
+            },
+            affection: affection);
+        coordinator.SetSessionLocked(false);
+
+        async Task TickForAsync(TimeSpan duration)
+        {
+            for (var elapsed = TimeSpan.Zero; elapsed < duration; elapsed += TimeSpan.FromSeconds(30))
+            {
+                clock.Advance(TimeSpan.FromSeconds(30));
+                coordinator.SetSessionLocked(locked);
+                await coordinator.TickAsync(TestContext.Current.CancellationToken);
+            }
+        }
+
+        // Locked time never counts as neglect.
+        locked = true;
+        await TickForAsync(TimeSpan.FromHours(3));
+        Assert.Empty(played);
+
+        // The first unlocked tick only starts the active stretch.
+        locked = false;
+        await TickForAsync(AffectionTracker.NeglectThreshold + TimeSpan.FromMinutes(1));
+
+        var tantrum = Assert.Single(played, item => item.AnimationKey == "tantrum");
+        Assert.Equal(PetState.Ambient, tantrum.State);
+        Assert.Equal(PetStateMachine.TantrumBubble, tantrum.BubbleTitle);
+        Assert.Equal(PetState.Idle, played[^1].State);
+        Assert.Equal(PetState.Idle, pet.Current.State);
+
+        // At most one per cooldown, and petting resets the clock entirely.
+        await TickForAsync(AffectionTracker.TantrumCooldown - TimeSpan.FromMinutes(1));
+        Assert.Single(played, item => item.AnimationKey == "tantrum");
+        affection.RecordPet();
+        await TickForAsync(TimeSpan.FromMinutes(60));
+        Assert.Single(played, item => item.AnimationKey == "tantrum");
+    }
+
+    [Fact]
+    public async Task Tantrum_waits_while_focus_is_running()
+    {
+        var clock = new FixedClock(DateTimeOffset.Parse("2026-09-14T16:00:00Z"));
+        var affection = new AffectionTracker(clock);
+        var pet = PetStateMachine.CreateIdle();
+        pet.Handle(new PetEvent.FocusStarted("focus-1"));
+        var played = new List<PetPresentation>();
+        var coordinator = new PresentationCoordinator(
+            new PresentationPolicy(TimeSpan.Zero),
+            new RecordingNotificationService(),
+            pet,
+            (presentation, _, _) =>
+            {
+                played.Add(presentation);
+                return Task.CompletedTask;
+            },
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            utcNow: () => clock.UtcNow,
+            affection: affection);
+        coordinator.SetUserVisible(true);
+
+        for (var tick = 0; tick < 240; tick++)
+        {
+            clock.Advance(TimeSpan.FromSeconds(30));
+            await coordinator.TickAsync(TestContext.Current.CancellationToken);
+        }
+
+        Assert.DoesNotContain(played, item => item.AnimationKey == "tantrum");
+        Assert.Equal(TimeSpan.Zero, affection.NeglectedFor);
+    }
+
     private sealed class FixedClock(DateTimeOffset utcNow) : IClock
     {
         public DateTimeOffset UtcNow { get; private set; } = utcNow;

@@ -138,7 +138,14 @@ public sealed class ReminderDueSink : IReminderDueSink
                 reminder.Id,
                 title,
                 body: body,
-                animationKey: reminder.Id == LocalReminderDefaults.BedtimeId ? "sticker-025" : null,
+                animationKey: reminder.Id switch
+                {
+                    LocalReminderDefaults.BedtimeId => "sticker-025",
+                    // The hydration nudge shows Dudu drinking, same clip as
+                    // the overlay's drink water action.
+                    "default-hydration" => "drink",
+                    _ => null,
+                },
                 expiresUtc: routine ? NextLocalMidnight(occurrence.DueUtc, reminder.LocalTimeZoneId) : null);
             var bypass = !routine && reminder.QuietHoursBehavior == QuietHoursBehavior.DeliverImmediately;
             await _gateway().PublishAsync(item, bypass, cancellationToken);

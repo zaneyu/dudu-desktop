@@ -56,6 +56,22 @@ public sealed class ReminderDueSinkTests
     }
 
     [Fact]
+    public async Task Hydration_nudge_shows_dudu_drinking()
+    {
+        var reminders = new RecordingReminderRepository(
+            MakeReminder("default-hydration", "drink water"));
+        var gateway = new RecordingGateway();
+        var sink = new ReminderDueSink(reminders, () => gateway);
+
+        await sink.NotifyAsync(
+            new ReminderOccurrence("default-hydration", DueUtc),
+            TestContext.Current.CancellationToken);
+
+        var item = Assert.IsType<DurableNotification>(gateway.LastItem);
+        Assert.Equal("drink", item.AnimationKey);
+    }
+
+    [Fact]
     public async Task Expired_routine_occurrence_is_dropped_before_it_can_queue()
     {
         var reminders = new RecordingReminderRepository(

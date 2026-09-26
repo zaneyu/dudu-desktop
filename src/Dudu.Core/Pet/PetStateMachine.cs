@@ -12,6 +12,18 @@ public sealed class PetStateMachine
     /// </summary>
     public const int MaxPendingItems = 50;
 
+    /// <summary>Bubble shown while a focus session is running.</summary>
+    public const string FocusBubble = "studying with you 📚";
+
+    /// <summary>Bubble shown while an eat-together meal is running.</summary>
+    public const string EatingBubble = "eating together 🍜";
+
+    /// <summary>Bubble shown with the drink pose (overlay action or ambient).</summary>
+    public const string DrinkBubble = "drink water ah 💧";
+
+    /// <summary>Bubble shown with the neglect tantrum (see <see cref="AffectionTracker"/>).</summary>
+    public const string TantrumBubble = "pet me!! 😤";
+
     private readonly object _sync = new();
     private readonly HashSet<string> _dueReminderIds = new(StringComparer.Ordinal);
     private readonly List<string> _dueReminderOrder = [];
@@ -27,6 +39,9 @@ public sealed class PetStateMachine
     private string? _focusTransition;
     private bool _welcomeBackPending;
     private string? _ambientAnimation;
+    private string? _interactionAnimation;
+    private string? _eatingId;
+    private bool _dragging;
     private bool _paused;
 
     private PetStateMachine(PetPresentation initial)
@@ -56,6 +71,42 @@ public sealed class PetStateMachine
             lock (_sync)
             {
                 return _dueReminderIds.Count + _remoteMessageIds.Count;
+            }
+        }
+    }
+
+    /// <summary>True while a focus session is latched, even when a higher
+    /// priority presentation (drag, petting, welcome-back) is on screen.</summary>
+    public bool IsFocusActive
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return IsFocusLatched();
+            }
+        }
+    }
+
+    /// <summary>True while an eat-together meal is latched.</summary>
+    public bool IsEatingActive
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return IsEatingLatched();
+            }
+        }
+    }
+
+    public bool IsDragging
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _dragging;
             }
         }
     }
@@ -122,7 +173,7 @@ public sealed class PetStateMachine
                 break;
 
             case PetEvent.AmbientRequested ambient:
-                if (!_paused && !IsFocusActive() && IsAllowedAmbientAnimation(ambient.AnimationKey))
+                if (!_paused && !IsQuietCompanyActive() && IsAllowedAmbientAnimation(ambient.AnimationKey))
                 {
                     _ambientAnimation = ambient.AnimationKey;
                 }
@@ -137,6 +188,44 @@ public sealed class PetStateMachine
 
                 break;
 
+            case PetEvent.InteractionRequested interaction:
+                if (!_paused && IsAllowedInteractionAnimation(interaction.AnimationKey))
+                {
+                    _interactionAnimation = interaction.AnimationKey;
+                }
+
+                break;
+
+            case PetEvent.InteractionDismissed interaction:
+                if (string.Equals(_interactionAnimation, interaction.AnimationKey, StringComparison.Ordinal))
+                {
+                    _interactionAnimation = null;
+                }
+
+                break;
+
+            case PetEvent.DragStarted:
+                _dragging = true;
+                break;
+
+            case PetEvent.DragEnded:
+                _dragging = false;
+                break;
+
+            case PetEvent.EatingStarted eating:
+                _eatingId = eating.SessionId;
+                _ambientAnimation = null;
+                break;
+
+            case PetEvent.EatingEnded eating:
+                if (string.Equals(_eatingId, eating.SessionId, StringComparison.Ordinal))
+                {
+                    _eatingId = null;
+                    _ambientAnimation = null;
+                }
+
+                break;
+
             case PetEvent.Dismissed dismissed:
                 Dismiss(dismissed.ItemId);
                 break;
@@ -145,6 +234,7 @@ public sealed class PetStateMachine
                 _paused = true;
                 _welcomeBackPending = false;
                 _ambientAnimation = null;
+                _interactionAnimation = null;
                 break;
 
             case PetEvent.ResumeRequested:
@@ -174,14 +264,28 @@ public sealed class PetStateMachine
 
     private PetPresentation Select()
     {
+        // A drag is a live physical interaction: whatever else is latched
+        // stays latched and returns the moment the pointer is released.
+        if (_dragging)
+        {
+            return Present(PetState.Dragging, "drag");
+        }
+
         if (_comfortActive)
         {
             return Present(PetState.Comfort, "comfort-hug");
         }
 
+        // An explicit user one-shot briefly plays over everything below it
+        // (a waiting note card, focus, a meal) and then hands back to it.
+        if (!_paused && _interactionAnimation is not null)
+        {
+            return Present(PetState.Interaction, _interactionAnimation, BubbleFor(_interactionAnimation));
+        }
+
         // Pending notes and reminders each coalesce into a single display card
         // no matter how many ids are queued behind it.
-        if (!_paused && !IsFocusActive() && _remoteMessageIds.Count > 0)
+        if (!_paused && !IsQuietCompanyActive() && _remoteMessageIds.Count > 0)
         {
             var body = _remoteMessageIds.Count > 1
                 ? $"{_remoteMessageIds.Count} notes waiting"
@@ -189,7 +293,7 @@ public sealed class PetStateMachine
             return new(PetState.RemoteNote, "note-arrival", "A note arrived 💌", body, true);
         }
 
-        if (!_paused && !IsFocusActive() && _dueReminderIds.Count > 0)
+        if (!_paused && !IsQuietCompanyActive() && _dueReminderIds.Count > 0)
         {
             var body = _dueReminderIds.Count > 1
                 ? $"{_dueReminderIds.Count} reminders due"
@@ -213,14 +317,21 @@ public sealed class PetStateMachine
             return Present(PetState.WelcomeBack, "greeting");
         }
 
-        if (!_paused && !IsFocusActive() && _ambientAnimation is not null)
+        if (!_paused && !IsQuietCompanyActive() && _ambientAnimation is not null)
         {
-            return Present(PetState.Ambient, _ambientAnimation);
+            return Present(PetState.Ambient, _ambientAnimation, BubbleFor(_ambientAnimation));
         }
 
-        if (IsFocusActive())
+        // A meal is the more recent, shorter commitment, so it shows over a
+        // focus session that happens to still be running underneath it.
+        if (IsEatingLatched())
         {
-            return Present(PetState.Focus, "focus");
+            return Present(PetState.Eating, "eat", EatingBubble);
+        }
+
+        if (IsFocusLatched())
+        {
+            return Present(PetState.Focus, "focus", FocusBubble);
         }
 
         return Present(PetState.Idle, "idle");
@@ -279,24 +390,52 @@ public sealed class PetStateMachine
             return;
         }
 
+        if (string.Equals(itemId, _interactionAnimation, StringComparison.Ordinal))
+        {
+            _interactionAnimation = null;
+            return;
+        }
+
+        if (_eatingId is not null && string.Equals(itemId, _eatingId, StringComparison.Ordinal))
+        {
+            _eatingId = null;
+            return;
+        }
+
         if (string.Equals(itemId, _ambientAnimation, StringComparison.Ordinal))
         {
             _ambientAnimation = null;
         }
     }
 
-    private bool IsFocusActive() => _focusId is not null;
+    private bool IsFocusLatched() => _focusId is not null;
+
+    private bool IsEatingLatched() => _eatingId is not null;
+
+    /// <summary>Focus and eating both keep Dudu as quiet company: unsolicited
+    /// notes, reminders, and ambient moments wait until they end.</summary>
+    private bool IsQuietCompanyActive() => IsFocusLatched() || IsEatingLatched();
 
     private static bool IsAllowedAmbientAnimation(string animationKey)
     {
         return animationKey is "idle" or "blink" or "greeting" or "sleep"
-            or "drink" or "celebrate"
+            or "drink" or "celebrate" or "tantrum"
             || AssetManifestContract.IsStickerAnimationKey(animationKey)
             || AssetManifestContract.IsMotionAnimationKey(animationKey);
     }
 
-    private static PetPresentation Present(PetState state, string animationKey)
+    private static bool IsAllowedInteractionAnimation(string animationKey) =>
+        animationKey is "petted" or "drink" or "celebrate" or "greeting";
+
+    private static string? BubbleFor(string animationKey) => animationKey switch
     {
-        return new(state, animationKey, null, null, false);
+        "drink" => DrinkBubble,
+        "tantrum" => TantrumBubble,
+        _ => null,
+    };
+
+    private static PetPresentation Present(PetState state, string animationKey, string? bubbleTitle = null)
+    {
+        return new(state, animationKey, bubbleTitle, null, false);
     }
 }

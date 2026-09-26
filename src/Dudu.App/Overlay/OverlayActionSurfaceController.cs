@@ -123,7 +123,7 @@ public sealed class OverlayActionSurfaceController : IDisposable
             {
                 OverlayActionSurfaceKind.Primary => _arrangement?.PrimaryActions
                 .Select(item => new OverlaySurfaceAction(
-                    ActionBubbleLayout.Label(item.Action),
+                    _router?.LabelFor(item.Action) ?? ActionBubbleLayout.Label(item.Action),
                     ActionBubbleLayout.AutomationId(item.Action),
                     item.HitRegion,
                     OverlayCommandRouter.EquivalentSettingsDestination(item.Action))

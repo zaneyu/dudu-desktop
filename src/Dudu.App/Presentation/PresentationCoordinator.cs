@@ -99,6 +99,7 @@ public sealed class PresentationCoordinator :
     private readonly Func<DateTimeOffset> _utcNow;
     private readonly IAppHostErrorReporter? _errorReporter;
     private readonly IHeldPresentationRepository? _heldPresentations;
+    private readonly AffectionTracker? _affection;
     private bool _sessionLocked;
     private bool _fullscreen;
     private bool _userHidden;
@@ -135,7 +136,8 @@ public sealed class PresentationCoordinator :
         Func<AudioCueEvent, CancellationToken, Task>? playAudioAsync = null,
         IReadOnlyList<string>? availableStickerKeys = null,
         IHeldPresentationRepository? heldPresentations = null,
-        bool initialUserHidden = false)
+        bool initialUserHidden = false,
+        AffectionTracker? affection = null)
     {
         _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
         _policy = policy ?? throw new ArgumentNullException(nameof(policy));
@@ -153,6 +155,7 @@ public sealed class PresentationCoordinator :
         _isFullscreenNow = isFullscreenNow ?? (() => { lock (_gate) return _fullscreen; });
         _errorReporter = errorReporter;
         _heldPresentations = heldPresentations;
+        _affection = affection;
         // Finding B: production must start user-hidden until the lifecycle
         // coordinator pushes the first real value. Its own ctor also seeds
         // one (AppLifecycleCoordinator's constructor calls
@@ -753,6 +756,14 @@ public sealed class PresentationCoordinator :
             return;
         }
 
+        // Observed every tick (active or not) so neglect only accumulates
+        // while Dudu is actually on screen and free to act.
+        var tantrumDue = _affection?.Observe(!IsSuppressed(environment)) == true;
+        if (tantrumDue && await PresentTantrumAsync(cancellationToken))
+        {
+            return;
+        }
+
         if (_ambientScheduler is null
             || _localNoteSelector is null
             || environment.NowQuiet
@@ -793,6 +804,63 @@ public sealed class PresentationCoordinator :
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+
+    /// <summary>
+    /// Plays the not-petted-enough tantrum through the ambient path, under
+    /// the same pet gate, only when the pet is idle and nothing suppresses
+    /// it. Declining (busy, suppressed) does not consume the tantrum: it is
+    /// retried on a later tick.
+    /// </summary>
+    private async Task<bool> PresentTantrumAsync(CancellationToken cancellationToken)
+    {
+        const string tantrumKey = "tantrum";
+        await _petGate.WaitAsync(cancellationToken);
+        PetPresentation? presentation = null;
+        var played = false;
+        try
+        {
+            if (_pet.Current.State != PetState.Idle || IsSuppressed(CaptureEnvironment(_utcNow())))
+            {
+                return false;
+            }
+
+            presentation = _pet.Handle(new PetEvent.AmbientRequested(tantrumKey));
+            if (presentation.State != PetState.Ambient)
+            {
+                presentation = null;
+                return false;
+            }
+
+            _affection!.RecordTantrum();
+            played = await ObserveAsync(
+                () => PlayWithTimeoutAsync(presentation, cancellationToken),
+                "presentation-playback");
+        }
+        finally
+        {
+            if (presentation is not null)
+            {
+                _pet.Handle(new PetEvent.PresentationAcknowledged());
+                _pet.Handle(new PetEvent.AmbientDismissed(tantrumKey));
+                // A one-shot leaves its last frame on screen; hand the
+                // overlay back to whatever the state machine now says.
+                var restore = _pet.Current;
+                _ = ObserveAsync(
+                    () => _playAsync(restore, _options(), CancellationToken.None),
+                    "presentation-playback");
+            }
+
+            _petGate.Release();
+        }
+
+        if (played && presentation is not null && _playAudioAsync is not null
+            && AudioCueSelection.ForPresentation(presentation) is { } audioCue)
+        {
+            _ = ObserveAudioAsync(() => _playAudioAsync(audioCue, cancellationToken));
+        }
+
+        return true;
+    }
 
     /// <summary>
     /// Mutates the pet state machine and plays its animation under the same
@@ -1061,7 +1129,11 @@ public sealed class PresentationCoordinator :
             }
 
             var paused = PausePolicy.IsSuppressed(_pauseState(), now, liveFullscreen);
-            var focusActive = _pet.Current.State == PetState.Focus;
+            // Latched focus or an eat-together meal hold unsolicited items
+            // back even while a drag, pet or welcome-back is what is on
+            // screen right now; a drag holds them too, so a reminder is
+            // never "presented" as the drag loop and then acknowledged.
+            var focusActive = _pet.IsFocusActive || _pet.IsEatingActive || _pet.IsDragging;
             return new SuppressionSnapshot(_isQuietHours(), liveFullscreen, paused, sessionLocked, focusActive, userHidden);
         }
         catch (Exception exception)

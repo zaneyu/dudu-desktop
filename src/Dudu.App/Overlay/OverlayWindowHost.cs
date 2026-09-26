@@ -78,6 +78,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private readonly Action _showContextMenu;
     private readonly Action<uint, nint, nint>? _systemMessageHandler;
     private Func<uint, nint, nint, bool>? _runtimeMessageHandler;
+    private Action<bool>? _dragStateHandler;
     private readonly Action<Exception> _diagnostic;
     private readonly IAppHostErrorReporter? _errorReporter;
     private readonly IReadOnlyList<PixelRect> _bubbleHitRegions;
@@ -98,6 +99,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private PixelRect _windowBounds;
     private HWND _window;
     private bool _dragging;
+    private bool _dragAnimating;
     private bool _actionSurfacePointerArmed;
     private OverlaySurfaceAction? _armedOverlayAction;
     private bool _petBodyPointerArmed;
@@ -875,6 +877,26 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     public void SetRuntimeMessageHandler(Func<uint, nint, nint, bool>? handler) =>
         _runtimeMessageHandler = handler;
 
+    /// <summary>Called on the owner thread with <c>true</c> once a press
+    /// has actually moved the pet (past the 4 px click slop) and with
+    /// <c>false</c> when that drag ends by any path (release, capture loss,
+    /// hide, destroy). A plain click never raises either. The handler must
+    /// not block the message loop.</summary>
+    public void SetDragStateHandler(Action<bool>? handler) =>
+        _dragStateHandler = handler;
+
+    private void NotifyDragState(bool dragging)
+    {
+        try
+        {
+            _dragStateHandler?.Invoke(dragging);
+        }
+        catch (Exception exception)
+        {
+            ReportFailure("overlay-drag", exception);
+        }
+    }
+
     public bool TryHandleRuntimeMessage(uint message, nint wParam, nint lParam)
     {
         try
@@ -1076,6 +1098,11 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         if (Math.Abs(point.X - _dragOriginX) > 4 || Math.Abs(point.Y - _dragOriginY) > 4)
         {
             _petBodyPointerArmed = false;
+            if (!_dragAnimating)
+            {
+                _dragAnimating = true;
+                NotifyDragState(true);
+            }
         }
         var cursor = PInvoke.GetCursorPos(out var screenPoint)
             ? new PixelPoint(screenPoint.X, screenPoint.Y)
@@ -1160,6 +1187,12 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         {
             _dragging = false;
             _ = PInvoke.ReleaseCapture();
+        }
+
+        if (_dragAnimating)
+        {
+            _dragAnimating = false;
+            NotifyDragState(false);
         }
     }
 

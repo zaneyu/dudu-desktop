@@ -271,6 +271,12 @@ public static class WindowsCompanionProductionComposition
         AnimationEngine? animationEngine = null;
         PetPresentationCoordinator? presentationCoordinator = null;
         PetActivityDirector? activityDirector = null;
+        // Shared by PetPresentationCoordinator, PresentationCoordinator, the
+        // direct presentPetAsync path and the drag handler, so an explicit
+        // one-shot (a drink), an unsolicited background release and a state
+        // change never interleave their mutation of the one PetStateMachine
+        // instance, and nothing cuts a running one-shot short.
+        var petGate = new SemaphoreSlim(1, 1);
         AppNotificationService? notificationService = null;
         AudioCueService? audioCueService = null;
         IAudioCuePlayer? audioPlayer = null;
@@ -342,6 +348,7 @@ public static class WindowsCompanionProductionComposition
             // Saved placements are selected only after that identity is known.
             var initialPlacement = new PetPlacement("MISSING", 0.8, 0.8, 1);
             var pet = services.GetRequiredService<PetStateMachine>();
+            var affection = new AffectionTracker(services.GetRequiredService<IClock>());
             startup = new StartupRegistrationService();
             WindowsCompanionRuntime? activeRuntime = null;
             var activePlacement = initialPlacement;
@@ -442,6 +449,17 @@ public static class WindowsCompanionProductionComposition
 
                 _ = ObserveNativeCallbackAsync(callback, "focus-expiry", host.ErrorReporter);
             };
+
+            // A focus session still running from before a restart must
+            // re-latch the pet, or Dudu idles (and notes/reminders are not
+            // held back) for the rest of that session.
+            await ObserveNativeCallbackAsync(
+                RestoreActiveFocusAsync(
+                    services.GetRequiredService<Dudu.Core.Focus.FocusService>(),
+                    pet,
+                    cancellationToken),
+                "focus-restore",
+                host.ErrorReporter);
 
             var placementRepository = services.GetRequiredService<IPetPlacementRepository>();
             var savedPlacements = await placementRepository.ListAsync(cancellationToken);
@@ -573,11 +591,6 @@ public static class WindowsCompanionProductionComposition
                         localDate: LocalDateNow(),
                         seasonalDates: SeasonalDatesFor(preferences),
                         localDateProvider: LocalDateNow);
-                    // Shared with PresentationCoordinator below so an explicit
-                    // one-shot (via PetPresentationCoordinator) and an
-                    // unsolicited background release never interleave their
-                    // mutation of the one PetStateMachine instance.
-                    var petGate = new SemaphoreSlim(1, 1);
                     presentationCoordinator = new PetPresentationCoordinator(
                         pet,
                         animationEngine.PlayAsync,
@@ -697,7 +710,8 @@ public static class WindowsCompanionProductionComposition
                         // there) cannot animate an overdue reminder straight
                         // into a window that is not shown yet and delete
                         // its row on that "successful" presentation.
-                        initialUserHidden: true);
+                        initialUserHidden: true,
+                        affection: affection);
                     // Idle fidgets and short wanders between notes, built from the
                     // pack's motion clips. Started with the runtime (see
                     // ComposedPrimaryRuntime) and silent; reduced motion turns it off.
@@ -726,6 +740,53 @@ public static class WindowsCompanionProductionComposition
                         overlay.GlideAsync,
                         PetActivityDirector.WanderDurationFor(pack),
                         host.ErrorReporter);
+                    var dragDesired = 0;
+                    overlay.SetDragStateHandler(dragging =>
+                    {
+                        Volatile.Write(ref dragDesired, dragging ? 1 : 0);
+                        _ = ObserveNativeCallbackAsync(
+                            ApplyDragStateAsync(),
+                            "overlay-drag",
+                            host.ErrorReporter);
+                    });
+
+                    // Latest desired drag state wins: a release that races
+                    // ahead of its own start (both queued on the gate)
+                    // leaves the pet not dragging, never stuck in the loop.
+                    async Task ApplyDragStateAsync()
+                    {
+                        PetPresentation? started = null;
+                        await petGate.WaitAsync(CancellationToken.None);
+                        try
+                        {
+                            var desired = Volatile.Read(ref dragDesired) == 1;
+                            if (pet.IsDragging == desired || animationEngine is null)
+                            {
+                                return;
+                            }
+
+                            var presentation = pet.Handle(desired
+                                ? new PetEvent.DragStarted()
+                                : new PetEvent.DragEnded());
+                            started = desired ? presentation : null;
+                            _ = StartAnimationPlayback(animationEngine.PlayAsync(
+                                pet.Current,
+                                AnimationOptionsFor(runtimePreferences.Current),
+                                CancellationToken.None));
+                        }
+                        finally
+                        {
+                            petGate.Release();
+                        }
+
+                        if (started is not null
+                            && audioCueService is not null
+                            && AudioCueSelection.ForPresentation(started) is { } cue)
+                        {
+                            await ObserveAudioCueAsync(() => audioCueService.TryPlayAsync(cue, CancellationToken.None));
+                        }
+                    }
+
                     _ = StartAnimationPlayback(
                         animationEngine.PlayAsync(
                             pet.Current,
@@ -847,24 +908,40 @@ public static class WindowsCompanionProductionComposition
                     // since nothing restores _userVisible afterward.
                     await runtime.OnPauseStateChangedAsync(token);
                 },
-                presentPetAsync: (petEvent, token) =>
+                presentPetAsync: async (petEvent, token) =>
                 {
-                    var presentation = pet.Handle(petEvent);
-                    if (animationEngine is not null)
+                    // Under the shared pet gate: a state change (focus start,
+                    // a meal, a dismiss) waits for a running one-shot such as
+                    // a drink to finish instead of replacing its playback.
+                    // The gate is held only to mutate and start playback,
+                    // never across a loop.
+                    await petGate.WaitAsync(token);
+                    PetPresentation presentation;
+                    Task? playback = null;
+                    try
                     {
-                        var playback = animationEngine.PlayAsync(
-                            pet.Current,
-                            AnimationOptionsFor(runtimePreferences.Current),
-                            token);
-                        _ = StartAnimationPlayback(playback);
-                        if (AudioCueSelection.ForPresentation(presentation) is { } cue)
+                        presentation = pet.Handle(petEvent);
+                        if (animationEngine is not null)
                         {
-                            _ = ObserveDirectAudioAfterVisualAsync(
-                                playback,
-                                () => audioCueService!.TryPlayAsync(cue, token));
+                            playback = animationEngine.PlayAsync(
+                                pet.Current,
+                                AnimationOptionsFor(runtimePreferences.Current),
+                                token);
+                            _ = StartAnimationPlayback(playback);
                         }
                     }
-                    return Task.CompletedTask;
+                    finally
+                    {
+                        petGate.Release();
+                    }
+
+                    if (playback is not null
+                        && AudioCueSelection.ForPresentation(presentation) is { } cue)
+                    {
+                        _ = ObserveDirectAudioAfterVisualAsync(
+                            playback,
+                            () => audioCueService!.TryPlayAsync(cue, token));
+                    }
                 },
                 presentOneShotPetAsync: (petEvent, dismissalId, token) =>
                     (presentationCoordinator ?? throw new InvalidOperationException(
@@ -945,7 +1022,8 @@ public static class WindowsCompanionProductionComposition
                     {
                         throw new NotSupportedException(result.ErrorMessage ?? "Remote-device deletion is unavailable.");
                     }
-                });
+                },
+                affection: affection);
             reminderToastActions = new ReminderToastActions(
                 featureContext.Clock,
                 featureContext.Reminders,
@@ -1101,6 +1179,18 @@ public static class WindowsCompanionProductionComposition
             Task.FromResult(AudioPlaybackState.Suppressed);
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private static async Task RestoreActiveFocusAsync(
+        Dudu.Core.Focus.FocusService focus,
+        PetStateMachine pet,
+        CancellationToken cancellationToken)
+    {
+        var active = await focus.GetCurrentAsync(cancellationToken);
+        if (active is { Status: FocusStatus.Running or FocusStatus.Paused })
+        {
+            pet.Handle(new PetEvent.FocusStarted(active.Id.ToString("D")));
+        }
     }
 
     private static Task StartAnimationPlayback(Task playback)
