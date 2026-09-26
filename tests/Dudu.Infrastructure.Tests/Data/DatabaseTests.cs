@@ -29,13 +29,13 @@ public sealed class DatabaseTests
         await using var fixture = await DatabaseFixture.CreateAsync();
         await using var connection = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken);
         var runner = new MigrationRunner(fixture.Options);
-        // Versions 8-11 are now real migrations; inject the failure at the
+        // Versions 8-12 are now real migrations; inject the failure at the
         // next version so this test continues to exercise rollback rather
         // than replacing production schema.
-        runner.AddMigration(12, "CREATE TABLE broken(;" );
+        runner.AddMigration(13, "CREATE TABLE broken(;" );
 
         await Assert.ThrowsAsync<SqliteException>(() => runner.RunAsync(connection, TestContext.Current.CancellationToken));
-        Assert.Equal(11, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(12, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
         Assert.True(File.Exists(fixture.Options.DatabasePath));
     }
 
@@ -148,6 +148,9 @@ public sealed class DatabaseTests
             ("preferences", "bedtime_ritual_enabled"),
             ("preferences", "sounds_enabled"),
             ("preferences", "sound_volume"),
+            ("preferences", "global_shortcut"),
+            ("preferences", "pause_mode"),
+            ("preferences", "pause_expires_utc"),
         })
         {
             await using var drop = connection.CreateCommand();
@@ -167,7 +170,7 @@ public sealed class DatabaseTests
         var result = await fixture.Backups.TryRestoreAsync(
             backup!, TestContext.Current.CancellationToken);
         Assert.True(result.Restored);
-        Assert.Equal(11, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(12, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -365,6 +368,51 @@ public sealed class DatabaseTests
         Assert.Empty(await repository.LoadDueAsync(DateTimeOffset.Parse("2026-09-12T10:00:00Z"), cancellationToken));
         Assert.Equal([reminder.Id], (await repository.LoadDueAsync(
             DateTimeOffset.Parse("2026-09-12T10:15:00Z"), cancellationToken)).Select(item => item.Id));
+    }
+
+    [Fact]
+    public async Task A_snooze_picked_after_the_reminder_fired_is_selected_once_it_expires()
+    {
+        // Regression: the engine advances next_due_utc before notifying, so a
+        // snooze she picks after a reminder fired leaves next_due_utc in the
+        // future (a recurring reminder) or NULL (a fired one-off). The old
+        // query required next_due_utc <= $now and never selected either row
+        // again, so snoozing a fired reminder did nothing.
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var repository = new ReminderRepository(fixture.Database);
+        var recurring = new Reminder("recurring", "Recurring", null, true,
+            new RecurrenceRule.Daily(new TimeOnly(9, 0)), "UTC",
+            QuietHoursBehavior.DeliverImmediately, MissedOccurrencePolicy.LatestOnly,
+            DateTimeOffset.Parse("2026-09-13T09:00:00Z"),
+            DateTimeOffset.Parse("2026-09-12T09:16:00Z"));
+        var firedOnce = new Reminder("fired-once", "Fired once", null, true, new RecurrenceRule.Once(), "UTC",
+            QuietHoursBehavior.DeliverImmediately, MissedOccurrencePolicy.LatestOnly,
+            null,
+            DateTimeOffset.Parse("2026-09-12T09:20:00Z"));
+        var disabled = firedOnce with { Id = "disabled-once", Enabled = false };
+        await repository.SaveAsync(recurring, cancellationToken);
+        await repository.SaveAsync(firedOnce, cancellationToken);
+        await repository.SaveAsync(disabled, cancellationToken);
+
+        Assert.Empty(await repository.LoadDueAsync(DateTimeOffset.Parse("2026-09-12T09:15:00Z"), cancellationToken));
+        Assert.Equal(["recurring"], (await repository.LoadDueAsync(
+            DateTimeOffset.Parse("2026-09-12T09:16:00Z"), cancellationToken)).Select(item => item.Id));
+        Assert.Equal(["recurring", "fired-once"], (await repository.LoadDueAsync(
+            DateTimeOffset.Parse("2026-09-12T09:30:00Z"), cancellationToken)).Select(item => item.Id));
+
+        // Delivering the snooze clears it while keeping the regular schedule,
+        // so the row is not selected again until its next occurrence.
+        Assert.True(await repository.RecordOccurrencesAndAdvanceAsync(
+            recurring,
+            [new ReminderOccurrence(recurring.Id, recurring.SnoozedUntilUtc!.Value)],
+            recurring.NextDueUtc,
+            cancellationToken));
+        var stored = (await repository.ListAsync(cancellationToken)).Single(item => item.Id == recurring.Id);
+        Assert.Null(stored.SnoozedUntilUtc);
+        Assert.Equal(recurring.NextDueUtc, stored.NextDueUtc);
+        Assert.Equal(["fired-once"], (await repository.LoadDueAsync(
+            DateTimeOffset.Parse("2026-09-12T09:30:00Z"), cancellationToken)).Select(item => item.Id));
     }
 
     [Fact]
@@ -697,7 +745,7 @@ public sealed class DatabaseTests
         await using (var connection = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken))
         {
             await using var command = connection.CreateCommand();
-            command.CommandText = "ALTER TABLE preferences DROP COLUMN sounds_enabled; ALTER TABLE preferences DROP COLUMN sound_volume; UPDATE schema_version SET version = 7 WHERE id = 1;";
+            command.CommandText = "ALTER TABLE preferences DROP COLUMN sounds_enabled; ALTER TABLE preferences DROP COLUMN sound_volume; ALTER TABLE preferences DROP COLUMN global_shortcut; ALTER TABLE preferences DROP COLUMN pause_mode; ALTER TABLE preferences DROP COLUMN pause_expires_utc; UPDATE schema_version SET version = 7 WHERE id = 1;";
             await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
         }
 
@@ -709,6 +757,66 @@ public sealed class DatabaseTests
         Assert.True(await reader.ReadAsync(TestContext.Current.CancellationToken));
         Assert.Equal(1, reader.GetInt32(0));
         Assert.Equal(0.35, reader.GetDouble(1));
+    }
+
+    [Fact]
+    public async Task Version_eleven_database_migrates_to_a_default_global_shortcut_and_no_pause()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await new PreferencesRepository(fixture.Database).SaveAsync(
+            Preferences.Default with { GlobalShortcut = "Ctrl+Shift+K" }, cancellationToken);
+        await using (var connection = await fixture.Database.CreateConnectionAsync(cancellationToken))
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = "ALTER TABLE preferences DROP COLUMN global_shortcut; ALTER TABLE preferences DROP COLUMN pause_mode; ALTER TABLE preferences DROP COLUMN pause_expires_utc; UPDATE schema_version SET version = 11 WHERE id = 1;";
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        fixture.Database.InvalidateInitialization();
+        var migrated = await new PreferencesRepository(fixture.Database).GetAsync(cancellationToken);
+
+        Assert.Equal(12, await fixture.ReadSchemaVersionAsync(cancellationToken));
+        Assert.NotNull(migrated);
+        Assert.Null(migrated!.GlobalShortcut);
+        Assert.Null(migrated.PauseMode);
+        Assert.Null(migrated.PauseExpiresUtc);
+    }
+
+    [Fact]
+    public async Task Preferences_round_trip_the_global_shortcut()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var repository = new PreferencesRepository(fixture.Database);
+        var custom = Preferences.Default with { GlobalShortcut = "Ctrl+Shift+K" };
+
+        await repository.SaveAsync(custom, cancellationToken);
+        Assert.Equal(custom, await repository.GetAsync(cancellationToken));
+
+        await repository.SaveAsync(custom with { GlobalShortcut = null }, cancellationToken);
+        Assert.Null((await repository.GetAsync(cancellationToken))!.GlobalShortcut);
+    }
+
+    [Fact]
+    public async Task Preferences_round_trip_the_persisted_pause()
+    {
+        await using var fixture = await DatabaseFixture.CreateAsync();
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var repository = new PreferencesRepository(fixture.Database);
+        var paused = Preferences.Default with
+        {
+            PauseMode = "OneHour",
+            PauseExpiresUtc = DateTimeOffset.Parse("2026-09-12T11:00:00Z"),
+        };
+
+        await repository.SaveAsync(paused, cancellationToken);
+        Assert.Equal(paused, await repository.GetAsync(cancellationToken));
+
+        await repository.SaveAsync(paused with { PauseMode = null, PauseExpiresUtc = null }, cancellationToken);
+        var resumed = await repository.GetAsync(cancellationToken);
+        Assert.Null(resumed!.PauseMode);
+        Assert.Null(resumed.PauseExpiresUtc);
     }
 
     [Fact]
@@ -954,7 +1062,8 @@ public sealed class DatabaseTests
                 "outfit_key", "automatic_seasonal_mode", "anniversary_month",
                 "anniversary_day", "birthday_month", "birthday_day",
                 "evening_check_in_enabled", "bedtime_ritual_enabled",
-                "sounds_enabled", "sound_volume",
+                "sounds_enabled", "sound_volume", "global_shortcut",
+                "pause_mode", "pause_expires_utc",
             };
             foreach (var column in columns)
             {
@@ -980,11 +1089,11 @@ public sealed class DatabaseTests
         Assert.True(result.Restored, result.ToString());
 
         var preferencesRepository = new PreferencesRepository(fixture.Database);
-        Assert.Equal(11, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(12, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
         _ = await preferencesRepository.GetAsync(TestContext.Current.CancellationToken);
 
         await using var freshDatabase = await Database.OpenAsync(fixture.Options, TestContext.Current.CancellationToken);
-        Assert.Equal(11, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(12, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
         var freshPreferences = new PreferencesRepository(freshDatabase);
         _ = await freshPreferences.GetAsync(TestContext.Current.CancellationToken);
     }
@@ -1605,7 +1714,7 @@ public sealed class DatabaseTests
         await fixture.Database.InitializeAsync(TestContext.Current.CancellationToken);
         Assert.Equal(runsBefore + 1, fixture.Database.InitializationRunCount);
         Assert.Equal("Current", (await profiles.GetAsync(TestContext.Current.CancellationToken))?.RecipientName);
-        Assert.Equal(11, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(12, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -1627,7 +1736,7 @@ public sealed class DatabaseTests
         await using (var setup = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken))
         {
             await using var rollback = setup.CreateCommand();
-            rollback.CommandText = "UPDATE schema_version SET version = 9 WHERE id = 1;";
+            rollback.CommandText = "UPDATE schema_version SET version = 9 WHERE id = 1; ALTER TABLE preferences DROP COLUMN global_shortcut; ALTER TABLE preferences DROP COLUMN pause_mode; ALTER TABLE preferences DROP COLUMN pause_expires_utc;";
             await rollback.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
 
             await using var dropSeedState = setup.CreateCommand();
@@ -1670,7 +1779,7 @@ public sealed class DatabaseTests
         await using (var setup = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken))
         {
             await using var rollback = setup.CreateCommand();
-            rollback.CommandText = "UPDATE schema_version SET version = 9 WHERE id = 1;";
+            rollback.CommandText = "UPDATE schema_version SET version = 9 WHERE id = 1; ALTER TABLE preferences DROP COLUMN global_shortcut; ALTER TABLE preferences DROP COLUMN pause_mode; ALTER TABLE preferences DROP COLUMN pause_expires_utc;";
             await rollback.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
 
             await using var dropSeedState = setup.CreateCommand();
@@ -1716,7 +1825,7 @@ public sealed class DatabaseTests
         await using (var setup = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken))
         {
             await using var rollback = setup.CreateCommand();
-            rollback.CommandText = "UPDATE schema_version SET version = 9 WHERE id = 1;";
+            rollback.CommandText = "UPDATE schema_version SET version = 9 WHERE id = 1; ALTER TABLE preferences DROP COLUMN global_shortcut; ALTER TABLE preferences DROP COLUMN pause_mode; ALTER TABLE preferences DROP COLUMN pause_expires_utc;";
             await rollback.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
         }
 
@@ -1778,7 +1887,7 @@ public sealed class DatabaseTests
         await using (var setup = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken))
         {
             await using var rollback = setup.CreateCommand();
-            rollback.CommandText = "UPDATE schema_version SET version = 9 WHERE id = 1;";
+            rollback.CommandText = "UPDATE schema_version SET version = 9 WHERE id = 1; ALTER TABLE preferences DROP COLUMN global_shortcut; ALTER TABLE preferences DROP COLUMN pause_mode; ALTER TABLE preferences DROP COLUMN pause_expires_utc;";
             await rollback.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
 
             await using var dropSeedState = setup.CreateCommand();
@@ -1816,7 +1925,7 @@ public sealed class DatabaseTests
         fixture.Database.InvalidateInitialization();
         await fixture.Database.InitializeAsync(TestContext.Current.CancellationToken);
 
-        Assert.Equal(11, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(12, await fixture.ReadSchemaVersionAsync(TestContext.Current.CancellationToken));
     }
 
     [Fact]

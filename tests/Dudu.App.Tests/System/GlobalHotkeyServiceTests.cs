@@ -26,6 +26,25 @@ public sealed class GlobalHotkeyServiceTests
     }
 
     [Fact]
+    public void Native_registration_adds_mod_norepeat_so_holding_the_shortcut_fires_once()
+    {
+        Assert.Equal(0x4000u, WindowsGlobalHotkeyNativeApi.ModNoRepeat);
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "PRODUCT.md")))
+        {
+            directory = directory.Parent;
+        }
+
+        Assert.NotNull(directory);
+        var source = File.ReadAllText(Path.Combine(
+            directory!.FullName, "src", "Dudu.App", "System", "GlobalHotkeyService.cs"));
+        Assert.Contains("(HOT_KEY_MODIFIERS)((uint)modifiers | ModNoRepeat)", source, StringComparison.Ordinal);
+        // The gesture's own modifier flags stay free of it, so equality and
+        // the displayed text are unchanged.
+        Assert.Equal(HotkeyModifiers.Ctrl | HotkeyModifiers.Alt, HotkeyGesture.Default.Modifiers);
+    }
+
+    [Fact]
     public void Conflicting_registration_preserves_the_previous_registration()
     {
         var native = new FakeHotkeyNativeApi();

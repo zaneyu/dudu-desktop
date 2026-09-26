@@ -36,7 +36,16 @@ public sealed class ReminderEngine
         foreach (var reminder in reminders)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (reminder.NextDueUtc is null)
+
+            // A snooze picked after the reminder already fired: the engine
+            // advanced NextDueUtc past it (or cleared it, for a fired Once),
+            // so it is no longer inside the regular Reconcile window. It is
+            // delivered on its own below, keeping NextDueUtc for the regular
+            // schedule.
+            var snoozeOnly = reminder.SnoozedUntilUtc is { } snoozedUntilUtc
+                && snoozedUntilUtc.ToUniversalTime() <= nowUtc
+                && (reminder.NextDueUtc is not { } pendingUtc || pendingUtc.ToUniversalTime() > nowUtc);
+            if (reminder.NextDueUtc is null && !snoozeOnly)
             {
                 continue;
             }
@@ -59,11 +68,26 @@ public sealed class ReminderEngine
             ReminderReconciliation reconciliation;
             try
             {
-                reconciliation = ReminderScheduler.Reconcile(
-                    reminder,
-                    reminder.NextDueUtc.Value,
-                    nowUtc,
-                    timeZone);
+                if (snoozeOnly)
+                {
+                    var snooze = ReminderScheduler.ReconcileDueSnooze(reminder, nowUtc, timeZone);
+                    if (snooze is null)
+                    {
+                        // Still held by the reminder's own quiet hours: leave
+                        // the snooze untouched and retry on a later tick.
+                        continue;
+                    }
+
+                    reconciliation = snooze;
+                }
+                else
+                {
+                    reconciliation = ReminderScheduler.Reconcile(
+                        reminder,
+                        reminder.NextDueUtc!.Value,
+                        nowUtc,
+                        timeZone);
+                }
             }
             catch (ArgumentException)
             {

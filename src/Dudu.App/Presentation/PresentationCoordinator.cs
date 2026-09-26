@@ -484,7 +484,7 @@ public sealed class PresentationCoordinator :
                 return;
             }
 
-            var environment = CaptureEnvironment(now);
+            var environment = EnvironmentFor(item, CaptureEnvironment(now));
             if (_policy.IsQueued(item))
             {
                 // Finding 12: an earlier occurrence of this same recurring
@@ -827,7 +827,7 @@ public sealed class PresentationCoordinator :
                 return true;
             }
 
-            if (item.IsRoutine && IsSuppressed(CaptureEnvironment(now)))
+            if (item.IsRoutine && IsSuppressed(EnvironmentFor(item, CaptureEnvironment(now))))
             {
                 return false;
             }
@@ -1074,6 +1074,13 @@ public sealed class PresentationCoordinator :
             return true;
         }
     }
+
+    /// <summary>The environment as it applies to <paramref name="item"/>: an
+    /// item that <see cref="DurableNotification.IgnoresQuietHours"/> (the
+    /// bedtime routine) is not held by quiet hours; every other suppressor
+    /// still applies to it.</summary>
+    private static SuppressionSnapshot EnvironmentFor(DurableNotification item, SuppressionSnapshot snapshot) =>
+        item.IgnoresQuietHours ? snapshot with { NowQuiet = false } : snapshot;
 
     private static bool IsSuppressed(SuppressionSnapshot snapshot) =>
         snapshot.NowQuiet || snapshot.Fullscreen || snapshot.Paused

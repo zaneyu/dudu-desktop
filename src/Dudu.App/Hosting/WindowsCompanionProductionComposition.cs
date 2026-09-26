@@ -457,7 +457,32 @@ public static class WindowsCompanionProductionComposition
                 preferences.Theme,
                 OverlaySurfaceRenderer.IsHighContrastEnabled()));
             presenter = new LayeredFramePresenter();
-            var pause = new PauseStateStore();
+            // Seeded with the live fullscreen reading so "pause until
+            // fullscreen ends" chosen from inside a fullscreen session still
+            // ends with that session (see PauseStateStore.OnFullscreenChanged).
+            PauseStateStore? pauseStore = null;
+            var pause = new PauseStateStore(
+                () => presentationGateway?.IsFullscreen ?? false,
+                // Persisted without a runtime re-apply (CommitAsync), reading
+                // the store's latest state at commit time so two quick
+                // changes can never leave the older one on disk.
+                persist: changed => _ = ObserveNativeCallbackAsync(
+                    preferenceMutations.CommitAsync(
+                        current =>
+                        {
+                            var (mode, expiresUtc) = PausePersistence.ToPreference(pauseStore!.Current);
+                            return current with { PauseMode = mode, PauseExpiresUtc = expiresUtc };
+                        },
+                        (_, updated, token) => preferencesRepository.SaveAsync(updated, token)),
+                    "pause-persist",
+                    host.ErrorReporter));
+            pauseStore = pause;
+            // The pause she chose in an earlier run (the tray/overlay pause
+            // used to be lost on every restart).
+            pause.Restore(PausePersistence.FromPreference(
+                preferences.PauseMode,
+                preferences.PauseExpiresUtc,
+                DateTimeOffset.UtcNow));
             var runtimePreferences = new RuntimePreferencesState(preferences);
             var audioManifestPath = ResolveAudioManifestPath(assetsRoot);
             AudioCatalog audioCatalog;
@@ -487,7 +512,18 @@ public static class WindowsCompanionProductionComposition
                     DateTimeOffset.UtcNow,
                     runtimePreferences.Current.QuietHours,
                     TimeZoneInfo.Local),
-                isPaused: () => pause.GetEffective(DateTimeOffset.UtcNow).Mode != PauseMode.None,
+                // The same pause gate every other surface uses: "pause until
+                // fullscreen ends" only mutes while fullscreen is actually
+                // active, instead of muting audio for as long as the mode is
+                // merely set.
+                isPaused: () =>
+                {
+                    var now = DateTimeOffset.UtcNow;
+                    return PausePolicy.IsSuppressed(
+                        pause.GetEffective(now),
+                        now,
+                        presentationGateway?.IsFullscreen ?? false);
+                },
                 isFullscreen: () => presentationGateway?.IsFullscreen ?? false,
                 isSessionLocked: () => presentationGateway?.IsSessionLocked ?? false,
                 isSafeMode: () => safeMode,
@@ -522,6 +558,9 @@ public static class WindowsCompanionProductionComposition
                         $"tray-{command}",
                         host.ErrorReporter);
                 },
+                trayLabelOverride: command =>
+                    CompanionCommandRouter.TrayLabelFor(command, pause, DateTimeOffset.UtcNow),
+                fullscreenObserved: fullscreenNow => pause.OnFullscreenChanged(fullscreenNow),
                 initializeOverlay: async overlay =>
                 {
                     animationEngine = new AnimationEngine(
@@ -553,10 +592,28 @@ public static class WindowsCompanionProductionComposition
                         new WindowsAppNotificationSink(),
                         errorReporter: host.ErrorReporter);
                     AppNotificationService invokedNotifications = notificationService;
+                    var toastReminders = services.GetRequiredService<IReminderRepository>();
+                    var reminderToastActions = new ReminderToastActions(
+                        services.GetRequiredService<IClock>(),
+                        toastReminders,
+                        toastReminders as IReminderWriter
+                            ?? throw new InvalidOperationException("Reminder writer is not registered."),
+                        invokedNotifications.DismissReminderAsync,
+                        // presentationGateway is composed just below, before
+                        // any toast can exist to be clicked.
+                        (reminderId, token) =>
+                            presentationGateway?.DiscardHeldAsync(PresentationItemKind.Reminder, reminderId, token)
+                                ?? Task.CompletedTask,
+                        host.ErrorReporter);
                     try
                     {
                         AppNotificationManager.Default.NotificationInvoked += (_, invokedArgs) =>
-                            HandleNotificationInvoked(actions, invokedNotifications, invokedArgs.Arguments);
+                            HandleNotificationInvoked(
+                                actions,
+                                invokedNotifications,
+                                invokedArgs.Arguments,
+                                reminderToastActions,
+                                host.ErrorReporter);
                     }
                     catch (Exception exception)
                     {
@@ -846,7 +903,22 @@ public static class WindowsCompanionProductionComposition
                         }, token));
                     return Task.CompletedTask;
                 },
-                setGlobalShortcutAsync: runtime.SetGlobalShortcutAsync,
+                setGlobalShortcutAsync: async (shortcut, token) =>
+                {
+                    // Register first: a gesture another app already owns
+                    // throws here and is never saved. Only a registered
+                    // gesture is persisted, so it survives a restart (it used
+                    // to live only in the running hotkey service, and startup
+                    // always re-registered Ctrl+Alt+D).
+                    await runtime.SetGlobalShortcutAsync(shortcut, token);
+                    var gesture = HotkeyGesture.Parse(shortcut);
+                    await preferenceMutations.UpdateAsync(
+                        current => current with
+                        {
+                            GlobalShortcut = gesture == HotkeyGesture.Default ? null : gesture.ToString(),
+                        },
+                        token);
+                },
                 dismissReminderNotificationAsync: (reminderId, token) =>
                     notificationService?.DismissReminderAsync(reminderId, token) ?? Task.CompletedTask,
                 discardHeldReminderAsync: (reminderId, token) =>
@@ -1231,44 +1303,39 @@ public static class WindowsCompanionProductionComposition
     }
 
     /// <summary>
-    /// Resolves a toast activation to a settings destination and navigates
-    /// there. Executing Done/Snooze directly from the toast is out of scope
-    /// for this milestone; a malformed or unknown activation is ignored
-    /// rather than throwing.
+    /// Handles a toast activation through <see cref="ToastActivationRouter"/>:
+    /// a reminder toast's Done/Snooze buttons are carried out directly by
+    /// <see cref="ReminderToastActions"/> (they used to only open the
+    /// Reminders page and change nothing) and its body opens the Reminders
+    /// page. A malformed or unknown activation is ignored rather than throwing.
     /// </summary>
     private static void HandleNotificationInvoked(
         CompanionUiActions actions,
         AppNotificationService notifications,
-        IEnumerable<KeyValuePair<string, string>>? arguments)
+        IEnumerable<KeyValuePair<string, string>>? arguments,
+        ReminderToastActions? reminderActions,
+        IAppHostErrorReporter? errorReporter)
     {
         // Review I2: this used to re-parse invokedArgs.Argument, the raw string, with a
         // parser that split on '&' while the Windows App SDK writes ';' -- so every click
         // resolved to null. invokedArgs.Arguments is the SDK's own parsed map, which needs
         // no separator convention at all.
         var activation = NotificationActivation.TryParse(arguments);
-        var destination = activation?.Action switch
-        {
-            NotificationActivationAction.OpenNote => "notes",
-            NotificationActivationAction.ReminderDone => "reminders",
-            NotificationActivationAction.ReminderSnooze => "reminders",
-            _ => null,
-        };
-        if (destination is null)
+        if (activation is null)
         {
             return;
         }
 
-        if (activation!.ReminderId is { } reminderId)
-        {
-            // Acting on the toast acknowledges it; drop the Action Center copy.
-            _ = ObserveNativeCallbackAsync(
-                notifications.DismissReminderAsync(reminderId, CancellationToken.None),
-                "notification-dismiss");
-        }
-
         _ = ObserveNativeCallbackAsync(
-            DispatchSettingsDestinationAsync(actions, destination, CancellationToken.None),
-            "notification-invoked");
+            ToastActivationRouter.HandleAsync(
+                activation,
+                (destination, token) => DispatchSettingsDestinationAsync(actions, destination, token),
+                notifications.DismissReminderAsync,
+                reminderActions,
+                errorReporter,
+                CancellationToken.None),
+            "notification-invoked",
+            errorReporter);
     }
 
     private static async Task ObserveAnimationAsync(Task playback)

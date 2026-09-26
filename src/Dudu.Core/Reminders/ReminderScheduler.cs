@@ -153,6 +153,54 @@ public static class ReminderScheduler
         return NextOccurrence(reminder, effectiveNow, timeZone);
     }
 
+    /// <summary>
+    /// Delivers a snooze that has come due while the reminder's regular
+    /// schedule has already moved past it. <see cref="ReminderEngine"/>
+    /// advances <see cref="Reminder.NextDueUtc"/> to the next regular
+    /// occurrence (or null for a fired <see cref="RecurrenceRule.Once"/>)
+    /// before it notifies, so a snooze she picks after the reminder fired
+    /// always sits outside the <see cref="Reconcile"/> window that starts at
+    /// NextDueUtc. This delivers exactly that snooze, as one occurrence,
+    /// and keeps NextDueUtc unchanged for the regular schedule. Returns null
+    /// when no snooze is due yet, or when the reminder's own quiet hours
+    /// (<see cref="QuietHoursBehavior.WaitUntilQuietHoursEnd"/>) currently
+    /// hold it back -- the snooze is left in place and re-evaluated on a
+    /// later tick instead of being consumed.
+    /// </summary>
+    public static ReminderReconciliation? ReconcileDueSnooze(
+        Reminder reminder,
+        DateTimeOffset nowUtc,
+        TimeZoneInfo timeZone)
+    {
+        ArgumentNullException.ThrowIfNull(reminder);
+        ArgumentNullException.ThrowIfNull(timeZone);
+
+        if (!reminder.Enabled || reminder.SnoozedUntilUtc is not { } snoozedUntil)
+        {
+            return null;
+        }
+
+        nowUtc = nowUtc.ToUniversalTime();
+        snoozedUntil = snoozedUntil.ToUniversalTime();
+        if (snoozedUntil > nowUtc)
+        {
+            return null;
+        }
+
+        var deliverableUtc = ApplyQuietHours(reminder, snoozedUntil, timeZone) ?? snoozedUntil;
+        if (deliverableUtc > nowUtc
+            || (ApplyQuietHours(reminder, nowUtc, timeZone) is { } allowedUtc && allowedUtc > nowUtc))
+        {
+            return null;
+        }
+
+        var dueNow = ReminderOccurrencePolicy.Select(
+            reminder,
+            [new ReminderOccurrence(reminder.Id, deliverableUtc)],
+            nowUtc - deliverableUtc > OnTimeGracePeriod);
+        return new ReminderReconciliation(dueNow, reminder.NextDueUtc?.ToUniversalTime());
+    }
+
     public static ReminderReconciliation Reconcile(
         Reminder reminder,
         DateTimeOffset fromUtc,

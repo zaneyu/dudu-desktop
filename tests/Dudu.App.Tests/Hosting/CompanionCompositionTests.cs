@@ -120,6 +120,10 @@ public sealed class CompanionCompositionTests
         Assert.Equal(PauseMode.UntilTomorrowAtSeven, pause.Current.Mode);
         await router.HandleAsync(TrayCommand.PauseUntilFullscreenEnds, TestContext.Current.CancellationToken);
         Assert.Equal(PauseMode.UntilFullscreenEnds, pause.Current.Mode);
+        // "pause indefinitely or resume" resumes from ANY active pause; it
+        // used to turn this one into an indefinite pause instead.
+        await router.HandleAsync(TrayCommand.PauseIndefinitelyOrResume, TestContext.Current.CancellationToken);
+        Assert.Equal(PauseMode.None, pause.Current.Mode);
         await router.HandleAsync(TrayCommand.PauseIndefinitelyOrResume, TestContext.Current.CancellationToken);
         Assert.Equal(PauseMode.Indefinite, pause.Current.Mode);
         await router.HandleAsync(TrayCommand.PauseIndefinitelyOrResume, TestContext.Current.CancellationToken);
@@ -128,6 +132,44 @@ public sealed class CompanionCompositionTests
         await router.HandleAsync(TrayCommand.Exit, TestContext.Current.CancellationToken);
         Assert.Equal(1, settings);
         Assert.Equal(1, exit);
+    }
+
+    [Theory]
+    [InlineData(TrayCommand.PauseOneHour)]
+    [InlineData(TrayCommand.PauseUntilTomorrowAtSeven)]
+    [InlineData(TrayCommand.PauseUntilFullscreenEnds)]
+    public async Task Pause_indefinitely_or_resume_resumes_from_a_timed_or_fullscreen_pause(TrayCommand pauseCommand)
+    {
+        var overlay = new FakeOverlay();
+        var pause = new PauseStateStore();
+        var now = new DateTimeOffset(2026, 9, 11, 10, 0, 0, TimeSpan.Zero);
+        await using var lifecycle = new AppLifecycleCoordinator(
+            new FakeHost(),
+            overlay,
+            PetStateMachine.CreateIdle(),
+            Preferences.Default,
+            pauseState: () => pause.GetEffective(now),
+            clock: () => now);
+        var router = new CompanionCommandRouter(
+            lifecycle,
+            pause,
+            _ => Task.CompletedTask,
+            _ => Task.CompletedTask,
+            () => now);
+
+        await router.HandleAsync(pauseCommand, TestContext.Current.CancellationToken);
+        Assert.NotEqual(PauseMode.None, pause.Current.Mode);
+        Assert.Equal(
+            "resume dudu",
+            CompanionCommandRouter.TrayLabelFor(TrayCommand.PauseIndefinitelyOrResume, pause, now));
+
+        await router.HandleAsync(TrayCommand.PauseIndefinitelyOrResume, TestContext.Current.CancellationToken);
+
+        Assert.Equal(PauseMode.None, pause.Current.Mode);
+        Assert.Equal(
+            "pause indefinitely",
+            CompanionCommandRouter.TrayLabelFor(TrayCommand.PauseIndefinitelyOrResume, pause, now));
+        Assert.Null(CompanionCommandRouter.TrayLabelFor(TrayCommand.Exit, pause, now));
     }
 
     [Theory]

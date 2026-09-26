@@ -155,7 +155,9 @@ public sealed class AppNotificationService : INotificationService, IRegistrableN
         var request = new NotificationRequest(
             title,
             null,
-            null,
+            // A click on the toast body used to activate with no arguments at
+            // all, so nothing happened; it now opens the Reminders page.
+            "action=open-reminder&" + id,
             new[]
             {
                 new NotificationButton("Done", "action=reminder-done&" + id),

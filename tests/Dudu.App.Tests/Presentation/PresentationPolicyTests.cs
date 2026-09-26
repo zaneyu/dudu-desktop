@@ -24,6 +24,37 @@ public sealed class PresentationPolicyTests
     }
 
     [Fact]
+    public void Quiet_hours_alone_release_only_the_bedtime_routine_and_keep_the_rest_in_order()
+    {
+        var now = DateTimeOffset.Parse("2026-09-18T22:00:00Z");
+        var policy = new PresentationPolicy(TimeSpan.Zero);
+        var first = DurableNotification.Reminder("generic-1", "Stretch");
+        var bedtime = DurableNotification.Reminder(
+            Dudu.Core.Reminders.LocalReminderDefaults.BedtimeId, "Goodnight", expiresUtc: now.AddHours(2));
+        var evening = DurableNotification.Reminder(
+            Dudu.Core.Reminders.LocalReminderDefaults.EveningCheckInId, "Check in", expiresUtc: now.AddHours(2));
+        var second = DurableNotification.Reminder("generic-2", "Water");
+        policy.Enqueue(first);
+        policy.Enqueue(bedtime);
+        policy.Enqueue(evening);
+        policy.Enqueue(second);
+
+        // Quiet plus anything else still holds everything.
+        Assert.Empty(policy.Decide(nowQuiet: true, fullscreen: true, paused: false, nowUtc: now).ToPresent);
+        Assert.Empty(policy.Decide(nowQuiet: true, fullscreen: false, paused: false, nowUtc: now, userHidden: true).ToPresent);
+
+        var decision = policy.Decide(nowQuiet: true, fullscreen: false, paused: false, nowUtc: now);
+        Assert.Equal(bedtime, Assert.Single(decision.ToPresent));
+        Assert.Equal(3, decision.RemainingQueuedCount);
+        Assert.Empty(policy.Decide(nowQuiet: true, fullscreen: false, paused: false, nowUtc: now).ToPresent);
+
+        // Once quiet hours end, the others come out in their original order.
+        Assert.Equal(first, Assert.Single(policy.Decide(false, false, false, nowUtc: now).ToPresent));
+        Assert.Equal(evening, Assert.Single(policy.Decide(false, false, false, nowUtc: now).ToPresent));
+        Assert.Equal(second, Assert.Single(policy.Decide(false, false, false, nowUtc: now).ToPresent));
+    }
+
+    [Fact]
     public void Leaving_quiet_hours_releases_one_durable_item_not_a_burst()
     {
         var policy = PresentationPolicyFixture.WithQueuedNotes(3);

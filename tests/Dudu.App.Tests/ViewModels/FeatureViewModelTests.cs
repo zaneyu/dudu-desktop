@@ -466,6 +466,24 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Appearance_shows_the_saved_global_shortcut_instead_of_a_hard_coded_default()
+    {
+        // Regression: the field was hard-coded to "Ctrl+Alt+D", so Settings
+        // always showed the default even after she saved a different one.
+        var fixture = FeatureFixture.Create();
+        Assert.Equal("Ctrl+Alt+D", new AppearanceViewModel(fixture.Context).GlobalShortcut);
+
+        var viewModel = new AppearanceViewModel(fixture.Context);
+        await fixture.Context.UpdatePreferencesAsync(
+            current => current with { GlobalShortcut = "Ctrl+Shift+K" },
+            TestContext.Current.CancellationToken);
+        await viewModel.RefreshAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal("Ctrl+Shift+K", viewModel.GlobalShortcut);
+        Assert.Equal("Ctrl+Shift+K", new AppearanceViewModel(fixture.Context).GlobalShortcut);
+    }
+
+    [Fact]
     public async Task ArgumentException_error_text_strips_the_framework_parameter_suffix()
     {
         // Regression: ArgumentException.Message appends " (Parameter 'GlobalShortcut')" from

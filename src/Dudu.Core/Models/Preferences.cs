@@ -27,7 +27,10 @@ public sealed record Preferences(
     bool EveningCheckInEnabled = false,
     bool BedtimeRitualEnabled = false,
     bool SoundsEnabled = true,
-    double SoundVolume = 0.35)
+    double SoundVolume = 0.35,
+    string? GlobalShortcut = null,
+    string? PauseMode = null,
+    DateTimeOffset? PauseExpiresUtc = null)
 {
     public static Preferences Default => new(
         AppTheme.System,
