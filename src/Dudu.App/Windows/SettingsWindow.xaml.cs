@@ -334,16 +334,10 @@ public sealed partial class SettingsWindow : UserControl
     };
 
     private async void DuduPetButton_Click(object sender, RoutedEventArgs args) =>
-        await RunDuduOneShotAsync(
-            new PetEvent.AmbientRequested("greeting"),
-            "greeting",
-            "dudu says hi le");
+        await RunDuduActionAsync(features => features.PetAsync(CancellationToken.None), "dudu loves the pats le");
 
     private async void DuduDrinkButton_Click(object sender, RoutedEventArgs args) =>
-        await RunDuduOneShotAsync(
-            new PetEvent.AmbientRequested("drink"),
-            "drink",
-            "dudu says drink some water");
+        await RunDuduActionAsync(features => features.DrinkAsync(CancellationToken.None), "dudu says drink some water");
 
     private async void DuduComfortButton_Click(object sender, RoutedEventArgs args) =>
         await RunDuduOneShotAsync(
@@ -351,7 +345,12 @@ public sealed partial class SettingsWindow : UserControl
             "comfort",
             "dudu gives u a tiny hug");
 
-    private async Task RunDuduOneShotAsync(PetEvent petEvent, string dismissalId, string status)
+    private Task RunDuduOneShotAsync(PetEvent petEvent, string dismissalId, string status) =>
+        RunDuduActionAsync(
+            features => features.PresentOneShotPetAsync(petEvent, dismissalId, CancellationToken.None),
+            status);
+
+    private async Task RunDuduActionAsync(Func<CompanionFeatureContext, Task> action, string status)
     {
         var features = _context.Features;
         if (features is null)
@@ -363,7 +362,7 @@ public sealed partial class SettingsWindow : UserControl
         SetCompanionStatus(status);
         try
         {
-            await features.PresentOneShotPetAsync(petEvent, dismissalId, CancellationToken.None);
+            await action(features);
         }
         catch (Exception exception)
         {

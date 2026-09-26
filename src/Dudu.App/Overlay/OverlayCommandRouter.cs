@@ -175,24 +175,11 @@ public sealed class OverlayCommandRouter
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "alala unknown comfort action"),
     };
 
-    /// <summary>Petting resets the tantrum clock; a third pet within a
-    /// minute celebrates instead of the ordinary <c>petted</c> clip. An
-    /// interaction (not an ambient) so it also plays during focus or a meal.</summary>
-    private Task ExecutePetAsync(CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        var key = _context.Affection.RecordPet() == PetReaction.Delighted ? "celebrate" : "petted";
-        return _context.PresentOneShotPetAsync(
-            new PetEvent.InteractionRequested(key),
-            key,
-            cancellationToken);
-    }
+    private Task ExecutePetAsync(CancellationToken cancellationToken) =>
+        _context.PetAsync(cancellationToken);
 
     private Task ExecuteDrinkWaterAsync(CancellationToken cancellationToken) =>
-        _context.PresentOneShotPetAsync(
-            new PetEvent.InteractionRequested("drink"),
-            "drink",
-            cancellationToken);
+        _context.DrinkAsync(cancellationToken);
 
     /// <summary>Starts an in-memory eat-together meal (eat loop, notes and
     /// reminders held back like focus) or, when one is running, ends it.

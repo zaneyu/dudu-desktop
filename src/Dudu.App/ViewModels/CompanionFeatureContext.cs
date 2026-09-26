@@ -166,6 +166,20 @@ public sealed class CompanionFeatureContext
     public Func<PauseState, CancellationToken, Task> ApplyPauseAsync { get; }
     public Func<PetEvent, CancellationToken, Task> PresentPetAsync { get; }
     public Func<PetEvent, string, CancellationToken, Task> PresentOneShotPetAsync { get; }
+
+    /// <summary>Pets Dudu from any surface: resets the shared tantrum clock
+    /// and plays <c>petted</c>, or <c>celebrate</c> on a third pet within a
+    /// minute. An interaction (not an ambient) so it also plays during focus
+    /// or a meal.</summary>
+    public Task PetAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var key = Affection.RecordPet() == PetReaction.Delighted ? "celebrate" : "petted";
+        return PresentOneShotPetAsync(new PetEvent.InteractionRequested(key), key, cancellationToken);
+    }
+
+    public Task DrinkAsync(CancellationToken cancellationToken) =>
+        PresentOneShotPetAsync(new PetEvent.InteractionRequested("drink"), "drink", cancellationToken);
     public Func<RemoteEnvelope, CancellationToken, Task<RevealedRemoteNote>> RevealRemoteNoteAsync { get; }
     public Func<CancellationToken, Task> BackupAsync { get; }
     public Func<CancellationToken, Task> RestoreAsync { get; }

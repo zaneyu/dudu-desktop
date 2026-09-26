@@ -1323,6 +1323,24 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Context_pet_shares_the_affection_clock_with_the_overlay_router()
+    {
+        var fixture = FeatureFixture.Create();
+        var router = new OverlayCommandRouter(fixture.Context);
+
+        await fixture.Context.PetAsync(TestContext.Current.CancellationToken);
+        await router.ExecuteAsync(OverlayAction.Pet, TestContext.Current.CancellationToken);
+        await fixture.Context.PetAsync(TestContext.Current.CancellationToken);
+        await fixture.Context.DrinkAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(
+            ["petted", "petted", "celebrate", "drink"],
+            fixture.OneShotPresentations.Select(item =>
+                Assert.IsType<PetEvent.InteractionRequested>(item.Event).AnimationKey));
+        Assert.Equal(TimeSpan.Zero, fixture.Context.Affection.NeglectedFor);
+    }
+
+    [Fact]
     public async Task Router_drink_plays_during_focus_and_hands_back_to_focus()
     {
         var fixture = FeatureFixture.Create();
