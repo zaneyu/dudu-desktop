@@ -131,7 +131,7 @@ public sealed class ReminderDueSink : IReminderDueSink
                 reminder.Id,
                 title,
                 body: routine ? body : null,
-                animationKey: reminder.Id == LocalReminderDefaults.BedtimeId ? "sleep" : null,
+                animationKey: reminder.Id == LocalReminderDefaults.BedtimeId ? "sticker-025" : null,
                 expiresUtc: routine ? NextLocalMidnight(occurrence.DueUtc, reminder.LocalTimeZoneId) : null);
             var bypass = !routine && reminder.QuietHoursBehavior == QuietHoursBehavior.DeliverImmediately;
             await _gateway().PublishAsync(item, bypass, cancellationToken);

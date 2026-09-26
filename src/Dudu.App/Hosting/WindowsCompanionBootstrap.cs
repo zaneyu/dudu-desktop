@@ -780,7 +780,8 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
             {
                 await initializeOverlay(overlay);
             }
-            return new WindowsCompanionRuntime(
+
+            var composed = new WindowsCompanionRuntime(
                 host,
                 overlay,
                 lifecycle!,
@@ -792,6 +793,13 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                 onPreferencesChanged,
                 presentationEnvironment,
                 errorReporter);
+            // WM_HOTKEY and tray callbacks arrive at the overlay owner window
+            // but were only forwarded to the event source, never to the
+            // runtime handler, so the hotkey and tray menu were silently
+            // dropped into DefWindowProc.
+            var runtimeCopy = composed;
+            overlay.SetRuntimeMessageHandler(runtimeCopy.HandleWindowMessage);
+            return composed;
         }
         catch
         {
