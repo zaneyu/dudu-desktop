@@ -1169,6 +1169,82 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Appearance_refresh_builds_saved_dates_at_local_noon_so_pickers_show_the_right_day()
+    {
+        // Audit regression: dates were built at midnight UTC, which a date picker
+        // shows as the previous day anywhere west of UTC.
+        var fixture = FeatureFixture.Create();
+        await fixture.Context.UpdatePreferencesAsync(
+            current => current with { Anniversary = new MonthDay(9, 12) },
+            TestContext.Current.CancellationToken);
+        var viewModel = new AppearanceViewModel(fixture.Context);
+
+        await viewModel.RefreshAsync(TestContext.Current.CancellationToken);
+
+        var date = Assert.IsType<DateTimeOffset>(viewModel.AnniversaryDate);
+        Assert.Equal(12, date.Hour);
+        Assert.Equal(TimeZoneInfo.Local.GetUtcOffset(date.DateTime), date.Offset);
+        Assert.Equal(9, date.ToLocalTime().Month);
+        Assert.Equal(12, date.ToLocalTime().Day);
+    }
+
+    [Fact]
+    public async Task Appearance_refresh_keeps_the_chosen_monitor_when_the_combo_box_pushes_null()
+    {
+        // Audit regression: MonitorOptions.Clear() makes the TwoWay-bound monitor
+        // ComboBox push a null SelectedItem into MonitorDeviceName, so the chosen
+        // monitor reset to the first one on every visit.
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        await fixture.Placements.SaveAsync(new PetPlacement("MONITOR-1", 0.8, 0.8, 1.0), ct);
+        await fixture.Placements.SaveAsync(new PetPlacement("MONITOR-2", 0.8, 0.8, 1.4), ct);
+        var viewModel = new AppearanceViewModel(fixture.Context);
+        await viewModel.RefreshAsync(ct);
+        viewModel.MonitorDeviceName = "MONITOR-2";
+        var reannounced = false;
+        viewModel.MonitorOptions.CollectionChanged += (_, args) =>
+        {
+            // What the bound ComboBox does when its items are cleared.
+            if (args.Action == NotifyCollectionChangedAction.Reset) viewModel.MonitorDeviceName = null!;
+        };
+        viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(AppearanceViewModel.MonitorDeviceName)) reannounced = true;
+        };
+
+        await viewModel.RefreshAsync(ct);
+
+        Assert.Equal("MONITOR-2", viewModel.MonitorDeviceName);
+        Assert.Equal(1.4, viewModel.PetScale);
+        // Re-announced so the rebuilt ComboBox selects it again.
+        Assert.True(reannounced);
+    }
+
+    [Fact]
+    public void Appearance_page_keeps_layering_toggles_with_the_button_that_saves_them()
+    {
+        // Audit regression: "keep dudu above other windows" and "hide dudu during
+        // fullscreen work" sat under "save seasonal look", which does not save
+        // them; only "save appearance" does, so changes were silently lost.
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "PRODUCT.md"))) root = root.Parent;
+        Assert.NotNull(root);
+        var xaml = File.ReadAllText(Path.Combine(root.FullName, "src", "Dudu.App", "Pages", "AppearancePage.xaml"));
+        var lookAndMotion = xaml.IndexOf("Text=\"look and motion\"", StringComparison.Ordinal);
+        var save = xaml.IndexOf("AutomationProperties.AutomationId=\"AppearanceSave\"", StringComparison.Ordinal);
+        var petOptions = xaml.IndexOf("Text=\"pet options\"", StringComparison.Ordinal);
+        foreach (var id in new[] { "AppearanceAlwaysOnTop", "AppearanceHideFullscreen" })
+        {
+            var toggle = xaml.IndexOf($"AutomationProperties.AutomationId=\"{id}\"", StringComparison.Ordinal);
+            Assert.True(toggle > lookAndMotion && toggle < save && save < petOptions, id);
+        }
+
+        // The shortcut shows Dudu and opens Home; it does not toggle Dudu away.
+        Assert.Contains("Header=\"shortcut to open dudu\"", xaml);
+        Assert.DoesNotContain("show or hide dudu", xaml, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Appearance_reports_the_automatic_outfit_for_the_current_local_date()
     {
         var fixture = FeatureFixture.Create();
