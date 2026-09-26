@@ -288,16 +288,23 @@ public sealed class XamlContractTests
     }
 
     [Fact]
-    public void Primary_buttons_keep_coral_on_hover_and_meet_text_contrast()
+    public void Primary_buttons_keep_their_size_and_meet_text_contrast()
     {
-        // Audit regression: PrimaryButtonStyle was not based on a button style with
-        // coral PointerOver/Pressed brushes (it turned grey on hover), and white on
-        // the old coral #C95F55 was only ~4.0:1.
+        // Audit regression: white on the old coral #C95F55 was only ~4.0:1, and the
+        // explicit PrimaryButtonStyle dropped the implicit Button style's size setters.
+        // It must not be BasedOn a framework style: that StaticResource lookup from a
+        // merged theme dictionary cannot be verified off Windows and a miss fails startup.
         var root = FindRepositoryRoot();
         var controls = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Themes", "Controls.xaml"));
         var colors = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Themes", "Colors.xaml"));
 
-        Assert.Contains("<Style x:Key=\"PrimaryButtonStyle\" TargetType=\"Button\" BasedOn=\"{StaticResource AccentButtonStyle}\">", controls);
+        var primary = Regex.Match(
+            controls,
+            "<Style x:Key=\"PrimaryButtonStyle\" TargetType=\"Button\">(?<body>.*?)</Style>",
+            RegexOptions.Singleline);
+        Assert.True(primary.Success, "PrimaryButtonStyle must be a plain (not BasedOn) Button style.");
+        Assert.Contains("<Setter Property=\"MinHeight\" Value=\"40\" />", primary.Groups["body"].Value);
+        Assert.Contains("<Setter Property=\"Padding\" Value=\"16,8\" />", primary.Groups["body"].Value);
         var themes = Regex.Matches(
             colors,
             "<ResourceDictionary x:Key=\"(?<theme>\\w+)\">(?<body>.*?)</ResourceDictionary>",
@@ -306,19 +313,9 @@ public sealed class XamlContractTests
         foreach (var theme in new[] { "Default", "Light", "Dark" })
         {
             var body = themes[theme];
-            var foreground = BrushColor(body, "PrimaryButtonForegroundBrush");
-            foreach (var key in new[] { "CoralActionBrush", "AccentButtonBackgroundPointerOver", "AccentButtonBackgroundPressed" })
-            {
-                var ratio = ContrastRatio(BrushColor(body, key), foreground);
-                Assert.True(ratio >= 4.5, $"{theme} {key}: {ratio:F2}:1 is below 4.5:1");
-            }
-
-            Assert.Equal(foreground, BrushColor(body, "AccentButtonForegroundPointerOver"));
-            Assert.Equal(foreground, BrushColor(body, "AccentButtonForegroundPressed"));
+            var ratio = ContrastRatio(BrushColor(body, "CoralActionBrush"), BrushColor(body, "PrimaryButtonForegroundBrush"));
+            Assert.True(ratio >= 4.5, $"{theme} CoralActionBrush: {ratio:F2}:1 is below 4.5:1");
         }
-
-        // High contrast keeps the system accent-button brushes.
-        Assert.DoesNotContain("AccentButton", themes["HighContrast"], StringComparison.Ordinal);
     }
 
     private static string BrushColor(string dictionary, string key)

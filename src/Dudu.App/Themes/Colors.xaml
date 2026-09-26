@@ -10,11 +10,6 @@
             <!-- #B85248 keeps white text at 4.8:1 (was #C95F55, 4.0:1). -->
             <SolidColorBrush x:Key="CoralActionBrush" Color="#B85248" />
             <SolidColorBrush x:Key="PrimaryButtonForegroundBrush" Color="#FFFFFFFF" />
-            <!-- PrimaryButtonStyle (AccentButtonStyle) hover/press: stay coral, white text >= 5.8:1. -->
-            <SolidColorBrush x:Key="AccentButtonBackgroundPointerOver" Color="#A8463D" />
-            <SolidColorBrush x:Key="AccentButtonBackgroundPressed" Color="#9A3D35" />
-            <SolidColorBrush x:Key="AccentButtonForegroundPointerOver" Color="#FFFFFFFF" />
-            <SolidColorBrush x:Key="AccentButtonForegroundPressed" Color="#FFFFFFFF" />
             <SolidColorBrush x:Key="TextPrimaryBrush" Color="#2B2828" />
             <SolidColorBrush x:Key="TextSecondaryBrush" Color="#696164" />
             <SolidColorBrush x:Key="SuccessBrush" Color="#3E765F" />
@@ -29,11 +24,6 @@
             <!-- #B85248 keeps white text at 4.8:1 (was #C95F55, 4.0:1). -->
             <SolidColorBrush x:Key="CoralActionBrush" Color="#B85248" />
             <SolidColorBrush x:Key="PrimaryButtonForegroundBrush" Color="#FFFFFFFF" />
-            <!-- PrimaryButtonStyle (AccentButtonStyle) hover/press: stay coral, white text >= 5.8:1. -->
-            <SolidColorBrush x:Key="AccentButtonBackgroundPointerOver" Color="#A8463D" />
-            <SolidColorBrush x:Key="AccentButtonBackgroundPressed" Color="#9A3D35" />
-            <SolidColorBrush x:Key="AccentButtonForegroundPointerOver" Color="#FFFFFFFF" />
-            <SolidColorBrush x:Key="AccentButtonForegroundPressed" Color="#FFFFFFFF" />
             <SolidColorBrush x:Key="TextPrimaryBrush" Color="#2B2828" />
             <SolidColorBrush x:Key="TextSecondaryBrush" Color="#696164" />
             <SolidColorBrush x:Key="SuccessBrush" Color="#3E765F" />
@@ -47,11 +37,6 @@
             <SolidColorBrush x:Key="LavenderBorderBrush" Color="#5A5260" />
             <SolidColorBrush x:Key="CoralActionBrush" Color="#E88376" />
             <SolidColorBrush x:Key="PrimaryButtonForegroundBrush" Color="#FF2B2828" />
-            <!-- PrimaryButtonStyle (AccentButtonStyle) hover/press: stay coral, dark text >= 4.7:1. -->
-            <SolidColorBrush x:Key="AccentButtonBackgroundPointerOver" Color="#F0968A" />
-            <SolidColorBrush x:Key="AccentButtonBackgroundPressed" Color="#DD7568" />
-            <SolidColorBrush x:Key="AccentButtonForegroundPointerOver" Color="#FF2B2828" />
-            <SolidColorBrush x:Key="AccentButtonForegroundPressed" Color="#FF2B2828" />
             <SolidColorBrush x:Key="TextPrimaryBrush" Color="#F4EDE8" />
             <SolidColorBrush x:Key="TextSecondaryBrush" Color="#C6BDC0" />
             <SolidColorBrush x:Key="SuccessBrush" Color="#83C3A7" />

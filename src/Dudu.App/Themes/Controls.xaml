@@ -10,13 +10,12 @@
         <Setter Property="MinHeight" Value="40" />
         <Setter Property="Padding" Value="16,8" />
     </Style>
-    <!-- Based on the accent button so hover and press keep the coral fill
-         (the plain button template swapped in its grey PointerOver/Pressed
-         brushes). The AccentButton* hover/pressed brushes are overridden in
-         Colors.xaml for the light and dark themes only; high contrast keeps
-         the system accent-button brushes. An explicit Style replaces the
-         implicit one above, so its size and font setters are repeated. -->
-    <Style x:Key="PrimaryButtonStyle" TargetType="Button" BasedOn="{StaticResource AccentButtonStyle}">
+    <!-- An explicit Style replaces the implicit Button style above, so its
+         font and size setters are repeated here. Deliberately not BasedOn a
+         framework style: a StaticResource lookup from this merged dictionary
+         into XamlControlsResources cannot be verified off Windows, and a
+         miss would fail app startup. -->
+    <Style x:Key="PrimaryButtonStyle" TargetType="Button">
         <Setter Property="FontFamily" Value="Segoe UI Variable" />
         <Setter Property="MinHeight" Value="40" />
         <Setter Property="Padding" Value="16,8" />
