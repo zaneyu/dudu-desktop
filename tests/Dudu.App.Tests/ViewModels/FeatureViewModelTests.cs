@@ -2384,6 +2384,21 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public void Check_in_history_shows_friendly_choice_text_and_local_time()
+    {
+        // Audit regression: the history bound the raw enum name ("Tired") and the
+        // stored UTC timestamp (rendered with its "+00:00" offset).
+        var created = DateTimeOffset.Parse("2026-09-11T21:05:00Z");
+
+        Assert.Equal("great", CheckInDisplay.ChoiceText(MoodChoice.Great));
+        Assert.Equal("okay", CheckInDisplay.ChoiceText(MoodChoice.Okay));
+        Assert.Equal("tired", CheckInDisplay.ChoiceText(MoodChoice.Tired));
+        Assert.Equal("rough", CheckInDisplay.ChoiceText(MoodChoice.Rough));
+        Assert.Equal(created.ToLocalTime().ToString("g"), CheckInDisplay.TimeText(created));
+        Assert.DoesNotContain("+00:00", CheckInDisplay.TimeText(created), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task New_countdown_clears_the_selection_so_the_next_save_creates_a_new_countdown()
     {
         // Audit regression: there was no "new" action, so once a countdown was

@@ -142,7 +142,13 @@ public sealed class XamlContractTests
         Assert.Contains("Date=\"{x:Bind ViewModel.AnniversaryDate, Mode=TwoWay}\"", allPages);
         Assert.Contains("Date=\"{x:Bind ViewModel.BirthdayDate, Mode=TwoWay}\"", allPages);
         Assert.Contains("ViewModel.OutfitAvailabilityMessage", allPages);
-        Assert.Contains("ItemsSource=\"{x:Bind ViewModel.RecentCheckIns, Mode=OneWay}\"", File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml")));
+        var homeXaml = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml"));
+        Assert.Contains("ItemsSource=\"{x:Bind ViewModel.RecentCheckIns, Mode=OneWay}\"", homeXaml);
+        // Check-in history shows friendly local text, never the raw enum or UTC value.
+        Assert.Contains("{x:Bind viewmodels:CheckInDisplay.ChoiceText(Choice)}", homeXaml);
+        Assert.Contains("{x:Bind viewmodels:CheckInDisplay.TimeText(CreatedUtc)}", homeXaml);
+        Assert.DoesNotContain("Text=\"{x:Bind CreatedUtc}\"", homeXaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("Text=\"{x:Bind Choice}\"", homeXaml, StringComparison.Ordinal);
         var loveNotes = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "LoveNotesPage.xaml"));
         Assert.Contains("SelectedItem=\"{x:Bind ViewModel.SelectedRemoteEnvelope, Mode=TwoWay}\"", loveNotes);
         Assert.Contains("AutomationProperties.AutomationId=\"LoveNotesRevealSelected\"", loveNotes);
