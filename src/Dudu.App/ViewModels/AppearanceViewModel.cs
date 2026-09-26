@@ -40,6 +40,7 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
         _hideDuringFullscreen = preferences.HidePetDuringFullscreen;
         _soundsEnabled = preferences.SoundsEnabled;
         _soundVolume = Preferences.ClampSoundVolume(preferences.SoundVolume);
+        _globalShortcut = DisplayShortcut(preferences.GlobalShortcut);
         _petScale = 1;
         _loadedPetScale = _petScale;
         _monitorDeviceName = "current monitor";
@@ -210,6 +211,9 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
                 HideDuringFullscreen = preferences.HidePetDuringFullscreen;
                 SoundsEnabled = preferences.SoundsEnabled;
                 SoundVolume = preferences.SoundVolume;
+                // The shortcut box always showed Ctrl+Alt+D on open, whatever
+                // was actually saved; show the stored one.
+                GlobalShortcut = DisplayShortcut(preferences.GlobalShortcut);
                 _automaticSeasonalMode = preferences.AutomaticSeasonalMode;
                 OnPropertyChanged(nameof(AutomaticSeasonalMode));
                 _selectedOutfit = preferences.AutomaticSeasonalMode
@@ -325,10 +329,52 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
             }
 
             var canonical = gesture.ToString();
-            await _context.SetGlobalShortcutAsync(canonical, cancellationToken);
+            // The default is stored as "no custom shortcut" so typing Ctrl+Alt+D is the way
+            // back to the default.
+            var stored = gesture == HotkeyGesture.Default ? null : canonical;
+            // Register first and persist only once Windows accepted the chord: this used to
+            // re-register at runtime only, so the next start silently went back to Ctrl+Alt+D
+            // even though the page had said "shortcut set". A refused chord (already taken)
+            // throws before anything is saved, leaving the previous shortcut both registered
+            // and stored; a failed save re-registers the previous one.
+            await _context.PreferenceMutations.ApplyThenPersistAsync(
+                current => current with { GlobalShortcut = stored },
+                async (previous, _, token) =>
+                {
+                    try
+                    {
+                        await _context.SetGlobalShortcutAsync(canonical, token);
+                    }
+                    catch (HotkeyConflictException conflict)
+                    {
+                        // Say which shortcut still works, not just that this one failed.
+                        throw new HotkeyConflictException(
+                            $"{conflict.Message}, still using {DisplayShortcut(previous.GlobalShortcut)}");
+                    }
+                },
+                (previous, _, token) => _context.SetGlobalShortcutAsync(
+                    DisplayShortcut(previous.GlobalShortcut), token),
+                cancellationToken);
             // Show the shortcut the way it is registered ("ctrl + alt + k" becomes Ctrl+Alt+K).
             GlobalShortcut = canonical;
         }, "otayyy shortcut set");
+
+    /// <summary>The stored shortcut in the canonical form it is registered with; the default
+    /// when none is stored or the stored text no longer parses (startup registers the default
+    /// in that case too).</summary>
+    private static string DisplayShortcut(string? stored)
+    {
+        var normalized = Preferences.NormalizeGlobalShortcut(stored);
+        if (normalized is null) return HotkeyGesture.Default.ToString();
+        try
+        {
+            return HotkeyGesture.Parse(normalized).ToString();
+        }
+        catch (Exception exception) when (exception is FormatException or ArgumentException or InvalidOperationException)
+        {
+            return HotkeyGesture.Default.ToString();
+        }
+    }
 
     private string BuildOutfitAvailabilityMessage()
     {

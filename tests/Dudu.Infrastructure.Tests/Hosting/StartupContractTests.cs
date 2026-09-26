@@ -52,7 +52,12 @@ public sealed class StartupContractTests
             "Hosting",
             "WindowsCompanionBootstrap.cs"));
 
-        Assert.Contains("_hotkey.SetGesture(HotkeyGesture.Default)", bootstrap);
+        // Startup registers the shortcut persisted in preferences (it used to hard-code
+        // HotkeyGesture.Default, silently reverting a chosen shortcut on every restart) and
+        // still falls back to the default when the stored one is unusable or taken.
+        Assert.Contains("PersistedHotkeyRegistration.Apply(", bootstrap);
+        Assert.Contains("hotkey.SetGesture(HotkeyGesture.Default)", bootstrap);
+        Assert.DoesNotContain("_hotkey.SetGesture(HotkeyGesture.Default)", bootstrap);
         Assert.Contains("Dudu global hotkey unavailable", bootstrap);
         Assert.Contains("_tray.Attach(", bootstrap);
         Assert.Contains("Dudu tray icon unavailable", bootstrap);

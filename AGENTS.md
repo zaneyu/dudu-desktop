@@ -609,7 +609,8 @@ authoritative for future changes.
   overlay, tray, hotkey, event source, presentation and notification sinks)
   where one is composed, else legacy diagnostic, else a `Trace` line with
   operation + exception type/HResult only. Operation names in use:
-  `hotkey-attach`, `hotkey-set-gesture`, `tray-attach`, `tray-recreate`,
+  `hotkey-attach`, `hotkey-set-gesture`, `hotkey-restore` (a saved shortcut
+  that could not be re-registered at startup; falls back to the default), `tray-attach`, `tray-recreate`,
   `taskbar-tray-recreate`, `overlay-create`, `overlay-dispose`,
   `overlay-message-loop`, `fullscreen-poll` (fail-closed to hidden, unchanged),
   native callbacks (`session-lock/unlock`, `suspend`, `resume`,

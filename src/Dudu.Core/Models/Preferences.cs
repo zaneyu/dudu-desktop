@@ -27,7 +27,8 @@ public sealed record Preferences(
     bool EveningCheckInEnabled = false,
     bool BedtimeRitualEnabled = false,
     bool SoundsEnabled = true,
-    double SoundVolume = 0.35)
+    double SoundVolume = 0.35,
+    string? GlobalShortcut = null)
 {
     public static Preferences Default => new(
         AppTheme.System,
@@ -43,4 +44,12 @@ public sealed record Preferences(
 
     public static double ClampSoundVolume(double value) =>
         double.IsFinite(value) ? Math.Clamp(value, 0.0, 1.0) : 0.35;
+
+    /// <summary>Normalizes a persisted global show/hide shortcut. Null means
+    /// "use the built-in default"; blank text is treated the same way so a
+    /// cleared value never reaches hotkey parsing. The value itself is only
+    /// validated where the hotkey is registered (the App layer), keeping Core
+    /// free of any keyboard/UI dependency.</summary>
+    public static string? NormalizeGlobalShortcut(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }

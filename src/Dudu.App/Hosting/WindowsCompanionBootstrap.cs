@@ -669,6 +669,11 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
     private readonly IAppHostErrorReporter? _errorReporter;
     private readonly object _lifecycleGate = new();
     private readonly object _callbackSync = new();
+    // The persisted global shortcut (Preferences.GlobalShortcut). Registered
+    // at start instead of always HotkeyGesture.Default, which silently
+    // reverted a chosen shortcut to Ctrl+Alt+D on every restart.
+    private string? _persistedShortcut;
+    private bool _hotkeyStarted;
     private readonly HashSet<Task> _callbackTasks = new();
     private Task<bool>? _startTask;
     private Task? _disposeTask;
@@ -686,7 +691,8 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         Func<CancellationToken, Task> openHome,
         Func<Preferences, CancellationToken, Task>? onPreferencesChanged,
         IPresentationEnvironmentSink? presentationEnvironment = null,
-        IAppHostErrorReporter? errorReporter = null)
+        IAppHostErrorReporter? errorReporter = null,
+        string? persistedShortcut = null)
     {
         _host = host ?? throw new ArgumentNullException(nameof(host));
         _overlay = overlay ?? throw new ArgumentNullException(nameof(overlay));
@@ -699,6 +705,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         _onPreferencesChanged = onPreferencesChanged;
         _presentationEnvironment = presentationEnvironment;
         _errorReporter = errorReporter;
+        _persistedShortcut = Preferences.NormalizeGlobalShortcut(persistedShortcut);
     }
 
     public static async Task<WindowsCompanionRuntime> CreateAsync(
@@ -792,7 +799,8 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                 openHome,
                 onPreferencesChanged,
                 presentationEnvironment,
-                errorReporter);
+                errorReporter,
+                preferences.GlobalShortcut);
             // WM_HOTKEY and tray callbacks arrive at the overlay owner window
             // but were only forwarded to the event source, never to the
             // runtime handler, so the hotkey and tray menu were silently
@@ -860,6 +868,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         ArgumentNullException.ThrowIfNull(placement);
         await _lifecycle.UpdatePreferencesAsync(preferences, cancellationToken);
         await _overlay.SetAlwaysOnTopAsync(preferences.AlwaysOnTop, cancellationToken);
+        await SyncPersistedShortcutAsync(preferences.GlobalShortcut, cancellationToken);
         if (_onPreferencesChanged is not null)
         {
             await _onPreferencesChanged(preferences, cancellationToken);
@@ -880,7 +889,54 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
     {
         cancellationToken.ThrowIfCancellationRequested();
         var gesture = HotkeyGesture.Parse(shortcut);
-        return _overlay.InvokeOnOwnerAsync(() => _hotkey.SetGesture(gesture), cancellationToken);
+        return _overlay.InvokeOnOwnerAsync(() =>
+        {
+            _hotkey.SetGesture(gesture);
+            Volatile.Write(ref _persistedShortcut, gesture.ToString());
+        }, cancellationToken);
+    }
+
+    /// <summary>
+    /// Keeps the registered hotkey in step with a preference row that was
+    /// replaced wholesale (backup restore, delete local data) or applied at
+    /// startup. Best-effort: the shortcut is convenience-only, so a refused
+    /// chord is reported and never fails the surrounding settings apply --
+    /// otherwise an unavailable stored shortcut would make every later theme
+    /// or sound save fail too. Before the runtime has started the value is
+    /// only remembered; StartCoreAsync registers it once the owner window
+    /// exists.
+    /// </summary>
+    private async Task SyncPersistedShortcutAsync(
+        string? persistedShortcut,
+        CancellationToken cancellationToken)
+    {
+        var normalized = Preferences.NormalizeGlobalShortcut(persistedShortcut);
+        var previous = Interlocked.Exchange(ref _persistedShortcut, normalized);
+        // Only a changed stored value is re-registered: an ordinary theme or
+        // sound save must not retry (and re-report) a stored chord that
+        // another app still owns on every apply.
+        if (!Volatile.Read(ref _hotkeyStarted)
+            || string.Equals(previous, normalized, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        await _overlay.InvokeOnOwnerAsync(() =>
+        {
+            if (PersistedHotkeyRegistration.Matches(_hotkey.CurrentGesture, normalized))
+            {
+                return;
+            }
+
+            try
+            {
+                PersistedHotkeyRegistration.Apply(_hotkey, normalized, _errorReporter);
+            }
+            catch (Exception exception)
+            {
+                ReportFailure("hotkey-attach", exception);
+            }
+        }, cancellationToken);
     }
 
     public Task StartAsync(CancellationToken cancellationToken = default)
@@ -913,7 +969,11 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                 try
                 {
                     _hotkey.AttachOwnerWindow(_overlay.Handle);
-                    _hotkey.SetGesture(HotkeyGesture.Default);
+                    Volatile.Write(ref _hotkeyStarted, true);
+                    PersistedHotkeyRegistration.Apply(
+                        _hotkey,
+                        Volatile.Read(ref _persistedShortcut),
+                        _errorReporter);
                 }
                 catch (Exception exception)
                 {
@@ -1199,6 +1259,79 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
             operation,
             exception.GetType().FullName,
             exception.HResult);
+    }
+}
+
+/// <summary>
+/// Registers the global shortcut persisted in <see cref="Preferences.GlobalShortcut"/>
+/// on an owner-attached <see cref="GlobalHotkeyService"/>. A stored value that no
+/// longer parses (or is now reserved) or that the OS refuses falls back to
+/// <see cref="HotkeyGesture.Default"/> and is reported as
+/// <see cref="RestoreOperation"/>; the stored preference is left untouched so a
+/// later start can claim it again once the other app releases it.
+/// </summary>
+internal static class PersistedHotkeyRegistration
+{
+    public const string RestoreOperation = "hotkey-restore";
+
+    public static bool Matches(HotkeyGesture current, string? persistedShortcut)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        var normalized = Preferences.NormalizeGlobalShortcut(persistedShortcut);
+        if (normalized is null) return current == HotkeyGesture.Default;
+        try
+        {
+            return HotkeyGesture.Parse(normalized) == current;
+        }
+        catch (Exception exception) when (exception is FormatException or ArgumentException or InvalidOperationException)
+        {
+            // An unusable stored value is served by the default.
+            return current == HotkeyGesture.Default;
+        }
+    }
+
+    /// <summary>Returns the gesture that ended up registered. Throws only when
+    /// even the default cannot be registered (the caller reports that as
+    /// hotkey-attach, exactly as before).</summary>
+    public static HotkeyGesture Apply(
+        GlobalHotkeyService hotkey,
+        string? persistedShortcut,
+        IAppHostErrorReporter? errorReporter)
+    {
+        ArgumentNullException.ThrowIfNull(hotkey);
+        var normalized = Preferences.NormalizeGlobalShortcut(persistedShortcut);
+        HotkeyGesture? desired = null;
+        if (normalized is not null)
+        {
+            try
+            {
+                desired = HotkeyGesture.Parse(normalized);
+            }
+            catch (Exception exception) when (exception is FormatException or ArgumentException or InvalidOperationException)
+            {
+                // Includes HotkeyConflictException for a chord that became
+                // reserved after it was saved.
+                WindowsCompanionRuntime.ReportStaticFailure(errorReporter, RestoreOperation, exception);
+            }
+        }
+
+        if (desired is not null && desired != HotkeyGesture.Default)
+        {
+            try
+            {
+                hotkey.SetGesture(desired);
+                return desired;
+            }
+            catch (Exception exception) when (exception is not ObjectDisposedException)
+            {
+                // Another app already owns the saved chord. Keep a working
+                // shortcut rather than none at all.
+                WindowsCompanionRuntime.ReportStaticFailure(errorReporter, RestoreOperation, exception);
+            }
+        }
+
+        hotkey.SetGesture(HotkeyGesture.Default);
+        return HotkeyGesture.Default;
     }
 }
 
