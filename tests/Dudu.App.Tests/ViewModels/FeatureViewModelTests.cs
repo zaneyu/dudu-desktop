@@ -439,6 +439,41 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task An_error_hides_an_earlier_success_message_so_both_never_show_together()
+    {
+        // Audit regression: RunAsync cleared ErrorMessage but not StatusMessage,
+        // and the request-delete handlers set ErrorMessage directly, so "oki
+        // saved" and an error could show side by side.
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        var home = new HomeViewModel(fixture.Context) { CountdownTitle = "Visit" };
+        await home.SaveCountdownAsync(ct);
+        Assert.True(home.HasStatus);
+
+        home.RequestDeleteCountdownCommand.Execute(null);
+
+        Assert.Equal("select one first", home.ErrorMessage);
+        Assert.False(home.HasStatus);
+
+        var tasks = new TasksFocusViewModel(fixture.Context) { Title = "Book dinner" };
+        await tasks.SaveTaskAsync(ct);
+        Assert.True(tasks.HasStatus);
+        await tasks.SaveTaskAsync(ct); // blank title now: fails
+
+        Assert.True(tasks.HasError);
+        Assert.False(tasks.HasStatus);
+
+        var notes = new LoveNotesViewModel(fixture.Context) { DraftText = "hi" };
+        await notes.SaveLocalNoteAsync(ct);
+        notes.RequestDeleteLocalNoteCommand.Execute(null);
+        Assert.True(notes.HasError);
+        Assert.False(notes.HasStatus);
+
+        notes.RequestDeleteLocalNoteCommand.Execute(Assert.Single(notes.LocalNotes));
+        Assert.False(notes.HasError);
+    }
+
+    [Fact]
     public async Task Null_selection_reports_select_one_first_instead_of_internals()
     {
         var fixture = FeatureFixture.Create();

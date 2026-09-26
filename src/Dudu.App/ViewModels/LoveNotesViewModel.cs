@@ -259,11 +259,11 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
     {
         if (note is null)
         {
-            ErrorMessage = SelectOneFirstMessage;
+            ReportError(SelectOneFirstMessage);
             return;
         }
 
-        ErrorMessage = null;
+        ClearMessages();
         PendingDeleteNote = note;
     }
 
