@@ -911,6 +911,47 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Saving_an_opened_note_removes_it_from_pending_even_for_a_fresh_envelope_instance()
+    {
+        // Audit regression: PendingRemoteNotes.Remove(envelope) used record
+        // equality, which compares the byte[] fields by reference, so a note
+        // revealed from a different (e.g. refreshed) instance was never removed.
+        var fixture = FeatureFixture.Create();
+        var received = fixture.Clock.UtcNow;
+        fixture.RemoteNotes.Pending.Add(new RemoteEnvelope("message-1", [1], received));
+        var viewModel = new LoveNotesViewModel(fixture.Context);
+        await viewModel.RefreshAsync(TestContext.Current.CancellationToken);
+
+        await viewModel.RevealRemoteNoteCommand.ExecuteAsync(new RemoteEnvelope("message-1", [1], received));
+        await viewModel.SaveOpenedNoteCommand.ExecuteAsync(null);
+
+        Assert.Empty(viewModel.PendingRemoteNotes);
+        Assert.Equal(0, viewModel.UnopenedRemoteNoteCount);
+    }
+
+    [Fact]
+    public async Task Let_dudu_choose_shows_the_pick_in_the_jar_without_replacing_an_opened_note()
+    {
+        // Audit regression: the pick was written into the incoming "opened note"
+        // box, replacing an encrypted note she had opened but not saved yet.
+        var fixture = FeatureFixture.Create();
+        fixture.LocalNotes.Notes.Add(new LocalLoveNote("local-1", "you are doing great", true));
+        var envelope = new RemoteEnvelope("message-1", [1], fixture.Clock.UtcNow);
+        fixture.RemoteNotes.Pending.Add(envelope);
+        var viewModel = new LoveNotesViewModel(fixture.Context);
+        await viewModel.RefreshAsync(TestContext.Current.CancellationToken);
+        await viewModel.RevealRemoteNoteCommand.ExecuteAsync(envelope);
+        var opened = viewModel.OpenedRemoteNoteText;
+
+        await viewModel.ShowLocalNoteCommand.ExecuteAsync(null);
+
+        Assert.Equal("you are doing great", viewModel.ChosenLocalNoteText);
+        Assert.True(viewModel.HasChosenLocalNote);
+        Assert.Equal(opened, viewModel.OpenedRemoteNoteText);
+        Assert.Same(envelope, viewModel.OpenedRemoteEnvelope);
+    }
+
+    [Fact]
     public async Task Privacy_destructive_actions_require_a_separate_confirmation()
     {
         var calls = new List<string>();

@@ -29,6 +29,10 @@
                     <Button Content="delete selected" Command="{x:Bind ViewModel.RequestDeleteLocalNoteCommand}" CommandParameter="{x:Bind ViewModel.SelectedNote, Mode=OneWay}" AutomationProperties.AutomationId="LoveNotesDelete" AutomationProperties.Name="delete selected" />
                     <Button Content="let dudu choose" Command="{x:Bind ViewModel.ShowLocalNoteCommand}" AutomationProperties.AutomationId="LoveNotesChoose" AutomationProperties.Name="let dudu choose" />
                 </StackPanel>
+                <StackPanel Spacing="4" Visibility="{x:Bind ViewModel.HasChosenLocalNote, Mode=OneWay}">
+                    <TextBlock Text="dudu picked this one for you" Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" />
+                    <TextBlock Text="{x:Bind ViewModel.ChosenLocalNoteText, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" AutomationProperties.AutomationId="LoveNotesChosen" AutomationProperties.Name="{x:Bind ViewModel.ChosenLocalNoteText, Mode=OneWay}" />
+                </StackPanel>
                 <Border Padding="16" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource WarningBrush}" Visibility="{x:Bind ViewModel.IsConfirmingDeleteNote, Mode=OneWay}" AutomationProperties.AutomationId="LoveNotesDeleteConfirmationPanel" AutomationProperties.Name="delete note confirmation panel">
                     <StackPanel Spacing="8">
                         <TextBlock Text="{x:Bind ViewModel.DeleteNotePrompt, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Assertive" AutomationProperties.AutomationId="LoveNotesDeleteConfirmationMessage" AutomationProperties.Name="delete note confirmation message" />
