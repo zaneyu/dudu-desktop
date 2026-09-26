@@ -38,6 +38,18 @@ public static class AssetManifestContract
         "note-arrival",
     ];
 
+    /// <summary>
+    /// Interaction poses a pack may supply. They are optional so an older or
+    /// neutral pack stays valid; a missing key resolves to the idle loop.
+    /// </summary>
+    public static IReadOnlyList<string> OptionalAnimationKeys { get; } =
+    [
+        "drag",
+        "tantrum",
+        "petted",
+        "eat",
+    ];
+
     public static IReadOnlySet<string> OneShotAnimationKeys { get; } =
         new HashSet<string>(StringComparer.Ordinal)
         {
@@ -47,6 +59,8 @@ public static class AssetManifestContract
             "celebrate",
             "comfort-hug",
             "note-arrival",
+            "tantrum",
+            "petted",
         };
 
     /// <summary>The motion clip played while Dudu wanders across the desktop.</summary>
@@ -104,6 +118,7 @@ public static class AssetManifestContract
     public static bool IsSupportedAnimationKey(string? key) =>
         key is not null
         && (RequiredAnimationKeys.Contains(key, StringComparer.Ordinal)
+            || OptionalAnimationKeys.Contains(key, StringComparer.Ordinal)
             || IsStickerAnimationKey(key)
             || IsMotionAnimationKey(key));
 
