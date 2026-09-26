@@ -275,6 +275,9 @@ public sealed class HomeViewModel : FeatureViewModelBase
         PetState.WelcomeBack => "saying welcome back",
         PetState.Ambient => "having a little moment",
         PetState.Focus => "keeping u company while u focus",
+        PetState.Interaction => "enjoying the attention",
+        PetState.Dragging => "being carried around",
+        PetState.Eating => "eating with u",
         _ => "idle",
     };
 
