@@ -155,7 +155,9 @@ public sealed class AppNotificationService : INotificationService, IRegistrableN
         var request = new NotificationRequest(
             title,
             null,
-            null,
+            // Without body arguments a click on the toast itself (rather than
+            // Done/Snooze) activated nothing; it now opens the Reminders page.
+            "action=open-reminder&" + id,
             new[]
             {
                 new NotificationButton("Done", "action=reminder-done&" + id),

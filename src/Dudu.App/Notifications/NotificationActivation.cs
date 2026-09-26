@@ -6,12 +6,13 @@ public enum NotificationActivationAction
     OpenNote,
     ReminderDone,
     ReminderSnooze,
+    /// <summary>A click on a reminder toast's body (not one of its buttons).</summary>
+    OpenReminder,
 }
 
 /// <summary>
-/// A parsed toast activation. Executing Done/Snooze directly from the toast
-/// is out of scope for this milestone; this record only carries enough to
-/// navigate to the matching settings destination.
+/// A parsed toast activation: which toast (or toast button) was clicked and
+/// the id it carries. NotificationInvocationRouter acts on it.
 /// </summary>
 public sealed record NotificationActivation(
     NotificationActivationAction Action,
@@ -84,9 +85,23 @@ public sealed record NotificationActivation(
                 new NotificationActivation(NotificationActivationAction.ReminderDone, null, reminderId),
             "reminder-snooze" when HasValue(values, "reminderId", out var reminderId) =>
                 new NotificationActivation(NotificationActivationAction.ReminderSnooze, null, reminderId),
+            "open-reminder" when HasValue(values, "reminderId", out var reminderId) =>
+                new NotificationActivation(NotificationActivationAction.OpenReminder, null, reminderId),
             _ => null,
         };
     }
+
+    /// <summary>
+    /// The settings page this activation belongs to: Love Notes for a note
+    /// toast, Reminders for anything on a reminder toast. Used to open the
+    /// page for a body click, and as the fallback when a Done/Snooze button
+    /// could not be carried out in the background.
+    /// </summary>
+    public string Destination => Action switch
+    {
+        NotificationActivationAction.OpenNote => "notes",
+        _ => "reminders",
+    };
 
     /// <summary>
     /// A message id is looked up as a <see cref="Guid"/> downstream, so an

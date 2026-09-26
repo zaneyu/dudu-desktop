@@ -611,6 +611,8 @@ authoritative for future changes.
   operation + exception type/HResult only. Operation names in use:
   `hotkey-attach`, `hotkey-set-gesture`, `hotkey-restore` (a saved shortcut
   that could not be re-registered at startup; falls back to the default), `tray-attach`, `tray-recreate`,
+  `tray-menu-state` (the tray menu falls back to neutral labels),
+  `pet-context-menu` (right-click on the pet showing the tray menu),
   `taskbar-tray-recreate`, `overlay-create`, `overlay-dispose`,
   `overlay-message-loop`, `fullscreen-poll` (fail-closed to hidden, unchanged),
   native callbacks (`session-lock/unlock`, `suspend`, `resume`,
@@ -618,6 +620,10 @@ authoritative for future changes.
   `reminder-notify`, `reminder-notify-profile` (a transient failure reading
   the profile for name personalization; the notify itself still goes out
   with the neutral copy), `presentation-tick`, `toast-notify`,
+  `notification-invoked` (a toast click could not open its page),
+  `reminder-toast-action` (a reminder toast's Done/Snooze could not be
+  carried out -- Snooze then opens the Reminders page instead; exception
+  only, never the reminder text),
   `reconcile-visibility` (both `AppLifecycleCoordinator.ReconcileVisibilityAsync`
   and `AppHost`'s wrapper around it report under this one name),
   `presentation-held-load`, `presentation-held-persist`,
