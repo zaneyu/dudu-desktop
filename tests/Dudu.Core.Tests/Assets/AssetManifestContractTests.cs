@@ -19,6 +19,25 @@ public sealed class AssetManifestContractTests
         Assert.Contains(errors, error => error.Contains("packId", StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData("drag", "loop")]
+    [InlineData("eat", "loop")]
+    [InlineData("tantrum", "once")]
+    [InlineData("petted", "once")]
+    public void Optional_interaction_poses_are_supported_but_not_required(string key, string loop)
+    {
+        var withoutPose = ValidManifest();
+        Assert.Empty(AssetManifestContract.Validate(withoutPose));
+
+        var withPose = ValidManifest();
+        withPose.Outfits["base"].Animations[key] = Animation(key);
+
+        Assert.True(AssetManifestContract.IsSupportedAnimationKey(key));
+        Assert.Equal(loop == "once", AssetManifestContract.IsOneShotAnimationKey(key));
+        Assert.Equal(loop, withPose.Outfits["base"].Animations[key].Loop);
+        Assert.Empty(AssetManifestContract.Validate(withPose));
+    }
+
     [Fact]
     public void Frame_count_is_capped_per_animation()
     {
