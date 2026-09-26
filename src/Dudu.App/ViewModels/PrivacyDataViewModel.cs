@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
 namespace Dudu.App.ViewModels;
@@ -26,14 +27,38 @@ public sealed class PrivacyDataViewModel : FeatureViewModelBase
     public PrivacyDataViewModel(CompanionFeatureContext context)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
-        BackupCommand = new AsyncRelayCommand(() => BackupAsync(CancellationToken.None));
-        RequestRestoreCommand = new RelayCommand(() => RequestConfirmation(PrivacyConfirmationAction.Restore));
-        RequestDeleteLocalDataCommand = new RelayCommand(() => RequestConfirmation(PrivacyConfirmationAction.DeleteLocal));
-        RequestDeleteRemoteDataCommand = new RelayCommand(() => RequestConfirmation(PrivacyConfirmationAction.DeleteRemote));
+        // Every data action is gated on !IsBusy: a backup still copying the database must not
+        // race a confirmed local deletion or restore, and the pending confirmation must not be
+        // swapped out from under the action that is running (its success would then silently
+        // disarm the newly requested one).
+        BackupCommand = new AsyncRelayCommand(() => BackupAsync(CancellationToken.None), () => !IsBusy);
+        RequestRestoreCommand = new RelayCommand(
+            () => RequestConfirmation(PrivacyConfirmationAction.Restore),
+            () => !IsBusy);
+        RequestDeleteLocalDataCommand = new RelayCommand(
+            () => RequestConfirmation(PrivacyConfirmationAction.DeleteLocal),
+            () => !IsBusy);
+        RequestDeleteRemoteDataCommand = new RelayCommand(
+            () => RequestConfirmation(PrivacyConfirmationAction.DeleteRemote),
+            () => !IsBusy);
         ConfirmCommand = new AsyncRelayCommand(
             () => ConfirmAsync(CancellationToken.None),
-            () => PendingConfirmation != PrivacyConfirmationAction.None);
-        CancelConfirmationCommand = new RelayCommand(CancelConfirmation);
+            () => PendingConfirmation != PrivacyConfirmationAction.None && !IsBusy);
+        CancelConfirmationCommand = new RelayCommand(
+            CancelConfirmation,
+            () => PendingConfirmation != PrivacyConfirmationAction.None && !IsBusy);
+    }
+
+    protected override void OnPropertyChanged(PropertyChangedEventArgs e)
+    {
+        base.OnPropertyChanged(e);
+        if (e.PropertyName != nameof(IsBusy)) return;
+        BackupCommand.NotifyCanExecuteChanged();
+        RequestRestoreCommand.NotifyCanExecuteChanged();
+        RequestDeleteLocalDataCommand.NotifyCanExecuteChanged();
+        RequestDeleteRemoteDataCommand.NotifyCanExecuteChanged();
+        ConfirmCommand.NotifyCanExecuteChanged();
+        CancelConfirmationCommand.NotifyCanExecuteChanged();
     }
 
     public IAsyncRelayCommand BackupCommand { get; }
@@ -51,15 +76,23 @@ public sealed class PrivacyDataViewModel : FeatureViewModelBase
             OnPropertyChanged(nameof(ConfirmationTitle));
             OnPropertyChanged(nameof(ConfirmationMessage));
             OnPropertyChanged(nameof(ConfirmationButtonText));
+            OnPropertyChanged(nameof(HasPendingConfirmation));
             ConfirmCommand.NotifyCanExecuteChanged();
+            CancelConfirmationCommand.NotifyCanExecuteChanged();
         }
     }
+
+    /// <summary>Drives the confirmation panel's visibility: with nothing pending it used to
+    /// sit on screen permanently as a warning box with a disabled confirm button.</summary>
+    public bool HasPendingConfirmation => PendingConfirmation != PrivacyConfirmationAction.None;
     public string ConfirmationTitle => PendingConfirmation == PrivacyConfirmationAction.None
         ? "confirmation needed"
         : "confirm this action";
     public string ConfirmationMessage => PendingConfirmation switch
     {
-        PrivacyConfirmationAction.Restore => "restore latest backup then dudu restarts",
+        // Restoring never restarted anything, yet this used to promise "then dudu restarts".
+        // Say what actually happens: the newest backup replaces what is on this pc now.
+        PrivacyConfirmationAction.Restore => "replace data on this pc with latest backup changes since then are lost",
         PrivacyConfirmationAction.DeleteLocal => "delete all data here forever cannot undo",
         PrivacyConfirmationAction.DeleteRemote => "delete remote data and sessions local stays",
         _ => "pick an action above to see effect",
@@ -106,8 +139,10 @@ public sealed class PrivacyDataViewModel : FeatureViewModelBase
     public Task BackupAsync(CancellationToken cancellationToken = default) =>
         RunAsync(() => _context.BackupAsync(cancellationToken), "oki backup created on this pc");
 
+    private const string RestoredMessage = "okkk backup restored restart dudu if something looks off";
+
     public Task RestoreAsync(CancellationToken cancellationToken = default) =>
-        RunAsync(() => _context.RestoreAsync(cancellationToken), "okkk backup restored restart dudu if needed");
+        RunAsync(() => _context.RestoreAsync(cancellationToken), RestoredMessage);
 
     public Task DeleteLocalDataAsync(CancellationToken cancellationToken = default) =>
         RunAsync(() => _context.DeleteLocalDataAsync(cancellationToken), "otayyy local data deletion started");
@@ -124,7 +159,7 @@ public sealed class PrivacyDataViewModel : FeatureViewModelBase
         {
             PrivacyConfirmationAction.Restore => await RunAsync(
                 () => _context.RestoreAsync(cancellationToken),
-                "done le restart dudu first"),
+                RestoredMessage),
             PrivacyConfirmationAction.DeleteLocal => await RunAsync(
                 () => _context.DeleteLocalDataAsync(cancellationToken),
                 "can data deleted le restart dudu fresh"),
@@ -136,8 +171,31 @@ public sealed class PrivacyDataViewModel : FeatureViewModelBase
         if (succeeded) PendingConfirmation = PrivacyConfirmationAction.None;
     }
 
-    private void RequestConfirmation(PrivacyConfirmationAction action) =>
-        PendingConfirmation = action;
+    /// <summary>Called when the (cached) page is shown again. A confirmation armed on an
+    /// earlier visit -- "delete all data here forever" requested, then she navigated away --
+    /// must not still be waiting one click from running, and an old visit's result line must
+    /// not read as news. Leaves a running action's state alone.</summary>
+    public void ResetTransientState()
+    {
+        if (IsBusy) return;
+        PendingConfirmation = PrivacyConfirmationAction.None;
+        ErrorMessage = null;
+        StatusMessage = null;
+    }
 
-    private void CancelConfirmation() => PendingConfirmation = PrivacyConfirmationAction.None;
+    // A result line from an earlier, different action must not linger next to a new
+    // confirmation, or after cancelling one, as if it described the action now on screen.
+    private void RequestConfirmation(PrivacyConfirmationAction action)
+    {
+        ErrorMessage = null;
+        StatusMessage = null;
+        PendingConfirmation = action;
+    }
+
+    private void CancelConfirmation()
+    {
+        ErrorMessage = null;
+        StatusMessage = null;
+        PendingConfirmation = PrivacyConfirmationAction.None;
+    }
 }

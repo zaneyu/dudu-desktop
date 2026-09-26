@@ -16,7 +16,10 @@
                 <TextBlock x:Name="ConnectionAvailability" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionAvailability" AutomationProperties.Name="pairing availability" />
                 <TextBlock x:Name="ConnectionPairingCode" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionPairingCode" AutomationProperties.Name="pairing code" />
                 <TextBlock x:Name="ConnectionCodeExpiry" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionCodeExpiry" AutomationProperties.Name="pairing code expiry" />
-                <Button Content="create 10 min pairing code" Command="{x:Bind ViewModel.CreateCodeCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="ConnectionCreateCode" AutomationProperties.Name="create 10 min pairing code" HorizontalAlignment="Left" />
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Content="create 10 min pairing code" Command="{x:Bind ViewModel.CreateCodeCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="ConnectionCreateCode" AutomationProperties.Name="create 10 min pairing code" />
+                    <Button Content="check again" Command="{x:Bind ViewModel.RefreshCommand}" AutomationProperties.AutomationId="ConnectionRefresh" AutomationProperties.Name="check pairing status again" />
+                </StackPanel>
             </StackPanel>
 
             <StackPanel Spacing="12">
@@ -34,7 +37,7 @@
                     <Button Content="delete remote device data" Command="{x:Bind ViewModel.RequestDeleteRemoteDeviceCommand}" AutomationProperties.AutomationId="ConnectionDeleteRemote" AutomationProperties.Name="delete remote device data" />
                     <Button Content="forget pairing on this pc" Command="{x:Bind ViewModel.RequestForgetPairingCommand}" AutomationProperties.AutomationId="ConnectionForgetPairing" AutomationProperties.Name="forget pairing on this pc" />
                 </StackPanel>
-                <Border Padding="16" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource WarningBrush}" AutomationProperties.AutomationId="ConnectionConfirmationPanel" AutomationProperties.Name="confirmation panel">
+                <Border Padding="16" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource WarningBrush}" Visibility="{x:Bind ViewModel.HasPendingConfirmation, Mode=OneWay}" AutomationProperties.AutomationId="ConnectionConfirmationPanel" AutomationProperties.Name="confirmation panel">
                     <StackPanel Spacing="8">
                         <TextBlock Text="{x:Bind ViewModel.ConfirmationTitle, Mode=OneWay}" FontWeight="SemiBold" />
                         <TextBlock Text="{x:Bind ViewModel.ConfirmationMessage, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Assertive" AutomationProperties.AutomationId="ConnectionConfirmationMessage" AutomationProperties.Name="confirmation message" />
@@ -47,6 +50,10 @@
             </StackPanel>
 
             <StackPanel Spacing="4" AutomationProperties.LiveSetting="Polite">
+                <StackPanel Orientation="Horizontal" Spacing="8" Visibility="{x:Bind ViewModel.IsBusy, Mode=OneWay}">
+                    <ProgressRing IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" Width="16" Height="16" AutomationProperties.AccessibilityView="Raw" />
+                    <TextBlock Text="working on it" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="ConnectionBusy" AutomationProperties.Name="working on it" />
+                </StackPanel>
                 <StackPanel Orientation="Horizontal" Spacing="6" Visibility="{x:Bind ViewModel.HasStatus, Mode=OneWay}">
                     <FontIcon Glyph="&#xE73E;" Foreground="{ThemeResource SuccessBrush}" AutomationProperties.AccessibilityView="Raw" />
                     <TextBlock Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" Foreground="{ThemeResource SuccessBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionStatusMessage" AutomationProperties.Name="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" />

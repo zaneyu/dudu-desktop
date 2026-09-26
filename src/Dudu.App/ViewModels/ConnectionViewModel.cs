@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Globalization;
 using CommunityToolkit.Mvvm.Input;
 using Dudu.Core.Abstractions;
 
@@ -30,15 +32,41 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
     public ConnectionViewModel(CompanionFeatureContext context)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
-        RefreshCommand = new AsyncRelayCommand((CancellationToken ct) => RefreshAsync(ct));
-        CreateCodeCommand = new AsyncRelayCommand((CancellationToken ct) => CreateCodeAsync(ct));
-        RequestRevokeSessionsCommand = new RelayCommand(() => RequestConfirmation(ConnectionConfirmationAction.RevokeSessions));
-        RequestDeleteRemoteDeviceCommand = new RelayCommand(() => RequestConfirmation(ConnectionConfirmationAction.DeleteRemoteDevice));
-        RequestForgetPairingCommand = new RelayCommand(() => RequestConfirmation(ConnectionConfirmationAction.ForgetPairing));
+        // Every action is gated on !IsBusy: while one relay call (or a confirmed destructive
+        // action) is in flight, a second click must not start another one, and the pending
+        // confirmation must not be swapped out from under the action that is running -- the
+        // running action's success used to clear whichever confirmation was pending by then,
+        // silently disarming one the user had just requested.
+        RefreshCommand = new AsyncRelayCommand((CancellationToken ct) => RefreshAsync(ct), () => !IsBusy);
+        CreateCodeCommand = new AsyncRelayCommand((CancellationToken ct) => CreateCodeAsync(ct), () => !IsBusy);
+        RequestRevokeSessionsCommand = new RelayCommand(
+            () => RequestConfirmation(ConnectionConfirmationAction.RevokeSessions),
+            () => !IsBusy);
+        RequestDeleteRemoteDeviceCommand = new RelayCommand(
+            () => RequestConfirmation(ConnectionConfirmationAction.DeleteRemoteDevice),
+            () => !IsBusy);
+        RequestForgetPairingCommand = new RelayCommand(
+            () => RequestConfirmation(ConnectionConfirmationAction.ForgetPairing),
+            () => !IsBusy);
         ConfirmCommand = new AsyncRelayCommand(
             () => ConfirmAsync(CancellationToken.None),
-            () => PendingConfirmation != ConnectionConfirmationAction.None);
-        CancelConfirmationCommand = new RelayCommand(CancelConfirmation);
+            () => PendingConfirmation != ConnectionConfirmationAction.None && !IsBusy);
+        CancelConfirmationCommand = new RelayCommand(
+            CancelConfirmation,
+            () => PendingConfirmation != ConnectionConfirmationAction.None && !IsBusy);
+    }
+
+    protected override void OnPropertyChanged(PropertyChangedEventArgs e)
+    {
+        base.OnPropertyChanged(e);
+        if (e.PropertyName != nameof(IsBusy)) return;
+        RefreshCommand.NotifyCanExecuteChanged();
+        CreateCodeCommand.NotifyCanExecuteChanged();
+        RequestRevokeSessionsCommand.NotifyCanExecuteChanged();
+        RequestDeleteRemoteDeviceCommand.NotifyCanExecuteChanged();
+        RequestForgetPairingCommand.NotifyCanExecuteChanged();
+        ConfirmCommand.NotifyCanExecuteChanged();
+        CancelConfirmationCommand.NotifyCanExecuteChanged();
     }
 
     public IAsyncRelayCommand RefreshCommand { get; }
@@ -74,7 +102,12 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
         get => _pairingCode;
         private set
         {
-            if (SetProperty(ref _pairingCode, value)) OnPropertyChanged(nameof(PairingCodeText));
+            if (SetProperty(ref _pairingCode, value))
+            {
+                OnPropertyChanged(nameof(PairingCodeText));
+                OnPropertyChanged(nameof(CodeExpiryText));
+                OnPropertyChanged(nameof(HasLiveCode));
+            }
         }
     }
     public DateTimeOffset? CodeExpiresUtc
@@ -82,7 +115,12 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
         get => _codeExpiresUtc;
         private set
         {
-            if (SetProperty(ref _codeExpiresUtc, value)) OnPropertyChanged(nameof(CodeExpiryText));
+            if (SetProperty(ref _codeExpiresUtc, value))
+            {
+                OnPropertyChanged(nameof(PairingCodeText));
+                OnPropertyChanged(nameof(CodeExpiryText));
+                OnPropertyChanged(nameof(HasLiveCode));
+            }
         }
     }
     public int SessionCount
@@ -107,9 +145,16 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
             OnPropertyChanged(nameof(ConfirmationTitle));
             OnPropertyChanged(nameof(ConfirmationMessage));
             OnPropertyChanged(nameof(ConfirmationButtonText));
+            OnPropertyChanged(nameof(HasPendingConfirmation));
             ConfirmCommand.NotifyCanExecuteChanged();
+            CancelConfirmationCommand.NotifyCanExecuteChanged();
         }
     }
+
+    /// <summary>Drives the confirmation panel's visibility. With nothing pending the panel
+    /// used to stay on screen permanently -- a warning-bordered box reading "confirmation
+    /// needed" with a disabled confirm button -- as if something were waiting on the user.</summary>
+    public bool HasPendingConfirmation => PendingConfirmation != ConnectionConfirmationAction.None;
     public string ConfirmationTitle => PendingConfirmation == ConnectionConfirmationAction.None
         ? "confirmation needed"
         : "confirm this action";
@@ -151,12 +196,44 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
             _ => "pairing offline dudu still works here",
         },
     };
+    /// <summary>True while a code is on screen and the clock has not yet passed its expiry.
+    /// A code whose ten minutes are up is no longer offered as usable.</summary>
+    public bool HasLiveCode => !string.IsNullOrWhiteSpace(PairingCode)
+        && CodeExpiresUtc is { } expires
+        && _context.Clock.UtcNow < expires;
+    private bool HasExpiredCode => !string.IsNullOrWhiteSpace(PairingCode)
+        && CodeExpiresUtc is { } expires
+        && _context.Clock.UtcNow >= expires;
+    // An expired code used to stay on screen as "pairing code XXXX" forever, with the "code
+    // ready for 10 min" success line still under it, so she would read out a code the relay
+    // already rejects.
     public string PairingCodeText => string.IsNullOrWhiteSpace(PairingCode)
         ? "no code yet ah"
-        : $"pairing code {PairingCode}";
-    public string CodeExpiryText => CodeExpiresUtc is null
-        ? "no code expiry yet"
-        : $"code expires {CodeExpiresUtc.Value.ToLocalTime():g}";
+        : HasExpiredCode
+            ? "that code expired make a new one"
+            : $"pairing code {PairingCode}";
+    public string CodeExpiryText
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(PairingCode) || CodeExpiresUtc is not { } expires)
+            {
+                return "no code expiry yet";
+            }
+
+            var remaining = expires - _context.Clock.UtcNow;
+            if (remaining <= TimeSpan.Zero) return "code expired";
+
+            // Shown in the PC's own time zone as a clock time (the code only lives ten
+            // minutes, so a date is noise), plus a countdown so she need not do the maths.
+            var local = TimeZoneInfo.ConvertTime(expires, _context.Clock.LocalTimeZone);
+            var minutes = (int)Math.Ceiling(remaining.TotalMinutes);
+            var left = remaining < TimeSpan.FromMinutes(1)
+                ? "less than 1 min left"
+                : minutes == 1 ? "1 min left" : $"{minutes} min left";
+            return $"code expires at {local.ToString("t", CultureInfo.CurrentCulture)} {left}";
+        }
+    }
     public string SessionCountText => SessionCount switch
     {
         0 => "no sender sessions yet ah",
@@ -200,10 +277,38 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
         }, cancellationToken);
     }
 
+    /// <summary>Re-evaluates the code's expiry against the clock. The page calls this on a
+    /// timer so the countdown moves and an expired code stops being shown as usable without
+    /// the user having to leave and come back.</summary>
+    public void UpdateCodeExpiry()
+    {
+        if (string.IsNullOrWhiteSpace(PairingCode) || CodeExpiresUtc is null) return;
+        OnPropertyChanged(nameof(PairingCodeText));
+        OnPropertyChanged(nameof(CodeExpiryText));
+        OnPropertyChanged(nameof(HasLiveCode));
+        if (HasExpiredCode && StatusMessage == CodeReadyMessage)
+        {
+            StatusMessage = null;
+        }
+    }
+
+    private const string CodeReadyMessage = "yayyy code ready for 10 min";
+
     public Task CreateCodeAsync(CancellationToken cancellationToken = default) =>
         RunAsync(async () =>
         {
-            var result = await _context.Pairing.CreateCodeAsync(cancellationToken);
+            PairingCodeResult result;
+            try
+            {
+                result = await _context.Pairing.CreateCodeAsync(cancellationToken);
+            }
+            catch (RemoteSyncException)
+            {
+                // Relay failures (unreachable, timed out, answering garbage) carry developer
+                // English; before this they fell through to the generic "cannot finish that".
+                throw new NotSupportedException("cant reach the relay right now try again in a bit");
+            }
+
             Availability = result.Availability;
             StatusReason = _context.Pairing.StatusReason;
             PairingCode = result.Code;
@@ -211,9 +316,18 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
             if (result.Availability != PairingAvailability.Available ||
                 string.IsNullOrWhiteSpace(result.Code) || result.ExpiresUtc is null)
             {
-                throw new NotSupportedException("oh no pairing unavailable relay offline");
+                // Every failure used to say "relay offline", including "no relay set up at all"
+                // and "this pc's pairing needs fixing", which each need a different next step.
+                throw new NotSupportedException(StatusReason switch
+                {
+                    PairingStatusReason.RelayNotConfigured => "no relay set up yet so codes cant be made notes stay local",
+                    PairingStatusReason.RelayProtocolError => "relay talking weird try again later",
+                    _ => result.Availability == PairingAvailability.NeedsRepair
+                        ? "pairing needs fixing forget pairing on this pc then make a new code"
+                        : "oh no pairing unavailable relay offline",
+                });
             }
-        }, "yayyy code ready for 10 min");
+        }, CodeReadyMessage);
 
     // F3: no longer bound directly to a button -- each is reached only through ConfirmAsync,
     // after RequestConfirmation put the page into the matching pending-confirmation state.
@@ -282,7 +396,12 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
             catch (Exception exception)
             {
-                global::System.Diagnostics.Trace.TraceError("Dudu forget-pairing envelope check failed: {0}", exception);
+                // Trace fallbacks carry the exception type and HResult only, never its message
+                // or stack (AGENTS.md logging rules): a repository message can echo row data.
+                global::System.Diagnostics.Trace.TraceError(
+                    "Dudu forget-pairing envelope check failed: {0} 0x{1:X8}",
+                    exception.GetType().Name,
+                    exception.HResult);
             }
 
             if (!envelopesRemain)
@@ -294,7 +413,10 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
                 catch (Exception exception)
                 {
-                    global::System.Diagnostics.Trace.TraceError("Dudu forget-pairing held-note discard failed: {0}", exception);
+                    global::System.Diagnostics.Trace.TraceError(
+                        "Dudu forget-pairing held-note discard failed: {0} 0x{1:X8}",
+                        exception.GetType().Name,
+                        exception.HResult);
                 }
             }
             await MutateAsync(() =>
@@ -324,8 +446,20 @@ public sealed class ConnectionViewModel : FeatureViewModelBase
         if (succeeded) PendingConfirmation = ConnectionConfirmationAction.None;
     }
 
-    private void RequestConfirmation(ConnectionConfirmationAction action) =>
+    // A result line from an earlier, different action ("cannot revoke sessions right now",
+    // "sessions revoked") must not linger next to a new confirmation, or after cancelling one,
+    // as if it described the action now on screen.
+    private void RequestConfirmation(ConnectionConfirmationAction action)
+    {
+        ErrorMessage = null;
+        StatusMessage = null;
         PendingConfirmation = action;
+    }
 
-    private void CancelConfirmation() => PendingConfirmation = ConnectionConfirmationAction.None;
+    private void CancelConfirmation()
+    {
+        ErrorMessage = null;
+        StatusMessage = null;
+        PendingConfirmation = ConnectionConfirmationAction.None;
+    }
 }
