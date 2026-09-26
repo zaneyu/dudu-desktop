@@ -73,6 +73,7 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
     private TaskCompletionSource<object?>? _mutationUsersCompletion;
     private AnimationOptions _currentOptions = AnimationOptions.Default;
     private PetPresentation? _currentPresentation;
+    private PresentedFrameState? _lastPresented;
     private int _mutationUsers;
     private bool _mutationDisposeRequested;
     private bool _disposed;
@@ -250,6 +251,7 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
                 {
                     ThrowIfDisposed();
                     _pack = pack;
+                    _lastPresented = null;
                     _composer.SetPack(pack);
                 }
             }
@@ -390,14 +392,14 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
             var frameDuration = TimeSpan.FromMilliseconds(frame.DurationMs);
             var frameEnd = AddDuration(frameStart, frameDuration, _clock.Frequency);
             var now = _clock.Timestamp;
-            var isLastOneShotFrame = animation.Loop == "once" && frameIndex == animation.Frames.Count - 1;
-            if (now > frameEnd || (now == frameEnd && !isLastOneShotFrame))
+            var isTerminalFrame = IsTerminalFrame(animation, frameIndex);
+            // Late frames are skipped to keep the semantic duration, but the
+            // final pose of a one-shot ("once") or held ("hold") animation is
+            // always presented (the wait after it returns immediately when
+            // already late). Skipping it left the pet frozen on an
+            // intermediate pose.
+            if (!isTerminalFrame && now >= frameEnd)
             {
-                if (isLastOneShotFrame)
-                {
-                    return;
-                }
-
                 frameStart = frameEnd;
                 frameIndex++;
                 if (frameIndex == animation.Frames.Count)
@@ -455,6 +457,9 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
         }
     }
 
+    internal static bool IsTerminalFrame(AssetAnimation animation, int frameIndex) =>
+        animation.Loop is "once" or "hold" && frameIndex == animation.Frames.Count - 1;
+
     private async Task RunReducedMotionAsync(
         AssetPack pack,
         AssetAnimation animation,
@@ -507,21 +512,50 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
         await _presentationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            using var rendered = _composer.Compose(
-                pack,
-                animation,
-                frame,
-                scale,
-                opacity,
-                semanticDuration,
-                frameDuration);
-            await _presenter.PresentAsync(rendered, cancellationToken).ConfigureAwait(false);
+            await PresentUnderGateAsync(
+                new PresentedFrameState(pack, animation, frame, frameDuration, semanticDuration, scale, opacity),
+                cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             _presentationGate.Release();
         }
     }
+
+    /// <summary>Composes and presents one frame; the caller holds
+    /// <see cref="_presentationGate"/>. Records it as the frame on screen so
+    /// an interaction repaint can redraw exactly that frame.</summary>
+    private async ValueTask PresentUnderGateAsync(
+        PresentedFrameState state,
+        CancellationToken cancellationToken)
+    {
+        using (var rendered = _composer.Compose(
+            state.Pack,
+            state.Animation,
+            state.Frame,
+            state.Scale,
+            state.Opacity,
+            state.SemanticDuration,
+            state.FrameDuration))
+        {
+            await _presenter.PresentAsync(rendered, cancellationToken).ConfigureAwait(false);
+        }
+
+        lock (_stateGate)
+        {
+            _lastPresented = state;
+        }
+    }
+
+    /// <summary>Everything needed to recompose the frame currently on screen.</summary>
+    private readonly record struct PresentedFrameState(
+        AssetPack Pack,
+        AssetAnimation Animation,
+        AssetFrame Frame,
+        TimeSpan FrameDuration,
+        TimeSpan SemanticDuration,
+        double Scale,
+        float Opacity);
 
     private void OnComposerRepaintRequested(object? sender, EventArgs args)
     {
@@ -567,40 +601,74 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
     {
         try
         {
-            AssetPack pack;
-            PetPresentation? presentation;
-            AnimationOptions options;
             lock (_stateGate)
             {
                 if (_disposed || _resourcesDisposed) return;
-                pack = _pack;
-                presentation = _currentPresentation;
-                options = _currentOptions;
             }
 
-            if (presentation is null) return;
-            var resolved = ResolveAnimation(pack, presentation.AnimationKey, options.OutfitKey);
-            var animation = resolved.Animation;
-            var sourceFrame = animation.Frames[0];
-            var frame = options.ReducedMotionEnabled && animation.ReducedMotion is { } reducedPath
-                && !string.Equals(reducedPath, sourceFrame.File, StringComparison.Ordinal)
-                    ? new AssetFrame { File = reducedPath, DurationMs = sourceFrame.DurationMs }
-                    : sourceFrame;
-            var semanticDuration = GetSemanticDuration(animation);
-            await PresentAsync(
-                pack,
-                animation,
-                frame,
-                TimeSpan.FromMilliseconds(frame.DurationMs),
-                semanticDuration,
-                options.Scale,
-                1f,
-                CancellationToken.None).ConfigureAwait(false);
+            // Hold the presentation gate while choosing the frame, so the
+            // frame loop cannot present a newer frame in between and have
+            // this repaint put an older one back on screen.
+            await _presentationGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+            try
+            {
+                if (SelectRepaintFrame() is not { } state) return;
+                await PresentUnderGateAsync(state, CancellationToken.None).ConfigureAwait(false);
+            }
+            finally
+            {
+                _presentationGate.Release();
+            }
         }
         catch (Exception exception) when (exception is ObjectDisposedException or OperationCanceledException)
         {
             // Shutdown can win the race with an interaction repaint.
         }
+    }
+
+    /// <summary>
+    /// The frame to recompose for an interaction repaint (bubble opened or
+    /// closed, palette change): the frame and opacity currently on screen.
+    /// Repainting frame 0 instead made the pet flicker to its first pose on
+    /// every bubble toggle. Falls back to the presentation's first frame only
+    /// when nothing from the current pack has been presented yet.
+    /// </summary>
+    private PresentedFrameState? SelectRepaintFrame()
+    {
+        AssetPack pack;
+        PetPresentation? presentation;
+        AnimationOptions options;
+        PresentedFrameState? last;
+        lock (_stateGate)
+        {
+            if (_disposed || _resourcesDisposed) return null;
+            pack = _pack;
+            presentation = _currentPresentation;
+            options = _currentOptions;
+            last = _lastPresented;
+        }
+
+        if (presentation is null) return null;
+        if (last is { } previous && ReferenceEquals(previous.Pack, pack))
+        {
+            return previous;
+        }
+
+        var resolved = ResolveAnimation(pack, presentation.AnimationKey, options.OutfitKey);
+        var animation = resolved.Animation;
+        var sourceFrame = animation.Frames[0];
+        var frame = options.ReducedMotionEnabled && animation.ReducedMotion is { } reducedPath
+            && !string.Equals(reducedPath, sourceFrame.File, StringComparison.Ordinal)
+                ? new AssetFrame { File = reducedPath, DurationMs = sourceFrame.DurationMs }
+                : sourceFrame;
+        return new PresentedFrameState(
+            pack,
+            animation,
+            frame,
+            TimeSpan.FromMilliseconds(frame.DurationMs),
+            GetSemanticDuration(animation),
+            options.Scale,
+            1f);
     }
 
     private async ValueTask WaitUntilAsync(long deadline, CancellationToken cancellationToken)

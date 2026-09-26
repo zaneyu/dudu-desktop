@@ -16,6 +16,7 @@ public sealed class LayeredFramePresenter : IFramePresenter, IDisposable
 {
     private const byte AC_SRC_ALPHA = 1;
     private readonly object _gate = new();
+    private readonly PremultipliedBgraResampler _resampler = new();
     private HWND _window;
     private LayeredWindowState _windowState;
     private bool _disposed;
@@ -302,28 +303,21 @@ public sealed class LayeredFramePresenter : IFramePresenter, IDisposable
                 ThrowLastWin32Error("SelectObject");
             }
 
-            var bytes = frame.PremultipliedBgra;
-            using var pinned = bytes.Pin();
-            var source = (byte*)pinned.Pointer;
-            var destination = (byte*)dibBits;
+            cancellationToken.ThrowIfCancellationRequested();
             var destinationRowBytes = checked(update.DestinationWidth * 4);
-            for (var row = 0; row < update.DestinationHeight; row++)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var sourceY = (int)((long)row * update.SourceHeight / update.DestinationHeight);
-                var destinationRow = destination + row * destinationRowBytes;
-                var sourceRow = source + sourceY * frame.Stride;
-                for (var column = 0; column < update.DestinationWidth; column++)
-                {
-                    var sourceX = (int)((long)column * update.SourceWidth / update.DestinationWidth);
-                    var sourcePixel = sourceRow + sourceX * 4;
-                    var destinationPixel = destinationRow + column * 4;
-                    destinationPixel[0] = sourcePixel[0];
-                    destinationPixel[1] = sourcePixel[1];
-                    destinationPixel[2] = sourcePixel[2];
-                    destinationPixel[3] = sourcePixel[3];
-                }
-            }
+            var destinationLength = checked(destinationRowBytes * update.DestinationHeight);
+            // Area-average / bilinear instead of nearest-neighbour sampling:
+            // the 512px frame is drawn into a smaller (or DPI-enlarged)
+            // window, and point sampling made the art and bubble text jagged.
+            _resampler.Resample(
+                frame.PremultipliedBgra.Span,
+                update.SourceWidth,
+                update.SourceHeight,
+                frame.Stride,
+                new Span<byte>(dibBits, destinationLength),
+                update.DestinationWidth,
+                update.DestinationHeight,
+                destinationRowBytes);
 
             var size = new SIZE { cx = update.DestinationWidth, cy = update.DestinationHeight };
             var sourcePoint = new Point(0, 0);

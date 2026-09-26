@@ -73,6 +73,56 @@ public sealed class FullscreenDetectorTests
             new FullscreenWindowSnapshot(42, 1, 2, new PixelRect(3, 0, 1917, 1080), Monitor, WorkArea)));
     }
     [Fact]
+    public void Fullscreen_window_on_another_monitor_does_not_hide_the_pet()
+    {
+        var otherMonitor = new PixelRect(1920, 0, 2560, 1440);
+
+        Assert.False(FullscreenDetector.IsForegroundFullscreen(
+            new FullscreenWindowSnapshot(
+                42, 1, 2, Monitor, Monitor, WorkArea, OverlayMonitorBounds: otherMonitor)));
+    }
+
+    [Fact]
+    public void Fullscreen_window_on_the_overlay_monitor_still_hides_the_pet()
+    {
+        Assert.True(FullscreenDetector.IsForegroundFullscreen(
+            new FullscreenWindowSnapshot(
+                42, 1, 2, Monitor, Monitor, WorkArea, OverlayMonitorBounds: Monitor)));
+    }
+
+    [Fact]
+    public void Unknown_overlay_monitor_keeps_suppressing_fullscreen_on_any_monitor()
+    {
+        Assert.True(FullscreenDetector.IsForegroundFullscreen(
+            new FullscreenWindowSnapshot(42, 1, 2, Monitor, Monitor, WorkArea)));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Detector_compares_the_foreground_monitor_with_the_overlay_monitor(bool sameMonitor)
+    {
+        var native = new FullscreenForegroundApi(
+            overlayMonitor: sameMonitor ? Monitor : new PixelRect(-2560, 0, 2560, 1440));
+
+        Assert.Equal(sameMonitor, new FullscreenDetector(native).IsForegroundFullscreen());
+    }
+
+    [Fact]
+    public void Overlay_monitor_query_failure_does_not_fail_detection()
+    {
+        var native = new FullscreenForegroundApi(overlayMonitor: null, throwOnOverlayQuery: true);
+        var detector = new FullscreenDetector(native);
+
+        // Unknown overlay monitor: fullscreen is still detected, and the
+        // failure does not count toward the fail-closed limit.
+        for (var i = 0; i <= FullscreenDetector.FailClosedLimit; i++)
+        {
+            Assert.True(detector.IsForegroundFullscreen());
+        }
+    }
+
+    [Fact]
     public void Native_query_failure_fails_closed_as_fullscreen()
     {
         Assert.True(new FullscreenDetector(new ThrowingNativeApi()).IsForegroundFullscreen());
@@ -105,6 +155,33 @@ public sealed class FullscreenDetectorTests
         Assert.False(detector.IsForegroundFullscreen());
         native.Fail = true;
         Assert.True(detector.IsForegroundFullscreen());
+    }
+
+    private sealed class FullscreenForegroundApi(PixelRect? overlayMonitor, bool throwOnOverlayQuery = false)
+        : IFullscreenNativeApi
+    {
+        public nint GetForegroundWindow() => 42;
+        public nint GetShellWindow() => 1;
+        public nint GetDesktopWindow() => 2;
+        public bool IsIconic(nint hwnd) => false;
+        public bool IsMaximized(nint hwnd) => false;
+        public bool IsDuduWindow(nint hwnd) => false;
+        public bool TryGetCloaked(nint hwnd, out bool cloaked) { cloaked = false; return true; }
+        public bool TryGetExtendedFrameBounds(nint hwnd, out PixelRect bounds) { bounds = Monitor; return true; }
+
+        public bool TryGetMonitorBounds(nint hwnd, out PixelRect monitorBounds, out PixelRect workArea)
+        {
+            monitorBounds = Monitor;
+            workArea = WorkArea;
+            return true;
+        }
+
+        public bool TryGetOverlayMonitorBounds(out PixelRect monitorBounds)
+        {
+            if (throwOnOverlayQuery) throw new InvalidOperationException("overlay query failed");
+            monitorBounds = overlayMonitor ?? default;
+            return overlayMonitor is not null;
+        }
     }
 
     private sealed class ThrowingNativeApi : IFullscreenNativeApi

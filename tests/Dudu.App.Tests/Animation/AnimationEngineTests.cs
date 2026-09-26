@@ -22,6 +22,90 @@ public sealed class AnimationEngineTests
     }
 
     [Fact]
+    public async Task Late_one_shot_still_presents_its_final_pose()
+    {
+        // The loop used to return without presenting the last frame of a
+        // "once" animation whenever it was already late for it, leaving the
+        // reaction frozen on an intermediate pose.
+        using var fixture = AnimationFixture.Create(
+            [100, 100],
+            loop: "once",
+            animationKey: "celebrate",
+            frameFiles: ["idle.png", "celebrate.png"]);
+        var firstPresented = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Presenter.OnPresented = count =>
+        {
+            if (count == 1) firstPresented.TrySetResult(true);
+        };
+
+        var play = fixture.Engine.PlayAsync(TestPresentation("celebrate"), AnimationOptions.Default, TestContext.Current.CancellationToken);
+        await firstPresented.Task.WaitAsync(TestContext.Current.CancellationToken);
+        fixture.Clock.AdvanceBy(500);
+        await play.WaitAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, fixture.Presenter.Frames.Count);
+        Assert.EndsWith("/celebrate.png", fixture.Presenter.Frames[^1].Source, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("once", 1, true)]
+    [InlineData("hold", 1, true)]
+    [InlineData("once", 0, false)]
+    [InlineData("loop", 1, false)]
+    public void Only_the_last_frame_of_once_and_hold_animations_is_terminal(string loop, int index, bool expected)
+    {
+        var animation = new AssetAnimation
+        {
+            Frames =
+            [
+                new AssetFrame { File = "a.png", DurationMs = 100 },
+                new AssetFrame { File = "b.png", DurationMs = 100 },
+            ],
+            Loop = loop,
+            NominalSize = new PixelSize(1, 1),
+            Anchor = new PixelPoint(0, 0),
+        };
+
+        Assert.Equal(expected, AnimationEngine.IsTerminalFrame(animation, index));
+    }
+
+    [Fact]
+    public async Task Interaction_repaint_redraws_the_frame_on_screen_not_frame_zero()
+    {
+        // Opening/closing the bubble requests a repaint; it used to always
+        // recompose Frames[0], so the pet flickered to its first pose.
+        using var fixture = AnimationFixture.Create(
+            [100, 100],
+            loop: "loop",
+            animationKey: "idle",
+            frameFiles: ["idle.png", "celebrate.png"]);
+        using var cancellation = new CancellationTokenSource();
+        var firstPresented = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondPresented = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var repainted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Presenter.OnPresented = count =>
+        {
+            if (count == 1) firstPresented.TrySetResult(true);
+            if (count == 2) secondPresented.TrySetResult(true);
+            if (count == 3) repainted.TrySetResult(true);
+        };
+
+        var play = fixture.Engine.PlayAsync(TestPresentation("idle"), AnimationOptions.Default, cancellation.Token);
+        await firstPresented.Task.WaitAsync(TestContext.Current.CancellationToken);
+        fixture.Clock.AdvanceBy(100);
+        await secondPresented.Task.WaitAsync(TestContext.Current.CancellationToken);
+        fixture.Composer.SetOverlayPalette(OverlaySurfacePalette.For(AppTheme.Dark, highContrast: false));
+        await repainted.Task.WaitAsync(TestContext.Current.CancellationToken);
+
+        Assert.EndsWith("/celebrate.png", fixture.Presenter.Frames[1].Source, StringComparison.Ordinal);
+        Assert.Equal(fixture.Presenter.Frames[1].Source, fixture.Presenter.Frames[2].Source);
+        Assert.Equal(fixture.Presenter.Frames[1].Opacity, fixture.Presenter.Frames[2].Opacity);
+
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => play);
+    }
+
+    [Fact]
     public async Task Missing_animation_uses_fallback_idle_pose()
     {
         // Reduced motion holds the fallback pose for its semantic duration; nothing here
@@ -455,7 +539,8 @@ public sealed class AnimationEngineTests
             string packId = "fixture",
             bool immediateClock = false,
             DateOnly? localDate = null,
-            Func<DateOnly>? localDateProvider = null)
+            Func<DateOnly>? localDateProvider = null,
+            IReadOnlyList<string>? frameFiles = null)
         {
             var root = Path.Combine(Path.GetTempPath(), "dudu-animation-tests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
@@ -464,7 +549,11 @@ public sealed class AnimationEngineTests
             File.WriteAllBytes(Path.Combine(root, "winter.png"), PngFixture.OnePixel);
 
             var frames = durations
-                .Select(_ => new AssetFrame { File = animationKey == "idle" ? "idle.png" : "celebrate.png", DurationMs = _ })
+                .Select((duration, index) => new AssetFrame
+                {
+                    File = frameFiles?[index] ?? (animationKey == "idle" ? "idle.png" : "celebrate.png"),
+                    DurationMs = duration,
+                })
                 .ToList();
             var animation = new AssetAnimation
             {

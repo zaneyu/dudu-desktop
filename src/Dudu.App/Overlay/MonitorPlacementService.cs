@@ -23,10 +23,11 @@ public readonly record struct PlacementResolution(
 
 public static class MonitorPlacementService
 {
-    // PetPlacement.Scale is a user-facing logical size multiplier. Physical
-    // monitor DPI is tracked for diagnostics and WM_DPICHANGED, but is not
-    // multiplied into Resolve dimensions: the suggested RECT supplies the
-    // physical resize and applying DPI here too would double-scale the pet.
+    // PetPlacement.Scale is a user-facing logical size multiplier. The window
+    // is sized in physical pixels as nominal * scale * (monitor DPI / 96), so
+    // the pet keeps the same logical size on a 150-200% display instead of
+    // shrinking. WM_DPICHANGED sizing goes through ScaleWindowSize too (never
+    // blindly through the suggested RECT), so DPI is applied exactly once.
     public const double MinimumScale = 0.5;
     public const double MaximumScale = 2.0;
     public const double DefaultNominalScale = 0.75;
@@ -70,6 +71,114 @@ public static class MonitorPlacementService
 
         return (int)dpiX;
     }
+
+    /// <summary>One wheel notch (WHEEL_DELTA) resizes by this factor.</summary>
+    public const double WheelNotchFactor = 1.1;
+    internal const int WheelDelta = 120;
+    internal const int DefaultDpi = 96;
+
+    /// <summary>Physical window size for a nominal pet size, user scale, and
+    /// monitor DPI. Invalid DPI values fall back to 96.</summary>
+    public static PixelSize ScaleWindowSize(PixelSize nominalSize, double scale, int dpi)
+    {
+        if (nominalSize.Width <= 0 || nominalSize.Height <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(nominalSize));
+        }
+
+        var factor = ClampScale(scale) * NormalizeDpi(dpi) / DefaultDpi;
+        return new PixelSize(
+            ToDimension(nominalSize.Width, factor),
+            ToDimension(nominalSize.Height, factor));
+    }
+
+    /// <summary>
+    /// Applies a WM_MOUSEWHEEL delta proportionally: one 120-unit notch is
+    /// x1.1, while a precision touchpad's many small deltas add up to the same
+    /// total instead of each applying a full notch (which used to snap the
+    /// pet between the minimum and maximum size in one swipe).
+    /// </summary>
+    public static double ApplyWheelDelta(double scale, int wheelDelta)
+    {
+        var current = ClampScale(scale);
+        if (wheelDelta == 0)
+        {
+            return current;
+        }
+
+        return ClampScale(current * Math.Pow(WheelNotchFactor, wheelDelta / (double)WheelDelta));
+    }
+
+    /// <summary>Keeps a window rectangle inside a monitor work area. A rect
+    /// larger than the work area is pinned to the work-area origin, matching
+    /// how <see cref="Resolve"/> places an oversized pet.</summary>
+    public static PixelRect ClampToWorkArea(PixelRect bounds, PixelRect workArea)
+    {
+        if (!workArea.IsValid)
+        {
+            return bounds;
+        }
+
+        return new PixelRect(
+            ClampAxis(bounds.X, bounds.Width, workArea.X, workArea.Width),
+            ClampAxis(bounds.Y, bounds.Height, workArea.Y, workArea.Height),
+            bounds.Width,
+            bounds.Height);
+    }
+
+    /// <summary>The monitor whose work area contains <paramref name="point"/>,
+    /// else the nearest one (ties broken by device name).</summary>
+    public static MonitorInfo SelectMonitorAt(IEnumerable<MonitorInfo> monitors, PixelPoint point)
+    {
+        ArgumentNullException.ThrowIfNull(monitors);
+        var usable = monitors
+            .Where(monitor => monitor is not null && monitor.WorkArea.IsValid)
+            .OrderBy(monitor => monitor.DeviceName, StringComparer.Ordinal)
+            .ToArray();
+        if (usable.Length == 0)
+        {
+            throw new InvalidOperationException("No monitor has a valid work area.");
+        }
+
+        return usable.FirstOrDefault(monitor => monitor.WorkArea.Contains(point.X, point.Y))
+            ?? usable
+                .OrderBy(monitor => DistanceSquared(monitor.WorkArea, point.X, point.Y))
+                .ThenBy(monitor => monitor.DeviceName, StringComparer.Ordinal)
+                .First();
+    }
+
+    /// <summary>Resizes <paramref name="bounds"/> to <paramref name="size"/>
+    /// while keeping <paramref name="anchor"/> (e.g. the cursor grabbing the
+    /// pet) at the same proportional position inside the window.</summary>
+    public static PixelRect ResizeAroundPoint(PixelRect bounds, PixelPoint anchor, PixelSize size)
+    {
+        if (!bounds.IsValid)
+        {
+            throw new ArgumentOutOfRangeException(nameof(bounds));
+        }
+
+        if (size.Width <= 0 || size.Height <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(size));
+        }
+
+        var fractionX = Math.Clamp((anchor.X - (double)bounds.X) / bounds.Width, 0, 1);
+        var fractionY = Math.Clamp((anchor.Y - (double)bounds.Y) / bounds.Height, 0, 1);
+        return new PixelRect(
+            anchor.X - (int)Math.Round(fractionX * size.Width, MidpointRounding.AwayFromZero),
+            anchor.Y - (int)Math.Round(fractionY * size.Height, MidpointRounding.AwayFromZero),
+            size.Width,
+            size.Height);
+    }
+
+    /// <summary>Centers a rectangle of <paramref name="size"/> on
+    /// <paramref name="container"/>'s center.</summary>
+    public static PixelRect CenterOn(PixelRect container, PixelSize size) =>
+        new(
+            container.X + (container.Width - size.Width) / 2,
+            container.Y + (container.Height - size.Height) / 2,
+            size.Width,
+            size.Height);
 
     public static double ClampScale(double scale)
     {
@@ -121,8 +230,9 @@ public static class MonitorPlacementService
         }
 
         var scale = ClampScale(saved.Scale);
-        var width = ToDimension(nominalSize.Width, scale);
-        var height = ToDimension(nominalSize.Height, scale);
+        var size = ScaleWindowSize(nominalSize, scale, selected.Dpi);
+        var width = size.Width;
+        var height = size.Height;
         var normalizedX = ClampNormalized(saved.NormalizedX);
         var normalizedY = ClampNormalized(saved.NormalizedY);
         var workArea = selected.WorkArea;
@@ -222,6 +332,19 @@ public static class MonitorPlacementService
         var dx = x < area.X ? area.X - x : x >= area.Right ? x - area.Right + 1 : 0;
         var dy = y < area.Y ? area.Y - y : y >= area.Bottom ? y - area.Bottom + 1 : 0;
         return (double)dx * dx + (double)dy * dy;
+    }
+
+    private static int NormalizeDpi(int dpi) => dpi > 0 ? dpi : DefaultDpi;
+
+    private static int ClampAxis(int position, int extent, int origin, int available)
+    {
+        var slack = (long)available - extent;
+        if (slack <= 0)
+        {
+            return origin;
+        }
+
+        return checked((int)Math.Clamp((long)position, origin, origin + slack));
     }
 
     private static int ToDimension(int value, double scale) =>

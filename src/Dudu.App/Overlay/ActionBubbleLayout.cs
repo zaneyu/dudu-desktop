@@ -36,6 +36,13 @@ public static class ActionBubbleLayout
     private const int DetailGap = 4;
     private const int DetailHeight = 28;
     private const int MinimumSurfaceWidth = 16;
+    private const int ComfortableActionHeight = 24;
+    private static readonly (int Padding, int Gap)[] SpacingTiers =
+    [
+        (PreferredPadding, PreferredGap),
+        (8, 6),
+        (4, 4),
+    ];
     private static readonly OverlayAction[] AllowedActions = Enum.GetValues<OverlayAction>();
 
     public static IReadOnlyList<ComfortAction> ComfortActions { get; } =
@@ -150,14 +157,7 @@ public static class ActionBubbleLayout
         var minimumHeight = MinimumActionHeight + DetailGap + DetailHeight;
         if (workArea.Width < MinimumSurfaceWidth || workArea.Height < minimumHeight) return null;
 
-        var preferredHeight = requestedCount * PreferredActionHeight
-            + (requestedCount - 1) * PreferredGap
-            + PreferredPadding * 2
-            + DetailGap
-            + DetailHeight;
-        var usePreferredSpacing = workArea.Height >= preferredHeight;
-        var padding = usePreferredSpacing ? PreferredPadding : 0;
-        var gap = usePreferredSpacing ? PreferredGap : 0;
+        var (padding, gap) = ChooseSpacing(requestedCount, workArea.Height);
         var available = workArea.Height - padding * 2 - DetailGap - DetailHeight;
         var maximumRows = Math.Max(1, (available + gap) / (MinimumActionHeight + gap));
         if (requireAllRows && maximumRows < requestedCount) return null;
@@ -185,6 +185,30 @@ public static class ActionBubbleLayout
             bounds.Width - horizontalPadding * 2,
             DetailHeight);
         return (bounds, regions, detailRegion);
+    }
+
+    /// <summary>
+    /// Picks the roomiest padding/gap tier that still fits every requested
+    /// row at a comfortable height, else the tightest non-zero tier at the
+    /// minimum row height. Spacing used to be all-or-nothing: below the full
+    /// 44px-row height (about 360px for six actions) padding and gaps dropped
+    /// straight to zero and the buttons touched. Only when even the tightest
+    /// tier cannot fit every row does it fall back to zero spacing (and, for
+    /// the primary bubble, fewer rows) exactly as before.
+    /// </summary>
+    internal static (int Padding, int Gap) ChooseSpacing(int requestedCount, int height)
+    {
+        foreach (var (padding, gap) in SpacingTiers)
+        {
+            if (Fits(padding, gap, ComfortableActionHeight)) return (padding, gap);
+        }
+
+        var tightest = SpacingTiers[^1];
+        return Fits(tightest.Padding, tightest.Gap, MinimumActionHeight) ? tightest : (0, 0);
+
+        bool Fits(int padding, int gap, int rowHeight) =>
+            height - padding * 2 - DetailGap - DetailHeight
+                >= requestedCount * rowHeight + (requestedCount - 1) * gap;
     }
 
     private static void ValidateWorkArea(PixelRect workArea)
