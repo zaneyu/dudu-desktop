@@ -429,10 +429,7 @@ public sealed class HomeViewModel : FeatureViewModelBase
     public Task PetAsync(CancellationToken cancellationToken = default) =>
         RunAsync(async () =>
         {
-            await _context.PresentOneShotPetAsync(
-                new PetEvent.AmbientRequested("greeting"),
-                "greeting",
-                cancellationToken);
+            await _context.PetAsync(cancellationToken);
             OnPropertyChanged(nameof(PetPresentation));
             OnPropertyChanged(nameof(PetStateText));
             OnPropertyChanged(nameof(PetAnimationText));
