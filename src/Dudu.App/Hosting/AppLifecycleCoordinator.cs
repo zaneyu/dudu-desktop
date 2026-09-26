@@ -459,10 +459,14 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
 
     public async Task OnDisplayChangedAsync(CancellationToken cancellationToken = default)
     {
-        var snapshot = await CaptureAsync(cancellationToken);
+        await CaptureAsync(cancellationToken);
         await InvokeVisualSafelyAsync(_overlay.RestorePlacement, "display-placement", cancellationToken);
         // A monitor unplug while fullscreen-hidden strands the pet: placement
         // alone never re-shows. Restore visibility when desired and allowed.
+        // Re-capture AFTER the restore: an explicit hide racing in mid-flight
+        // must win over this re-show, so the pre-restore snapshot is stale by
+        // design here.
+        var snapshot = await CaptureAsync(cancellationToken);
         if (snapshot.UserVisible && !snapshot.FullscreenHidden
             && TryCanShow(
                 TryReadFullscreen("display-fullscreen"),
