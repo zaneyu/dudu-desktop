@@ -3,8 +3,9 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:models="using:Dudu.Core.Models"
+    xmlns:viewmodels="using:Dudu.App.ViewModels"
     Background="{ThemeResource WindowSurfaceBrush}">
-    <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
         <StackPanel MaxWidth="880" Margin="32" Spacing="24">
             <StackPanel Spacing="8">
                 <TextBlock Text="home" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="HomePageTitle" AutomationProperties.Name="home" />
@@ -61,8 +62,9 @@
                     <TextBox x:Name="CountdownTargetBox" Header="target" PlaceholderText="blank means tmrw" TextChanged="CountdownTarget_Changed" AutomationProperties.AutomationId="HomeCountdownTarget" AutomationProperties.Name="target" />
                     <TextBlock x:Name="CountdownTargetValidation" TextWrapping="Wrap" Foreground="{ThemeResource ErrorBrush}" Visibility="Collapsed" AutomationProperties.AutomationId="HomeCountdownTargetValidation" AutomationProperties.Name="countdown target validation" />
                     <Button x:Name="HomeSaveCountdownButton" Content="save" Command="{x:Bind ViewModel.CreateCountdownCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="HomeSaveCountdown" AutomationProperties.Name="save" />
+                    <Button Content="new countdown" Command="{x:Bind ViewModel.NewCountdownCommand}" AutomationProperties.AutomationId="HomeNewCountdown" AutomationProperties.Name="new countdown" />
                 </StackPanel>
-                <ListView ItemsSource="{x:Bind ViewModel.Countdowns, Mode=OneWay}" SelectionChanged="CountdownList_SelectionChanged" MaxHeight="220" AutomationProperties.AutomationId="HomeCountdownList" AutomationProperties.Name="countdowns list">
+                <ListView x:Name="CountdownList" ItemsSource="{x:Bind ViewModel.Countdowns, Mode=OneWay}" SelectionChanged="CountdownList_SelectionChanged" MaxHeight="220" AutomationProperties.AutomationId="HomeCountdownList" AutomationProperties.Name="countdowns list">
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="models:Countdown"><TextBlock Text="{x:Bind Title}" Margin="4" TextWrapping="Wrap" /></DataTemplate>
                     </ListView.ItemTemplate>
@@ -96,8 +98,8 @@
                     <ItemsControl.ItemTemplate>
                         <DataTemplate x:DataType="models:MoodCheckIn">
                             <StackPanel Margin="0,4" Spacing="2">
-                                <TextBlock Text="{x:Bind Choice}" />
-                                <TextBlock Text="{x:Bind CreatedUtc}" Foreground="{ThemeResource TextSecondaryBrush}" />
+                                <TextBlock Text="{x:Bind viewmodels:CheckInDisplay.ChoiceText(Choice)}" />
+                                <TextBlock Text="{x:Bind viewmodels:CheckInDisplay.TimeText(CreatedUtc)}" Foreground="{ThemeResource TextSecondaryBrush}" />
                                 <TextBlock Text="{x:Bind Note}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                             </StackPanel>
                         </DataTemplate>

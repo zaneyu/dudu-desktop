@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using Dudu.App.Hosting;
 using Dudu.App.Overlay;
 using Dudu.App.ViewModels;
@@ -10,6 +11,8 @@ public sealed partial class HomePage : Page
 {
     private readonly OverlayCommandRouter? _overlayCommands;
     private bool _suppressStartupToggle;
+    private bool _syncingCountdownTarget;
+    private bool _applyingCountdownTargetFromBox;
 
     public HomePage(
         HomeViewModel viewModel,
@@ -22,13 +25,25 @@ public sealed partial class HomePage : Page
         InitializeComponent();
         DataContext = ViewModel;
         Loaded += Page_Loaded;
+        Unloaded += Page_Unloaded;
     }
 
     public HomeViewModel ViewModel { get; }
     public StartupSettingsService Startup { get; }
 
+    // SettingsWindow caches this page, so Loaded/Unloaded fire on every visit;
+    // the view-model subscription is live only while the page is in the tree.
+    private void Page_Unloaded(object sender, RoutedEventArgs args)
+    {
+        if (IsLoaded) return; // a re-load already won the out-of-order race
+        ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
+    }
+
     private async void Page_Loaded(object sender, RoutedEventArgs args)
     {
+        ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
+        ViewModel.PropertyChanged += ViewModel_PropertyChanged;
+
         // Run before the (possibly slow, possibly failing) view-model refresh so the
         // checkbox reflects the real startup registration immediately: the XAML no
         // longer binds StartupToggle.IsChecked, so until this runs it would otherwise
@@ -96,29 +111,74 @@ public sealed partial class HomePage : Page
 
     private void CountdownList_SelectionChanged(object sender, SelectionChangedEventArgs args)
     {
+        // The target box is resynced from ViewModel_PropertyChanged, which also
+        // covers programmatic clears (after save, delete or "new countdown").
         if (sender is ListView list)
         {
             ViewModel.SelectCountdownCommand.Execute(list.SelectedItem as Dudu.Core.Models.Countdown);
+        }
+    }
+
+    private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        switch (args.PropertyName)
+        {
+            case nameof(HomeViewModel.CountdownTargetUtc) when !_applyingCountdownTargetFromBox:
+                // After a save the view model clears the target; without this the
+                // unbound box kept the old text while the value was null, so the
+                // next countdown was saved with the wrong (or no) date.
+                SyncCountdownTargetBox();
+                break;
+            case nameof(HomeViewModel.SelectedCountdown):
+                // Also clears a stale validation message left by half-typed text.
+                SyncCountdownTargetBox();
+                if (!Equals(CountdownList.SelectedItem, ViewModel.SelectedCountdown))
+                {
+                    CountdownList.SelectedItem = ViewModel.SelectedCountdown;
+                }
+
+                break;
+        }
+    }
+
+    private void SyncCountdownTargetBox()
+    {
+        _syncingCountdownTarget = true;
+        try
+        {
             CountdownTargetBox.Text = ViewModel.CountdownTargetUtc?.ToLocalTime().ToString("g") ?? string.Empty;
+            SetCountdownTargetValidation(true, null);
+        }
+        finally
+        {
+            _syncingCountdownTarget = false;
         }
     }
 
     private void CountdownTarget_Changed(object sender, TextChangedEventArgs args)
     {
-        if (sender is not TextBox box) return;
-        if (string.IsNullOrWhiteSpace(box.Text))
+        if (_syncingCountdownTarget || sender is not TextBox box) return;
+        _applyingCountdownTargetFromBox = true;
+        try
         {
-            ViewModel.CountdownTargetUtc = null;
-            SetCountdownTargetValidation(true, null);
+            if (string.IsNullOrWhiteSpace(box.Text))
+            {
+                ViewModel.CountdownTargetUtc = null;
+                SetCountdownTargetValidation(true, null);
+            }
+            else if (DateTimeOffset.TryParse(box.Text, out var target))
+            {
+                ViewModel.CountdownTargetUtc = target;
+                SetCountdownTargetValidation(true, null);
+            }
+            else
+            {
+                SetCountdownTargetValidation(false, $"use a date like {DateHintExample()}");
+            }
         }
-        else if (DateTimeOffset.TryParse(box.Text, out var target))
+        finally
         {
-            ViewModel.CountdownTargetUtc = target;
-            SetCountdownTargetValidation(true, null);
-        }
-        else
-        {
-            SetCountdownTargetValidation(false, $"use a date like {DateHintExample()}");
+            _applyingCountdownTargetFromBox = false;
         }
     }
 

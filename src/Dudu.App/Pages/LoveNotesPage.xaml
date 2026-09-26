@@ -4,7 +4,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:models="using:Dudu.Core.Models"
     Background="{ThemeResource WindowSurfaceBrush}">
-    <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
         <StackPanel MaxWidth="880" Margin="32" Spacing="24">
             <StackPanel Spacing="8">
                 <TextBlock Text="love notes" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="LoveNotesPageTitle" AutomationProperties.Name="love notes" />
@@ -28,6 +28,10 @@
                     <Button Content="new note" Command="{x:Bind ViewModel.NewNoteCommand}" AutomationProperties.AutomationId="LoveNotesNew" AutomationProperties.Name="new note" />
                     <Button Content="delete selected" Command="{x:Bind ViewModel.RequestDeleteLocalNoteCommand}" CommandParameter="{x:Bind ViewModel.SelectedNote, Mode=OneWay}" AutomationProperties.AutomationId="LoveNotesDelete" AutomationProperties.Name="delete selected" />
                     <Button Content="let dudu choose" Command="{x:Bind ViewModel.ShowLocalNoteCommand}" AutomationProperties.AutomationId="LoveNotesChoose" AutomationProperties.Name="let dudu choose" />
+                </StackPanel>
+                <StackPanel Spacing="4" Visibility="{x:Bind ViewModel.HasChosenLocalNote, Mode=OneWay}">
+                    <TextBlock Text="dudu picked this one for you" Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" />
+                    <TextBlock Text="{x:Bind ViewModel.ChosenLocalNoteText, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" AutomationProperties.AutomationId="LoveNotesChosen" AutomationProperties.Name="{x:Bind ViewModel.ChosenLocalNoteText, Mode=OneWay}" />
                 </StackPanel>
                 <Border Padding="16" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource WarningBrush}" Visibility="{x:Bind ViewModel.IsConfirmingDeleteNote, Mode=OneWay}" AutomationProperties.AutomationId="LoveNotesDeleteConfirmationPanel" AutomationProperties.Name="delete note confirmation panel">
                     <StackPanel Spacing="8">

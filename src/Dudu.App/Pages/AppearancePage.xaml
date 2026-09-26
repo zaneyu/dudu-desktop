@@ -3,7 +3,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Background="{ThemeResource WindowSurfaceBrush}">
-    <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
         <StackPanel MaxWidth="880" Margin="32" Spacing="24">
             <StackPanel Spacing="8">
                 <TextBlock Text="appearance" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="AppearancePageTitle" AutomationProperties.Name="appearance" />
@@ -24,6 +24,11 @@
                 <TextBlock Text="{x:Bind ViewModel.SoundVolumeLabel, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceSoundVolumeLabel" AutomationProperties.Name="sound volume" />
                 <Slider Header="pet size" Minimum="0.5" Maximum="2" SmallChange="0.1" Value="{x:Bind ViewModel.PetScale, Mode=TwoWay}" AutomationProperties.AutomationId="AppearancePetScale" AutomationProperties.Name="pet size" />
                 <ComboBox Header="monitor" ItemsSource="{x:Bind ViewModel.MonitorOptions, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.MonitorDeviceName, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceMonitor" AutomationProperties.Name="monitor" />
+                <!-- Saved by "save appearance" below, so they live in this group
+                     (they used to sit under "save seasonal look", which does not
+                     save them, and changes were silently lost). -->
+                <CheckBox Content="keep dudu above other windows" IsChecked="{x:Bind ViewModel.AlwaysOnTop, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceAlwaysOnTop" AutomationProperties.Name="keep dudu above other windows" />
+                <CheckBox Content="hide dudu during fullscreen work" IsChecked="{x:Bind ViewModel.HideDuringFullscreen, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceHideFullscreen" AutomationProperties.Name="hide dudu during fullscreen work" />
                 <StackPanel Spacing="8">
                     <Button Content="save appearance" Command="{x:Bind ViewModel.SaveCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="AppearanceSave" AutomationProperties.Name="save appearance" />
                     <Button Content="save pet placement" Command="{x:Bind ViewModel.SavePlacementCommand}" AutomationProperties.AutomationId="AppearanceSavePlacement" AutomationProperties.Name="save pet placement" />
@@ -46,13 +51,11 @@
                     <CalendarDatePicker Grid.Column="1" Header="birthday (month and day)" Date="{x:Bind ViewModel.BirthdayDate, Mode=TwoWay}" PlaceholderText="not set" AutomationProperties.AutomationId="AppearanceBirthday" AutomationProperties.Name="birthday month and day" />
                 </Grid>
                 <Button Content="save seasonal look" Command="{x:Bind ViewModel.ApplyOutfitCommand}" IsEnabled="{x:Bind ViewModel.CanConfigureSeasonalMode, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceSaveSeasonal" AutomationProperties.Name="save seasonal look" HorizontalAlignment="Left" />
-                <CheckBox Content="keep dudu above other windows" IsChecked="{x:Bind ViewModel.AlwaysOnTop, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceAlwaysOnTop" AutomationProperties.Name="keep dudu above other windows" />
-                <CheckBox Content="hide dudu during fullscreen work" IsChecked="{x:Bind ViewModel.HideDuringFullscreen, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceHideFullscreen" AutomationProperties.Name="hide dudu during fullscreen work" />
             </StackPanel>
 
             <StackPanel Spacing="12">
                 <TextBlock Text="shortcut" Style="{StaticResource SectionHeadingStyle}" />
-                <TextBox Header="show or hide dudu" Text="{x:Bind ViewModel.GlobalShortcut, Mode=TwoWay}" PlaceholderText="Ctrl+Alt+D" AutomationProperties.AutomationId="AppearanceShortcut" AutomationProperties.Name="show or hide dudu" />
+                <TextBox Header="shortcut to open dudu" Text="{x:Bind ViewModel.GlobalShortcut, Mode=TwoWay}" PlaceholderText="Ctrl+Alt+D" AutomationProperties.AutomationId="AppearanceShortcut" AutomationProperties.Name="shortcut to open dudu" />
                 <Button Content="save shortcut" Command="{x:Bind ViewModel.SaveShortcutCommand}" AutomationProperties.AutomationId="AppearanceSaveShortcut" AutomationProperties.Name="save shortcut" HorizontalAlignment="Left" />
             </StackPanel>
 

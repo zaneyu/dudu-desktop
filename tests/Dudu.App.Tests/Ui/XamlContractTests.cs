@@ -79,9 +79,9 @@ public sealed class XamlContractTests
         };
         var expectedNamedElements = new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
-            ["HomePage"] = ["HomeNextReminder", "HomeActiveFocus", "HomePetState", "HomePetAnimation", "HomeActionStatus", "HomeNextCountdown", "CountdownTargetBox", "CountdownTargetValidation", "HomeSaveCountdownButton", "HomeCheckInSummary", "HomeCheckInHistory", "StartupToggle", "StartupRecoveryPanel", "StartupRecoveryMessage", "RetryStartupButton"],
+            ["HomePage"] = ["HomeNextReminder", "HomeActiveFocus", "HomePetState", "HomePetAnimation", "HomeActionStatus", "HomeNextCountdown", "CountdownTargetBox", "CountdownTargetValidation", "HomeSaveCountdownButton", "CountdownList", "HomeCheckInSummary", "HomeCheckInHistory", "StartupToggle", "StartupRecoveryPanel", "StartupRecoveryMessage", "RetryStartupButton"],
             ["RemindersPage"] = ["ReminderList", "ScheduleBox", "LocalTimeBox", "RemindersLocalTimeValidation", "SundayBox", "MondayBox", "TuesdayBox", "WednesdayBox", "ThursdayBox", "FridayBox", "SaturdayBox", "IntervalBox", "QuietHoursBox", "SaveReminderButton"],
-            ["TasksFocusPage"] = ["TaskDueBox", "TaskDueValidation", "SaveTaskButton", "FocusCurrent"],
+            ["TasksFocusPage"] = ["ActiveTaskList", "TaskDueBox", "TaskDueValidation", "SaveTaskButton", "FocusCurrent"],
             ["LoveNotesPage"] = ["LoveNotesDailyLimit", "LoveNotesPendingCount"],
             ["AppearancePage"] = ["ThemeBox"],
             ["ConnectionPage"] = ["ConnectionAvailability", "ConnectionPairingCode", "ConnectionCodeExpiry", "ConnectionSessionCount"],
@@ -142,11 +142,19 @@ public sealed class XamlContractTests
         Assert.Contains("Date=\"{x:Bind ViewModel.AnniversaryDate, Mode=TwoWay}\"", allPages);
         Assert.Contains("Date=\"{x:Bind ViewModel.BirthdayDate, Mode=TwoWay}\"", allPages);
         Assert.Contains("ViewModel.OutfitAvailabilityMessage", allPages);
-        Assert.Contains("ItemsSource=\"{x:Bind ViewModel.RecentCheckIns, Mode=OneWay}\"", File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml")));
+        var homeXaml = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml"));
+        Assert.Contains("ItemsSource=\"{x:Bind ViewModel.RecentCheckIns, Mode=OneWay}\"", homeXaml);
+        // Check-in history shows friendly local text, never the raw enum or UTC value.
+        Assert.Contains("{x:Bind viewmodels:CheckInDisplay.ChoiceText(Choice)}", homeXaml);
+        Assert.Contains("{x:Bind viewmodels:CheckInDisplay.TimeText(CreatedUtc)}", homeXaml);
+        Assert.DoesNotContain("Text=\"{x:Bind CreatedUtc}\"", homeXaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("Text=\"{x:Bind Choice}\"", homeXaml, StringComparison.Ordinal);
         var loveNotes = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "LoveNotesPage.xaml"));
         Assert.Contains("SelectedItem=\"{x:Bind ViewModel.SelectedRemoteEnvelope, Mode=TwoWay}\"", loveNotes);
         Assert.Contains("AutomationProperties.AutomationId=\"LoveNotesRevealSelected\"", loveNotes);
         Assert.DoesNotContain("RemoteNoteList_SelectionChanged", loveNotes);
+        // The cached privacy page disarms a stale destructive confirmation on every visit.
+        Assert.Contains("ViewModel.ResetPendingConfirmation();", File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "PrivacyDataPage.xaml.cs")));
         var privacy = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "PrivacyDataPage.xaml"));
         Assert.Contains("AutomationProperties.AutomationId=\"PrivacyConfirmationMessage\"", privacy);
         Assert.Contains("AutomationProperties.AutomationId=\"PrivacyConfirm\"", privacy);
@@ -258,6 +266,125 @@ public sealed class XamlContractTests
         Assert.Contains("private Image DuduFrameImage", stubs);
         Assert.Contains("private Frame OnboardingFrame", stubs);
         Assert.Contains("private Button DuduComfortButton", stubs);
+    }
+
+    [Fact]
+    public void Feature_pages_wrap_text_instead_of_scrolling_horizontally()
+    {
+        // Audit regression: HorizontalScrollBarVisibility="Auto" measured content
+        // with unbounded width, so text never wrapped and a horizontal scrollbar
+        // appeared (and could push buttons off-window at 200% text scaling).
+        var root = FindRepositoryRoot();
+        foreach (var page in new[]
+        {
+            "HomePage", "RemindersPage", "TasksFocusPage", "LoveNotesPage",
+            "AppearancePage", "ConnectionPage", "PrivacyDataPage",
+        })
+        {
+            var xaml = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", $"{page}.xaml"));
+            Assert.Contains("<ScrollViewer HorizontalScrollBarVisibility=\"Disabled\" VerticalScrollBarVisibility=\"Auto\">", xaml);
+            Assert.DoesNotContain("HorizontalScrollBarVisibility=\"Auto\"", xaml, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void Primary_buttons_keep_coral_on_hover_and_meet_text_contrast()
+    {
+        // Audit regression: PrimaryButtonStyle was not based on a button style with
+        // coral PointerOver/Pressed brushes (it turned grey on hover), and white on
+        // the old coral #C95F55 was only ~4.0:1.
+        var root = FindRepositoryRoot();
+        var controls = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Themes", "Controls.xaml"));
+        var colors = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Themes", "Colors.xaml"));
+
+        Assert.Contains("<Style x:Key=\"PrimaryButtonStyle\" TargetType=\"Button\" BasedOn=\"{StaticResource AccentButtonStyle}\">", controls);
+        var themes = Regex.Matches(
+            colors,
+            "<ResourceDictionary x:Key=\"(?<theme>\\w+)\">(?<body>.*?)</ResourceDictionary>",
+            RegexOptions.Singleline)
+            .ToDictionary(match => match.Groups["theme"].Value, match => match.Groups["body"].Value);
+        foreach (var theme in new[] { "Default", "Light", "Dark" })
+        {
+            var body = themes[theme];
+            var foreground = BrushColor(body, "PrimaryButtonForegroundBrush");
+            foreach (var key in new[] { "CoralActionBrush", "AccentButtonBackgroundPointerOver", "AccentButtonBackgroundPressed" })
+            {
+                var ratio = ContrastRatio(BrushColor(body, key), foreground);
+                Assert.True(ratio >= 4.5, $"{theme} {key}: {ratio:F2}:1 is below 4.5:1");
+            }
+
+            Assert.Equal(foreground, BrushColor(body, "AccentButtonForegroundPointerOver"));
+            Assert.Equal(foreground, BrushColor(body, "AccentButtonForegroundPressed"));
+        }
+
+        // High contrast keeps the system accent-button brushes.
+        Assert.DoesNotContain("AccentButton", themes["HighContrast"], StringComparison.Ordinal);
+    }
+
+    private static string BrushColor(string dictionary, string key)
+    {
+        var match = Regex.Match(dictionary, $"<SolidColorBrush x:Key=\"{key}\" Color=\"#(?<color>[0-9A-Fa-f]{{6,8}})\" />");
+        Assert.True(match.Success, $"{key} is missing a literal color.");
+        var color = match.Groups["color"].Value;
+        return color.Length == 8 ? color[2..] : color;
+    }
+
+    private static double ContrastRatio(string first, string second)
+    {
+        static double Luminance(string hex)
+        {
+            static double Channel(string part)
+            {
+                var value = Convert.ToInt32(part, 16) / 255.0;
+                return value <= 0.03928 ? value / 12.92 : Math.Pow((value + 0.055) / 1.055, 2.4);
+            }
+
+            return (0.2126 * Channel(hex[..2])) + (0.7152 * Channel(hex[2..4])) + (0.0722 * Channel(hex[4..6]));
+        }
+
+        var a = Luminance(first);
+        var b = Luminance(second);
+        return (Math.Max(a, b) + 0.05) / (Math.Min(a, b) + 0.05);
+    }
+
+    [Fact]
+    public void Compact_navigation_rail_gives_every_destination_an_icon()
+    {
+        // Audit regression: PaneDisplayMode="LeftCompact" collapses the pane to an
+        // icon rail, but no item had an Icon, so the rail showed seven blank buttons.
+        var root = FindRepositoryRoot();
+        var shell = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Windows", "SettingsWindow.xaml"));
+
+        Assert.Contains("PaneDisplayMode=\"LeftCompact\"", shell);
+        var items = Regex.Matches(
+            shell,
+            "<NavigationViewItem\\s[^>]*AutomationProperties\\.AutomationId=\"(?<id>Nav\\w+)\"[^>]*>(?<body>.*?)</NavigationViewItem>",
+            RegexOptions.Singleline);
+        Assert.Equal(7, items.Count);
+        foreach (Match item in items)
+        {
+            Assert.Matches("<NavigationViewItem\\.Icon>\\s*<FontIcon Glyph=\"&#x[0-9A-F]{4};\" />\\s*</NavigationViewItem\\.Icon>", item.Groups["body"].Value);
+        }
+    }
+
+    [Fact]
+    public void Navigation_selection_before_feature_pages_exist_does_not_overwrite_a_deep_link()
+    {
+        // Audit regression: the constructor's initial "home" selection (or the
+        // NavigationView applying its template) raised SelectionChanged while the
+        // feature pages were not built yet, recording "home" as the pending
+        // destination over a tray deep link queued by NavigateTo.
+        var root = FindRepositoryRoot();
+        var code = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Windows", "SettingsWindow.xaml.cs")).Replace("\r\n", "\n");
+        var start = code.IndexOf("private void RootNavigation_SelectionChanged(", StringComparison.Ordinal);
+        Assert.True(start >= 0);
+        var end = code.IndexOf("\n    }", start, StringComparison.Ordinal);
+        var body = code[start..end];
+
+        var guard = body.IndexOf("if (!_featurePagesInitialized) return;", StringComparison.Ordinal);
+        var navigate = body.IndexOf("NavigateTo(tag);", StringComparison.Ordinal);
+        Assert.True(guard >= 0, "SelectionChanged must ignore changes before the feature pages exist.");
+        Assert.True(navigate > guard);
     }
 
     [Fact]
@@ -380,6 +507,44 @@ public sealed class XamlContractTests
         Assert.Contains("try", methodBody, StringComparison.Ordinal);
         Assert.Contains("catch (Exception exception)", methodBody, StringComparison.Ordinal);
         Assert.Contains("Trace.TraceError", methodBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Tasks_and_countdowns_offer_a_new_action_and_resync_their_unbound_date_boxes()
+    {
+        // Audit regressions: once an item was selected there was no way to start
+        // a fresh one (typing a new title overwrote it), and the unbound date
+        // boxes kept stale text after a save cleared the view-model value.
+        var root = FindRepositoryRoot();
+        var home = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml"));
+        var tasks = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "TasksFocusPage.xaml"));
+        var homeCode = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml.cs"));
+        var tasksCode = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "TasksFocusPage.xaml.cs"));
+
+        Assert.Contains("Command=\"{x:Bind ViewModel.NewCountdownCommand}\"", home);
+        Assert.Contains("AutomationProperties.AutomationId=\"HomeNewCountdown\"", home);
+        Assert.Contains("Command=\"{x:Bind ViewModel.NewTaskCommand}\"", tasks);
+        Assert.Contains("AutomationProperties.AutomationId=\"TasksNew\"", tasks);
+        Assert.Contains("case nameof(HomeViewModel.CountdownTargetUtc) when !_applyingCountdownTargetFromBox:", homeCode);
+        Assert.Contains("case nameof(TasksFocusViewModel.DueUtc) when !_applyingDueFromBox:", tasksCode);
+    }
+
+    [Fact]
+    public void Focus_controls_are_enabled_by_session_state_and_idle_copy_is_accurate()
+    {
+        var root = FindRepositoryRoot();
+        var tasks = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "TasksFocusPage.xaml"));
+        var tasksCode = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "TasksFocusPage.xaml.cs"));
+
+        Assert.Contains("IsEnabled=\"{x:Bind ViewModel.CanPauseFocus, Mode=OneWay}\" AutomationProperties.AutomationId=\"FocusPause\"", tasks);
+        Assert.Contains("IsEnabled=\"{x:Bind ViewModel.CanResumeFocus, Mode=OneWay}\" AutomationProperties.AutomationId=\"FocusResume\"", tasks);
+        Assert.Contains("IsEnabled=\"{x:Bind ViewModel.CanAdjustFocus, Mode=OneWay}\" AutomationProperties.AutomationId=\"FocusExtend\"", tasks);
+        Assert.Contains("IsEnabled=\"{x:Bind ViewModel.CanAdjustFocus, Mode=OneWay}\" AutomationProperties.AutomationId=\"FocusEnd\"", tasks);
+        Assert.DoesNotContain("nothing due now", tasksCode, StringComparison.Ordinal);
+        Assert.Contains("null => \"no focus running\"", tasksCode);
+        // The remaining time ticks while the page is visible and stops with it.
+        Assert.Contains("DispatcherQueue.CreateTimer()", tasksCode);
+        Assert.Contains("_focusTimer?.Stop();", tasksCode);
     }
 
     private static string FindRepositoryRoot()

@@ -70,13 +70,43 @@
                         SelectionChanged="RootNavigation_SelectionChanged"
                         Background="{ThemeResource NavigationSurfaceBrush}">
             <NavigationView.MenuItems>
-                <NavigationViewItem Content="home" Tag="home" AutomationProperties.AutomationId="NavHome" />
-                <NavigationViewItem Content="reminders" Tag="reminders" AutomationProperties.AutomationId="NavReminders" />
-                <NavigationViewItem Content="tasks and focus" Tag="tasks" AutomationProperties.AutomationId="NavTasksFocus" />
-                <NavigationViewItem Content="love notes" Tag="notes" AutomationProperties.AutomationId="NavLoveNotes" />
-                <NavigationViewItem Content="appearance" Tag="appearance" AutomationProperties.AutomationId="NavAppearance" />
-                <NavigationViewItem Content="connection" Tag="connection" AutomationProperties.AutomationId="NavConnection" />
-                <NavigationViewItem Content="privacy and data" Tag="privacy" AutomationProperties.AutomationId="NavPrivacy" />
+                <!-- LeftCompact collapses the pane to an icon rail, so every
+                     destination needs an icon or the rail shows blank buttons. -->
+                <NavigationViewItem Content="home" Tag="home" AutomationProperties.AutomationId="NavHome">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE80F;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="reminders" Tag="reminders" AutomationProperties.AutomationId="NavReminders">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE121;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="tasks and focus" Tag="tasks" AutomationProperties.AutomationId="NavTasksFocus">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE9D5;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="love notes" Tag="notes" AutomationProperties.AutomationId="NavLoveNotes">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xEB51;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="appearance" Tag="appearance" AutomationProperties.AutomationId="NavAppearance">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE790;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="connection" Tag="connection" AutomationProperties.AutomationId="NavConnection">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE71B;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem Content="privacy and data" Tag="privacy" AutomationProperties.AutomationId="NavPrivacy">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE72E;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
             </NavigationView.MenuItems>
             <Frame x:Name="ContentFrame" />
         </NavigationView>

@@ -86,6 +86,10 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
         get => _monitorDeviceName;
         set
         {
+            // The monitor ComboBox binds SelectedItem TwoWay: when RefreshAsync
+            // clears MonitorOptions, it pushes null back in, which used to
+            // reset the chosen monitor to the first one on every visit.
+            if (string.IsNullOrWhiteSpace(value)) return;
             if (!SetProperty(ref _monitorDeviceName, value)) return;
             // Each monitor can have its own saved pet size. Reload it from
             // whatever RefreshAsync already loaded into _placements -- no
@@ -211,7 +215,18 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
                 var selectedPlacement = placements.FirstOrDefault(item =>
                     string.Equals(item.MonitorDeviceName, MonitorDeviceName, StringComparison.Ordinal))
                     ?? placements.FirstOrDefault();
-                MonitorDeviceName = selectedPlacement?.MonitorDeviceName ?? MonitorOptions[0];
+                var monitor = selectedPlacement?.MonitorDeviceName ?? MonitorOptions[0];
+                if (string.Equals(monitor, MonitorDeviceName, StringComparison.Ordinal))
+                {
+                    // Unchanged value: re-announce it anyway so the ComboBox,
+                    // whose items were just rebuilt, selects it again.
+                    OnPropertyChanged(nameof(MonitorDeviceName));
+                }
+                else
+                {
+                    MonitorDeviceName = monitor;
+                }
+
                 if (selectedPlacement is not null)
                 {
                     PetScale = selectedPlacement.Scale;
@@ -348,6 +363,10 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
             return null;
         }
 
-        return new DateTimeOffset(year, value.Month, value.Day, 0, 0, 0, TimeSpan.Zero);
+        // Local noon with the local offset: midnight UTC displayed a day early
+        // in the date pickers anywhere west of UTC. Noon stays on the same
+        // calendar day for every real-world offset.
+        var localNoon = new DateTime(year, value.Month, value.Day, 12, 0, 0, DateTimeKind.Unspecified);
+        return new DateTimeOffset(localNoon, TimeZoneInfo.Local.GetUtcOffset(localNoon));
     }
 }

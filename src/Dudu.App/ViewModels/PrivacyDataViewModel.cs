@@ -136,6 +136,11 @@ public sealed class PrivacyDataViewModel : FeatureViewModelBase
         if (succeeded) PendingConfirmation = PrivacyConfirmationAction.None;
     }
 
+    /// <summary>Called on every page visit. The shell caches this page and its
+    /// view model, so a destructive confirmation requested on an earlier visit
+    /// (then navigated away from) must not still be armed when she returns.</summary>
+    public void ResetPendingConfirmation() => PendingConfirmation = PrivacyConfirmationAction.None;
+
     private void RequestConfirmation(PrivacyConfirmationAction action) =>
         PendingConfirmation = action;
 

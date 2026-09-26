@@ -13,6 +13,7 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
     private RemoteEnvelope? _selectedRemoteEnvelope;
     private RemoteEnvelope? _openedRemoteEnvelope;
     private string? _openedRemoteNoteText;
+    private string? _chosenLocalNoteText;
     private string _draftText = string.Empty;
     private bool _draftEnabled = true;
 
@@ -86,6 +87,20 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
     }
     public RemoteEnvelope? OpenedRemoteEnvelope { get => _openedRemoteEnvelope; private set => SetProperty(ref _openedRemoteEnvelope, value); }
     public string? OpenedRemoteNoteText { get => _openedRemoteNoteText; private set => SetProperty(ref _openedRemoteNoteText, value); }
+
+    /// <summary>The local note "let dudu choose" picked. Shown in the note jar
+    /// section, separate from the incoming "opened note" box, so a pick never
+    /// replaces an encrypted note she opened but has not saved yet.</summary>
+    public string? ChosenLocalNoteText
+    {
+        get => _chosenLocalNoteText;
+        private set
+        {
+            if (SetProperty(ref _chosenLocalNoteText, value)) OnPropertyChanged(nameof(HasChosenLocalNote));
+        }
+    }
+
+    public bool HasChosenLocalNote => !string.IsNullOrWhiteSpace(ChosenLocalNoteText);
     public string DraftText { get => _draftText; set => SetProperty(ref _draftText, value); }
     public bool DraftEnabled { get => _draftEnabled; set => SetProperty(ref _draftEnabled, value); }
     public int DailyLocalNoteLimit => _context.CurrentPreferences.LocalNoteDailyLimit;
@@ -227,7 +242,12 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
             await MutateAsync(() =>
             {
                 Replace(note);
-                PendingRemoteNotes.Remove(envelope);
+                // RemoteEnvelope is a record with byte[] fields, so Remove(envelope)
+                // compared the arrays by reference and silently failed for any
+                // fresh instance (e.g. after a refresh). Match by MessageId.
+                var pending = PendingRemoteNotes.FirstOrDefault(item =>
+                    string.Equals(item.MessageId, envelope.MessageId, StringComparison.Ordinal));
+                if (pending is not null) PendingRemoteNotes.Remove(pending);
                 if (SelectedRemoteEnvelope?.MessageId == envelope.MessageId) SelectedRemoteEnvelope = null;
             }, cancellationToken);
             OpenedRemoteEnvelope = null;
@@ -242,10 +262,8 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
         RunAsync(async () =>
         {
             var note = await _context.NoteSelector.SelectAsync(true, cancellationToken)
-                ?? throw new InvalidOperationException("cannot add a local note first");
-            OpenedRemoteEnvelope = null;
-            OpenedRemoteNoteText = note.Text;
-            OnPropertyChanged(nameof(HasOpenedRemoteNote));
+                ?? throw new InvalidOperationException("aiyo add a note to the jar first");
+            ChosenLocalNoteText = note.Text;
         });
 
     private void Replace(LocalLoveNote note)
@@ -259,11 +277,11 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
     {
         if (note is null)
         {
-            ErrorMessage = SelectOneFirstMessage;
+            ReportError(SelectOneFirstMessage);
             return;
         }
 
-        ErrorMessage = null;
+        ClearMessages();
         PendingDeleteNote = note;
     }
 

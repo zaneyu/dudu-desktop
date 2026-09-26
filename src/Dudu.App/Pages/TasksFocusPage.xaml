@@ -5,7 +5,7 @@
     xmlns:models="using:Dudu.Core.Models"
     xmlns:viewModels="using:Dudu.App.ViewModels"
     Background="{ThemeResource WindowSurfaceBrush}">
-    <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
         <StackPanel MaxWidth="880" Margin="32" Spacing="24">
             <StackPanel Spacing="8">
                 <TextBlock Text="tasks and focus" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="TasksPageTitle" AutomationProperties.Name="tasks and focus" />
@@ -14,7 +14,7 @@
 
             <StackPanel Spacing="12">
                 <TextBlock Text="active tasks" Style="{StaticResource SectionHeadingStyle}" />
-                <ListView ItemsSource="{x:Bind ViewModel.ActiveTasks, Mode=OneWay}" SelectionChanged="TaskList_SelectionChanged" MaxHeight="260" AutomationProperties.AutomationId="TasksActiveList" AutomationProperties.Name="active tasks list">
+                <ListView x:Name="ActiveTaskList" ItemsSource="{x:Bind ViewModel.ActiveTasks, Mode=OneWay}" SelectionChanged="TaskList_SelectionChanged" MaxHeight="260" AutomationProperties.AutomationId="TasksActiveList" AutomationProperties.Name="active tasks list">
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="models:TaskItem">
                             <StackPanel Margin="4" Spacing="2">
@@ -45,6 +45,7 @@
                 <TextBox x:Name="TaskDueBox" Header="due date and time" TextChanged="TaskDueBox_TextChanged" PlaceholderText="optional" AutomationProperties.AutomationId="TasksDue" AutomationProperties.Name="due date and time" />
                 <TextBlock x:Name="TaskDueValidation" TextWrapping="Wrap" Foreground="{ThemeResource ErrorBrush}" Visibility="Collapsed" AutomationProperties.AutomationId="TasksDueValidation" AutomationProperties.Name="due date validation" />
                 <Button x:Name="SaveTaskButton" Content="save task" Command="{x:Bind ViewModel.SaveTaskCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="TasksSave" AutomationProperties.Name="save task" HorizontalAlignment="Left" />
+                <Button Content="new task" Command="{x:Bind ViewModel.NewTaskCommand}" AutomationProperties.AutomationId="TasksNew" AutomationProperties.Name="new task" HorizontalAlignment="Left" />
             </StackPanel>
 
             <StackPanel Spacing="12">
@@ -60,10 +61,10 @@
                 <NumberBox Header="custom minutes" Value="30" Minimum="1" Maximum="240" SpinButtonPlacementMode="Compact" ValueChanged="CustomDurationBox_ValueChanged" AutomationProperties.AutomationId="FocusCustomDuration" AutomationProperties.Name="custom minutes" />
                 <StackPanel Spacing="8">
                     <Button Content="start focus" Command="{x:Bind ViewModel.StartFocusCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="FocusStart" AutomationProperties.Name="start focus" />
-                    <Button Content="pause" Command="{x:Bind ViewModel.PauseFocusCommand}" AutomationProperties.AutomationId="FocusPause" AutomationProperties.Name="pause" />
-                    <Button Content="resume" Command="{x:Bind ViewModel.ResumeFocusCommand}" AutomationProperties.AutomationId="FocusResume" AutomationProperties.Name="resume" />
-                    <Button Content="extend 5 min" Command="{x:Bind ViewModel.ExtendFocusCommand}" AutomationProperties.AutomationId="FocusExtend" AutomationProperties.Name="extend 5 min" />
-                    <Button Content="end focus" Command="{x:Bind ViewModel.EndFocusCommand}" AutomationProperties.AutomationId="FocusEnd" AutomationProperties.Name="end focus" />
+                    <Button Content="pause" Command="{x:Bind ViewModel.PauseFocusCommand}" IsEnabled="{x:Bind ViewModel.CanPauseFocus, Mode=OneWay}" AutomationProperties.AutomationId="FocusPause" AutomationProperties.Name="pause" />
+                    <Button Content="resume" Command="{x:Bind ViewModel.ResumeFocusCommand}" IsEnabled="{x:Bind ViewModel.CanResumeFocus, Mode=OneWay}" AutomationProperties.AutomationId="FocusResume" AutomationProperties.Name="resume" />
+                    <Button Content="extend 5 min" Command="{x:Bind ViewModel.ExtendFocusCommand}" IsEnabled="{x:Bind ViewModel.CanAdjustFocus, Mode=OneWay}" AutomationProperties.AutomationId="FocusExtend" AutomationProperties.Name="extend 5 min" />
+                    <Button Content="end focus" Command="{x:Bind ViewModel.EndFocusCommand}" IsEnabled="{x:Bind ViewModel.CanAdjustFocus, Mode=OneWay}" AutomationProperties.AutomationId="FocusEnd" AutomationProperties.Name="end focus" />
                 </StackPanel>
             </StackPanel>
 

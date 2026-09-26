@@ -36,6 +36,7 @@ public sealed class HomeViewModel : FeatureViewModelBase
         DeleteCountdownCommand = new AsyncRelayCommand<Countdown>((item, ct) => DeleteCountdownAsync(item, ct));
         RequestDeleteCountdownCommand = new RelayCommand<Countdown>(RequestDeleteCountdown);
         CancelDeleteCountdownCommand = new RelayCommand(() => PendingDeleteCountdown = null);
+        NewCountdownCommand = new RelayCommand(() => SelectCountdown(null));
         RecordCheckInCommand = new AsyncRelayCommand((CancellationToken ct) =>
             RecordCheckInAsync(ct));
     }
@@ -49,6 +50,9 @@ public sealed class HomeViewModel : FeatureViewModelBase
     public IAsyncRelayCommand<Countdown> DeleteCountdownCommand { get; }
     public IRelayCommand<Countdown> RequestDeleteCountdownCommand { get; }
     public IRelayCommand CancelDeleteCountdownCommand { get; }
+    /// <summary>Clears the countdown editor so the next save creates a new
+    /// countdown instead of overwriting the one selected in the list.</summary>
+    public IRelayCommand NewCountdownCommand { get; }
     public IAsyncRelayCommand RecordCheckInCommand { get; }
 
     public ObservableCollection<Countdown> Countdowns { get; } = [];
@@ -225,7 +229,7 @@ public sealed class HomeViewModel : FeatureViewModelBase
                 .FirstOrDefault();
             if (previous is null) return $"a fresh check-in whenever u feel like it{RecipientClause}";
             var reflection = string.IsNullOrWhiteSpace(previous.Note) ? string.Empty : $"\nyour note: {previous.Note}";
-            return $"yesterday you chose {previous.Choice.ToString().ToLowerInvariant()}.{reflection}\nhow does today feel{RecipientClause}?";
+            return $"yesterday you chose {CheckInDisplay.ChoiceText(previous.Choice)}.{reflection}\nhow does today feel{RecipientClause}?";
         }
     }
 
@@ -350,11 +354,11 @@ public sealed class HomeViewModel : FeatureViewModelBase
     {
         if (countdown is null)
         {
-            ErrorMessage = SelectOneFirstMessage;
+            ReportError(SelectOneFirstMessage);
             return;
         }
 
-        ErrorMessage = null;
+        ClearMessages();
         PendingDeleteCountdown = countdown;
     }
 
@@ -428,4 +432,24 @@ public sealed class HomeViewModel : FeatureViewModelBase
     /// HomePage's code-behind click handlers, which run outside any
     /// RunAsync call and would otherwise surface raw exception.Message.</summary>
     public static string DescribeError(Exception exception) => ToUserMessage(exception);
+}
+
+/// <summary>Display-ready text for the check-in history list. The page binds
+/// these through x:Bind function bindings so it never shows the raw enum name
+/// or the stored UTC timestamp (with its "+00:00" offset).</summary>
+public static class CheckInDisplay
+{
+    public static string ChoiceText(MoodChoice choice) => choice switch
+    {
+        MoodChoice.Great => "great",
+        MoodChoice.Okay => "okay",
+        MoodChoice.Tired => "tired",
+        MoodChoice.Rough => "rough",
+        _ => choice.ToString().ToLowerInvariant(),
+    };
+
+    /// <summary>Local wall-clock time in the short general ("g") pattern,
+    /// matching how countdowns and focus history show times.</summary>
+    public static string TimeText(DateTimeOffset createdUtc) =>
+        createdUtc.ToLocalTime().ToString("g");
 }

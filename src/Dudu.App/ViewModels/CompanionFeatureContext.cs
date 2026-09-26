@@ -290,7 +290,9 @@ public abstract class FeatureViewModelBase : CommunityToolkit.Mvvm.ComponentMode
         string? successMessage = null)
     {
         ArgumentNullException.ThrowIfNull(operation);
-        ErrorMessage = null;
+        // Both banners clear up front: a success left over from an earlier
+        // action must not sit next to this action's error (or vice versa).
+        ClearMessages();
         IsBusy = true;
         try
         {
@@ -304,13 +306,28 @@ public abstract class FeatureViewModelBase : CommunityToolkit.Mvvm.ComponentMode
         }
         catch (Exception exception)
         {
-            ErrorMessage = ToUserMessage(exception);
+            ReportError(ToUserMessage(exception));
             return false;
         }
         finally
         {
             IsBusy = false;
         }
+    }
+
+    /// <summary>Shows an error and hides any earlier success message, so the
+    /// page never shows both at once.</summary>
+    protected void ReportError(string message)
+    {
+        StatusMessage = null;
+        ErrorMessage = message;
+    }
+
+    /// <summary>Hides both the success and the error banner.</summary>
+    protected void ClearMessages()
+    {
+        StatusMessage = null;
+        ErrorMessage = null;
     }
 
     protected Task<bool> RunAsync(

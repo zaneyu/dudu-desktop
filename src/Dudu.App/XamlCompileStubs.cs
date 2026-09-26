@@ -76,6 +76,7 @@ namespace Dudu.App.Pages
         private TextBox CountdownTargetBox = null!;
         private TextBlock CountdownTargetValidation = null!;
         private Button HomeSaveCountdownButton = null!;
+        private ListView CountdownList = null!;
         private TextBlock HomeCheckInSummary = null!;
         private ItemsControl HomeCheckInHistory = null!;
         private CheckBox StartupToggle = null!;
@@ -94,6 +95,7 @@ namespace Dudu.App.Pages
             CountdownTargetBox = new TextBox();
             CountdownTargetValidation = new TextBlock();
             HomeSaveCountdownButton = new Button();
+            CountdownList = new ListView();
             HomeCheckInSummary = new TextBlock();
             HomeCheckInHistory = new ItemsControl();
             StartupToggle = new CheckBox();
@@ -141,6 +143,7 @@ namespace Dudu.App.Pages
 
     public sealed partial class TasksFocusPage
     {
+        private ListView ActiveTaskList = null!;
         private TextBox TaskDueBox = null!;
         private TextBlock TaskDueValidation = null!;
         private Button SaveTaskButton = null!;
@@ -148,6 +151,7 @@ namespace Dudu.App.Pages
 
         private void InitializeComponent()
         {
+            ActiveTaskList = new ListView();
             TaskDueBox = new TextBox();
             TaskDueValidation = new TextBlock();
             SaveTaskButton = new Button();

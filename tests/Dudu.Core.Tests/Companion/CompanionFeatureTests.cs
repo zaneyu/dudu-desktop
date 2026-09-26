@@ -98,6 +98,28 @@ public sealed class CompanionFeatureTests
         CompanionAssertions.RecentIdsAreExcludedAsync(count: 2);
 
     [Fact]
+    public async Task Manual_request_falls_back_to_recent_notes_when_every_enabled_note_was_just_shown()
+    {
+        // Audit regression: with two or fewer enabled notes, excluding the two
+        // most recently shown left nothing, so "let dudu choose" failed with
+        // "add a local note first" even though the jar had notes.
+        var fixture = NoteFixture.WithNotes("one", "two");
+        var today = DateOnly.FromDateTime(fixture.Clock.UtcNow.DateTime);
+        await fixture.Repository.TryRecordShownAsync(
+            "one", fixture.Clock.UtcNow, today, dailyLimit: 3, unsolicited: false, fixture.CancellationToken);
+        await fixture.Repository.TryRecordShownAsync(
+            "two", fixture.Clock.UtcNow.AddMinutes(1), today, dailyLimit: 3, unsolicited: false, fixture.CancellationToken);
+
+        var manual = await fixture.Selector.SelectAsync(manualRequest: true, fixture.CancellationToken);
+        var unsolicited = await fixture.Selector.SelectAsync(manualRequest: false, fixture.CancellationToken);
+
+        Assert.NotNull(manual);
+        Assert.Contains(manual!.Id, new[] { "one", "two" });
+        // Unprompted picks still never repeat the two most recent notes.
+        Assert.Null(unsolicited);
+    }
+
+    [Fact]
     public void Past_countdown_is_zero() =>
         Assert.Equal(TimeSpan.Zero, CompanionFixtures.PastCountdown().Remaining);
 

@@ -439,6 +439,41 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task An_error_hides_an_earlier_success_message_so_both_never_show_together()
+    {
+        // Audit regression: RunAsync cleared ErrorMessage but not StatusMessage,
+        // and the request-delete handlers set ErrorMessage directly, so "oki
+        // saved" and an error could show side by side.
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        var home = new HomeViewModel(fixture.Context) { CountdownTitle = "Visit" };
+        await home.SaveCountdownAsync(ct);
+        Assert.True(home.HasStatus);
+
+        home.RequestDeleteCountdownCommand.Execute(null);
+
+        Assert.Equal("select one first", home.ErrorMessage);
+        Assert.False(home.HasStatus);
+
+        var tasks = new TasksFocusViewModel(fixture.Context) { Title = "Book dinner" };
+        await tasks.SaveTaskAsync(ct);
+        Assert.True(tasks.HasStatus);
+        await tasks.SaveTaskAsync(ct); // blank title now: fails
+
+        Assert.True(tasks.HasError);
+        Assert.False(tasks.HasStatus);
+
+        var notes = new LoveNotesViewModel(fixture.Context) { DraftText = "hi" };
+        await notes.SaveLocalNoteAsync(ct);
+        notes.RequestDeleteLocalNoteCommand.Execute(null);
+        Assert.True(notes.HasError);
+        Assert.False(notes.HasStatus);
+
+        notes.RequestDeleteLocalNoteCommand.Execute(Assert.Single(notes.LocalNotes));
+        Assert.False(notes.HasError);
+    }
+
+    [Fact]
     public async Task Null_selection_reports_select_one_first_instead_of_internals()
     {
         var fixture = FeatureFixture.Create();
@@ -894,6 +929,47 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Saving_an_opened_note_removes_it_from_pending_even_for_a_fresh_envelope_instance()
+    {
+        // Audit regression: PendingRemoteNotes.Remove(envelope) used record
+        // equality, which compares the byte[] fields by reference, so a note
+        // revealed from a different (e.g. refreshed) instance was never removed.
+        var fixture = FeatureFixture.Create();
+        var received = fixture.Clock.UtcNow;
+        fixture.RemoteNotes.Pending.Add(new RemoteEnvelope("message-1", [1], received));
+        var viewModel = new LoveNotesViewModel(fixture.Context);
+        await viewModel.RefreshAsync(TestContext.Current.CancellationToken);
+
+        await viewModel.RevealRemoteNoteCommand.ExecuteAsync(new RemoteEnvelope("message-1", [1], received));
+        await viewModel.SaveOpenedNoteCommand.ExecuteAsync(null);
+
+        Assert.Empty(viewModel.PendingRemoteNotes);
+        Assert.Equal(0, viewModel.UnopenedRemoteNoteCount);
+    }
+
+    [Fact]
+    public async Task Let_dudu_choose_shows_the_pick_in_the_jar_without_replacing_an_opened_note()
+    {
+        // Audit regression: the pick was written into the incoming "opened note"
+        // box, replacing an encrypted note she had opened but not saved yet.
+        var fixture = FeatureFixture.Create();
+        fixture.LocalNotes.Notes.Add(new LocalLoveNote("local-1", "you are doing great", true));
+        var envelope = new RemoteEnvelope("message-1", [1], fixture.Clock.UtcNow);
+        fixture.RemoteNotes.Pending.Add(envelope);
+        var viewModel = new LoveNotesViewModel(fixture.Context);
+        await viewModel.RefreshAsync(TestContext.Current.CancellationToken);
+        await viewModel.RevealRemoteNoteCommand.ExecuteAsync(envelope);
+        var opened = viewModel.OpenedRemoteNoteText;
+
+        await viewModel.ShowLocalNoteCommand.ExecuteAsync(null);
+
+        Assert.Equal("you are doing great", viewModel.ChosenLocalNoteText);
+        Assert.True(viewModel.HasChosenLocalNote);
+        Assert.Equal(opened, viewModel.OpenedRemoteNoteText);
+        Assert.Same(envelope, viewModel.OpenedRemoteEnvelope);
+    }
+
+    [Fact]
     public async Task Privacy_destructive_actions_require_a_separate_confirmation()
     {
         var calls = new List<string>();
@@ -1108,6 +1184,82 @@ public sealed class FeatureViewModelTests
 
         Assert.Equal(2, viewModel.BirthdayDate?.Month);
         Assert.Equal(29, viewModel.BirthdayDate?.Day);
+    }
+
+    [Fact]
+    public async Task Appearance_refresh_builds_saved_dates_at_local_noon_so_pickers_show_the_right_day()
+    {
+        // Audit regression: dates were built at midnight UTC, which a date picker
+        // shows as the previous day anywhere west of UTC.
+        var fixture = FeatureFixture.Create();
+        await fixture.Context.UpdatePreferencesAsync(
+            current => current with { Anniversary = new MonthDay(9, 12) },
+            TestContext.Current.CancellationToken);
+        var viewModel = new AppearanceViewModel(fixture.Context);
+
+        await viewModel.RefreshAsync(TestContext.Current.CancellationToken);
+
+        var date = Assert.IsType<DateTimeOffset>(viewModel.AnniversaryDate);
+        Assert.Equal(12, date.Hour);
+        Assert.Equal(TimeZoneInfo.Local.GetUtcOffset(date.DateTime), date.Offset);
+        Assert.Equal(9, date.ToLocalTime().Month);
+        Assert.Equal(12, date.ToLocalTime().Day);
+    }
+
+    [Fact]
+    public async Task Appearance_refresh_keeps_the_chosen_monitor_when_the_combo_box_pushes_null()
+    {
+        // Audit regression: MonitorOptions.Clear() makes the TwoWay-bound monitor
+        // ComboBox push a null SelectedItem into MonitorDeviceName, so the chosen
+        // monitor reset to the first one on every visit.
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        await fixture.Placements.SaveAsync(new PetPlacement("MONITOR-1", 0.8, 0.8, 1.0), ct);
+        await fixture.Placements.SaveAsync(new PetPlacement("MONITOR-2", 0.8, 0.8, 1.4), ct);
+        var viewModel = new AppearanceViewModel(fixture.Context);
+        await viewModel.RefreshAsync(ct);
+        viewModel.MonitorDeviceName = "MONITOR-2";
+        var reannounced = false;
+        viewModel.MonitorOptions.CollectionChanged += (_, args) =>
+        {
+            // What the bound ComboBox does when its items are cleared.
+            if (args.Action == NotifyCollectionChangedAction.Reset) viewModel.MonitorDeviceName = null!;
+        };
+        viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(AppearanceViewModel.MonitorDeviceName)) reannounced = true;
+        };
+
+        await viewModel.RefreshAsync(ct);
+
+        Assert.Equal("MONITOR-2", viewModel.MonitorDeviceName);
+        Assert.Equal(1.4, viewModel.PetScale);
+        // Re-announced so the rebuilt ComboBox selects it again.
+        Assert.True(reannounced);
+    }
+
+    [Fact]
+    public void Appearance_page_keeps_layering_toggles_with_the_button_that_saves_them()
+    {
+        // Audit regression: "keep dudu above other windows" and "hide dudu during
+        // fullscreen work" sat under "save seasonal look", which does not save
+        // them; only "save appearance" does, so changes were silently lost.
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "PRODUCT.md"))) root = root.Parent;
+        Assert.NotNull(root);
+        var xaml = File.ReadAllText(Path.Combine(root.FullName, "src", "Dudu.App", "Pages", "AppearancePage.xaml"));
+        var lookAndMotion = xaml.IndexOf("Text=\"look and motion\"", StringComparison.Ordinal);
+        var save = xaml.IndexOf("AutomationProperties.AutomationId=\"AppearanceSave\"", StringComparison.Ordinal);
+        var petOptions = xaml.IndexOf("Text=\"pet options\"", StringComparison.Ordinal);
+        foreach (var id in new[] { "AppearanceAlwaysOnTop", "AppearanceHideFullscreen" })
+        {
+            var toggle = xaml.IndexOf($"AutomationProperties.AutomationId=\"{id}\"", StringComparison.Ordinal);
+            Assert.True(toggle > lookAndMotion && toggle < save && save < petOptions, id);
+        }
+
+        // The shortcut shows Dudu and opens Home; it does not toggle Dudu away.
+        Assert.Contains("Header=\"shortcut to open dudu\"", xaml);
+        Assert.DoesNotContain("show or hide dudu", xaml, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1399,6 +1551,50 @@ public sealed class FeatureViewModelTests
 
         Assert.NotNull(viewModel.ErrorMessage);
         Assert.Null(viewModel.PairingCode);
+    }
+
+    [Fact]
+    public async Task Refreshing_connection_clears_a_pairing_code_that_has_expired()
+    {
+        // Audit regression: RefreshAsync never cleared an expired code, so a
+        // later visit still showed a dead code (and its past expiry) as usable.
+        var pairing = new FakePairing { State = PairingAvailability.Available, SessionCountResult = 0 };
+        var fixture = FeatureFixture.Create(pairing: pairing);
+        var ct = TestContext.Current.CancellationToken;
+        pairing.CodeResult = new PairingCodeResult(
+            PairingAvailability.Available, "ABC123", fixture.Clock.UtcNow.AddMinutes(10));
+        var viewModel = new ConnectionViewModel(fixture.Context);
+        await viewModel.CreateCodeAsync(ct);
+        Assert.Equal("ABC123", viewModel.PairingCode);
+
+        await viewModel.RefreshAsync(ct);
+        Assert.False(viewModel.HasError);
+        Assert.Equal("ABC123", viewModel.PairingCode); // still valid
+
+        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddMinutes(11);
+        await viewModel.RefreshAsync(ct);
+
+        Assert.Null(viewModel.PairingCode);
+        Assert.Null(viewModel.CodeExpiresUtc);
+        Assert.Equal("no code yet ah", viewModel.PairingCodeText);
+    }
+
+    [Fact]
+    public void Returning_to_privacy_disarms_a_confirmation_left_pending_on_an_earlier_visit()
+    {
+        var calls = new List<string>();
+        var fixture = FeatureFixture.Create(
+            deleteLocalDataAsync: _ => { calls.Add("local"); return Task.CompletedTask; });
+        var viewModel = new PrivacyDataViewModel(fixture.Context);
+        viewModel.RequestDeleteLocalDataCommand.Execute(null);
+        Assert.True(viewModel.ConfirmCommand.CanExecute(null));
+
+        // What PrivacyDataPage.Page_Loaded does on every visit.
+        viewModel.ResetPendingConfirmation();
+
+        Assert.Equal(PrivacyConfirmationAction.None, viewModel.PendingConfirmation);
+        Assert.False(viewModel.ConfirmCommand.CanExecute(null));
+        Assert.Empty(calls);
     }
 
     [Fact]
@@ -1964,6 +2160,170 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Editing_a_once_reminder_loads_its_due_time_and_does_not_move_it_on_save()
+    {
+        // Audit regression: the "once" branch of the selection loader never set
+        // LocalTime, so the editor kept 09:00 (or the previous selection's time)
+        // and saving any edit silently moved the reminder to that time.
+        var fixture = FeatureFixture.Create();
+        var due = DateTimeOffset.Parse("2026-09-14T15:30:00Z");
+        var reminder = fixture.Reminder with { NextDueUtc = due, LocalTimeZoneId = "UTC" };
+        fixture.Reminders.Items.Add(reminder);
+        var viewModel = new RemindersViewModel(fixture.Context)
+        {
+            SelectedReminder = fixture.Reminder with
+            {
+                Id = "other",
+                Rule = new RecurrenceRule.Daily(new TimeOnly(20, 0)),
+            },
+        };
+
+        viewModel.SelectedReminder = reminder;
+
+        Assert.Equal(ReminderScheduleKind.Once, viewModel.ScheduleKind);
+        Assert.Equal(new TimeOnly(15, 30), viewModel.LocalTime);
+
+        viewModel.Title = "Drink more water";
+        await viewModel.SaveAsync(TestContext.Current.CancellationToken);
+
+        var saved = fixture.Reminders.Items.Single(item => item.Id == reminder.Id);
+        Assert.Equal("Drink more water", saved.Title);
+        Assert.Equal(due, saved.NextDueUtc);
+    }
+
+    [Fact]
+    public void Selecting_a_reminder_loads_its_schedule_before_announcing_the_selection()
+    {
+        // Audit regression: SelectedReminder raised PropertyChanged before the
+        // schedule fields were loaded, and RemindersPage syncs its unbound
+        // schedule/time/interval/weekday controls on that event -- so the form
+        // showed the PREVIOUS reminder's schedule.
+        var fixture = FeatureFixture.Create();
+        var interval = fixture.Reminder with
+        {
+            Id = "interval",
+            Rule = new RecurrenceRule.Interval(TimeSpan.FromMinutes(45)),
+            QuietHoursBehavior = QuietHoursBehavior.DeliverImmediately,
+        };
+        var weekdays = fixture.Reminder with
+        {
+            Id = "weekdays",
+            Rule = new RecurrenceRule.SelectedWeekdays(
+                new HashSet<DayOfWeek> { DayOfWeek.Tuesday }, new TimeOnly(20, 15)),
+        };
+        var viewModel = new RemindersViewModel(fixture.Context) { SelectedReminder = interval };
+        (ReminderScheduleKind Kind, TimeOnly Time, QuietHoursBehavior Quiet, IReadOnlySet<DayOfWeek> Days)? seen = null;
+        viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(RemindersViewModel.SelectedReminder))
+            {
+                seen = (viewModel.ScheduleKind, viewModel.LocalTime, viewModel.QuietHoursBehavior, viewModel.SelectedWeekdays);
+            }
+        };
+
+        viewModel.SelectedReminder = weekdays;
+
+        Assert.NotNull(seen);
+        Assert.Equal(ReminderScheduleKind.SelectedWeekdays, seen.Value.Kind);
+        Assert.Equal(new TimeOnly(20, 15), seen.Value.Time);
+        Assert.Equal(QuietHoursBehavior.WaitUntilQuietHoursEnd, seen.Value.Quiet);
+        Assert.Equal(DayOfWeek.Tuesday, Assert.Single(seen.Value.Days));
+    }
+
+    [Fact]
+    public void New_reminder_always_announces_the_cleared_selection_so_the_page_resyncs()
+    {
+        // Audit regression: with nothing selected, NewReminder() raised no
+        // SelectedReminder change, so the page's unbound schedule controls kept
+        // stale values that the next save silently used.
+        var fixture = FeatureFixture.Create();
+        var viewModel = new RemindersViewModel(fixture.Context)
+        {
+            ScheduleKind = ReminderScheduleKind.Interval,
+            IntervalMinutes = 15,
+            LocalTime = new TimeOnly(22, 0),
+        };
+        ReminderScheduleKind? kindWhenAnnounced = null;
+        viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(RemindersViewModel.SelectedReminder))
+            {
+                kindWhenAnnounced = viewModel.ScheduleKind;
+            }
+        };
+
+        viewModel.NewReminder();
+
+        Assert.Equal(ReminderScheduleKind.Once, kindWhenAnnounced);
+        Assert.Null(viewModel.SelectedReminder);
+        Assert.Equal(60, viewModel.IntervalMinutes);
+        Assert.Equal(new TimeOnly(9, 0), viewModel.LocalTime);
+    }
+
+    [Fact]
+    public async Task Refreshing_reminders_keeps_a_half_typed_new_reminder_instead_of_selecting_the_first()
+    {
+        // Audit regression: every page visit ran `SelectedReminder ??= first`,
+        // overwriting a new reminder she was halfway through typing.
+        var fixture = FeatureFixture.Create();
+        fixture.Reminders.Items.Add(fixture.Reminder);
+        var viewModel = new RemindersViewModel(fixture.Context);
+        var ct = TestContext.Current.CancellationToken;
+
+        await viewModel.RefreshAsync(ct);
+        Assert.Equal(fixture.Reminder.Id, viewModel.SelectedReminder?.Id);
+
+        viewModel.NewReminder();
+        viewModel.Title = "half typed";
+        await viewModel.RefreshAsync(ct);
+
+        Assert.Null(viewModel.SelectedReminder);
+        Assert.Equal("half typed", viewModel.Title);
+    }
+
+    [Fact]
+    public async Task Refreshing_reminders_keeps_the_same_reminder_selected_without_reloading_edits()
+    {
+        var fixture = FeatureFixture.Create();
+        fixture.Reminders.Items.Add(fixture.Reminder with { Id = "first", Title = "first" });
+        fixture.Reminders.Items.Add(fixture.Reminder with { Id = "second", Title = "second" });
+        var viewModel = new RemindersViewModel(fixture.Context);
+        var ct = TestContext.Current.CancellationToken;
+        await viewModel.RefreshAsync(ct);
+
+        viewModel.SelectedReminder = viewModel.Reminders.Single(item => item.Id == "second");
+        viewModel.Title = "second, edited";
+        await viewModel.RefreshAsync(ct);
+
+        Assert.Equal("second", viewModel.SelectedReminder?.Id);
+        Assert.Same(viewModel.Reminders.Single(item => item.Id == "second"), viewModel.SelectedReminder);
+        Assert.Equal("second, edited", viewModel.Title);
+    }
+
+    [Fact]
+    public async Task Snoozing_the_selected_reminder_keeps_it_selected_so_a_later_save_keeps_the_snooze()
+    {
+        // Audit regression: Replace() after complete/snooze left SelectedReminder
+        // on the stale instance, so a later save overwrote SnoozedUntilUtc (or,
+        // once the list dropped its highlight, duplicated the reminder).
+        var fixture = FeatureFixture.Create();
+        fixture.Reminders.Items.Add(fixture.Reminder);
+        var viewModel = new RemindersViewModel(fixture.Context);
+        await viewModel.RefreshAsync(TestContext.Current.CancellationToken);
+        var selected = Assert.IsType<Reminder>(viewModel.SelectedReminder);
+
+        await viewModel.SnoozeCommand.ExecuteAsync(selected);
+
+        Assert.NotNull(viewModel.SelectedReminder?.SnoozedUntilUtc);
+        viewModel.Title = "Drink water slowly";
+        await viewModel.SaveAsync(TestContext.Current.CancellationToken);
+
+        var saved = Assert.Single(fixture.Reminders.Items);
+        Assert.Equal("Drink water slowly", saved.Title);
+        Assert.Equal(fixture.Clock.UtcNow.AddMinutes(15), saved.SnoozedUntilUtc);
+    }
+
+    [Fact]
     public async Task Reminder_default_commit_precedes_runtime_publish_and_failure_keeps_old_state()
     {
         var fixture = FeatureFixture.Create();
@@ -2235,6 +2595,163 @@ public sealed class FeatureViewModelTests
 
         await viewModel.DeleteTaskAsync(completed, TestContext.Current.CancellationToken);
         Assert.Empty(fixture.Tasks.Items);
+    }
+
+    [Fact]
+    public void Check_in_history_shows_friendly_choice_text_and_local_time()
+    {
+        // Audit regression: the history bound the raw enum name ("Tired") and the
+        // stored UTC timestamp (rendered with its "+00:00" offset).
+        var created = DateTimeOffset.Parse("2026-09-11T21:05:00Z");
+
+        Assert.Equal("great", CheckInDisplay.ChoiceText(MoodChoice.Great));
+        Assert.Equal("okay", CheckInDisplay.ChoiceText(MoodChoice.Okay));
+        Assert.Equal("tired", CheckInDisplay.ChoiceText(MoodChoice.Tired));
+        Assert.Equal("rough", CheckInDisplay.ChoiceText(MoodChoice.Rough));
+        Assert.Equal(created.ToLocalTime().ToString("g"), CheckInDisplay.TimeText(created));
+        Assert.DoesNotContain("+00:00", CheckInDisplay.TimeText(created), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task New_countdown_clears_the_selection_so_the_next_save_creates_a_new_countdown()
+    {
+        // Audit regression: there was no "new" action, so once a countdown was
+        // selected, typing a new title overwrote it.
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        var viewModel = new HomeViewModel(fixture.Context)
+        {
+            CountdownTitle = "Visit",
+            CountdownTargetUtc = DateTimeOffset.Parse("2026-12-01T12:00:00Z"),
+        };
+        await viewModel.SaveCountdownAsync(ct);
+        viewModel.SelectCountdown(Assert.Single(fixture.Countdowns.Items));
+        var targetChanges = 0;
+        viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(HomeViewModel.CountdownTargetUtc)) targetChanges++;
+        };
+
+        viewModel.NewCountdownCommand.Execute(null);
+
+        Assert.Null(viewModel.SelectedCountdown);
+        Assert.Equal(string.Empty, viewModel.CountdownTitle);
+        Assert.Null(viewModel.CountdownTargetUtc);
+        // HomePage resyncs its unbound target box from this notification.
+        Assert.Equal(1, targetChanges);
+
+        viewModel.CountdownTitle = "Trip";
+        await viewModel.SaveCountdownAsync(ct);
+        Assert.Equal(2, fixture.Countdowns.Items.Count);
+    }
+
+    [Fact]
+    public async Task Saving_a_countdown_announces_the_cleared_target_so_the_date_box_resyncs()
+    {
+        // Audit regression: after a save the view model's target went back to
+        // null but the unbound date box kept the old text, so the next
+        // countdown saved with no/the wrong date. The page resyncs the box from
+        // this property change.
+        var fixture = FeatureFixture.Create();
+        var viewModel = new HomeViewModel(fixture.Context)
+        {
+            CountdownTitle = "Visit",
+            CountdownTargetUtc = DateTimeOffset.Parse("2026-12-01T12:00:00Z"),
+        };
+        var announced = false;
+        viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(HomeViewModel.CountdownTargetUtc) && viewModel.CountdownTargetUtc is null)
+            {
+                announced = true;
+            }
+        };
+
+        await viewModel.SaveCountdownAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(announced);
+        Assert.Equal(string.Empty, viewModel.CountdownTargetText);
+    }
+
+    [Fact]
+    public async Task New_task_clears_the_selection_so_the_next_save_creates_a_new_task()
+    {
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        var viewModel = new TasksFocusViewModel(fixture.Context)
+        {
+            Title = "Book dinner",
+            DueUtc = DateTimeOffset.Parse("2026-09-20T18:00:00Z"),
+        };
+        await viewModel.SaveTaskAsync(ct);
+        viewModel.SelectTask(Assert.Single(fixture.Tasks.Items));
+        var dueCleared = false;
+        viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(TasksFocusViewModel.DueUtc) && viewModel.DueUtc is null) dueCleared = true;
+        };
+
+        viewModel.NewTaskCommand.Execute(null);
+
+        Assert.Null(viewModel.SelectedTask);
+        Assert.Equal(string.Empty, viewModel.Title);
+        Assert.Null(viewModel.DueUtc);
+        Assert.True(dueCleared);
+
+        viewModel.Title = "Buy flowers";
+        await viewModel.SaveTaskAsync(ct);
+        Assert.Equal(2, fixture.Tasks.Items.Count);
+    }
+
+    [Fact]
+    public async Task Completing_the_selected_task_clears_the_editor_instead_of_leaving_its_title_behind()
+    {
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        var viewModel = new TasksFocusViewModel(fixture.Context) { Title = "Book dinner" };
+        await viewModel.SaveTaskAsync(ct);
+        var task = Assert.Single(fixture.Tasks.Items);
+        viewModel.SelectTask(task);
+
+        await viewModel.CompleteTaskAsync(task, ct);
+
+        Assert.Null(viewModel.SelectedTask);
+        Assert.Equal(string.Empty, viewModel.Title);
+    }
+
+    [Fact]
+    public async Task Focus_controls_follow_the_session_state_and_the_remaining_time_counts_down()
+    {
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        var viewModel = new TasksFocusViewModel(fixture.Context) { SelectedDurationMinutes = 25 };
+        Assert.False(viewModel.CanPauseFocus);
+        Assert.False(viewModel.CanResumeFocus);
+        Assert.False(viewModel.CanAdjustFocus);
+        Assert.Null(viewModel.ActiveFocusRemaining);
+
+        await viewModel.StartFocusOrThrowAsync(ct);
+        Assert.True(viewModel.CanPauseFocus);
+        Assert.False(viewModel.CanResumeFocus);
+        Assert.True(viewModel.CanAdjustFocus);
+        Assert.Equal(TimeSpan.FromMinutes(25), viewModel.ActiveFocusRemaining);
+
+        // The snapshot is fixed when read; the page re-reads this on a timer.
+        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddMinutes(10);
+        Assert.Equal(TimeSpan.FromMinutes(15), viewModel.ActiveFocusRemaining);
+
+        await viewModel.PauseFocusAsync(ct);
+        Assert.False(viewModel.CanPauseFocus);
+        Assert.True(viewModel.CanResumeFocus);
+        Assert.True(viewModel.CanAdjustFocus);
+        var pausedRemaining = viewModel.ActiveFocusRemaining;
+        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddMinutes(5);
+        Assert.Equal(pausedRemaining, viewModel.ActiveFocusRemaining);
+
+        await viewModel.EndFocusAsync(ct);
+        Assert.False(viewModel.CanPauseFocus);
+        Assert.False(viewModel.CanResumeFocus);
+        Assert.False(viewModel.CanAdjustFocus);
     }
 
     [Fact]
@@ -2674,7 +3191,14 @@ public sealed class FeatureViewModelTests
         public int ForgetPairingCallCount { get; private set; }
 
         public Task<PairingAvailability> GetStateAsync(CancellationToken cancellationToken = default) => Task.FromResult(State);
-        public Task<PairingCodeResult> CreateCodeAsync(CancellationToken cancellationToken = default) => Task.FromResult(PairingCodeResult.Offline);
+        public PairingCodeResult CodeResult { get; set; } = PairingCodeResult.Offline;
+        // Null keeps the interface default (session management unsupported).
+        public int? SessionCountResult { get; set; }
+        public Task<int> GetSessionCountAsync(CancellationToken cancellationToken = default) =>
+            SessionCountResult is { } count
+                ? Task.FromResult(count)
+                : Task.FromException<int>(new NotSupportedException("session management unsupported"));
+        public Task<PairingCodeResult> CreateCodeAsync(CancellationToken cancellationToken = default) => Task.FromResult(CodeResult);
         public Task DisconnectSenderSessionsAsync(CancellationToken cancellationToken = default)
         {
             DisconnectSenderSessionsCallCount++;
