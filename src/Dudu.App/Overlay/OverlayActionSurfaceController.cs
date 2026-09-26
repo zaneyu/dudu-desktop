@@ -200,9 +200,50 @@ public sealed class OverlayActionSurfaceController : IDisposable
         lock (_gate) return GetHitRegionsLocked().Any(region => region.Contains(point.X, point.Y));
     }
 
+    /// <summary>
+    /// Runs synchronously at click time (before the click waits behind any
+    /// earlier dispatch): Close cancels breathing and closes the panel, and
+    /// every other comfort choice cancels an active breathing run so it is
+    /// dispatched now instead of up to 60 seconds late.
+    /// </summary>
+    public void InterruptBreathingFor(PixelPoint point)
+    {
+        ComfortAction? comfort;
+        lock (_gate)
+        {
+            comfort = _kind == OverlayActionSurfaceKind.Comfort
+                ? _comfortArrangement?.Actions
+                    .FirstOrDefault(item => item.HitRegion.Contains(point.X, point.Y))?.Action
+                : null;
+        }
+
+        InterruptBreathingFor(comfort);
+    }
+
+    /// <inheritdoc cref="InterruptBreathingFor(PixelPoint)"/>
+    public void InterruptBreathingFor(OverlaySurfaceAction action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        InterruptBreathingFor(action.ComfortAction);
+    }
+
+    private void InterruptBreathingFor(ComfortAction? comfort)
+    {
+        if (comfort is not { } selected) return;
+        if (selected == Dudu.App.Overlay.ComfortAction.Close)
+        {
+            CancelBreathing();
+            return;
+        }
+
+        OverlayCommandRouter? router;
+        lock (_gate) router = _router;
+        router?.CancelActiveBreathing();
+    }
+
     public async Task<bool> HandlePointerAsync(PixelPoint point, CancellationToken cancellationToken = default)
     {
-        if (IsCloseAt(point)) CancelBreathing();
+        InterruptBreathingFor(point);
         await _dispatchGate.WaitAsync(cancellationToken);
         try
         {
@@ -259,7 +300,7 @@ public sealed class OverlayActionSurfaceController : IDisposable
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(action);
-        if (action.ComfortAction == Dudu.App.Overlay.ComfortAction.Close) CancelBreathing();
+        InterruptBreathingFor(action);
         await _dispatchGate.WaitAsync(cancellationToken);
         try
         {
@@ -299,16 +340,17 @@ public sealed class OverlayActionSurfaceController : IDisposable
         router?.CancelBreathing();
     }
 
-    private bool IsCloseAt(PixelPoint point)
-    {
-        lock (_gate)
-        {
-            return _kind == OverlayActionSurfaceKind.Comfort
-                && _comfortArrangement?.Actions.Any(item =>
-                    item.Action == Dudu.App.Overlay.ComfortAction.Close
-                    && item.HitRegion.Contains(point.X, point.Y)) == true;
-        }
-    }
+    /// <summary>
+    /// Actions whose work is a one-shot pet reaction: ExecuteAsync awaits the
+    /// whole animation, so the bubble must close BEFORE it starts or the
+    /// reaction plays hidden underneath the open bubble.
+    /// </summary>
+    internal static bool ClosesBeforeExecuting(OverlayAction action) =>
+        action is OverlayAction.Pet or OverlayAction.DrinkWater;
+
+    /// <inheritdoc cref="ClosesBeforeExecuting(OverlayAction)"/>
+    internal static bool ClosesBeforeExecuting(ComfortAction action) =>
+        action is ComfortAction.TinyHug or ComfortAction.TakeAFiveMinuteBreak;
 
     private async Task DispatchPrimaryAsync(
         OverlayCommandRouter router,
@@ -316,6 +358,7 @@ public sealed class OverlayActionSurfaceController : IDisposable
         long expectedVersion,
         CancellationToken cancellationToken)
     {
+        var errorVersion = expectedVersion;
         try
         {
             if (action == OverlayAction.ComfortMe)
@@ -328,10 +371,15 @@ public sealed class OverlayActionSurfaceController : IDisposable
                     _version++;
                 }
             }
+            else if (ClosesBeforeExecuting(action))
+            {
+                if (TryClose(expectedVersion, router, out var closedVersion)) errorVersion = closedVersion;
+                await router.ExecuteAsync(action, cancellationToken);
+            }
             else
             {
                 await router.ExecuteAsync(action, cancellationToken);
-                if (!TryClose(expectedVersion, router)) return;
+                if (!TryClose(expectedVersion, router, out _)) return;
             }
             lock (_gate)
             {
@@ -344,7 +392,7 @@ public sealed class OverlayActionSurfaceController : IDisposable
         catch (OperationCanceledException) { throw; }
         catch (Exception exception)
         {
-            SetError(exception.Message, expectedVersion);
+            SetError(exception.Message, errorVersion);
             return;
         }
         RaiseChanged();
@@ -356,21 +404,31 @@ public sealed class OverlayActionSurfaceController : IDisposable
         long expectedVersion,
         CancellationToken cancellationToken)
     {
+        var errorVersion = expectedVersion;
         try
         {
-            await router.ExecuteComfortAsync(action, cancellationToken);
-            lock (_gate)
+            if (ClosesBeforeExecuting(action))
             {
-                if (_version != expectedVersion || _kind != OverlayActionSurfaceKind.Comfort) return;
-                _errorMessage = null;
+                // Collapse the comfort panel first so the hug is visible.
+                if (TryClose(expectedVersion, router, out var closedVersion)) errorVersion = closedVersion;
+                await router.ExecuteComfortAsync(action, cancellationToken);
             }
-            if ((action is ComfortAction.Close or ComfortAction.ReadALoveNote)
-                && !TryClose(expectedVersion, router)) return;
+            else
+            {
+                await router.ExecuteComfortAsync(action, cancellationToken);
+                lock (_gate)
+                {
+                    if (_version != expectedVersion || _kind != OverlayActionSurfaceKind.Comfort) return;
+                    _errorMessage = null;
+                }
+                if ((action is ComfortAction.Close or ComfortAction.ReadALoveNote)
+                    && !TryClose(expectedVersion, router, out _)) return;
+            }
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception exception)
         {
-            SetError(exception.Message, expectedVersion);
+            SetError(exception.Message, errorVersion);
             return;
         }
         RaiseChanged();
@@ -431,16 +489,17 @@ public sealed class OverlayActionSurfaceController : IDisposable
             : null;
     }
 
-    private bool TryClose(long expectedVersion, OverlayCommandRouter router)
+    private bool TryClose(long expectedVersion, OverlayCommandRouter router, out long closedVersion)
     {
         lock (_gate)
         {
+            closedVersion = _version;
             if (_version != expectedVersion) return false;
             _arrangement = null;
             _comfortArrangement = null;
             _kind = OverlayActionSurfaceKind.Closed;
             _errorMessage = null;
-            _version++;
+            closedVersion = ++_version;
         }
         router.CancelBreathing(closePanel: true);
         RaiseChanged();

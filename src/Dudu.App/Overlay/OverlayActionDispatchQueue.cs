@@ -24,6 +24,9 @@ internal sealed class OverlayActionDispatchQueue : IDisposable
     public void Enqueue(OverlayActionSurfaceController surface, PixelPoint point)
     {
         ArgumentNullException.ThrowIfNull(surface);
+        // Synchronously, before this click queues behind an in-progress
+        // "breathe with me" (up to 60 s): any comfort choice interrupts it.
+        surface.InterruptBreathingFor(point);
         EnqueueCore(token => surface.HandlePointerAsync(point, token));
     }
 
@@ -31,7 +34,7 @@ internal sealed class OverlayActionDispatchQueue : IDisposable
     {
         ArgumentNullException.ThrowIfNull(surface);
         ArgumentNullException.ThrowIfNull(action);
-        if (action.ComfortAction == ComfortAction.Close) surface.CancelBreathing();
+        surface.InterruptBreathingFor(action);
         EnqueueCore(token => surface.HandlePresentedActionAsync(action, token));
     }
 

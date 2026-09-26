@@ -287,6 +287,24 @@ public sealed class OverlayCommandRouter
 
     public void OpenComfortPanel() => SetComfortPanel(new ComfortPanelState(true, false, BreathVisualPhase.Idle, "choose a gentle next step"));
 
+    /// <summary>
+    /// Cancels an in-progress "breathe with me" run, if any, leaving the
+    /// comfort panel open. Returns false (and leaves the panel untouched)
+    /// when nothing was breathing. Used so any other comfort choice
+    /// interrupts the up-to-60-second exercise immediately instead of
+    /// queueing behind it and firing late.
+    /// </summary>
+    public bool CancelActiveBreathing()
+    {
+        lock (_gate)
+        {
+            if (_breathingCancellation is null) return false;
+        }
+
+        CancelBreathing();
+        return true;
+    }
+
     public void CancelBreathing(bool closePanel = false)
     {
         lock (_gate)
