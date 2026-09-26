@@ -4,6 +4,8 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Dudu.App.Overlay;
 using Dudu.Core.Assets;
+using Dudu.Core.Models;
+using Dudu.Core.Time;
 using SkiaSharp;
 
 namespace Dudu.App.Animation;
@@ -32,6 +34,15 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
     private AssetPack? _pack;
     private OverlayActionSurfaceController? _actionSurface;
     private OverlaySurfacePalette? _overlayPalette;
+    // UK partner-clock pill: the label is refreshed by a timer re-armed at each
+    // minute boundary (so static poses repaint too) and the pill bitmap is only
+    // re-rendered when its label, day/night icon, palette or canvas size change.
+    private PartnerClock? _partnerClock;
+    private Timer? _partnerClockTimer;
+    private string? _partnerClockLabel;
+    private bool _partnerClockIsNight;
+    private PartnerClockPill? _partnerClockPill;
+    private PartnerClockPillKey _partnerClockPillKey;
     private long _decodedBitmapBytes;
     private int _disposeCount;
     private bool _disposed;
@@ -102,6 +113,30 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
         RequestRepaint();
     }
 
+    /// <summary>Shows (or, with null, hides) the small "UK 14:05" pill above
+    /// Dudu. The composer repaints itself when the minute changes.</summary>
+    public void SetPartnerClock(PartnerClock? partnerClock)
+    {
+        lock (_gate)
+        {
+            ThrowIfDisposed();
+            if (ReferenceEquals(_partnerClock, partnerClock)) return;
+            _partnerClock = partnerClock;
+            _partnerClockTimer?.Dispose();
+            _partnerClockTimer = null;
+            _partnerClockLabel = null;
+            DisposePartnerClockPill();
+            if (partnerClock is not null)
+            {
+                RefreshPartnerClockLabel();
+                _partnerClockTimer = new Timer(OnPartnerClockTick);
+                ArmPartnerClockTimer();
+            }
+        }
+
+        RequestRepaint();
+    }
+
     public void SetPack(AssetPack pack)
     {
         ArgumentNullException.ThrowIfNull(pack);
@@ -153,6 +188,7 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
             // temporary SKImage on every call, which the 300-frame allocation gate
             // in AnimationEngineTests measured at about 100 bytes per frame.
             _canvas.DrawImage(image, destination, SamplingOptions, _paint);
+            DrawPartnerClockPill(dimensions.Width, dimensions.Height);
             OverlaySurfaceSnapshot? overlaySnapshot = null;
             if (_actionSurface is not null)
             {
@@ -250,6 +286,10 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
             if (_actionSurface is not null) _actionSurface.Changed -= OnActionSurfaceChanged;
             _actionSurface = null;
             _overlayPalette = null;
+            _partnerClockTimer?.Dispose();
+            _partnerClockTimer = null;
+            _partnerClock = null;
+            DisposePartnerClockPill();
             RepaintRequested = null;
             DisposeDecodedBitmaps();
             DisposeSurface();
@@ -268,6 +308,89 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
         }
 
         RequestRepaint();
+    }
+
+    private void DrawPartnerClockPill(int width, int height)
+    {
+        if (_partnerClockLabel is null) return;
+        var key = new PartnerClockPillKey(_partnerClockLabel, _partnerClockIsNight, _overlayPalette, width, height);
+        if (!key.Equals(_partnerClockPillKey))
+        {
+            DisposePartnerClockPill();
+            var palette = _overlayPalette
+                ?? OverlaySurfacePalette.For(AppTheme.Light, OverlaySurfaceRenderer.IsHighContrastEnabled());
+            _partnerClockPill = PartnerClockPillRenderer.Render(
+                _partnerClockLabel, _partnerClockIsNight, palette, width, height);
+            _partnerClockPillKey = key;
+        }
+
+        if (_partnerClockPill is { } pill)
+        {
+            // Same paint as the pet frame, so the pill fades with Dudu.
+            var destination = SKRect.Create(pill.X, pill.Y, pill.Image.Width, pill.Image.Height);
+            _canvas!.DrawImage(pill.Image, destination, SamplingOptions, _paint);
+        }
+    }
+
+    private void OnPartnerClockTick(object? state)
+    {
+        bool changed;
+        lock (_gate)
+        {
+            if (_disposed || _partnerClock is null) return;
+            try
+            {
+                changed = RefreshPartnerClockLabel();
+            }
+            catch (Exception exception)
+            {
+                // A thread-pool timer must never throw; the pill just keeps
+                // its last label until the next minute.
+                Trace.TraceWarning(
+                    "Dudu partner clock refresh failed: {0} 0x{1:X8}",
+                    exception.GetType().Name,
+                    exception.HResult);
+                changed = false;
+            }
+            finally
+            {
+                ArmPartnerClockTimer();
+            }
+        }
+
+        if (changed) RequestRepaint();
+    }
+
+    /// <summary>Caller holds <see cref="_gate"/>.</summary>
+    private bool RefreshPartnerClockLabel()
+    {
+        var reading = _partnerClock!.Now();
+        var label = reading.OverlayLabel;
+        var isNight = reading.IsNight;
+        if (string.Equals(label, _partnerClockLabel, StringComparison.Ordinal) && isNight == _partnerClockIsNight)
+        {
+            return false;
+        }
+
+        _partnerClockLabel = label;
+        _partnerClockIsNight = isNight;
+        return true;
+    }
+
+    /// <summary>Caller holds <see cref="_gate"/>. Fires just after the next
+    /// wall-clock minute, so the pill never lags by more than a moment.</summary>
+    private void ArmPartnerClockTimer()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var untilNextMinute = TimeSpan.FromMinutes(1) - TimeSpan.FromTicks(now.Ticks % TimeSpan.TicksPerMinute);
+        _partnerClockTimer?.Change(untilNextMinute + TimeSpan.FromMilliseconds(50), Timeout.InfiniteTimeSpan);
+    }
+
+    private void DisposePartnerClockPill()
+    {
+        _partnerClockPill?.Dispose();
+        _partnerClockPill = null;
+        _partnerClockPillKey = default;
     }
 
     private void RequestRepaint()
@@ -643,4 +766,11 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
     }
+
+    private readonly record struct PartnerClockPillKey(
+        string? Label,
+        bool IsNight,
+        OverlaySurfacePalette? Palette,
+        int Width,
+        int Height);
 }

@@ -5,97 +5,170 @@
     xmlns:models="using:Dudu.Core.Models"
     xmlns:viewModels="using:Dudu.App.ViewModels"
     Background="{ThemeResource WindowSurfaceBrush}">
-    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
-        <StackPanel MaxWidth="880" Margin="32" Spacing="24">
-            <StackPanel Spacing="8">
-                <TextBlock Text="tasks and focus" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="TasksPageTitle" AutomationProperties.Name="tasks and focus" />
-                <TextBlock Text="pick one small step give it protected time" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
-            </StackPanel>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
 
-            <StackPanel Spacing="12">
-                <TextBlock Text="active tasks" Style="{StaticResource SectionHeadingStyle}" />
-                <TextBlock Text="no active tasks. add one under task details" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" Visibility="{x:Bind ViewModel.HasNoActiveTasks, Mode=OneWay}" />
-                <ListView ItemsSource="{x:Bind ViewModel.ActiveTasks, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.SelectedTask, Mode=OneWay}" SelectionChanged="TaskList_SelectionChanged" MaxHeight="260" AutomationProperties.AutomationId="TasksActiveList" AutomationProperties.Name="active tasks list">
-                    <ListView.ItemTemplate>
-                        <DataTemplate x:DataType="models:TaskItem">
-                            <StackPanel Margin="4" Spacing="2">
-                                <TextBlock Text="{x:Bind Title}" TextWrapping="Wrap" />
-                            </StackPanel>
-                        </DataTemplate>
-                    </ListView.ItemTemplate>
-                </ListView>
-                <StackPanel Spacing="8">
-                    <Button Content="complete selected" Command="{x:Bind ViewModel.CompleteTaskCommand}" CommandParameter="{x:Bind ViewModel.SelectedTask, Mode=OneWay}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="TasksComplete" AutomationProperties.Name="complete selected" />
-                    <Button Content="delete selected" Command="{x:Bind ViewModel.RequestDeleteTaskCommand}" CommandParameter="{x:Bind ViewModel.SelectedTask, Mode=OneWay}" AutomationProperties.AutomationId="TasksDelete" AutomationProperties.Name="delete selected" />
+        <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+            <StackPanel MaxWidth="880" Margin="32,24,32,32" Spacing="20">
+                <StackPanel Spacing="4">
+                    <TextBlock Text="tasks and focus" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="TasksPageTitle" AutomationProperties.Name="tasks and focus" />
+                    <TextBlock Text="pick one small step, then give it some protected time" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                 </StackPanel>
-                <Border Padding="16" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource WarningBrush}" Visibility="{x:Bind ViewModel.IsConfirmingDeleteTask, Mode=OneWay}" AutomationProperties.AutomationId="TasksDeleteConfirmationPanel" AutomationProperties.Name="delete task confirmation panel">
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="{x:Bind ViewModel.DeleteTaskPrompt, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Assertive" AutomationProperties.AutomationId="TasksDeleteConfirmationMessage" AutomationProperties.Name="{x:Bind ViewModel.DeleteTaskPrompt, Mode=OneWay}" />
-                        <StackPanel Spacing="8">
-                            <Button Content="confirm delete" Command="{x:Bind ViewModel.DeleteTaskCommand}" CommandParameter="{x:Bind ViewModel.PendingDeleteTask, Mode=OneWay}" AutomationProperties.AutomationId="TasksDeleteConfirm" AutomationProperties.Name="confirm delete task" />
-                            <Button Content="cancel" Command="{x:Bind ViewModel.CancelDeleteTaskCommand}" AutomationProperties.AutomationId="TasksDeleteCancel" AutomationProperties.Name="cancel delete task" />
-                        </StackPanel>
+
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="12">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="📝" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
+                            <TextBlock Grid.Column="1" Text="active tasks" Style="{StaticResource SectionHeadingStyle}" />
+                        </Grid>
+                        <TextBlock Text="no active tasks. add one under task details" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" Visibility="{x:Bind ViewModel.HasNoActiveTasks, Mode=OneWay}" />
+                        <ListView ItemsSource="{x:Bind ViewModel.ActiveTasks, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.SelectedTask, Mode=OneWay}" SelectionChanged="TaskList_SelectionChanged" MaxHeight="260" AutomationProperties.AutomationId="TasksActiveList" AutomationProperties.Name="active tasks list">
+                            <ListView.ItemTemplate>
+                                <DataTemplate x:DataType="models:TaskItem">
+                                    <StackPanel Margin="4" Spacing="2">
+                                        <TextBlock Text="{x:Bind Title}" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                        <Grid ColumnSpacing="8" RowSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Button Content="complete selected" Command="{x:Bind ViewModel.CompleteTaskCommand}" CommandParameter="{x:Bind ViewModel.SelectedTask, Mode=OneWay}" Style="{StaticResource PrimaryButtonStyle}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="TasksComplete" AutomationProperties.Name="complete selected" />
+                            <Button Grid.Column="1" Content="delete selected" Command="{x:Bind ViewModel.RequestDeleteTaskCommand}" CommandParameter="{x:Bind ViewModel.SelectedTask, Mode=OneWay}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="TasksDelete" AutomationProperties.Name="delete selected" />
+                        </Grid>
+                        <Border Style="{StaticResource ConfirmCardStyle}" Visibility="{x:Bind ViewModel.IsConfirmingDeleteTask, Mode=OneWay}" AutomationProperties.AutomationId="TasksDeleteConfirmationPanel" AutomationProperties.Name="delete task confirmation panel">
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="{x:Bind ViewModel.DeleteTaskPrompt, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Assertive" AutomationProperties.AutomationId="TasksDeleteConfirmationMessage" AutomationProperties.Name="{x:Bind ViewModel.DeleteTaskPrompt, Mode=OneWay}" />
+                                <Grid ColumnSpacing="8" RowSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Button Content="confirm delete" Command="{x:Bind ViewModel.DeleteTaskCommand}" CommandParameter="{x:Bind ViewModel.PendingDeleteTask, Mode=OneWay}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="TasksDeleteConfirm" AutomationProperties.Name="confirm delete task" />
+                                    <Button Grid.Column="1" Content="cancel" Command="{x:Bind ViewModel.CancelDeleteTaskCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="TasksDeleteCancel" AutomationProperties.Name="cancel delete task" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="12">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="✏️" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
+                            <TextBlock Grid.Column="1" Text="task details" Style="{StaticResource SectionHeadingStyle}" />
+                        </Grid>
+                        <TextBox Header="title" Text="{x:Bind ViewModel.Title, Mode=TwoWay}" PlaceholderText="whats the next step?" AutomationProperties.AutomationId="TasksTitle" AutomationProperties.Name="title" />
+                        <TextBox Header="notes" Text="{x:Bind ViewModel.Notes, Mode=TwoWay}" TextWrapping="Wrap" AcceptsReturn="True" AutomationProperties.AutomationId="TasksNotes" AutomationProperties.Name="notes" />
+                        <TextBox x:Name="TaskDueBox" Header="due date and time" TextChanged="TaskDueBox_TextChanged" PlaceholderText="optional" AutomationProperties.AutomationId="TasksDue" AutomationProperties.Name="due date and time" />
+                        <TextBlock x:Name="TaskDueValidation" TextWrapping="Wrap" Foreground="{ThemeResource ErrorBrush}" Visibility="Collapsed" AutomationProperties.AutomationId="TasksDueValidation" AutomationProperties.Name="due date validation" />
+                        <Button x:Name="SaveTaskButton" Content="save task" Command="{x:Bind ViewModel.SaveTaskCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="TasksSave" AutomationProperties.Name="save task" HorizontalAlignment="Left" />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource HoneyCardStyle}">
+                    <StackPanel Spacing="12">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="🎯" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
+                            <TextBlock Grid.Column="1" Text="focus" Style="{StaticResource SectionHeadingStyle}" />
+                        </Grid>
+                        <TextBlock x:Name="FocusCurrent" TextWrapping="Wrap" AutomationProperties.AutomationId="FocusCurrent" AutomationProperties.Name="current focus status" />
+                        <ComboBox Header="focus length" SelectedIndex="1" SelectionChanged="FocusPresetBox_SelectionChanged" AutomationProperties.AutomationId="FocusPreset" AutomationProperties.Name="focus length">
+                            <ComboBoxItem Content="15 min" Tag="15" />
+                            <ComboBoxItem Content="25 min" Tag="25" />
+                            <ComboBoxItem Content="45 min" Tag="45" />
+                            <ComboBoxItem Content="60 min" Tag="60" />
+                            <ComboBoxItem Content="custom" Tag="0" />
+                        </ComboBox>
+                        <NumberBox Header="custom minutes" IsEnabled="{x:Bind ViewModel.IsCustomDuration, Mode=OneWay}" Value="30" Minimum="1" Maximum="240" SpinButtonPlacementMode="Compact" ValueChanged="CustomDurationBox_ValueChanged" AutomationProperties.AutomationId="FocusCustomDuration" AutomationProperties.Name="custom minutes" />
+                        <Grid ColumnSpacing="8" RowSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <Button Grid.ColumnSpan="2" Content="start focus" Command="{x:Bind ViewModel.StartFocusCommand}" Style="{StaticResource PrimaryButtonStyle}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="FocusStart" AutomationProperties.Name="start focus" />
+                            <Button Grid.Row="1" Content="pause" Command="{x:Bind ViewModel.PauseFocusCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="FocusPause" AutomationProperties.Name="pause" />
+                            <Button Grid.Row="1" Grid.Column="1" Content="resume" Command="{x:Bind ViewModel.ResumeFocusCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="FocusResume" AutomationProperties.Name="resume" />
+                            <Button Grid.Row="2" Content="extend 5 min" Command="{x:Bind ViewModel.ExtendFocusCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="FocusExtend" AutomationProperties.Name="extend 5 min" />
+                            <Button Grid.Row="2" Grid.Column="1" Content="end focus" Command="{x:Bind ViewModel.EndFocusCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="FocusEnd" AutomationProperties.Name="end focus" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="12">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="✅" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
+                            <TextBlock Grid.Column="1" Text="completed tasks" Style="{StaticResource SectionHeadingStyle}" />
+                        </Grid>
+                        <TextBlock Text="nothing completed yet" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" Visibility="{x:Bind ViewModel.HasNoCompletedTasks, Mode=OneWay}" />
+                        <ListView ItemsSource="{x:Bind ViewModel.CompletedTasks, Mode=OneWay}" MaxHeight="180" AutomationProperties.AutomationId="TasksCompletedList" AutomationProperties.Name="completed tasks list">
+                            <ListView.ItemTemplate>
+                                <DataTemplate x:DataType="models:TaskItem">
+                                    <TextBlock Text="{x:Bind Title}" TextWrapping="Wrap" Margin="4" />
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="12">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="📈" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
+                            <TextBlock Grid.Column="1" Text="focus history" Style="{StaticResource SectionHeadingStyle}" />
+                        </Grid>
+                        <TextBlock Text="no focus sessions yet" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" Visibility="{x:Bind ViewModel.HasNoFocusHistory, Mode=OneWay}" />
+                        <ItemsControl ItemsSource="{x:Bind ViewModel.FocusHistory, Mode=OneWay}" AutomationProperties.AutomationId="FocusHistoryList" AutomationProperties.Name="focus history list">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="viewModels:FocusHistoryEntry">
+                                    <StackPanel Margin="4" Spacing="2">
+                                        <TextBlock Text="{x:Bind StatusText}" />
+                                        <TextBlock Text="{x:Bind StartedText}" Foreground="{ThemeResource TextSecondaryBrush}" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
                     </StackPanel>
                 </Border>
             </StackPanel>
+        </ScrollViewer>
 
-            <StackPanel Spacing="12">
-                <TextBlock Text="task details" Style="{StaticResource SectionHeadingStyle}" />
-                <TextBox Header="title" Text="{x:Bind ViewModel.Title, Mode=TwoWay}" PlaceholderText="whats the next step?" AutomationProperties.AutomationId="TasksTitle" AutomationProperties.Name="title" />
-                <TextBox Header="notes" Text="{x:Bind ViewModel.Notes, Mode=TwoWay}" TextWrapping="Wrap" AcceptsReturn="True" AutomationProperties.AutomationId="TasksNotes" AutomationProperties.Name="notes" />
-                <TextBox x:Name="TaskDueBox" Header="due date and time" TextChanged="TaskDueBox_TextChanged" PlaceholderText="optional" AutomationProperties.AutomationId="TasksDue" AutomationProperties.Name="due date and time" />
-                <TextBlock x:Name="TaskDueValidation" TextWrapping="Wrap" Foreground="{ThemeResource ErrorBrush}" Visibility="Collapsed" AutomationProperties.AutomationId="TasksDueValidation" AutomationProperties.Name="due date validation" />
-                <Button x:Name="SaveTaskButton" Content="save task" Command="{x:Bind ViewModel.SaveTaskCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="TasksSave" AutomationProperties.Name="save task" HorizontalAlignment="Left" />
-            </StackPanel>
-
-            <StackPanel Spacing="12">
-                <TextBlock Text="focus" Style="{StaticResource SectionHeadingStyle}" />
-                <TextBlock x:Name="FocusCurrent" TextWrapping="Wrap" AutomationProperties.AutomationId="FocusCurrent" AutomationProperties.Name="current focus status" />
-                <ComboBox Header="focus length" SelectedIndex="1" SelectionChanged="FocusPresetBox_SelectionChanged" AutomationProperties.AutomationId="FocusPreset" AutomationProperties.Name="focus length">
-                    <ComboBoxItem Content="15 min" Tag="15" />
-                    <ComboBoxItem Content="25 min" Tag="25" />
-                    <ComboBoxItem Content="45 min" Tag="45" />
-                    <ComboBoxItem Content="60 min" Tag="60" />
-                    <ComboBoxItem Content="custom" Tag="0" />
-                </ComboBox>
-                <NumberBox Header="custom minutes" IsEnabled="{x:Bind ViewModel.IsCustomDuration, Mode=OneWay}" Value="30" Minimum="1" Maximum="240" SpinButtonPlacementMode="Compact" ValueChanged="CustomDurationBox_ValueChanged" AutomationProperties.AutomationId="FocusCustomDuration" AutomationProperties.Name="custom minutes" />
-                <StackPanel Spacing="8">
-                    <Button Content="start focus" Command="{x:Bind ViewModel.StartFocusCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="FocusStart" AutomationProperties.Name="start focus" />
-                    <Button Content="pause" Command="{x:Bind ViewModel.PauseFocusCommand}" AutomationProperties.AutomationId="FocusPause" AutomationProperties.Name="pause" />
-                    <Button Content="resume" Command="{x:Bind ViewModel.ResumeFocusCommand}" AutomationProperties.AutomationId="FocusResume" AutomationProperties.Name="resume" />
-                    <Button Content="extend 5 min" Command="{x:Bind ViewModel.ExtendFocusCommand}" AutomationProperties.AutomationId="FocusExtend" AutomationProperties.Name="extend 5 min" />
-                    <Button Content="end focus" Command="{x:Bind ViewModel.EndFocusCommand}" AutomationProperties.AutomationId="FocusEnd" AutomationProperties.Name="end focus" />
-                </StackPanel>
-            </StackPanel>
-
-            <StackPanel Spacing="12">
-                <TextBlock Text="completed tasks" Style="{StaticResource SectionHeadingStyle}" />
-                <TextBlock Text="nothing completed yet" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" Visibility="{x:Bind ViewModel.HasNoCompletedTasks, Mode=OneWay}" />
-                <ListView ItemsSource="{x:Bind ViewModel.CompletedTasks, Mode=OneWay}" MaxHeight="180" AutomationProperties.AutomationId="TasksCompletedList" AutomationProperties.Name="completed tasks list">
-                    <ListView.ItemTemplate>
-                        <DataTemplate x:DataType="models:TaskItem">
-                            <TextBlock Text="{x:Bind Title}" TextWrapping="Wrap" Margin="4" />
-                        </DataTemplate>
-                    </ListView.ItemTemplate>
-                </ListView>
-            </StackPanel>
-
-            <StackPanel Spacing="12">
-                <TextBlock Text="focus history" Style="{StaticResource SectionHeadingStyle}" />
-                <TextBlock Text="no focus sessions yet" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" Visibility="{x:Bind ViewModel.HasNoFocusHistory, Mode=OneWay}" />
-                <ItemsControl ItemsSource="{x:Bind ViewModel.FocusHistory, Mode=OneWay}" AutomationProperties.AutomationId="FocusHistoryList" AutomationProperties.Name="focus history list">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate x:DataType="viewModels:FocusHistoryEntry">
-                            <StackPanel Margin="4" Spacing="2">
-                                <TextBlock Text="{x:Bind StatusText}" />
-                                <TextBlock Text="{x:Bind StartedText}" Foreground="{ThemeResource TextSecondaryBrush}" />
-                            </StackPanel>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-            </StackPanel>
-
-            <StackPanel Spacing="4" AutomationProperties.LiveSetting="Polite">
+        <!-- Sticky feedback: what just happened stays in view at the bottom of the
+             page instead of landing below the fold. -->
+        <StackPanel Grid.Row="1" MaxWidth="880" Margin="32,0,32,16" Spacing="6" AutomationProperties.LiveSetting="Polite">
+            <Border Style="{StaticResource StatusPillStyle}" Visibility="{x:Bind ViewModel.HasStatus, Mode=OneWay}">
                 <Grid ColumnSpacing="6" Visibility="{x:Bind ViewModel.HasStatus, Mode=OneWay}">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
@@ -104,6 +177,8 @@
                     <FontIcon Glyph="&#xE73E;" Foreground="{ThemeResource SuccessBrush}" AutomationProperties.AccessibilityView="Raw" VerticalAlignment="Top" Margin="0,3,0,0" />
                     <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" Foreground="{ThemeResource SuccessBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="TasksStatusMessage" AutomationProperties.Name="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" />
                 </Grid>
+            </Border>
+            <Border Style="{StaticResource StatusPillStyle}" Visibility="{x:Bind ViewModel.HasError, Mode=OneWay}">
                 <Grid ColumnSpacing="6" Visibility="{x:Bind ViewModel.HasError, Mode=OneWay}">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
@@ -112,7 +187,7 @@
                     <FontIcon Glyph="&#xEA39;" Foreground="{ThemeResource ErrorBrush}" AutomationProperties.AccessibilityView="Raw" VerticalAlignment="Top" Margin="0,3,0,0" />
                     <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" Foreground="{ThemeResource ErrorBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="TasksErrorMessage" AutomationProperties.Name="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" />
                 </Grid>
-            </StackPanel>
+            </Border>
         </StackPanel>
-    </ScrollViewer>
+    </Grid>
 </Page>

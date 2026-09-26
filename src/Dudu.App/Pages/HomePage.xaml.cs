@@ -13,6 +13,7 @@ public sealed partial class HomePage : Page
     private readonly OverlayCommandRouter? _overlayCommands;
     private bool _suppressStartupToggle;
     private DispatcherTimer? _focusCountdownTimer;
+    private DispatcherTimer? _partnerClockTimer;
 
     public HomePage(
         HomeViewModel viewModel,
@@ -49,6 +50,16 @@ public sealed partial class HomePage : Page
         }
         _focusCountdownTimer.Start();
 
+        // The UK clock card shows seconds, so it ticks twice a second while Home is
+        // shown; the view model only raises the properties whose text changed.
+        if (_partnerClockTimer is null)
+        {
+            _partnerClockTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+            _partnerClockTimer.Tick += PartnerClockTimer_Tick;
+        }
+        RefreshPartnerClock();
+        _partnerClockTimer.Start();
+
         try
         {
             await ViewModel.RefreshAsync();
@@ -65,11 +76,34 @@ public sealed partial class HomePage : Page
     {
         if (IsLoaded) return; // a re-load already won the out-of-order race
         _focusCountdownTimer?.Stop();
+        _partnerClockTimer?.Stop();
     }
 
     /// <summary>Called when the hosting window closes: Unloaded is not guaranteed for a
     /// closed window's content, and the UI thread (and so this timer) outlives it.</summary>
-    public void StopFocusCountdown() => _focusCountdownTimer?.Stop();
+    public void StopFocusCountdown()
+    {
+        _focusCountdownTimer?.Stop();
+        _partnerClockTimer?.Stop();
+    }
+
+    private void PartnerClockTimer_Tick(object? sender, object args) => RefreshPartnerClock();
+
+    private void RefreshPartnerClock()
+    {
+        // Display-only: a throw on a DispatcherTimer tick would repeat every interval.
+        try
+        {
+            ViewModel.RefreshPartnerClock();
+        }
+        catch (Exception exception)
+        {
+            global::System.Diagnostics.Trace.TraceWarning(
+                "Dudu home partner clock tick failed: {0} 0x{1:X8}",
+                exception.GetType().Name,
+                exception.HResult);
+        }
+    }
 
     private void FocusCountdownTimer_Tick(object? sender, object args)
     {

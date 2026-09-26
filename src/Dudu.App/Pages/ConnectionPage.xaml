@@ -4,56 +4,89 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:models="using:Dudu.Core.Abstractions"
     Background="{ThemeResource WindowSurfaceBrush}">
-    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
-        <StackPanel MaxWidth="880" Margin="32" Spacing="24">
-            <StackPanel Spacing="8">
-                <TextBlock Text="connection" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="ConnectionPageTitle" AutomationProperties.Name="connection" />
-                <TextBlock Text="pairing is optional dudu stays useful offline" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
-            </StackPanel>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
 
-            <StackPanel Spacing="12">
-                <TextBlock Text="pairing status" Style="{StaticResource SectionHeadingStyle}" />
-                <TextBlock x:Name="ConnectionAvailability" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionAvailability" AutomationProperties.Name="pairing availability" />
-                <TextBlock x:Name="ConnectionPairingCode" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionPairingCode" AutomationProperties.Name="pairing code" />
-                <TextBlock x:Name="ConnectionCodeExpiry" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionCodeExpiry" AutomationProperties.Name="pairing code expiry" />
-                <StackPanel Spacing="8">
-                    <Button Content="create 10 min pairing code" Command="{x:Bind ViewModel.CreateCodeCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="ConnectionCreateCode" AutomationProperties.Name="create 10 min pairing code" />
-                    <Button Content="check again" Command="{x:Bind ViewModel.RefreshCommand}" AutomationProperties.AutomationId="ConnectionRefresh" AutomationProperties.Name="check pairing status again" />
+        <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+            <StackPanel MaxWidth="880" Margin="32,24,32,32" Spacing="20">
+                <StackPanel Spacing="4">
+                    <TextBlock Text="connection" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="ConnectionPageTitle" AutomationProperties.Name="connection" />
+                    <TextBlock Text="pairing is optional. dudu stays useful offline" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                 </StackPanel>
-            </StackPanel>
 
-            <StackPanel Spacing="12">
-                <TextBlock Text="paired sessions" Style="{StaticResource SectionHeadingStyle}" />
-                <TextBlock x:Name="ConnectionSessionCount" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionSessionCount" AutomationProperties.Name="paired session count" />
-                <ListView ItemsSource="{x:Bind ViewModel.Sessions, Mode=OneWay}" MaxHeight="180" AutomationProperties.AutomationId="ConnectionSessionsList" AutomationProperties.Name="paired sessions list">
-                    <ListView.ItemTemplate>
-                        <DataTemplate x:DataType="models:PairingSessionSummary">
-                            <TextBlock Text="paired sender session" Margin="4" />
-                        </DataTemplate>
-                    </ListView.ItemTemplate>
-                </ListView>
-                <StackPanel Spacing="8">
-                    <Button Content="revoke sender sessions" Command="{x:Bind ViewModel.RequestRevokeSessionsCommand}" AutomationProperties.AutomationId="ConnectionRevokeSessions" AutomationProperties.Name="revoke sender sessions" />
-                    <Button Content="delete remote device data" Command="{x:Bind ViewModel.RequestDeleteRemoteDeviceCommand}" AutomationProperties.AutomationId="ConnectionDeleteRemote" AutomationProperties.Name="delete remote device data" />
-                    <Button Content="forget pairing on this pc" Command="{x:Bind ViewModel.RequestForgetPairingCommand}" AutomationProperties.AutomationId="ConnectionForgetPairing" AutomationProperties.Name="forget pairing on this pc" />
-                </StackPanel>
-                <Border Padding="16" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource WarningBrush}" Visibility="{x:Bind ViewModel.HasPendingConfirmation, Mode=OneWay}" AutomationProperties.AutomationId="ConnectionConfirmationPanel" AutomationProperties.Name="confirmation panel">
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="{x:Bind ViewModel.ConfirmationTitle, Mode=OneWay}" FontWeight="SemiBold" />
-                        <TextBlock Text="{x:Bind ViewModel.ConfirmationMessage, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Assertive" AutomationProperties.AutomationId="ConnectionConfirmationMessage" AutomationProperties.Name="{x:Bind ViewModel.ConfirmationMessage, Mode=OneWay}" />
+                <Border Style="{StaticResource BlushCardStyle}">
+                    <StackPanel Spacing="12">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="🔗" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
+                            <TextBlock Grid.Column="1" Text="pairing status" Style="{StaticResource SectionHeadingStyle}" />
+                        </Grid>
+                        <TextBlock x:Name="ConnectionAvailability" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionAvailability" AutomationProperties.Name="pairing availability" />
+                        <TextBlock x:Name="ConnectionPairingCode" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionPairingCode" AutomationProperties.Name="pairing code" />
+                        <TextBlock x:Name="ConnectionCodeExpiry" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionCodeExpiry" AutomationProperties.Name="pairing code expiry" />
                         <StackPanel Spacing="8">
-                            <Button Content="{x:Bind ViewModel.ConfirmationButtonText, Mode=OneWay}" Command="{x:Bind ViewModel.ConfirmCommand}" AutomationProperties.AutomationId="ConnectionConfirm" AutomationProperties.Name="confirm action" />
-                            <Button Content="cancel" Command="{x:Bind ViewModel.CancelConfirmationCommand}" AutomationProperties.AutomationId="ConnectionCancel" AutomationProperties.Name="cancel" />
+                            <Button Content="create 10 min pairing code" Command="{x:Bind ViewModel.CreateCodeCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="ConnectionCreateCode" AutomationProperties.Name="create 10 min pairing code" />
+                            <Button Content="check again" Command="{x:Bind ViewModel.RefreshCommand}" AutomationProperties.AutomationId="ConnectionRefresh" AutomationProperties.Name="check pairing status again" />
                         </StackPanel>
                     </StackPanel>
                 </Border>
-            </StackPanel>
 
-            <StackPanel Spacing="4" AutomationProperties.LiveSetting="Polite">
-                <StackPanel Orientation="Horizontal" Spacing="8" Visibility="{x:Bind ViewModel.IsBusy, Mode=OneWay}">
-                    <ProgressRing IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" Width="16" Height="16" AutomationProperties.AccessibilityView="Raw" />
-                    <TextBlock Text="working on it" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="ConnectionBusy" AutomationProperties.Name="working on it" />
-                </StackPanel>
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="12">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="📱" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
+                            <TextBlock Grid.Column="1" Text="paired sessions" Style="{StaticResource SectionHeadingStyle}" />
+                        </Grid>
+                        <TextBlock x:Name="ConnectionSessionCount" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionSessionCount" AutomationProperties.Name="paired session count" />
+                        <ListView ItemsSource="{x:Bind ViewModel.Sessions, Mode=OneWay}" MaxHeight="180" AutomationProperties.AutomationId="ConnectionSessionsList" AutomationProperties.Name="paired sessions list">
+                            <ListView.ItemTemplate>
+                                <DataTemplate x:DataType="models:PairingSessionSummary">
+                                    <TextBlock Text="paired sender session" Margin="4" />
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                        <StackPanel Spacing="8">
+                            <Button Content="revoke sender sessions" Command="{x:Bind ViewModel.RequestRevokeSessionsCommand}" AutomationProperties.AutomationId="ConnectionRevokeSessions" AutomationProperties.Name="revoke sender sessions" />
+                            <Button Content="delete remote device data" Command="{x:Bind ViewModel.RequestDeleteRemoteDeviceCommand}" AutomationProperties.AutomationId="ConnectionDeleteRemote" AutomationProperties.Name="delete remote device data" />
+                            <Button Content="forget pairing on this pc" Command="{x:Bind ViewModel.RequestForgetPairingCommand}" AutomationProperties.AutomationId="ConnectionForgetPairing" AutomationProperties.Name="forget pairing on this pc" />
+                        </StackPanel>
+                        <Border Style="{StaticResource ConfirmCardStyle}" Visibility="{x:Bind ViewModel.HasPendingConfirmation, Mode=OneWay}" AutomationProperties.AutomationId="ConnectionConfirmationPanel" AutomationProperties.Name="confirmation panel">
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="{x:Bind ViewModel.ConfirmationTitle, Mode=OneWay}" FontWeight="SemiBold" />
+                                <TextBlock Text="{x:Bind ViewModel.ConfirmationMessage, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Assertive" AutomationProperties.AutomationId="ConnectionConfirmationMessage" AutomationProperties.Name="{x:Bind ViewModel.ConfirmationMessage, Mode=OneWay}" />
+                                <Grid ColumnSpacing="8" RowSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Button Content="{x:Bind ViewModel.ConfirmationButtonText, Mode=OneWay}" Command="{x:Bind ViewModel.ConfirmCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="ConnectionConfirm" AutomationProperties.Name="confirm action" />
+                                    <Button Grid.Column="1" Content="cancel" Command="{x:Bind ViewModel.CancelConfirmationCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="ConnectionCancel" AutomationProperties.Name="cancel" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Sticky feedback: what just happened stays in view at the bottom of the
+             page instead of landing below the fold. -->
+        <StackPanel Grid.Row="1" MaxWidth="880" Margin="32,0,32,16" Spacing="6" AutomationProperties.LiveSetting="Polite">
+            <StackPanel Orientation="Horizontal" Spacing="8" Visibility="{x:Bind ViewModel.IsBusy, Mode=OneWay}">
+                <ProgressRing IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" Width="16" Height="16" AutomationProperties.AccessibilityView="Raw" />
+                <TextBlock Text="working on it" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="ConnectionBusy" AutomationProperties.Name="working on it" />
+            </StackPanel>
+            <Border Style="{StaticResource StatusPillStyle}" Visibility="{x:Bind ViewModel.HasStatus, Mode=OneWay}">
                 <Grid ColumnSpacing="6" Visibility="{x:Bind ViewModel.HasStatus, Mode=OneWay}">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
@@ -62,6 +95,8 @@
                     <FontIcon Glyph="&#xE73E;" Foreground="{ThemeResource SuccessBrush}" AutomationProperties.AccessibilityView="Raw" VerticalAlignment="Top" Margin="0,3,0,0" />
                     <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" Foreground="{ThemeResource SuccessBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionStatusMessage" AutomationProperties.Name="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" />
                 </Grid>
+            </Border>
+            <Border Style="{StaticResource StatusPillStyle}" Visibility="{x:Bind ViewModel.HasError, Mode=OneWay}">
                 <Grid ColumnSpacing="6" Visibility="{x:Bind ViewModel.HasError, Mode=OneWay}">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
@@ -70,7 +105,7 @@
                     <FontIcon Glyph="&#xEA39;" Foreground="{ThemeResource ErrorBrush}" AutomationProperties.AccessibilityView="Raw" VerticalAlignment="Top" Margin="0,3,0,0" />
                     <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" Foreground="{ThemeResource ErrorBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionErrorMessage" AutomationProperties.Name="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" />
                 </Grid>
-            </StackPanel>
+            </Border>
         </StackPanel>
-    </ScrollViewer>
+    </Grid>
 </Page>

@@ -3,61 +3,103 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Background="{ThemeResource WindowSurfaceBrush}">
-    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
-        <StackPanel MaxWidth="880" Margin="32" Spacing="24">
-            <StackPanel Spacing="8">
-                <TextBlock Text="appearance" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="AppearancePageTitle" AutomationProperties.Name="appearance" />
-                <TextBlock Text="keep dudu visible calm on ur screen" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
-            </StackPanel>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
 
-            <StackPanel Spacing="12">
-                <TextBlock Text="look and motion" Style="{StaticResource SectionHeadingStyle}" />
-                <ComboBox x:Name="ThemeBox" Header="theme" SelectedIndex="0" SelectionChanged="ThemeBox_SelectionChanged" AutomationProperties.AutomationId="AppearanceTheme" AutomationProperties.Name="theme">
-                    <ComboBoxItem Content="use windows setting" Tag="System" />
-                    <ComboBoxItem Content="light" Tag="Light" />
-                    <ComboBoxItem Content="dark" Tag="Dark" />
-                </ComboBox>
-                <CheckBox Content="use reduced motion" IsChecked="{x:Bind ViewModel.ReducedMotion, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceReducedMotion" AutomationProperties.Name="use reduced motion" />
-                <TextBlock Text="reduced motion uses static poses less movement" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
-                <CheckBox Content="cute sounds" IsChecked="{x:Bind ViewModel.SoundsEnabled, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceSoundsEnabled" AutomationProperties.Name="cute sounds" />
-                <Slider Header="sound volume" Minimum="0" Maximum="1" SmallChange="0.01" LargeChange="0.1" StepFrequency="0.01" IsThumbToolTipEnabled="False" Value="{x:Bind ViewModel.SoundVolume, Mode=TwoWay}" IsEnabled="{x:Bind ViewModel.SoundsEnabled, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceSoundVolume" AutomationProperties.Name="sound volume" />
-                <TextBlock Text="{x:Bind ViewModel.SoundVolumeLabel, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceSoundVolumeLabel" AutomationProperties.Name="{x:Bind ViewModel.SoundVolumeLabel, Mode=OneWay}" />
-                <Slider Header="pet size" Minimum="0.5" Maximum="2" SmallChange="0.1" LargeChange="0.25" StepFrequency="0.05" IsThumbToolTipEnabled="False" Value="{x:Bind ViewModel.PetScale, Mode=TwoWay}" AutomationProperties.AutomationId="AppearancePetScale" AutomationProperties.Name="pet size" />
-                <TextBlock Text="{x:Bind ViewModel.PetScaleLabel, Mode=OneWay}" AutomationProperties.AutomationId="AppearancePetScaleLabel" AutomationProperties.Name="{x:Bind ViewModel.PetScaleLabel, Mode=OneWay}" />
-                <ComboBox Header="monitor" ItemsSource="{x:Bind ViewModel.MonitorOptions, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.MonitorDeviceName, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceMonitor" AutomationProperties.Name="monitor" />
-                <StackPanel Spacing="8">
-                    <Button Content="save appearance" Command="{x:Bind ViewModel.SaveCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="AppearanceSave" AutomationProperties.Name="save appearance" />
-                    <Button Content="save pet placement" Command="{x:Bind ViewModel.SavePlacementCommand}" AutomationProperties.AutomationId="AppearanceSavePlacement" AutomationProperties.Name="save pet placement" />
+        <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+            <StackPanel MaxWidth="880" Margin="32,24,32,32" Spacing="20">
+                <StackPanel Spacing="4">
+                    <TextBlock Text="appearance" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="AppearancePageTitle" AutomationProperties.Name="appearance" />
+                    <TextBlock Text="make dudu look and move just how u like, calm and easy to see" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                 </StackPanel>
-            </StackPanel>
 
-            <StackPanel Spacing="12">
-                <TextBlock Text="pet options" Style="{StaticResource SectionHeadingStyle}" />
-                <TextBlock Text="give dudu a small change of clothes without changing the rest of the app" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
-                <ComboBox Header="outfit" ItemsSource="{x:Bind ViewModel.OutfitOptions, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.SelectedOutfit, Mode=TwoWay}" IsEnabled="{x:Bind ViewModel.CanPersistOutfit, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceOutfit" AutomationProperties.Name="outfit" />
-                <TextBlock Text="{x:Bind ViewModel.OutfitAvailabilityMessage, Mode=OneWay}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="AppearanceOutfitAvailability" AutomationProperties.Name="{x:Bind ViewModel.OutfitAvailabilityMessage, Mode=OneWay}" />
-                <CheckBox Content="let the calendar choose seasonal outfits" IsChecked="{x:Bind ViewModel.AutomaticSeasonalMode, Mode=TwoWay}" IsEnabled="{x:Bind ViewModel.CanConfigureSeasonalMode, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceSeasonalMode" AutomationProperties.Name="let the calendar choose seasonal outfits" />
-                <TextBlock Text="seasonal outfits for these dates and winter aren't included in this version yet. the dates you save here are kept for when they are." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="AppearanceSeasonalAvailability" AutomationProperties.Name="automatic seasonal mode details" />
-                <Grid ColumnSpacing="16" RowSpacing="12">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <CalendarDatePicker Header="anniversary (month and day)" Date="{x:Bind ViewModel.AnniversaryDate, Mode=TwoWay}" PlaceholderText="not set" AutomationProperties.AutomationId="AppearanceAnniversary" AutomationProperties.Name="anniversary month and day" />
-                    <CalendarDatePicker Grid.Column="1" Header="birthday (month and day)" Date="{x:Bind ViewModel.BirthdayDate, Mode=TwoWay}" PlaceholderText="not set" AutomationProperties.AutomationId="AppearanceBirthday" AutomationProperties.Name="birthday month and day" />
-                </Grid>
-                <Button Content="save seasonal look" Command="{x:Bind ViewModel.ApplyOutfitCommand}" IsEnabled="{x:Bind ViewModel.CanConfigureSeasonalMode, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceSaveSeasonal" AutomationProperties.Name="save seasonal look" HorizontalAlignment="Left" />
-                <CheckBox Content="keep dudu above other windows" IsChecked="{x:Bind ViewModel.AlwaysOnTop, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceAlwaysOnTop" AutomationProperties.Name="keep dudu above other windows" />
-                <CheckBox Content="hide dudu during fullscreen work" IsChecked="{x:Bind ViewModel.HideDuringFullscreen, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceHideFullscreen" AutomationProperties.Name="hide dudu during fullscreen work" />
-            </StackPanel>
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="12">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="🎨" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
+                            <TextBlock Grid.Column="1" Text="look and motion" Style="{StaticResource SectionHeadingStyle}" />
+                        </Grid>
+                        <ComboBox x:Name="ThemeBox" Header="theme" SelectedIndex="0" SelectionChanged="ThemeBox_SelectionChanged" AutomationProperties.AutomationId="AppearanceTheme" AutomationProperties.Name="theme">
+                            <ComboBoxItem Content="use windows setting" Tag="System" />
+                            <ComboBoxItem Content="light" Tag="Light" />
+                            <ComboBoxItem Content="dark" Tag="Dark" />
+                        </ComboBox>
+                        <CheckBox Content="use reduced motion" IsChecked="{x:Bind ViewModel.ReducedMotion, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceReducedMotion" AutomationProperties.Name="use reduced motion" />
+                        <TextBlock Text="reduced motion uses static poses less movement" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                        <CheckBox Content="cute sounds" IsChecked="{x:Bind ViewModel.SoundsEnabled, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceSoundsEnabled" AutomationProperties.Name="cute sounds" />
+                        <Slider Header="sound volume" Minimum="0" Maximum="1" SmallChange="0.01" LargeChange="0.1" StepFrequency="0.01" IsThumbToolTipEnabled="False" Value="{x:Bind ViewModel.SoundVolume, Mode=TwoWay}" IsEnabled="{x:Bind ViewModel.SoundsEnabled, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceSoundVolume" AutomationProperties.Name="sound volume" />
+                        <TextBlock Text="{x:Bind ViewModel.SoundVolumeLabel, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceSoundVolumeLabel" AutomationProperties.Name="{x:Bind ViewModel.SoundVolumeLabel, Mode=OneWay}" />
+                        <Slider Header="pet size" Minimum="0.5" Maximum="2" SmallChange="0.1" LargeChange="0.25" StepFrequency="0.05" IsThumbToolTipEnabled="False" Value="{x:Bind ViewModel.PetScale, Mode=TwoWay}" AutomationProperties.AutomationId="AppearancePetScale" AutomationProperties.Name="pet size" />
+                        <TextBlock Text="{x:Bind ViewModel.PetScaleLabel, Mode=OneWay}" AutomationProperties.AutomationId="AppearancePetScaleLabel" AutomationProperties.Name="{x:Bind ViewModel.PetScaleLabel, Mode=OneWay}" />
+                        <ComboBox Header="monitor" ItemsSource="{x:Bind ViewModel.MonitorOptions, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.MonitorDeviceName, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceMonitor" AutomationProperties.Name="monitor" />
+                        <Grid ColumnSpacing="8" RowSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Button Content="save appearance" Command="{x:Bind ViewModel.SaveCommand}" Style="{StaticResource PrimaryButtonStyle}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="AppearanceSave" AutomationProperties.Name="save appearance" />
+                            <Button Grid.Column="1" Content="save pet placement" Command="{x:Bind ViewModel.SavePlacementCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="AppearanceSavePlacement" AutomationProperties.Name="save pet placement" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
 
-            <StackPanel Spacing="12">
-                <TextBlock Text="shortcut" Style="{StaticResource SectionHeadingStyle}" />
-                <TextBox Header="show or hide dudu" Text="{x:Bind ViewModel.GlobalShortcut, Mode=TwoWay}" PlaceholderText="Ctrl+Alt+D" AutomationProperties.AutomationId="AppearanceShortcut" AutomationProperties.Name="show or hide dudu" />
-                <Button Content="save shortcut" Command="{x:Bind ViewModel.SaveShortcutCommand}" AutomationProperties.AutomationId="AppearanceSaveShortcut" AutomationProperties.Name="save shortcut" HorizontalAlignment="Left" />
-            </StackPanel>
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="12">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="👕" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
+                            <TextBlock Grid.Column="1" Text="pet options" Style="{StaticResource SectionHeadingStyle}" />
+                        </Grid>
+                        <TextBlock Text="give dudu a small change of clothes without changing the rest of the app" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                        <ComboBox Header="outfit" ItemsSource="{x:Bind ViewModel.OutfitOptions, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.SelectedOutfit, Mode=TwoWay}" IsEnabled="{x:Bind ViewModel.CanPersistOutfit, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceOutfit" AutomationProperties.Name="outfit" />
+                        <TextBlock Text="{x:Bind ViewModel.OutfitAvailabilityMessage, Mode=OneWay}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="AppearanceOutfitAvailability" AutomationProperties.Name="{x:Bind ViewModel.OutfitAvailabilityMessage, Mode=OneWay}" />
+                        <CheckBox Content="let the calendar choose seasonal outfits" IsChecked="{x:Bind ViewModel.AutomaticSeasonalMode, Mode=TwoWay}" IsEnabled="{x:Bind ViewModel.CanConfigureSeasonalMode, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceSeasonalMode" AutomationProperties.Name="let the calendar choose seasonal outfits" />
+                        <TextBlock Text="seasonal outfits for these dates and winter aren't included in this version yet. the dates you save here are kept for when they are." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="AppearanceSeasonalAvailability" AutomationProperties.Name="automatic seasonal mode details" />
+                        <Grid ColumnSpacing="16" RowSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <CalendarDatePicker Header="anniversary (month and day)" Date="{x:Bind ViewModel.AnniversaryDate, Mode=TwoWay}" PlaceholderText="not set" AutomationProperties.AutomationId="AppearanceAnniversary" AutomationProperties.Name="anniversary month and day" />
+                            <CalendarDatePicker Grid.Column="1" Header="birthday (month and day)" Date="{x:Bind ViewModel.BirthdayDate, Mode=TwoWay}" PlaceholderText="not set" AutomationProperties.AutomationId="AppearanceBirthday" AutomationProperties.Name="birthday month and day" />
+                        </Grid>
+                        <Button Content="save seasonal look" Command="{x:Bind ViewModel.ApplyOutfitCommand}" IsEnabled="{x:Bind ViewModel.CanConfigureSeasonalMode, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceSaveSeasonal" AutomationProperties.Name="save seasonal look" HorizontalAlignment="Left" />
+                        <CheckBox Content="keep dudu above other windows" IsChecked="{x:Bind ViewModel.AlwaysOnTop, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceAlwaysOnTop" AutomationProperties.Name="keep dudu above other windows" />
+                        <CheckBox Content="hide dudu during fullscreen work" IsChecked="{x:Bind ViewModel.HideDuringFullscreen, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceHideFullscreen" AutomationProperties.Name="hide dudu during fullscreen work" />
+                    </StackPanel>
+                </Border>
 
-            <StackPanel Spacing="4" AutomationProperties.LiveSetting="Polite">
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="12">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="⌨️" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
+                            <TextBlock Grid.Column="1" Text="shortcut" Style="{StaticResource SectionHeadingStyle}" />
+                        </Grid>
+                        <TextBox Header="show or hide dudu" Text="{x:Bind ViewModel.GlobalShortcut, Mode=TwoWay}" PlaceholderText="Ctrl+Alt+D" AutomationProperties.AutomationId="AppearanceShortcut" AutomationProperties.Name="show or hide dudu" />
+                        <Button Content="save shortcut" Command="{x:Bind ViewModel.SaveShortcutCommand}" AutomationProperties.AutomationId="AppearanceSaveShortcut" AutomationProperties.Name="save shortcut" HorizontalAlignment="Left" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Sticky feedback: what just happened stays in view at the bottom of the
+             page instead of landing below the fold. -->
+        <StackPanel Grid.Row="1" MaxWidth="880" Margin="32,0,32,16" Spacing="6" AutomationProperties.LiveSetting="Polite">
+            <Border Style="{StaticResource StatusPillStyle}" Visibility="{x:Bind ViewModel.HasStatus, Mode=OneWay}">
                 <Grid ColumnSpacing="6" Visibility="{x:Bind ViewModel.HasStatus, Mode=OneWay}">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
@@ -66,6 +108,8 @@
                     <FontIcon Glyph="&#xE73E;" Foreground="{ThemeResource SuccessBrush}" AutomationProperties.AccessibilityView="Raw" VerticalAlignment="Top" Margin="0,3,0,0" />
                     <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" Foreground="{ThemeResource SuccessBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="AppearanceStatusMessage" AutomationProperties.Name="{x:Bind ViewModel.StatusMessage, Mode=OneWay}" />
                 </Grid>
+            </Border>
+            <Border Style="{StaticResource StatusPillStyle}" Visibility="{x:Bind ViewModel.HasError, Mode=OneWay}">
                 <Grid ColumnSpacing="6" Visibility="{x:Bind ViewModel.HasError, Mode=OneWay}">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
@@ -74,7 +118,7 @@
                     <FontIcon Glyph="&#xEA39;" Foreground="{ThemeResource ErrorBrush}" AutomationProperties.AccessibilityView="Raw" VerticalAlignment="Top" Margin="0,3,0,0" />
                     <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" Foreground="{ThemeResource ErrorBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="AppearanceErrorMessage" AutomationProperties.Name="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" />
                 </Grid>
-            </StackPanel>
+            </Border>
         </StackPanel>
-    </ScrollViewer>
+    </Grid>
 </Page>
