@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -18,6 +19,9 @@ public static class Program
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true,
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+        // These are local provenance/manifest files, never embedded in HTML: keep "&" etc. literal
+        // so a rewrite does not churn hand-written text.
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     };
     private static readonly byte[] PngSignature = [137, 80, 78, 71, 13, 10, 26, 10];
 
@@ -54,18 +58,19 @@ public static class Program
         var recordChecksums = args.Contains("--record-checksums", StringComparer.Ordinal);
         var rawDirectory = EnsureRawDirectory(outputPath);
         var document = await ReadSourcesAsync(sourcesPath);
+        var selected = SelectSources(document, OptionalCsv(args, "--only"));
         Directory.CreateDirectory(rawDirectory);
 
         using var client = MediaDownloader.CreateClient();
         client.DefaultRequestHeaders.UserAgent.ParseAdd("Dudu.AssetTool/1.0 private-local-import");
-        foreach (var source in document.Sources)
+        foreach (var source in selected)
         {
             await ImportSourceAsync(client, source, rawDirectory, recordChecksums);
         }
 
         await WriteSourcesAsync(sourcesPath, document);
-        var imported = document.Sources.Count(source => source.Status == "imported");
-        var unavailable = document.Sources.Count - imported;
+        var imported = selected.Count(source => source.Status == "imported");
+        var unavailable = selected.Count - imported;
         Console.WriteLine($"Import complete: {imported} imported, {unavailable} unavailable or rejected. Source metadata updated at {sourcesPath}.");
         return unavailable == 0 ? 0 : 1;
     }
@@ -80,11 +85,10 @@ public static class Program
             return;
         }
 
-        if (!DateTimeOffset.TryParse(source.AccessedUtc, out _)
-            || !string.Equals(source.AccessedUtc, AccessDate, StringComparison.Ordinal))
+        if (!IsRecordedAccessDate(source.AccessedUtc))
         {
             source.Status = "rejected";
-            source.Notes = $"Rejected: accessedUtc must be {AccessDate}.";
+            source.Notes = "Rejected: accessedUtc must be a UTC timestamp (ending in Z) that is not in the future.";
             Console.WriteLine($"{source.Id}: rejected (unexpected access date).");
             return;
         }
@@ -177,10 +181,17 @@ public static class Program
         var sourcesPath = RequiredOption(args, "--sources");
         var inputPath = RequiredOption(args, "--input");
         var outputPath = RequiredOption(args, "--output");
+        var keys = OptionalCsv(args, "--keys");
+        var version = OptionalValue(args, "--version");
         var document = await ReadSourcesAsync(sourcesPath);
         var rawDirectory = Path.GetFullPath(inputPath);
         var packDirectory = Path.GetFullPath(outputPath);
         EnsureSafePackDirectory(packDirectory);
+
+        if (keys is not null)
+        {
+            return await NormalizeKeysAsync(document, sourcesPath, rawDirectory, packDirectory, keys, version);
+        }
 
         var framesDirectory = Path.Combine(packDirectory, "frames");
         if (Directory.Exists(framesDirectory))
@@ -208,59 +219,25 @@ public static class Program
 
         var animations = new Dictionary<string, AssetAnimation>(StringComparer.Ordinal);
         var transformBySource = document.Sources.ToDictionary(source => source.Id, _ => new SourceTransform(), StringComparer.Ordinal);
-        foreach (var animationKey in AssetManifestContract.RequiredAnimationKeys)
+        // Optional keys (drag, tantrum, ...) are produced whenever a source provides them.
+        var animationKeys = AssetManifestContract.RequiredAnimationKeys
+            .Concat(AssetManifestContract.OptionalAnimationKeys.Where(key => FindImportedSource(document, key) is not null));
+        foreach (var animationKey in animationKeys)
         {
-            var source = document.Sources.First(candidate => candidate.Status == "imported"
-                && candidate.AnimationKeys.Contains(animationKey, StringComparer.Ordinal)
-                && !string.IsNullOrWhiteSpace(candidate.RawFile));
-            var rawPath = SafeRawPath(rawDirectory, source.RawFile!);
-            var bytes = await File.ReadAllBytesAsync(rawPath);
-            if (!IsSafeMedia(bytes) || !HashMatches(bytes, source.Sha256))
-            {
-                throw new InvalidDataException($"Source {source.Id} failed SHA-256 or media validation before normalization.");
-            }
-
-            var decodedFrames = AssetNormalizer.DecodeFrames(bytes, source.Id, 180);
-            var normalized = AssetNormalizer.Normalize(
-                decodedFrames,
-                new PixelPoint(256, 400),
-                512);
-            var transform = transformBySource[source.Id];
-            var animationFrames = new List<AssetFrame>(normalized.Frames.Count);
-            foreach (var (frame, index) in normalized.Frames.Select((frame, index) => (frame, index)))
-            {
-                var relativeFile = AssetNormalizer.DeterministicFileName(animationKey, index, frame.Sha256);
-                await WritePackBytesAsync(packDirectory, relativeFile, frame.PngBytes);
-                transform.OutputFiles.Add(relativeFile);
-                transform.OutputSha256.Add(frame.Sha256);
-                transform.Normalizations.Add(new NormalizationDetails
-                {
-                    FrameIndex = index,
-                    TrimmedSize = frame.TrimmedSize,
-                    Scale = frame.Scale,
-                    CanvasSize = frame.CanvasSize,
-                    Anchor = frame.Anchor,
-                    ColorFormat = frame.ColorFormat,
-                });
-                animationFrames.Add(new AssetFrame { File = relativeFile, DurationMs = frame.DurationMs, Sha256 = frame.Sha256 });
-            }
-
-            animations[animationKey] = new AssetAnimation
-            {
-                Frames = animationFrames,
-                Loop = animationKey == "idle" || animationKey == "blink" || animationKey == "focus" ? "loop" : "once",
-                Anchor = normalized.Anchor,
-                NominalSize = new PixelSize(normalized.CanvasSize, normalized.CanvasSize),
-                ReducedMotion = animationFrames[0].File,
-                ReducedMotionSha256 = animationFrames[0].Sha256,
-            };
+            var source = FindImportedSource(document, animationKey)!;
+            animations[animationKey] = await NormalizeAnimationAsync(
+                source,
+                animationKey,
+                rawDirectory,
+                packDirectory,
+                transformBySource[source.Id]);
         }
 
         var manifest = new AssetManifest
         {
             SchemaVersion = ProductInfo.ProtocolVersion,
             PackId = "private-dudu",
-            Version = "1.0.0",
+            Version = version ?? "1.0.0",
             PrivateUseOnly = true,
             Attribution = new AssetAttribution
             {
@@ -290,8 +267,203 @@ public static class Program
         }
 
         await WriteSourcesAsync(sourcesPath, document);
-        Console.WriteLine($"Normalized private pack at {packDirectory}; all {animations.Count} required animation keys are backed by imported source media.");
+        Console.WriteLine($"Normalized private pack at {packDirectory}; all {animations.Count} animation keys (required plus any sourced optional keys) are backed by imported source media.");
         return 0;
+    }
+
+    /// <summary>
+    /// Incremental normalize: regenerates only the listed base-outfit animation keys inside an
+    /// existing pack and preserves every other animation (including hand-curated stickers).
+    /// </summary>
+    private static async Task<int> NormalizeKeysAsync(
+        SourceDocument document,
+        string sourcesPath,
+        string rawDirectory,
+        string packDirectory,
+        IReadOnlyList<string> keys,
+        string? version)
+    {
+        var unsupported = keys
+            .Where(key => !AssetManifestContract.RequiredAnimationKeys.Contains(key, StringComparer.Ordinal)
+                && !AssetManifestContract.OptionalAnimationKeys.Contains(key, StringComparer.Ordinal))
+            .ToArray();
+        if (unsupported.Length > 0)
+        {
+            throw new ArgumentException("--keys only accepts required or optional animation keys: " + string.Join(", ", unsupported));
+        }
+
+        var missing = keys.Where(key => FindImportedSource(document, key) is null).ToArray();
+        if (missing.Length > 0)
+        {
+            throw new InvalidDataException("No imported source media is recorded for animation key(s): " + string.Join(", ", missing));
+        }
+
+        var manifestPath = SafePackDestinationPath(packDirectory, "manifest.json");
+        if (!File.Exists(manifestPath))
+        {
+            throw new InvalidDataException($"--keys regenerates animations inside an existing pack, but no manifest exists at {manifestPath}.");
+        }
+
+        AssetManifest existing;
+        await using (var stream = File.OpenRead(manifestPath))
+        {
+            existing = await JsonSerializer.DeserializeAsync<AssetManifest>(stream, JsonOptions)
+                ?? throw new InvalidDataException($"Existing manifest is empty: {manifestPath}");
+        }
+
+        if (!existing.Outfits.TryGetValue("base", out var baseOutfit))
+        {
+            throw new InvalidDataException("Existing manifest has no base outfit.");
+        }
+
+        foreach (var key in keys)
+        {
+            var keyDirectory = Path.Combine(packDirectory, "frames", "base", key);
+            if (Directory.Exists(keyDirectory))
+            {
+                if (!IsReparseSafe(packDirectory, keyDirectory))
+                {
+                    throw new InvalidDataException($"Pack frame directory contains a symlink, junction, or reparse point: {keyDirectory}");
+                }
+
+                Directory.Delete(keyDirectory, recursive: true);
+            }
+
+            foreach (var source in document.Sources)
+            {
+                RemoveTransformOutputs(source, $"frames/base/{key}/");
+            }
+        }
+
+        var sourceUrls = existing.Attribution.SourceUrls.ToList();
+        foreach (var key in keys)
+        {
+            var source = FindImportedSource(document, key)!;
+            source.Transform ??= new SourceTransform();
+            baseOutfit.Animations[key] = await NormalizeAnimationAsync(source, key, rawDirectory, packDirectory, source.Transform);
+            if (!sourceUrls.Contains(source.DiscoveryUrl, StringComparer.Ordinal))
+            {
+                sourceUrls.Add(source.DiscoveryUrl);
+            }
+        }
+
+        var manifest = new AssetManifest
+        {
+            SchemaVersion = existing.SchemaVersion,
+            PackId = existing.PackId,
+            Version = version ?? existing.Version,
+            PrivateUseOnly = existing.PrivateUseOnly,
+            Attribution = new AssetAttribution
+            {
+                Creator = existing.Attribution.Creator,
+                SourceUrls = sourceUrls,
+                RightsNote = existing.Attribution.RightsNote,
+            },
+            Outfits = existing.Outfits,
+        };
+        var errors = AssetManifestContract.Validate(manifest);
+        if (errors.Count > 0)
+        {
+            throw new AssetManifestException(string.Join(Environment.NewLine, errors));
+        }
+
+        await WritePackTextAsync(packDirectory, "manifest.json", JsonSerializer.Serialize(manifest, JsonOptions));
+        await WriteSourcesAsync(sourcesPath, document);
+        Console.WriteLine($"Regenerated {keys.Count} animation key(s) in {packDirectory}: {string.Join(", ", keys)}.");
+        return 0;
+    }
+
+    private static async Task<AssetAnimation> NormalizeAnimationAsync(
+        SourceRecord source,
+        string animationKey,
+        string rawDirectory,
+        string packDirectory,
+        SourceTransform transform)
+    {
+        var rawPath = SafeRawPath(rawDirectory, source.RawFile!);
+        var bytes = await File.ReadAllBytesAsync(rawPath);
+        if (!IsSafeMedia(bytes) || !HashMatches(bytes, source.Sha256))
+        {
+            throw new InvalidDataException($"Source {source.Id} failed SHA-256 or media validation before normalization.");
+        }
+
+        var clip = source.Clip;
+        var decodedFrames = AssetNormalizer.DecodeFrames(bytes, source.Id, 180, clip?.EraseRects);
+        var normalized = clip is null
+            ? AssetNormalizer.Normalize(decodedFrames, new PixelPoint(256, 400), 512)
+            : AssetNormalizer.NormalizeClip(
+                AssetNormalizer.SelectFrames(decodedFrames, clip.StartFrame, clip.FrameCount, clip.FrameStep),
+                new PixelPoint(256, 400),
+                512,
+                clip.TargetHeight,
+                clip.RecenterFrames);
+        var animationFrames = new List<AssetFrame>(normalized.Frames.Count);
+        foreach (var (frame, index) in normalized.Frames.Select((frame, index) => (frame, index)))
+        {
+            var relativeFile = AssetNormalizer.DeterministicFileName(animationKey, index, frame.Sha256);
+            await WritePackBytesAsync(packDirectory, relativeFile, frame.PngBytes);
+            transform.OutputFiles.Add(relativeFile);
+            transform.OutputSha256.Add(frame.Sha256);
+            transform.Normalizations.Add(new NormalizationDetails
+            {
+                FrameIndex = index,
+                TrimmedSize = frame.TrimmedSize,
+                Scale = frame.Scale,
+                CanvasSize = frame.CanvasSize,
+                Anchor = frame.Anchor,
+                ColorFormat = frame.ColorFormat,
+            });
+            animationFrames.Add(new AssetFrame { File = relativeFile, DurationMs = frame.DurationMs, Sha256 = frame.Sha256 });
+        }
+
+        return new AssetAnimation
+        {
+            Frames = animationFrames,
+            // One-shot keys (drink, tantrum, petted, ...) must play once; everything else loops.
+            Loop = AssetManifestContract.IsOneShotAnimationKey(animationKey) ? "once" : "loop",
+            Anchor = normalized.Anchor,
+            NominalSize = new PixelSize(normalized.CanvasSize, normalized.CanvasSize),
+            ReducedMotion = animationFrames[0].File,
+            ReducedMotionSha256 = animationFrames[0].Sha256,
+        };
+    }
+
+    private static SourceRecord? FindImportedSource(SourceDocument document, string animationKey) =>
+        document.Sources.FirstOrDefault(candidate => candidate.Status == "imported"
+            && candidate.AnimationKeys.Contains(animationKey, StringComparer.Ordinal)
+            && !string.IsNullOrWhiteSpace(candidate.RawFile));
+
+    private static void RemoveTransformOutputs(SourceRecord source, string outputPrefix)
+    {
+        var transform = source.Transform;
+        if (transform is null)
+        {
+            return;
+        }
+
+        for (var index = transform.OutputFiles.Count - 1; index >= 0; index--)
+        {
+            if (!transform.OutputFiles[index].StartsWith(outputPrefix, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            transform.OutputFiles.RemoveAt(index);
+            if (index < transform.OutputSha256.Count)
+            {
+                transform.OutputSha256.RemoveAt(index);
+            }
+
+            if (index < transform.Normalizations.Count)
+            {
+                transform.Normalizations.RemoveAt(index);
+            }
+        }
+
+        if (transform.OutputFiles.Count == 0 && transform.Normalization is null)
+        {
+            source.Transform = null;
+        }
     }
 
     private static async Task<int> ValidateAsync(string[] args)
@@ -442,6 +614,13 @@ public static class Program
         foreach (var source in document.Sources)
         {
             MediaDownloader.RequireHttps(source.DiscoveryUrl);
+            if (IsDerived(source))
+            {
+                // Derived records document frames synthesized from already-imported art;
+                // they have no media of their own and are never imported.
+                continue;
+            }
+
             if (string.IsNullOrWhiteSpace(source.MediaUrl))
             {
                 throw new InvalidDataException($"Source '{source.Id}' must record an explicit accountable mediaUrl; discovery-page scraping is disabled.");
@@ -699,6 +878,48 @@ public static class Program
         return args[index + 1];
     }
 
+    private static string? OptionalValue(string[] args, string option) =>
+        Array.IndexOf(args, option) < 0 ? null : RequiredOption(args, option);
+
+    private static IReadOnlyList<string>? OptionalCsv(string[] args, string option)
+    {
+        var value = OptionalValue(args, option);
+        if (value is null)
+        {
+            return null;
+        }
+
+        var items = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        return items.Length == 0 ? throw new ArgumentException($"{option} needs at least one value.") : items;
+    }
+
+    private static IReadOnlyList<SourceRecord> SelectSources(SourceDocument document, IReadOnlyList<string>? ids)
+    {
+        if (ids is null)
+        {
+            return document.Sources.Where(source => !IsDerived(source)).ToArray();
+        }
+
+        var unknown = ids.Where(id => document.Sources.All(source => source.Id != id || IsDerived(source))).ToArray();
+        if (unknown.Length > 0)
+        {
+            throw new ArgumentException("--only names unknown or derived source id(s): " + string.Join(", ", unknown));
+        }
+
+        return document.Sources.Where(source => ids.Contains(source.Id, StringComparer.Ordinal)).ToArray();
+    }
+
+    private static bool IsDerived(SourceRecord source) =>
+        string.Equals(source.Status, "derived", StringComparison.Ordinal);
+
+    private static bool IsRecordedAccessDate(string? accessedUtc) =>
+        accessedUtc is not null
+        && accessedUtc.EndsWith('Z')
+        && DateTimeOffset.TryParse(accessedUtc, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var accessed)
+        && accessed <= DateTimeOffset.UtcNow;
+
     private sealed class SourceDocument
     {
         public int SchemaVersion { get; set; }
@@ -723,6 +944,29 @@ public static class Program
         public string? Sha256 { get; set; }
         public SourceTransform? Transform { get; set; }
         public string? Notes { get; set; }
+
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public SourceClip? Clip { get; set; }
+    }
+
+    /// <summary>Optional per-source clip: frame range/sampling, caption erasure, and target height.</summary>
+    private sealed class SourceClip
+    {
+        public int StartFrame { get; set; }
+
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public int? FrameCount { get; set; }
+
+        public int FrameStep { get; set; } = 1;
+
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public int? TargetHeight { get; set; }
+
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public List<ClipRect>? EraseRects { get; set; }
+
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+        public bool RecenterFrames { get; set; }
     }
 
     private sealed class SourceTransform
