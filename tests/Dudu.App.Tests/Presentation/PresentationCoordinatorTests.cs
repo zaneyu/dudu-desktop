@@ -65,6 +65,103 @@ public sealed class PresentationCoordinatorTests
     }
 
     [Fact]
+    public async Task Bedtime_routine_presents_at_the_start_of_quiet_hours_but_other_routines_stay_held()
+    {
+        // The bedtime routine is scheduled at 22:00 -- exactly when the
+        // recommended quiet hours (22:00-07:00) begin -- and expires at the
+        // next local midnight. Routines never bypassed suppression, so it was
+        // held for quiet hours and purged before they ended: it never
+        // appeared at all with the recommended settings.
+        var now = new DateTimeOffset(2026, 9, 11, 22, 0, 0, TimeSpan.Zero);
+        var policy = new PresentationPolicy(TimeSpan.Zero);
+        var notifications = new RecordingNotificationService();
+        var played = 0;
+        var coordinator = new PresentationCoordinator(
+            policy,
+            notifications,
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => { played++; return Task.CompletedTask; },
+            () => AnimationOptions.Default,
+            isQuietHours: () => true,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            utcNow: () => now);
+
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder(
+                Dudu.Core.Reminders.LocalReminderDefaults.BedtimeId,
+                "goodnight",
+                body: "sleep well",
+                animationKey: "sticker-025",
+                expiresUtc: now.AddHours(2)),
+            bypassSuppression: false,
+            CancellationToken.None);
+
+        Assert.Equal(1, played);
+        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.Equal(0, policy.QueuedCount);
+
+        // Every other routine is still held by quiet hours.
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder(
+                Dudu.Core.Reminders.LocalReminderDefaults.EveningCheckInId,
+                "check in",
+                body: "how was today",
+                expiresUtc: now.AddHours(2)),
+            bypassSuppression: false,
+            CancellationToken.None);
+
+        Assert.Equal(1, played);
+        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.Equal(1, policy.QueuedCount);
+    }
+
+    [Fact]
+    public async Task Bedtime_routine_still_waits_for_pause_or_fullscreen_and_releases_while_quiet()
+    {
+        // Only quiet hours are ignored: a pause (or fullscreen, lock, focus,
+        // a hidden pet) still holds the bedtime routine, and once that ends
+        // it is released even though quiet hours are still on.
+        var now = new DateTimeOffset(2026, 9, 11, 22, 0, 0, TimeSpan.Zero);
+        var policy = new PresentationPolicy(TimeSpan.Zero);
+        var pause = new PauseState(PauseMode.Indefinite, null);
+        var fullscreen = false;
+        var played = 0;
+        var coordinator = new PresentationCoordinator(
+            policy,
+            new RecordingNotificationService(),
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => { played++; return Task.CompletedTask; },
+            () => AnimationOptions.Default,
+            isQuietHours: () => true,
+            pauseState: () => pause,
+            petGate: new SemaphoreSlim(1, 1),
+            isFullscreenNow: () => fullscreen,
+            utcNow: () => now);
+
+        await coordinator.PublishAsync(
+            DurableNotification.Reminder(
+                Dudu.Core.Reminders.LocalReminderDefaults.BedtimeId,
+                "goodnight",
+                body: "sleep well",
+                expiresUtc: now.AddHours(2)),
+            bypassSuppression: false,
+            CancellationToken.None);
+        Assert.Equal(0, played);
+        Assert.Equal(1, policy.QueuedCount);
+
+        pause = PauseState.None;
+        fullscreen = true;
+        await coordinator.TickAsync(CancellationToken.None);
+        Assert.Equal(0, played);
+
+        fullscreen = false;
+        await coordinator.TickAsync(CancellationToken.None);
+        Assert.Equal(1, played);
+        Assert.Equal(0, policy.QueuedCount);
+    }
+
+    [Fact]
     public async Task A_failed_toast_does_not_veto_a_successful_animations_result()
     {
         // Finding 15: PresentAsync used to AND the toast call's result into

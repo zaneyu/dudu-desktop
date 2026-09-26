@@ -32,6 +32,18 @@ public sealed record DurableNotification
             or Dudu.Core.Reminders.LocalReminderDefaults.BedtimeId;
 
     /// <summary>
+    /// The bedtime/goodnight routine is by definition a quiet-hours-start
+    /// message: it is scheduled at 22:00, exactly when the recommended quiet
+    /// hours (22:00-07:00) begin, and expires at the next local midnight. Held
+    /// for quiet hours it was always purged before they ended, so it never
+    /// appeared at all. It ignores quiet hours only -- lock, pause,
+    /// fullscreen, focus and a hidden pet still hold it as before (and its
+    /// audio cue stays muted by quiet hours in AudioCueService).
+    /// </summary>
+    internal bool IgnoresQuietHours => Kind == PresentationItemKind.Reminder
+        && Id == Dudu.Core.Reminders.LocalReminderDefaults.BedtimeId;
+
+    /// <summary>
     /// The identity used to detect duplicates, both while an item sits in
     /// <see cref="PresentationPolicy"/>'s queue and while it is currently
     /// being presented (tracked by <c>PresentationCoordinator</c>).
@@ -333,7 +345,9 @@ public sealed class PresentationPolicy
     /// Releases at most one queued durable item, and only when the
     /// environment is fully clear (not quiet, not fullscreen, not paused,
     /// session not locked, focus not active, pet not hidden by the user) and
-    /// the minimum silent interval has elapsed since the last release.
+    /// the minimum silent interval has elapsed since the last release. While
+    /// quiet hours are the only thing holding items back, an item that
+    /// <see cref="DurableNotification.IgnoresQuietHours"/> is still released.
     /// </summary>
     public PresentationDecision Decide(
         bool nowQuiet,
@@ -346,7 +360,8 @@ public sealed class PresentationPolicy
         bool userHidden = false)
     {
         var now = nowUtc ?? DateTimeOffset.UtcNow;
-        var suppressed = nowQuiet || fullscreen || paused || sessionLocked || focusActive || userHidden;
+        var suppressedExceptQuiet = fullscreen || paused || sessionLocked || focusActive || userHidden;
+        var suppressed = nowQuiet || suppressedExceptQuiet;
         lock (_sync)
         {
             List<string>? purgedKeys = null;
@@ -368,13 +383,42 @@ public sealed class PresentationPolicy
             IReadOnlyList<string> purged = purgedKeys ?? (IReadOnlyList<string>)Array.Empty<string>();
 
             if (_queue.Count == 0
-                || suppressed
+                || suppressedExceptQuiet
                 || (_lastReleaseUtc is { } last && now - last < _minimumSilentInterval))
             {
                 return new PresentationDecision(Array.Empty<DurableNotification>(), _queue.Count, purged);
             }
 
-            var item = _queue.Dequeue();
+            DurableNotification? item = null;
+            if (!suppressed)
+            {
+                item = _queue.Dequeue();
+            }
+            else
+            {
+                // Only quiet hours hold things back: release the first item
+                // that ignores quiet hours (the bedtime routine), keeping the
+                // order of everything else.
+                var count = _queue.Count;
+                for (var index = 0; index < count; index++)
+                {
+                    var queued = _queue.Dequeue();
+                    if (item is null && queued.IgnoresQuietHours)
+                    {
+                        item = queued;
+                    }
+                    else
+                    {
+                        _queue.Enqueue(queued);
+                    }
+                }
+
+                if (item is null)
+                {
+                    return new PresentationDecision(Array.Empty<DurableNotification>(), _queue.Count, purged);
+                }
+            }
+
             _queuedIds.Remove(item.Key);
             if (recordRelease)
             {
