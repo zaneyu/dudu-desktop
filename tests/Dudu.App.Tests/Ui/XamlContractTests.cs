@@ -404,6 +404,26 @@ public sealed class XamlContractTests
         Assert.Contains("SelectedItem=\"{x:Bind ViewModel.SelectedTask, Mode=OneWay}\"", tasks);
     }
 
+    [Fact]
+    public void Appearance_layering_toggles_sit_with_the_button_that_saves_them()
+    {
+        // "keep dudu above other windows" and "hide dudu during fullscreen work"
+        // are saved by "save appearance", but sat under "save seasonal look",
+        // which does not save them, so changes made there were lost.
+        var root = FindRepositoryRoot();
+        var appearance = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "AppearancePage.xaml"));
+        var save = appearance.IndexOf("AutomationProperties.AutomationId=\"AppearanceSave\"", StringComparison.Ordinal);
+        var seasonal = appearance.IndexOf("AutomationProperties.AutomationId=\"AppearanceSaveSeasonal\"", StringComparison.Ordinal);
+        var alwaysOnTop = appearance.IndexOf("AutomationProperties.AutomationId=\"AppearanceAlwaysOnTop\"", StringComparison.Ordinal);
+        var hideFullscreen = appearance.IndexOf("AutomationProperties.AutomationId=\"AppearanceHideFullscreen\"", StringComparison.Ordinal);
+
+        Assert.True(save > 0 && seasonal > save);
+        Assert.InRange(alwaysOnTop, 0, save);
+        Assert.InRange(hideFullscreen, 0, save);
+        // The hotkey only ever shows Dudu and opens Home; it never hides her.
+        Assert.DoesNotContain("Header=\"show or hide dudu\"", appearance, StringComparison.Ordinal);
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

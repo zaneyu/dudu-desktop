@@ -39,6 +39,11 @@
                         <Slider Header="pet size" Minimum="0.5" Maximum="2" SmallChange="0.1" LargeChange="0.25" StepFrequency="0.05" IsThumbToolTipEnabled="False" Value="{x:Bind ViewModel.PetScale, Mode=TwoWay}" AutomationProperties.AutomationId="AppearancePetScale" AutomationProperties.Name="pet size" />
                         <TextBlock Text="{x:Bind ViewModel.PetScaleLabel, Mode=OneWay}" AutomationProperties.AutomationId="AppearancePetScaleLabel" AutomationProperties.Name="{x:Bind ViewModel.PetScaleLabel, Mode=OneWay}" />
                         <ComboBox Header="monitor" ItemsSource="{x:Bind ViewModel.MonitorOptions, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.MonitorDeviceName, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceMonitor" AutomationProperties.Name="monitor" />
+                        <!-- Saved by "save appearance" below, so they live in this card
+                             (they used to sit under "save seasonal look", which does not
+                             save them, and changes were silently lost). -->
+                        <CheckBox Content="keep dudu above other windows" IsChecked="{x:Bind ViewModel.AlwaysOnTop, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceAlwaysOnTop" AutomationProperties.Name="keep dudu above other windows" />
+                        <CheckBox Content="hide dudu during fullscreen work" IsChecked="{x:Bind ViewModel.HideDuringFullscreen, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceHideFullscreen" AutomationProperties.Name="hide dudu during fullscreen work" />
                         <Grid ColumnSpacing="8" RowSpacing="8">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
@@ -74,8 +79,6 @@
                             <CalendarDatePicker Grid.Column="1" Header="birthday (month and day)" Date="{x:Bind ViewModel.BirthdayDate, Mode=TwoWay}" PlaceholderText="not set" AutomationProperties.AutomationId="AppearanceBirthday" AutomationProperties.Name="birthday month and day" />
                         </Grid>
                         <Button Content="save seasonal look" Command="{x:Bind ViewModel.ApplyOutfitCommand}" IsEnabled="{x:Bind ViewModel.CanConfigureSeasonalMode, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceSaveSeasonal" AutomationProperties.Name="save seasonal look" HorizontalAlignment="Left" />
-                        <CheckBox Content="keep dudu above other windows" IsChecked="{x:Bind ViewModel.AlwaysOnTop, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceAlwaysOnTop" AutomationProperties.Name="keep dudu above other windows" />
-                        <CheckBox Content="hide dudu during fullscreen work" IsChecked="{x:Bind ViewModel.HideDuringFullscreen, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceHideFullscreen" AutomationProperties.Name="hide dudu during fullscreen work" />
                     </StackPanel>
                 </Border>
 
@@ -89,7 +92,7 @@
                             <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="⌨️" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
                             <TextBlock Grid.Column="1" Text="shortcut" Style="{StaticResource SectionHeadingStyle}" />
                         </Grid>
-                        <TextBox Header="show or hide dudu" Text="{x:Bind ViewModel.GlobalShortcut, Mode=TwoWay}" PlaceholderText="Ctrl+Alt+D" AutomationProperties.AutomationId="AppearanceShortcut" AutomationProperties.Name="show or hide dudu" />
+                        <TextBox Header="shortcut to open dudu" Text="{x:Bind ViewModel.GlobalShortcut, Mode=TwoWay}" PlaceholderText="Ctrl+Alt+D" AutomationProperties.AutomationId="AppearanceShortcut" AutomationProperties.Name="shortcut to open dudu" />
                         <Button Content="save shortcut" Command="{x:Bind ViewModel.SaveShortcutCommand}" AutomationProperties.AutomationId="AppearanceSaveShortcut" AutomationProperties.Name="save shortcut" HorizontalAlignment="Left" />
                     </StackPanel>
                 </Border>
