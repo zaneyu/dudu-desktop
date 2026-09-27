@@ -53,7 +53,12 @@ function loadRecent(): RecentStatus[] {
 }
 
 function saveRecent(entries: RecentStatus[]): void {
-  sessionStorage.setItem(STORAGE_KEY, JSON.stringify(entries.slice(0, MAX_RECENT)));
+  try {
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(entries.slice(0, MAX_RECENT)));
+  } catch {
+    // Storage full or blocked (private mode): the list is a convenience, never worth reporting a
+    // send as failed after the relay already accepted the note.
+  }
 }
 
 export function addRecentStatus(messageId: string, status: MessageState, details: RecentStatusDetails = {}): void {
@@ -63,7 +68,11 @@ export function addRecentStatus(messageId: string, status: MessageState, details
 }
 
 export function clearRecent(): void {
-  sessionStorage.removeItem(STORAGE_KEY);
+  try {
+    sessionStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // Blocked storage has nothing to clear.
+  }
 }
 
 function statusLine(status: RecentStatus["status"]): string {
@@ -117,6 +126,7 @@ export function describeRecentStatus(entry: RecentStatus): string {
  * queued, every 30s while the tab is visible. */
 export class StatusTracker {
   private timer: ReturnType<typeof setInterval> | null = null;
+  private polling = false;
 
   constructor(
     private readonly listElement: HTMLElement,
@@ -134,9 +144,11 @@ export class StatusTracker {
     );
   }
 
+  /** Starts polling, checking once immediately so a returning visit does not wait 30s. */
   start(): void {
     this.stop();
     this.timer = setInterval(() => void this.poll(), POLL_INTERVAL_MS);
+    void this.poll();
   }
 
   stop(): void {
@@ -153,17 +165,35 @@ export class StatusTracker {
   }
 
   private async poll(): Promise<void> {
-    if (document.visibilityState !== "visible") {
+    // One pass at a time: a tab-return refresh landing on the interval tick would otherwise
+    // request every queued status twice.
+    if (document.visibilityState !== "visible" || this.polling) {
       return;
     }
+    this.polling = true;
+    try {
+      await this.pollQueued();
+    } finally {
+      this.polling = false;
+    }
+  }
+
+  private async pollQueued(): Promise<void> {
     const queued = loadRecent().filter((entry) => entry.status === "queued");
     for (const entry of queued) {
+      // Stopped mid-pass (disconnected, or the session was lost): a later lookup's 401 must not
+      // report a second session loss over the state the page has already moved to.
+      if (this.timer === null) {
+        return;
+      }
       try {
         const result = await getMessageStatus(entry.messageId);
         this.applyStatus(entry.messageId, result?.status ?? "unavailable");
       } catch (error) {
         if (error instanceof ApiUnauthorizedError) {
-          this.onUnauthorized();
+          if (this.timer !== null) {
+            this.onUnauthorized();
+          }
           return;
         }
         // Any other failure: leave the status as-is, the next tick tries again.
@@ -177,7 +207,8 @@ export class StatusTracker {
     if (index === -1) {
       return;
     }
-    entries[index] = { messageId, status };
+    // Keep when it was sent and when it is due; only the status changed.
+    entries[index] = { ...entries[index], status };
     saveRecent(entries);
     this.render();
   }

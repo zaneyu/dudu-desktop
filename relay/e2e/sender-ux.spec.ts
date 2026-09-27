@@ -2,7 +2,8 @@
  * Browser-level regressions for sender-page UI/UX bugs: pairing-code cleanup and busy state,
  * focus management between the two states, confirmation before disconnecting, stale status
  * lines, the recent list updating after a send, the key-changed path on a 412, the offline
- * load path, and phone layout (no horizontal overflow at 320px, no iOS focus zoom).
+ * load path and its retry, disconnect after the session already ended, the preview's line
+ * breaks, and phone layout (no horizontal overflow at 320px, no iOS focus zoom).
  */
 import { expect, test } from "@playwright/test";
 
@@ -162,6 +163,43 @@ test("an unreachable relay on load explains itself and recovers when back online
   await context.setOffline(true);
   await context.setOffline(false);
   await expect(page.getByLabel("Message")).toBeVisible();
+});
+
+test("an unreachable relay on load retries on its own, without waiting for an online event", async ({ page }) => {
+  // A relay 5xx or timeout on a phone that is already online never fires "online"; the page has
+  // to come back by itself (first retry after 5s).
+  const api = await openPairedSender(page);
+  api.failDeviceCheck = true;
+  await page.reload();
+  await expect(page.locator("#pairing-status")).toHaveText(
+    "couldnt reach dudu check your connection ill retry when youre back online",
+  );
+
+  api.failDeviceCheck = false;
+  await expect(page.getByLabel("Message")).toBeVisible({ timeout: 15_000 });
+});
+
+test("disconnect clears the pairing when the relay says the session already ended", async ({ page }) => {
+  const api = await openPairedSender(page);
+  api.failNextDisconnect = 401;
+  page.once("dialog", (dialog) => void dialog.accept());
+
+  await page.getByRole("button", { name: "Disconnect this phone" }).click();
+
+  await expect(page.getByRole("button", { name: "Pair privately" })).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem("dudu.sender.device.v1"))).toBeNull();
+});
+
+test("the preview keeps line breaks and wraps long words on a phone", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 640 });
+  await openPairedSender(page);
+  await page.getByLabel("Message").fill(`first line\nsecond line ${"x".repeat(120)}`);
+  await page.getByRole("button", { name: "Preview" }).click();
+
+  const preview = page.getByTestId("preview");
+  expect(await preview.evaluate((element) => (element as HTMLElement).innerText)).toContain("\n");
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
 });
 
 test("the page fits a 320px phone without horizontal scrolling", async ({ page }) => {

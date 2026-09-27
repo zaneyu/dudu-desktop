@@ -83,10 +83,15 @@ export async function getSenderDevice(): Promise<GetSenderDeviceResponse | null>
   throw new ApiHttpError(response.status, await parseErrorBody(response));
 }
 
-/** Clears local pairing state only after the relay confirms revocation with HTTP 204. */
+/**
+ * Clears local pairing state only after the relay confirms revocation with HTTP 204, or answers
+ * 401: the session is already gone (the desktop rotated its key, or the session expired), so
+ * there is nothing left to revoke. Treating that as a failure left "Disconnect this phone"
+ * permanently stuck on "couldnt disconnect".
+ */
 export async function disconnectSender(): Promise<void> {
   const response = await fetchWithTimeout("/v1/sender/disconnect", { method: "POST", credentials: "same-origin" });
-  if (response.status === 204) {
+  if (response.status === 204 || response.status === 401) {
     return;
   }
   throw new ApiHttpError(response.status, await parseErrorBody(response));

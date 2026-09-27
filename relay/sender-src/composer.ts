@@ -79,6 +79,14 @@ export function measureNote(text: string, reaction: Reaction): NoteMeasurement {
 
 const TOO_LONG_MESSAGE = "aiyo too long trim it abit";
 
+/**
+ * The relay rejects an envelope whose `createdUtc` is more than an hour old (422). An unchanged
+ * retry normally resends the identical envelope so the relay can dedupe it; past this age that
+ * resend can only fail, so the retry re-encrypts under a fresh id instead of costing the sender
+ * one guaranteed "couldnt send" first.
+ */
+const STALE_RETRY_ENVELOPE_MS = 50 * 60 * 1000;
+
 /** `YYYY-MM-DDTHH:MM` in the browser's local time zone, the format `datetime-local` expects. */
 function toLocalDateTimeInputValue(date: Date): string {
   const pad = (value: number) => String(value).padStart(2, "0");
@@ -125,6 +133,11 @@ export class MessageComposer {
     this.elements.textArea.value = "";
     this.elements.sendLaterInput.value = "";
     this.elements.scheduleStatus.textContent = "";
+    // The reaction is part of the note, so a fresh note starts from "none" like the page does,
+    // rather than silently carrying the previous note's heart or hug.
+    for (const input of this.elements.reactionInputs) {
+      input.checked = input.value === "none";
+    }
     this.invalidateDraft();
     this.updateCounter();
   }
@@ -241,6 +254,9 @@ export class MessageComposer {
   private async send(): Promise<void> {
     const recipient = this.recipient;
     if (!recipient || this.busy) return;
+    if (this.pendingEnvelope && Date.now() - Date.parse(this.pendingEnvelope.createdUtc) > STALE_RETRY_ENVELOPE_MS) {
+      this.pendingEnvelope = null;
+    }
     const deliverAfterUtc = this.pendingEnvelope?.deliverAfterUtc ?? this.resolveDeliverAfterUtc();
     if (deliverAfterUtc === undefined) return;
     const text = this.elements.textArea.value;

@@ -26,6 +26,9 @@ const MALFORMED_CODE_MESSAGE = "the code is 8 letters and numbers check it again
 // Shown when a cached pairing exists but the relay could not be reached to confirm it on load:
 // the phone is probably still paired, so it must not look like a fresh, never-paired page.
 const OFFLINE_ON_LOAD_MESSAGE = "couldnt reach dudu check your connection ill retry when youre back online";
+// Retries of that on-load check. The "online" event alone never fires for a relay 5xx or a
+// timeout on a phone that is already online, which left the page promising a retry it never made.
+const BOOT_RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000];
 const CONFIRM_DISCONNECT_MESSAGE =
   "Disconnect this phone? You will need a new pairing code from the desktop to send notes again.";
 
@@ -101,6 +104,7 @@ function showUnpaired(message = "", options: ShowOptions = {}): void {
 }
 
 function showPaired(device: StoredDevice, options: ShowOptions = {}): void {
+  cancelBootRetry();
   composer.setRecipientPublicKey(device.publicKey, device.deviceId);
   unpairedSection.hidden = true;
   pairedSection.hidden = false;
@@ -115,6 +119,9 @@ function showPaired(device: StoredDevice, options: ShowOptions = {}): void {
 }
 
 function handleSessionLoss(reason: ComposerSessionLoss): void {
+  // Status lookups are scoped to the session, so the old "recent" entries can never resolve
+  // again; drop them rather than showing a list of "status no longer available" after re-pairing.
+  clearRecent();
   if (reason === "recipient-changed") {
     // Same treatment as a key change found on load: drop the pinned key, say so bluntly.
     clearStoredDevice();
@@ -132,6 +139,28 @@ const composer = new MessageComposer(composerElements, {
 const statusTracker = new StatusTracker(recentList, () => handleSessionLoss("session-lost"));
 
 let pairing = false;
+let bootRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let bootAttempt = 0;
+/** Bumped by each on-load check and by a manual pairing; a check whose number is stale by the
+ * time the relay answers (the partner paired meanwhile) must not repaint the page. */
+let bootGeneration = 0;
+
+function cancelBootRetry(): void {
+  if (bootRetryTimer !== null) {
+    clearTimeout(bootRetryTimer);
+    bootRetryTimer = null;
+  }
+}
+
+function scheduleBootRetry(): void {
+  cancelBootRetry();
+  const delay = BOOT_RETRY_DELAYS_MS[Math.min(bootAttempt, BOOT_RETRY_DELAYS_MS.length - 1)];
+  bootAttempt += 1;
+  bootRetryTimer = setTimeout(() => {
+    bootRetryTimer = null;
+    void bootstrap();
+  }, delay);
+}
 
 function setPairingBusy(busy: boolean): void {
   pairing = busy;
@@ -152,11 +181,17 @@ async function handlePair(rawCode: string): Promise<void> {
     pairingCodeInput.focus();
     return;
   }
+  // The partner is pairing by hand now; a background re-check landing mid-redeem would replace
+  // "pairing" with the offline notice.
+  cancelBootRetry();
+  bootGeneration += 1;
   setPairingBusy(true);
   pairingStatus.textContent = "pairing";
   pairingCodeInput.removeAttribute("aria-invalid");
   try {
     const device = await pairWithCode(code);
+    // A new pairing is a new session; entries from any earlier one can never resolve.
+    clearRecent();
     pairingCodeInput.value = "";
     showPaired(device, { focus: true });
   } catch (error) {
@@ -205,8 +240,11 @@ async function handleDisconnect(): Promise<void> {
 }
 
 async function bootstrap(): Promise<void> {
+  const generation = ++bootGeneration;
   try {
     const verified = await verifyStoredSession();
+    if (generation !== bootGeneration) return;
+    bootAttempt = 0;
     if (verified.state === "paired") {
       showPaired(verified.device);
       return;
@@ -216,12 +254,14 @@ async function bootstrap(): Promise<void> {
       return;
     }
   } catch {
+    if (generation !== bootGeneration) return;
     // verifyStoredSession only throws for a relay failure other than "no session", so the cached
-    // device is left in place. Say why the pairing form is showing and retry once the phone is
-    // back online, rather than silently presenting a paired phone as never paired.
+    // device is left in place. Say why the pairing form is showing and retry (with backoff, and
+    // at once when the phone comes back online), rather than silently presenting a paired phone
+    // as never paired.
     if (loadStoredDevice()) {
       showUnpaired(OFFLINE_ON_LOAD_MESSAGE);
-      window.addEventListener("online", () => void bootstrap(), { once: true });
+      scheduleBootRetry();
       return;
     }
   }
@@ -246,6 +286,13 @@ pairingCodeInput.addEventListener("input", () => {
   }
   if (pairingCodeInput.getAttribute("aria-invalid") === "true" && !pairing) {
     setPairingError("");
+  }
+});
+
+window.addEventListener("online", () => {
+  if (bootRetryTimer !== null) {
+    cancelBootRetry();
+    void bootstrap();
   }
 });
 
