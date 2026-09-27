@@ -238,7 +238,7 @@ public sealed class RemindersViewModel : FeatureViewModelBase
             var zone = SelectedReminder is null
                 ? _context.Clock.LocalTimeZone
                 : ResolveTimeZone(SelectedReminder.LocalTimeZoneId);
-            var nextDue = NextDueUtc(rule, now, zone);
+            var nextDue = NextDueUtc(rule, now, zone, SelectedReminder);
             var isEveningRoutine = SelectedReminder?.Id is LocalReminderDefaults.EveningCheckInId or LocalReminderDefaults.BedtimeId;
             var reminder = SelectedReminder is null
                 ? new Reminder(Guid.NewGuid().ToString("N"), title, Normalize(Details), Enabled, rule,
@@ -557,9 +557,23 @@ public sealed class RemindersViewModel : FeatureViewModelBase
         _ => new RecurrenceRule.Once(),
     };
 
-    private DateTimeOffset NextDueUtc(RecurrenceRule rule, DateTimeOffset now, TimeZoneInfo zone)
+    private DateTimeOffset NextDueUtc(RecurrenceRule rule, DateTimeOffset now, TimeZoneInfo zone, Reminder? editing)
     {
         if (rule is RecurrenceRule.Interval interval) return now.Add(interval.Period);
+        if (rule is RecurrenceRule.Once
+            && editing is { Rule: RecurrenceRule.Once, NextDueUtc: { } existingDue }
+            && existingDue.ToUniversalTime() > now)
+        {
+            // Editing a still-upcoming "once" reminder without changing its
+            // time keeps its original date as well, instead of pulling it
+            // forward to the next occurrence of that time of day.
+            var existingLocal = TimeZoneInfo.ConvertTime(existingDue, zone);
+            if (existingLocal.Hour == LocalTime.Hour && existingLocal.Minute == LocalTime.Minute)
+            {
+                return existingDue.ToUniversalTime();
+            }
+        }
+
         var localNow = TimeZoneInfo.ConvertTime(now, zone);
         var localDate = localNow.Date.Date + LocalTime.ToTimeSpan();
         if (localDate <= localNow.DateTime) localDate = localDate.AddDays(1);
@@ -624,7 +638,7 @@ public sealed class RemindersViewModel : FeatureViewModelBase
 }
 
 /// <summary>Turns a reminder's recurrence rule into a short, lowercase, local-time
-/// summary for the reminders list (e.g. "every day at 9:30 pm"). LocalTime and
+/// summary for the reminders list (e.g. "every day at 21:30"). LocalTime and
 /// Period are already the reminder's own local wall-clock values, so no time
 /// zone conversion is needed here.</summary>
 public static class ReminderScheduleSummary
@@ -661,8 +675,9 @@ public static class ReminderScheduleSummary
     }
 
     private static string FormatTime(TimeOnly localTime) =>
-        localTime.ToString("h:mm tt", global::System.Globalization.CultureInfo.InvariantCulture)
-            .ToLowerInvariant();
+        // Same 24-hour HH:mm form the editor's "local time" box uses, so the
+        // list and the editor never show one reminder's time two ways.
+        localTime.ToString("HH:mm", global::System.Globalization.CultureInfo.InvariantCulture);
 
     private static string FormatDays(IReadOnlySet<DayOfWeek>? days) => days is null || days.Count == 0
         ? string.Empty

@@ -90,6 +90,27 @@ public sealed class RemindersTasksLoveNotesUxTests
     }
 
     [Fact]
+    public async Task Editing_an_upcoming_once_reminder_without_changing_its_time_keeps_its_date()
+    {
+        // Saving any edit to a "once" reminder used to recompute NextDueUtc as
+        // the next occurrence of its time of day, pulling a reminder set for
+        // days ahead forward to today or tomorrow.
+        var fixture = Fixture.Create();
+        var due = DateTimeOffset.Parse("2026-09-15T15:30:00Z");
+        var reminder = fixture.MakeReminder("r-once", "call mum", new RecurrenceRule.Once()) with { NextDueUtc = due };
+        fixture.Reminders.Items.Add(reminder);
+        var viewModel = new RemindersViewModel(fixture.Context) { SelectedReminder = reminder };
+
+        viewModel.Title = "call mum back";
+        await viewModel.SaveCommand.ExecuteAsync(null);
+
+        Assert.Null(viewModel.ErrorMessage);
+        var saved = Assert.Single(fixture.Reminders.Items);
+        Assert.Equal("call mum back", saved.Title);
+        Assert.Equal(due, saved.NextDueUtc);
+    }
+
+    [Fact]
     public void Deselecting_a_reminder_clears_the_editor_so_save_cannot_duplicate_it()
     {
         var fixture = Fixture.Create();
@@ -359,8 +380,8 @@ public sealed class RemindersTasksLoveNotesUxTests
     public void A_switched_off_reminder_says_so_in_the_list_summary()
     {
         var rule = new RecurrenceRule.Daily(new TimeOnly(21, 30));
-        Assert.Equal("every day at 9:30 pm", ReminderScheduleSummary.DescribeWithState(rule, enabled: true));
-        Assert.Equal("off · every day at 9:30 pm", ReminderScheduleSummary.DescribeWithState(rule, enabled: false));
+        Assert.Equal("every day at 21:30", ReminderScheduleSummary.DescribeWithState(rule, enabled: true));
+        Assert.Equal("off · every day at 21:30", ReminderScheduleSummary.DescribeWithState(rule, enabled: false));
     }
 
     [Fact]

@@ -10,10 +10,10 @@ public sealed class ReminderScheduleSummaryTests
     // schedule" for every row instead of a real, human, local-time summary.
 
     [Fact]
-    public void Daily_rule_formats_as_lowercase_local_time()
+    public void Daily_rule_formats_as_24_hour_local_time_matching_the_editor()
     {
         Assert.Equal(
-            "every day at 9:30 pm",
+            "every day at 21:30",
             ReminderScheduleSummary.Describe(new RecurrenceRule.Daily(new TimeOnly(21, 30))));
     }
 
@@ -21,7 +21,7 @@ public sealed class ReminderScheduleSummaryTests
     public void Selected_weekdays_rule_orders_days_monday_first()
     {
         Assert.Equal(
-            "on mon, wed, fri at 9:00 am",
+            "on mon, wed, fri at 09:00",
             ReminderScheduleSummary.Describe(new RecurrenceRule.SelectedWeekdays(
                 new HashSet<DayOfWeek> { DayOfWeek.Friday, DayOfWeek.Monday, DayOfWeek.Wednesday },
                 new TimeOnly(9, 0))));
@@ -66,11 +66,11 @@ public sealed class ReminderScheduleSummaryTests
     [Fact]
     public void Selected_weekdays_rule_with_an_empty_day_set_falls_back_to_time_only_copy()
     {
-        // Audit regression: an empty weekday set rendered "on  at 9:00 am"
+        // Audit regression: an empty weekday set rendered "on  at 09:00"
         // (a blank day list) instead of copy consistent with the rest of
         // this summary.
         Assert.Equal(
-            "every week at 9:00 am",
+            "every week at 09:00",
             ReminderScheduleSummary.Describe(new RecurrenceRule.SelectedWeekdays(
                 new HashSet<DayOfWeek>(),
                 new TimeOnly(9, 0))));
@@ -83,7 +83,7 @@ public sealed class ReminderScheduleSummaryTests
         // during ListView item realization, where a throw crashes the page
         // -- corrupt/old data with a null weekday set must not crash it.
         Assert.Equal(
-            "every week at 9:00 am",
+            "every week at 09:00",
             ReminderScheduleSummary.Describe(new RecurrenceRule.SelectedWeekdays(
                 (IReadOnlySet<DayOfWeek>)null!,
                 new TimeOnly(9, 0))));
