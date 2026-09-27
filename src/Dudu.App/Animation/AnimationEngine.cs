@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using Dudu.Core.Assets;
 using Dudu.Core.Models;
 
@@ -15,6 +16,24 @@ public interface IAnimationClock
 
 public sealed class StopwatchAnimationClock : IAnimationClock
 {
+    /// <summary>Waits at or below this length raise the timer resolution;
+    /// longer ones (1 s idle poses) cannot show a 15 ms error.</summary>
+    internal const double HighResolutionWaitCeilingMilliseconds = 250;
+
+    private readonly Func<bool> _beginHighResolution;
+    private readonly Action _endHighResolution;
+
+    public StopwatchAnimationClock()
+        : this(WindowsTimerResolution.TryBegin, WindowsTimerResolution.End)
+    {
+    }
+
+    internal StopwatchAnimationClock(Func<bool> beginHighResolution, Action endHighResolution)
+    {
+        _beginHighResolution = beginHighResolution ?? throw new ArgumentNullException(nameof(beginHighResolution));
+        _endHighResolution = endHighResolution ?? throw new ArgumentNullException(nameof(endHighResolution));
+    }
+
     public long Timestamp => Stopwatch.GetTimestamp();
 
     public long Frequency => Stopwatch.Frequency;
@@ -29,10 +48,78 @@ public sealed class StopwatchAnimationClock : IAnimationClock
         }
 
         var milliseconds = remaining * 1000d / Stopwatch.Frequency;
-        return new ValueTask(Task.Delay(
-            TimeSpan.FromMilliseconds(Math.Max(1d, milliseconds)),
-            cancellationToken));
+        var delay = TimeSpan.FromMilliseconds(Math.Max(1d, milliseconds));
+        return milliseconds <= HighResolutionWaitCeilingMilliseconds
+            ? new ValueTask(DelayWithHighResolutionAsync(delay, cancellationToken))
+            : new ValueTask(Task.Delay(delay, cancellationToken));
     }
+
+    /// <summary>
+    /// Task.Delay wakes on the system timer tick (~15.6 ms by default), so a
+    /// 50 ms frame lasted 47 or 62 ms and short clips visibly stuttered. The
+    /// 1 ms resolution is requested only for the duration of one short frame
+    /// wait and always released in the finally, including on cancellation;
+    /// while the pet is paused or hidden no wait (and no request) is active.
+    /// </summary>
+    private async Task DelayWithHighResolutionAsync(TimeSpan delay, CancellationToken cancellationToken)
+    {
+        var raised = _beginHighResolution();
+        try
+        {
+            await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (raised)
+            {
+                _endHighResolution();
+            }
+        }
+    }
+}
+
+/// <summary>winmm timeBeginPeriod/timeEndPeriod at 1 ms. Every successful
+/// <see cref="TryBegin"/> must be paired with exactly one <see cref="End"/>.</summary>
+internal static partial class WindowsTimerResolution
+{
+    private const uint PeriodMilliseconds = 1;
+    private const uint TimerNoError = 0;
+
+    public static bool TryBegin()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return false;
+        }
+
+        try
+        {
+            return TimeBeginPeriod(PeriodMilliseconds) == TimerNoError;
+        }
+        catch (Exception exception) when (exception is DllNotFoundException or EntryPointNotFoundException)
+        {
+            return false;
+        }
+    }
+
+    public static void End()
+    {
+        try
+        {
+            _ = TimeEndPeriod(PeriodMilliseconds);
+        }
+        catch (Exception exception) when (exception is DllNotFoundException or EntryPointNotFoundException)
+        {
+        }
+    }
+
+    [LibraryImport("winmm.dll", EntryPoint = "timeBeginPeriod")]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    private static partial uint TimeBeginPeriod(uint period);
+
+    [LibraryImport("winmm.dll", EntryPoint = "timeEndPeriod")]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    private static partial uint TimeEndPeriod(uint period);
 }
 
 public sealed record AnimationOptions
