@@ -14,6 +14,31 @@ public interface IStartupLinkWriter
     Task DeleteAsync(string shortcutPath, CancellationToken cancellationToken);
 }
 
+/// <summary>Why Windows refuses to enable the packaged startup task on its own.</summary>
+public enum StartupRegistrationBlockReason
+{
+    /// <summary>She turned Dudu off in Task Manager or Settings › Apps ›
+    /// Startup. Windows never prompts again; only she can turn it back on
+    /// there.</summary>
+    DisabledByUser,
+
+    /// <summary>A group policy turned startup apps off.</summary>
+    DisabledByPolicy,
+}
+
+/// <summary>
+/// The packaged startup task cannot be enabled by the app itself -- only by
+/// her, in Windows settings. Retrying cannot help, so callers show guidance
+/// instead of "needs another try".
+/// </summary>
+public sealed class StartupRegistrationBlockedException(StartupRegistrationBlockReason reason)
+    : InvalidOperationException(reason == StartupRegistrationBlockReason.DisabledByUser
+        ? "The packaged startup task was disabled by the user in Windows settings."
+        : "The packaged startup task was disabled by policy.")
+{
+    public StartupRegistrationBlockReason Reason { get; } = reason;
+}
+
 internal interface IPackagedStartupTaskRegistration
 {
     Task<bool> SetEnabledAsync(bool enabled, CancellationToken cancellationToken);
@@ -152,7 +177,20 @@ public sealed class StartupRegistrationService : IAsyncDisposable
             if (_packagedStartupTask is not null)
             {
                 await DeleteLegacyShortcutAsync(cancellationToken);
-                var applied = await _packagedStartupTask.SetEnabledAsync(enabled, cancellationToken);
+                bool applied;
+                try
+                {
+                    applied = await _packagedStartupTask.SetEnabledAsync(enabled, cancellationToken);
+                }
+                catch (StartupRegistrationBlockedException)
+                {
+                    // Windows reported the real state (off) along with why
+                    // it will not change it: cache that before rethrowing.
+                    Volatile.Write(ref _enabled, false);
+                    Volatile.Write(ref _enabledKnown, true);
+                    throw;
+                }
+
                 // Cache the real state before throwing below: even when
                 // Windows denied the requested change, applied is still the
                 // actual current state, and callers deserve an accurate
@@ -255,6 +293,20 @@ internal sealed class WindowsStartupTaskRegistration : IPackagedStartupTaskRegis
             var state = IsEnabled(task.State)
                 ? task.State
                 : await task.RequestEnableAsync().AsTask(cancellationToken);
+            // RequestEnableAsync never prompts again once she turned Dudu
+            // off in Task Manager / Settings › Apps › Startup (or a policy
+            // did): it just returns the disabled state, so a plain retry can
+            // never succeed. Say why, so the UI can point her at the switch.
+            if (state == StartupTaskState.DisabledByUser)
+            {
+                throw new StartupRegistrationBlockedException(StartupRegistrationBlockReason.DisabledByUser);
+            }
+
+            if (state == StartupTaskState.DisabledByPolicy)
+            {
+                throw new StartupRegistrationBlockedException(StartupRegistrationBlockReason.DisabledByPolicy);
+            }
+
             return IsEnabled(state);
         }
 
