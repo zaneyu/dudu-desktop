@@ -25,6 +25,7 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
     private bool _soundsEnabled;
     private double _soundVolume;
     private string _globalShortcut = "Ctrl+Alt+D";
+    private string _shortcutStatus = string.Empty;
 
     public AppearanceViewModel(
         CompanionFeatureContext context,
@@ -41,6 +42,7 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
         _soundsEnabled = preferences.SoundsEnabled;
         _soundVolume = Preferences.ClampSoundVolume(preferences.SoundVolume);
         _globalShortcut = DisplayShortcut(preferences.GlobalShortcut);
+        _shortcutStatus = context.GetGlobalShortcutStatus() ?? string.Empty;
         _petScale = 1;
         _loadedPetScale = _petScale;
         _monitorDeviceName = "current monitor";
@@ -193,6 +195,20 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
     public string SoundVolumeLabel => $"{SoundVolume:P0}";
     public string GlobalShortcut { get => _globalShortcut; set => SetProperty(ref _globalShortcut, value); }
 
+    /// <summary>Why the saved shortcut is not the one in effect (startup fell
+    /// back to the default because another app owns it), or empty. Without
+    /// this the page showed the saved shortcut while a different one worked.</summary>
+    public string ShortcutStatus
+    {
+        get => _shortcutStatus;
+        private set
+        {
+            if (SetProperty(ref _shortcutStatus, value)) OnPropertyChanged(nameof(HasShortcutStatus));
+        }
+    }
+
+    public bool HasShortcutStatus => _shortcutStatus.Length > 0;
+
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
     {
         await RunRefreshAsync(async ct =>
@@ -214,6 +230,7 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
                 // The shortcut box always showed Ctrl+Alt+D on open, whatever
                 // was actually saved; show the stored one.
                 GlobalShortcut = DisplayShortcut(preferences.GlobalShortcut);
+                ShortcutStatus = _context.GetGlobalShortcutStatus() ?? string.Empty;
                 _automaticSeasonalMode = preferences.AutomaticSeasonalMode;
                 OnPropertyChanged(nameof(AutomaticSeasonalMode));
                 _selectedOutfit = preferences.AutomaticSeasonalMode
@@ -357,6 +374,7 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
                 cancellationToken);
             // Show the shortcut the way it is registered ("ctrl + alt + k" becomes Ctrl+Alt+K).
             GlobalShortcut = canonical;
+            ShortcutStatus = _context.GetGlobalShortcutStatus() ?? string.Empty;
         }, "otayyy shortcut set");
 
     /// <summary>The stored shortcut in the canonical form it is registered with; the default

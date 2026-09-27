@@ -122,4 +122,45 @@ public sealed class AppearanceShortcutPersistenceTests
 
         Assert.Equal("Ctrl+Alt+K", viewModel.GlobalShortcut);
     }
+
+    [Fact]
+    public async Task The_page_says_when_startup_fell_back_from_the_saved_shortcut()
+    {
+        // Startup falls back to Ctrl+Alt+D when another app owns the saved chord; the page
+        // used to keep showing the saved shortcut as if it worked.
+        var ct = TestContext.Current.CancellationToken;
+        string? status = "Ctrl+Alt+K is taken by another app, Ctrl+Alt+D opens dudu for now";
+        var fixture = SettingsDataPagesFixture.Create(
+            initialPreferences: Preferences.Default with { GlobalShortcut = "Ctrl+Alt+K" },
+            setGlobalShortcutAsync: (_, _) =>
+            {
+                status = null;
+                return Task.CompletedTask;
+            },
+            getGlobalShortcutStatus: () => status);
+
+        var viewModel = new AppearanceViewModel(fixture.Context);
+        Assert.Equal("Ctrl+Alt+K", viewModel.GlobalShortcut);
+        Assert.Equal("Ctrl+Alt+K is taken by another app, Ctrl+Alt+D opens dudu for now", viewModel.ShortcutStatus);
+        Assert.True(viewModel.HasShortcutStatus);
+
+        // Picking a shortcut that registers clears the note.
+        viewModel.GlobalShortcut = "Ctrl+Alt+J";
+        await viewModel.SaveShortcutAsync(ct);
+        Assert.Equal(string.Empty, viewModel.ShortcutStatus);
+
+        // Refresh re-reads the runtime state.
+        status = "no shortcut works right now, another app may be using it";
+        await viewModel.RefreshAsync(ct);
+        Assert.Equal("no shortcut works right now, another app may be using it", viewModel.ShortcutStatus);
+    }
+
+    [Fact]
+    public void Without_a_runtime_status_the_page_shows_no_shortcut_note()
+    {
+        var viewModel = new AppearanceViewModel(SettingsDataPagesFixture.Create().Context);
+
+        Assert.Equal(string.Empty, viewModel.ShortcutStatus);
+        Assert.False(viewModel.HasShortcutStatus);
+    }
 }

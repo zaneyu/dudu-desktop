@@ -55,7 +55,8 @@ public sealed class CompanionFeatureContext
         Func<string, CancellationToken, Task>? discardHeldLocalNoteAsync = null,
         Func<string, CancellationToken, Task>? discardHeldRemoteNoteAsync = null,
         Func<CancellationToken, Task>? discardHeldRemoteNotesAsync = null,
-        AffectionTracker? affection = null)
+        AffectionTracker? affection = null,
+        Func<string?>? getGlobalShortcutStatus = null)
     {
         Clock = clock ?? throw new ArgumentNullException(nameof(clock));
         PreferenceMutations = preferenceMutations ?? throw new ArgumentNullException(nameof(preferenceMutations));
@@ -127,6 +128,7 @@ public sealed class CompanionFeatureContext
             new NotSupportedException("aiyo outfits not ready yet")));
         SetGlobalShortcutAsync = setGlobalShortcutAsync ?? ((_, _) => Task.FromException(
             new NotSupportedException("oh no shortcuts not ready yet")));
+        GetGlobalShortcutStatus = getGlobalShortcutStatus ?? (() => null);
         DismissReminderNotificationAsync = dismissReminderNotificationAsync ?? ((_, _) => Task.CompletedTask);
         DiscardHeldReminderAsync = discardHeldReminderAsync ?? ((_, _) => Task.CompletedTask);
         DiscardHeldLocalNoteAsync = discardHeldLocalNoteAsync ?? ((_, _) => Task.CompletedTask);
@@ -187,6 +189,9 @@ public sealed class CompanionFeatureContext
     public Func<CancellationToken, Task> DeleteRemoteDataAsync { get; }
     public Func<string?, CancellationToken, Task> ApplyOutfitAsync { get; }
     public Func<string, CancellationToken, Task> SetGlobalShortcutAsync { get; }
+    /// <summary>Null while the saved global shortcut is the one registered;
+    /// otherwise why a different one (or none) is in effect.</summary>
+    public Func<string?> GetGlobalShortcutStatus { get; }
     /// <summary>Best-effort removal of a reminder's toast after the user
     /// acknowledged it (Done or Snooze).</summary>
     public Func<string, CancellationToken, Task> DismissReminderNotificationAsync { get; }

@@ -424,6 +424,19 @@ public sealed class XamlContractTests
         Assert.DoesNotContain("Header=\"show or hide dudu\"", appearance, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Appearance_shows_the_shortcut_fallback_next_to_the_shortcut_box()
+    {
+        var root = FindRepositoryRoot();
+        var appearance = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "AppearancePage.xaml"));
+        var box = appearance.IndexOf("AutomationProperties.AutomationId=\"AppearanceShortcut\"", StringComparison.Ordinal);
+        var status = appearance.IndexOf("AutomationProperties.AutomationId=\"AppearanceShortcutStatus\"", StringComparison.Ordinal);
+        var save = appearance.IndexOf("AutomationProperties.AutomationId=\"AppearanceSaveShortcut\"", StringComparison.Ordinal);
+
+        Assert.True(box > 0 && status > box && save > status);
+        Assert.Contains("Text=\"{x:Bind ViewModel.ShortcutStatus, Mode=OneWay}\"", appearance, StringComparison.Ordinal);
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

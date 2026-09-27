@@ -51,7 +51,8 @@ internal sealed class SettingsDataPagesFixture
         IReminderWriter? reminderWriter = null,
         Func<string, CancellationToken, Task>? dismissReminderNotificationAsync = null,
         Func<string, CancellationToken, Task>? discardHeldReminderAsync = null,
-        Func<PetEvent, CancellationToken, Task>? presentPetAsync = null)
+        Func<PetEvent, CancellationToken, Task>? presentPetAsync = null,
+        Func<string?>? getGlobalShortcutStatus = null)
     {
         var clock = new MutableClock(
             DateTimeOffset.Parse("2026-09-19T08:00:00Z"),
@@ -92,7 +93,8 @@ internal sealed class SettingsDataPagesFixture
             setGlobalShortcutAsync: setGlobalShortcutAsync,
             presentPetAsync: presentPetAsync,
             dismissReminderNotificationAsync: dismissReminderNotificationAsync,
-            discardHeldReminderAsync: discardHeldReminderAsync);
+            discardHeldReminderAsync: discardHeldReminderAsync,
+            getGlobalShortcutStatus: getGlobalShortcutStatus);
         return new SettingsDataPagesFixture(context, clock, pairing, placements, preferenceRepository);
     }
 

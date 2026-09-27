@@ -899,6 +899,28 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         CancellationToken cancellationToken = default) =>
         _overlay.CapturePlacementSnapshotAsync(cancellationToken);
 
+    /// <summary>
+    /// Null while the saved shortcut is the one registered; otherwise a short
+    /// user-facing explanation of what is in effect instead (startup fell back
+    /// to the default because another app owns the saved chord, or no chord
+    /// could be registered at all). The failure itself is reported as
+    /// hotkey-restore / hotkey-attach; this only lets the Appearance page stop
+    /// showing the saved shortcut as if it worked.
+    /// </summary>
+    public string? GlobalShortcutStatus
+    {
+        get
+        {
+            if (!Volatile.Read(ref _hotkeyStarted)) return null;
+            if (!_hotkey.IsRegistered) return "no shortcut works right now, another app may be using it";
+            var current = _hotkey.CurrentGesture;
+            var saved = Volatile.Read(ref _persistedShortcut);
+            return PersistedHotkeyRegistration.Matches(current, saved)
+                ? null
+                : $"{saved ?? HotkeyGesture.Default.ToString()} is taken by another app, {current} opens dudu for now";
+        }
+    }
+
     public Task SetGlobalShortcutAsync(string shortcut, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();

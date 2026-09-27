@@ -1042,6 +1042,7 @@ public static class WindowsCompanionProductionComposition
                     return Task.CompletedTask;
                 },
                 setGlobalShortcutAsync: runtime.SetGlobalShortcutAsync,
+                getGlobalShortcutStatus: () => runtime.GlobalShortcutStatus,
                 dismissReminderNotificationAsync: (reminderId, token) =>
                     notificationService?.DismissReminderAsync(reminderId, token) ?? Task.CompletedTask,
                 discardHeldReminderAsync: (reminderId, token) =>

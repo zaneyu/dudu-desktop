@@ -271,6 +271,15 @@ public sealed class GlobalHotkeyService : IDisposable
         }
     }
 
+    /// <summary>True while some gesture is registered with Windows.</summary>
+    public bool IsRegistered
+    {
+        get
+        {
+            lock (_gate) return _registeredId != 0;
+        }
+    }
+
     public event EventHandler? Triggered;
 
     public nint OwnerWindow
