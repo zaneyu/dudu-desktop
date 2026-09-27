@@ -65,6 +65,34 @@ public sealed class ChromeWiringUxTests
         Assert.Contains("`reminder-toast-action`", agents);
         Assert.Contains("`notification-invoked`", agents);
         Assert.Contains("`tray-menu-state`", agents);
+        Assert.Contains("`settings-load`", agents);
+    }
+
+    [Fact]
+    public void Settings_load_failures_reach_the_diagnostics_log_in_normal_and_safe_mode()
+    {
+        var composition = ReadHosting("WindowsCompanionProductionComposition.cs");
+        Assert.Equal(2, CountOf(composition, "ErrorReporter = host.ErrorReporter,"));
+
+        var window = File.ReadAllText(Path.Combine(
+                FindRepositoryRoot(), "src", "Dudu.App", "Windows", "SettingsWindow.xaml.cs"))
+            .Replace("\r\n", "\n");
+        Assert.Contains("internal const string SettingsLoadOperation = \"settings-load\";", window);
+        Assert.Equal(2, CountOf(window, "ReportFailure(SettingsLoadOperation, exception);"));
+        Assert.DoesNotContain("Trace.TraceError(\"Dudu settings load failed: {0}\", exception)", window);
+    }
+
+    private static int CountOf(string source, string value)
+    {
+        var count = 0;
+        for (var index = source.IndexOf(value, StringComparison.Ordinal);
+             index >= 0;
+             index = source.IndexOf(value, index + value.Length, StringComparison.Ordinal))
+        {
+            count++;
+        }
+
+        return count;
     }
 
     private static string ReadHosting(string file) =>

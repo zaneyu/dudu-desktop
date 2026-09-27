@@ -195,8 +195,31 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
                 PlacementScale = MonitorPlacementService.ClampScale(placement.Scale);
             }
 
-            PairingAvailability = await _pairingService.GetStateAsync(cancellationToken);
-            PairingSkipped = PairingAvailability == PairingAvailability.Offline;
+            // The pairing step is the only reader of this probe. Every settings
+            // open runs LoadAsync, and the probe is a live relay round trip
+            // (plus registration on a device that has none yet): once setup is
+            // done it only delayed the window and, when it threw, turned into
+            // "aiyo couldnt load settings" -- the Connection page probes on its
+            // own. During onboarding a failed probe means "pair later", never
+            // "no settings".
+            if (!IsComplete)
+            {
+                try
+                {
+                    PairingAvailability = await _pairingService.GetStateAsync(cancellationToken);
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    PairingAvailability = PairingAvailability.Offline;
+                    Trace.TraceWarning(
+                        "Dudu onboarding pairing probe failed: {0} 0x{1:X8}",
+                        exception.GetType().Name,
+                        exception.HResult);
+                }
+
+                PairingSkipped = PairingAvailability == PairingAvailability.Offline;
+            }
+
             OnPropertyChanged(nameof(CanGoBack));
         }
         finally

@@ -248,6 +248,46 @@ public sealed class OnboardingViewModelTests
         Assert.Null(fixture.ViewModel.StartupRegistrationError);
     }
 
+    [Fact]
+    public async Task Load_after_setup_opens_settings_without_probing_the_relay()
+    {
+        // Every settings open runs LoadAsync. A live relay probe there made a
+        // relay hiccup read as "aiyo couldnt load settings" long after setup.
+        var pairing = new ThrowingPairingService(new InvalidOperationException("relay broke"));
+        await using var fixture = OnboardingFixture.Create(pairing: pairing);
+        fixture.Profiles.Restore(new Profile("Mia", OnboardingComplete: true));
+
+        await fixture.ViewModel.LoadAsync(fixture.CancellationToken);
+
+        Assert.True(fixture.ViewModel.IsComplete);
+        Assert.Equal("Mia", fixture.ViewModel.RecipientName);
+        Assert.Equal(0, pairing.StateCalls);
+    }
+
+    [Fact]
+    public async Task Load_during_setup_survives_a_failing_pairing_probe()
+    {
+        var pairing = new ThrowingPairingService(new InvalidOperationException("relay broke"));
+        await using var fixture = OnboardingFixture.Create(pairing: pairing);
+
+        await fixture.ViewModel.LoadAsync(fixture.CancellationToken);
+
+        Assert.Equal(1, pairing.StateCalls);
+        Assert.False(fixture.ViewModel.IsComplete);
+        Assert.Equal(PairingAvailability.Offline, fixture.ViewModel.PairingAvailability);
+        Assert.True(fixture.ViewModel.PairingSkipped);
+    }
+
+    [Fact]
+    public async Task Load_during_setup_still_honours_cancellation()
+    {
+        var pairing = new ThrowingPairingService(new OperationCanceledException());
+        await using var fixture = OnboardingFixture.Create(pairing: pairing);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            fixture.ViewModel.LoadAsync(fixture.CancellationToken));
+    }
+
     private sealed class OnboardingFixture : IAsyncDisposable
     {
         private OnboardingFixture(
@@ -255,7 +295,8 @@ public sealed class OnboardingViewModelTests
             Func<Preferences, PetPlacement, CancellationToken, Task>? runtimeApplier,
             PetPlacement? initialPlacement,
             List<string>? events,
-            Func<CancellationToken, Task<MonitorPlacementSnapshot>>? placementCapture)
+            Func<CancellationToken, Task<MonitorPlacementSnapshot>>? placementCapture,
+            IPairingService? pairing)
         {
             Preferences = new RecordingPreferencesRepository();
             Profiles = new RecordingProfileRepository();
@@ -294,7 +335,7 @@ public sealed class OnboardingViewModelTests
                 Placements,
                 UnitOfWork,
                 StartupSettings,
-                new OfflinePairingService(),
+                pairing ?? new OfflinePairingService(),
                 initialPlacement: initialPlacement ?? new PetPlacement("MONITOR-2", 0.8, 0.8, 1),
                 runtimeApplier: applyRuntime,
                 placementCapture: placementCapture ?? (_ => Task.FromResult(
@@ -330,8 +371,9 @@ public sealed class OnboardingViewModelTests
             Func<Preferences, PetPlacement, CancellationToken, Task>? runtimeApplier = null,
             PetPlacement? initialPlacement = null,
             List<string>? events = null,
-            Func<CancellationToken, Task<MonitorPlacementSnapshot>>? placementCapture = null) =>
-            new(failCommit, runtimeApplier, initialPlacement, events, placementCapture);
+            Func<CancellationToken, Task<MonitorPlacementSnapshot>>? placementCapture = null,
+            IPairingService? pairing = null) =>
+            new(failCommit, runtimeApplier, initialPlacement, events, placementCapture, pairing);
 
         public async ValueTask DisposeAsync()
         {
@@ -364,6 +406,20 @@ public sealed class OnboardingViewModelTests
     {
         public Task<PairingAvailability> GetStateAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(PairingAvailability.Offline);
+        public Task<PairingCodeResult> CreateCodeAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(PairingCodeResult.Offline);
+        public Task DisconnectSenderSessionsAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task DeleteRemoteDeviceAsync(string? deviceId = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
+    private sealed class ThrowingPairingService(Exception failure) : IPairingService
+    {
+        public int StateCalls { get; private set; }
+        public Task<PairingAvailability> GetStateAsync(CancellationToken cancellationToken = default)
+        {
+            StateCalls++;
+            return Task.FromException<PairingAvailability>(failure);
+        }
         public Task<PairingCodeResult> CreateCodeAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(PairingCodeResult.Offline);
         public Task DisconnectSenderSessionsAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
