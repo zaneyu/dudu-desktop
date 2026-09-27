@@ -19,7 +19,8 @@ public sealed record FullscreenWindowSnapshot(
     bool IsMinimized = false,
     bool IsDuduWindow = false,
     bool IsMaximized = false,
-    bool IsDesktopSurface = false);
+    bool IsDesktopSurface = false,
+    PixelRect? OverlayMonitorBounds = null);
 
 public interface IFullscreenNativeApi
 {
@@ -37,6 +38,17 @@ public interface IFullscreenNativeApi
     /// "WorkerW" that hosts the wallpaper after Show desktop / Win+D). They
     /// cover the whole monitor but are the desktop, not a fullscreen app.</summary>
     bool IsDesktopSurface(nint hwnd) => false;
+
+    /// <summary>
+    /// Bounds of the monitor the pet overlay is on. Returning false means
+    /// "unknown", which keeps the conservative behavior of suppressing the
+    /// pet for a fullscreen window on any monitor.
+    /// </summary>
+    bool TryGetOverlayMonitorBounds(out PixelRect monitorBounds)
+    {
+        monitorBounds = default;
+        return false;
+    }
 }
 
 public sealed class FullscreenDetector
@@ -84,6 +96,7 @@ public sealed class FullscreenDetector
 
             var isDudu = _native.IsDuduWindow(foreground);
             var isDesktopSurface = _native.IsDesktopSurface(foreground);
+            var overlayMonitor = TryGetOverlayMonitorBounds();
             Interlocked.Exchange(ref _consecutiveFailures, 0);
             return IsForegroundFullscreen(new FullscreenWindowSnapshot(
                 foreground,
@@ -96,7 +109,8 @@ public sealed class FullscreenDetector
                 isMinimized,
                 isDudu,
                 isMaximized,
-                isDesktopSurface));
+                isDesktopSurface,
+                overlayMonitor));
         }
         catch
         {
@@ -132,12 +146,37 @@ public sealed class FullscreenDetector
             return false;
         }
 
+        // A fullscreen game or presentation on ANOTHER monitor must not hide
+        // the pet: only suppress when it covers the monitor the overlay is
+        // on. An unknown overlay monitor keeps the conservative behavior.
+        if (snapshot.OverlayMonitorBounds is { IsValid: true } overlayMonitor
+            && overlayMonitor != snapshot.MonitorBounds)
+        {
+            return false;
+        }
+
         return WithinTolerance(snapshot.ExtendedFrameBounds, snapshot.MonitorBounds);
     }
 
     internal static bool IsDesktopSurfaceClassName(string? className) =>
         string.Equals(className, "WorkerW", StringComparison.Ordinal)
         || string.Equals(className, "Progman", StringComparison.Ordinal);
+
+    private PixelRect? TryGetOverlayMonitorBounds()
+    {
+        try
+        {
+            return _native.TryGetOverlayMonitorBounds(out var bounds) && bounds.IsValid
+                ? bounds
+                : null;
+        }
+        catch
+        {
+            // Unknown overlay monitor: keep suppressing for fullscreen on any
+            // monitor rather than failing the whole detection.
+            return null;
+        }
+    }
 
     private static bool WithinTolerance(PixelRect actual, PixelRect expected)
     {
@@ -205,6 +244,13 @@ internal sealed unsafe class WindowsFullscreenNativeApi : IFullscreenNativeApi
 
         bounds = new PixelRect(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
         return bounds.IsValid;
+    }
+
+    public bool TryGetOverlayMonitorBounds(out PixelRect monitorBounds)
+    {
+        monitorBounds = default;
+        var overlay = OverlayWindowHost.GetAnyLiveWindowHandle();
+        return overlay != 0 && TryGetMonitorBounds(overlay, out monitorBounds, out _);
     }
 
     public bool TryGetMonitorBounds(nint hwnd, out PixelRect monitorBounds, out PixelRect workArea)
