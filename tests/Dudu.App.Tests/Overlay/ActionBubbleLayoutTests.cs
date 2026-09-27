@@ -50,6 +50,50 @@ public sealed class ActionBubbleLayoutTests
             Assert.False(Overlaps(action.HitRegion, layout.DetailRegion)));
     }
 
+    [Theory]
+    [InlineData(411)]
+    [InlineData(300)]
+    [InlineData(250)]
+    [InlineData(200)]
+    public void Primary_bubble_keeps_padding_and_gaps_below_the_full_row_height(int height)
+    {
+        // Spacing used to drop to zero below the full 44px-row height (about
+        // 412px for seven actions), so the buttons touched each other and
+        // the bubble edge.
+        var workArea = new PixelRect(0, 0, 384, height);
+
+        var layout = ActionBubbleLayout.Arrange(
+            OverlayCommandRouter.PrimaryActions,
+            workArea,
+            new PixelPoint(192, height - 20));
+
+        Assert.Equal(OverlayCommandRouter.PrimaryActions.Count, layout.PrimaryActions.Count);
+        Assert.True(workArea.Contains(layout.Bounds));
+        Assert.True(layout.PrimaryActions[0].HitRegion.Y > layout.Bounds.Y, "top padding");
+        for (var index = 1; index < layout.PrimaryActions.Count; index++)
+        {
+            Assert.True(
+                layout.PrimaryActions[index].HitRegion.Y > layout.PrimaryActions[index - 1].HitRegion.Bottom,
+                "rows must not touch");
+        }
+    }
+
+    [Fact]
+    public void Spacing_tiers_step_down_before_dropping_to_zero()
+    {
+        Assert.Equal((12, 8), ActionBubbleLayout.ChooseSpacing(6, 360));
+        Assert.Equal((12, 8), ActionBubbleLayout.ChooseSpacing(6, 240));
+        Assert.Equal((8, 6), ActionBubbleLayout.ChooseSpacing(6, 224));
+        Assert.Equal((4, 4), ActionBubbleLayout.ChooseSpacing(6, 200));
+        Assert.Equal((4, 4), ActionBubbleLayout.ChooseSpacing(6, 156));
+        Assert.Equal((0, 0), ActionBubbleLayout.ChooseSpacing(6, 128));
+
+        // Seven primary rows (eat together included).
+        Assert.Equal((12, 8), ActionBubbleLayout.ChooseSpacing(7, 272));
+        Assert.Equal((8, 6), ActionBubbleLayout.ChooseSpacing(7, 252));
+        Assert.Equal((4, 4), ActionBubbleLayout.ChooseSpacing(7, 176));
+        Assert.Equal((0, 0), ActionBubbleLayout.ChooseSpacing(7, 175));
+    }
     [Fact]
     public void Action_bubble_deduplicates_and_falls_back_to_pet()
     {
