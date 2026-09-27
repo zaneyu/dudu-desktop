@@ -71,6 +71,27 @@ public static class MonitorPlacementService
         return (int)dpiX;
     }
 
+    /// <summary>One wheel notch (WHEEL_DELTA) resizes by this factor.</summary>
+    public const double WheelNotchFactor = 1.1;
+    internal const int WheelDelta = 120;
+
+    /// <summary>
+    /// Applies a WM_MOUSEWHEEL delta proportionally: one 120-unit notch is
+    /// x1.1, while a precision touchpad's many small deltas add up to the same
+    /// total instead of each applying a full notch (which used to snap the
+    /// pet between the minimum and maximum size in one swipe).
+    /// </summary>
+    public static double ApplyWheelDelta(double scale, int wheelDelta)
+    {
+        var current = ClampScale(scale);
+        if (wheelDelta == 0)
+        {
+            return current;
+        }
+
+        return ClampScale(current * Math.Pow(WheelNotchFactor, wheelDelta / (double)WheelDelta));
+    }
+
     public static double ClampScale(double scale)
     {
         if (double.IsNaN(scale))

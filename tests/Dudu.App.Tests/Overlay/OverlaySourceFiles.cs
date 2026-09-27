@@ -15,7 +15,8 @@ internal static class OverlaySourceFiles
             var path = Path.Combine(parts);
             if (File.Exists(path))
             {
-                return File.ReadAllText(path);
+                // Normalized so assertions hold on a CRLF (autocrlf) checkout.
+                return File.ReadAllText(path).Replace("\r\n", "\n", StringComparison.Ordinal);
             }
 
             directory = directory.Parent;

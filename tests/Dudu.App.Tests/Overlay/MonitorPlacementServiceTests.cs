@@ -174,4 +174,25 @@ public sealed class MonitorPlacementServiceTests
         Assert.Equal(96, effectiveDpi);
         Assert.Equal(reportsUnexpectedFailure ? 1 : 0, reports);
     }
+
+    [Fact]
+    public void Wheel_delta_scales_proportionally_so_touchpads_do_not_snap_to_the_limits()
+    {
+        // A full 120-unit notch keeps the historic x1.1 step.
+        Assert.Equal(1.1, MonitorPlacementService.ApplyWheelDelta(1.0, 120), 10);
+        Assert.Equal(1 / 1.1, MonitorPlacementService.ApplyWheelDelta(1.0, -120), 10);
+
+        // Ten 12-unit touchpad deltas add up to exactly one notch instead of
+        // ten notches (1.1^10 = 2.59 -> clamped straight to the maximum).
+        var scale = 1.0;
+        for (var index = 0; index < 10; index++)
+        {
+            scale = MonitorPlacementService.ApplyWheelDelta(scale, 12);
+        }
+
+        Assert.Equal(1.1, scale, 10);
+        Assert.Equal(1.0, MonitorPlacementService.ApplyWheelDelta(1.0, 0));
+        Assert.Equal(MonitorPlacementService.MaximumScale, MonitorPlacementService.ApplyWheelDelta(1.9, 1200));
+        Assert.Equal(MonitorPlacementService.MinimumScale, MonitorPlacementService.ApplyWheelDelta(0.6, -1200));
+    }
 }

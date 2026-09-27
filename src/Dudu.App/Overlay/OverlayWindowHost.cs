@@ -36,6 +36,9 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private const uint WmDestroy = 0x0002;
     private const uint WmCancelMode = 0x001F;
     private const uint WmCaptureChanged = 0x0215;
+    private const uint WmTimer = 0x0113;
+    internal const nuint PlacementSaveTimerId = 1;
+    internal const uint PlacementSaveDelayMilliseconds = 750;
     private const nint MA_NOACTIVATE = 3;
     private const nint HTCLIENT = 1;
     private const nint HTTRANSPARENT = -1;
@@ -105,11 +108,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private bool _petBodyPointerArmed;
     private bool _suppressPetBodyToggleOnNextUp;
     private bool _placementDirty;
-    private int _dragOriginX;
-    private int _dragOriginY;
-    private int _dragOriginScreenX;
-    private int _dragOriginScreenY;
-    private PixelRect _dragStartBounds;
+    private readonly OverlayPointerGesture _gesture = new();
     private bool _shutdownIssued;
     private int _shutdownRequestPosted;
     private int _ownerThreadId;
@@ -985,6 +984,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             switch (message)
             {
             case WmLButtonDown:
+                _gesture.NoteButtonDown();
                 if (TryArmActionSurfacePointer(lParam)) break;
                 _petBodyPointerArmed = BeginDrag(lParam);
                 break;
@@ -993,10 +993,15 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                 break;
             case WmLButtonUp:
                 var releasedPoint = GetClientPoint(lParam);
+                // Click-vs-drag is decided in screen space by the gesture
+                // (the window follows the cursor, so client points cannot
+                // tell a slow drag from a click). Decide BEFORE releasing
+                // capture: ReleaseCapture synchronously delivers
+                // WM_CAPTURECHANGED, which cancels the gesture.
+                var wasPetBodyClick = _gesture.Release(TryGetCursorScreenPoint());
                 var toggleActionSurface = _petBodyPointerArmed
                     && !_suppressPetBodyToggleOnNextUp
-                    && Math.Abs(releasedPoint.X - _dragOriginX) <= 4
-                    && Math.Abs(releasedPoint.Y - _dragOriginY) <= 4;
+                    && wasPetBodyClick;
                 _suppressPetBodyToggleOnNextUp = false;
                 _petBodyPointerArmed = false;
                 SettleDraggedWindow();
@@ -1005,6 +1010,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                 if (_actionSurfacePointerArmed)
                 {
                     _actionSurfacePointerArmed = false;
+                    _gesture.ClearPetBodyClick();
                     _ = TryHandleActionSurfacePointer(lParam);
                 }
                 else if (toggleActionSurface && _actionSurface is not null)
@@ -1012,10 +1018,20 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                     _actionSurface.ToggleFromPetBody(
                         new PixelRect(0, 0, _windowBounds.Width, _windowBounds.Height),
                         new PixelPoint(releasedPoint.X, releasedPoint.Y));
+                    // Remember that this click toggled the bubble so a
+                    // WM_LBUTTONDBLCLK completing a double-click on the pet
+                    // opens Home instead of arming whatever bubble action the
+                    // first click just placed under the cursor.
+                    _gesture.NotePetBodyClick();
+                }
+                else
+                {
+                    _gesture.ClearPetBodyClick();
                 }
                 break;
             case WmLButtonDoubleClick:
-                if (TryArmActionSurfacePointer(lParam))
+                var petBodyDoubleClick = _gesture.TakeDoubleClickFollowsPetBodyClick();
+                if (!petBodyDoubleClick && TryArmActionSurfacePointer(lParam))
                 {
                     // A double-click landing on an open bubble's action behaves
                     // exactly like an ordinary down-click on it: the paired
@@ -1027,12 +1043,15 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                 }
 
                 // The pet body's first click of this double-click already ran
-                // its own WM_LBUTTONUP and toggled the action bubble open;
-                // close it before opening Home so the two don't end up
-                // stacked, and suppress the paired WM_LBUTTONUP's bubble
-                // toggle so it doesn't immediately reopen what was just
-                // closed. Arm drag from this second press exactly like a
-                // normal WM_LBUTTONDOWN would.
+                // its own WM_LBUTTONUP and toggled the action bubble; close it
+                // before opening Home so the two don't end up stacked (and so
+                // the bubble action it put under the cursor is never armed),
+                // and suppress the paired WM_LBUTTONUP's bubble toggle so it
+                // doesn't immediately reopen what was just closed. Arm drag
+                // from this second press exactly like a normal
+                // WM_LBUTTONDOWN would.
+                _armedOverlayAction = null;
+                _actionSurfacePointerArmed = false;
                 _actionSurface?.Close();
                 ReleasePointerCapture();
                 _petBodyPointerArmed = BeginDrag(lParam);
@@ -1062,17 +1081,26 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                     ResolveAndMove();
                 }
                 break;
+            case WmTimer:
+                if ((nuint)wParam.Value == PlacementSaveTimerId)
+                {
+                    StopPlacementSaveTimer();
+                    CommitPlacementIfDirty();
+                }
+                break;
             case WmCancelMode:
             case WmCaptureChanged:
                 SettleDraggedWindow();
                 CommitPlacementIfDirty();
                 ReleasePointerCapture();
+                _gesture.Cancel();
                 _actionSurfacePointerArmed = false;
                 _armedOverlayAction = null;
                 _petBodyPointerArmed = false;
                 _suppressPetBodyToggleOnNextUp = false;
                 break;
             case WmDestroy:
+                StopPlacementSaveTimer();
                 CommitPlacementIfDirty();
                 ReleasePointerCapture();
                 _actionDispatchQueue.Dispose();
@@ -1112,23 +1140,18 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         }
 
         _dragging = true;
-        _dragOriginX = point.X;
-        _dragOriginY = point.Y;
-        if (PInvoke.GetCursorPos(out var cursor))
-        {
-            _dragOriginScreenX = cursor.X;
-            _dragOriginScreenY = cursor.Y;
-        }
-        else
-        {
-            _dragOriginScreenX = _windowBounds.X + point.X;
-            _dragOriginScreenY = _windowBounds.Y + point.Y;
-        }
-        _dragStartBounds = _windowBounds;
+        var cursor = TryGetCursorScreenPoint()
+            ?? new PixelPoint(_windowBounds.X + point.X, _windowBounds.Y + point.Y);
+        _gesture.Press(
+            cursor,
+            _windowBounds,
+            PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXDRAG),
+            PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CYDRAG));
         // A scroll-resize just before this drag can leave a pending placement
         // save (_placementDirty from ChangeScale); commit it instead of
         // unconditionally discarding it, or the resize is lost forever once
         // the drag starts.
+        StopPlacementSaveTimer();
         CommitPlacementIfDirty();
         return true;
     }
@@ -1141,22 +1164,25 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         }
 
         var point = GetClientPoint(lParam);
-        if (Math.Abs(point.X - _dragOriginX) > 4 || Math.Abs(point.Y - _dragOriginY) > 4)
+        var cursor = TryGetCursorScreenPoint()
+            ?? new PixelPoint(_windowBounds.X + point.X, _windowBounds.Y + point.Y);
+        // Measured in screen space: the window follows the cursor, so client
+        // points stay put during a slow drag, which then never counted as a
+        // drag (no drag animation, and the release opened the bubble). Inside
+        // the system drag threshold nothing moves, so a plain click neither
+        // nudges the pet nor dirties the saved placement.
+        if (_gesture.Move(cursor) is not { } bounds)
         {
-            _petBodyPointerArmed = false;
-            if (!_dragAnimating)
-            {
-                _dragAnimating = true;
-                NotifyDragState(true);
-            }
+            return;
         }
-        var cursor = PInvoke.GetCursorPos(out var screenPoint)
-            ? new PixelPoint(screenPoint.X, screenPoint.Y)
-            : new PixelPoint(_windowBounds.X + point.X, _windowBounds.Y + point.Y);
-        var bounds = CalculateDraggedBounds(
-            _dragStartBounds,
-            new PixelPoint(_dragOriginScreenX, _dragOriginScreenY),
-            cursor);
+
+        _petBodyPointerArmed = false;
+        if (!_dragAnimating)
+        {
+            _dragAnimating = true;
+            NotifyDragState(true);
+        }
+
         ApplyWindowState(bounds, _placement.Scale);
         _placement = MonitorPlacementService.Capture(
             bounds,
@@ -1165,6 +1191,9 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             EnumerateMonitors());
         _placementDirty = true;
     }
+
+    private static PixelPoint? TryGetCursorScreenPoint() =>
+        PInvoke.GetCursorPos(out var cursor) ? new PixelPoint(cursor.X, cursor.Y) : null;
 
     /// <summary>True for the WM_SETTINGCHANGE broadcast Windows sends when
     /// a monitor's work area changes (SPI_SETWORKAREA).</summary>
@@ -1213,18 +1242,49 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
 
     private void ChangeScale(short delta)
     {
-        if (delta == 0)
+        // Ignored while a press/drag holds capture: resizing under an active
+        // drag desynced the window from the drag's start bounds, and the next
+        // mouse move snapped it back to the old size.
+        if (delta == 0 || _dragging)
         {
             return;
         }
 
-        var factor = delta > 0 ? 1.1 : 1 / 1.1;
-        _placement = _placement with
+        var scale = MonitorPlacementService.ApplyWheelDelta(_placement.Scale, delta);
+        if (scale == _placement.Scale)
         {
-            Scale = MonitorPlacementService.ClampScale(_placement.Scale * factor),
-        };
+            return;
+        }
+
+        _placement = _placement with { Scale = scale };
         ResolveAndMove();
         _placementDirty = true;
+        // Persist once the wheel settles instead of only on the next button
+        // press/release (which may never come before the app is closed).
+        StartPlacementSaveTimer();
+    }
+
+    private void StartPlacementSaveTimer()
+    {
+        if (_window.IsNull)
+        {
+            return;
+        }
+
+        // Re-arming an existing timer id restarts its countdown (debounce).
+        if (PInvoke.SetTimer(_window, PlacementSaveTimerId, PlacementSaveDelayMilliseconds, null) == 0)
+        {
+            // No timer: save right away rather than risk losing the resize.
+            CommitPlacementIfDirty();
+        }
+    }
+
+    private void StopPlacementSaveTimer()
+    {
+        if (!_window.IsNull)
+        {
+            _ = PInvoke.KillTimer(_window, PlacementSaveTimerId);
+        }
     }
 
     private void ReleasePointerCapture()
@@ -1252,6 +1312,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         _shutdownIssued = true;
         _actionDispatchQueue.Dispose();
         _ownerActions.Close(new ObjectDisposedException(nameof(OverlayWindowHost)));
+        StopPlacementSaveTimer();
         CommitPlacementIfDirty();
         ReleasePointerCapture();
         if (!_window.IsNull)

@@ -186,4 +186,40 @@ public sealed class OverlayWindowHostTests
         Assert.Contains("RouteWindowMessage(", body, StringComparison.Ordinal);
         Assert.DoesNotContain("TryHandleRuntimeMessage(", body, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void Host_decides_click_versus_drag_in_screen_space_and_debounces_wheel_saves()
+    {
+        var source = OverlaySourceFiles.Read("src", "Dudu.App", "Overlay", "OverlayWindowHost.cs");
+
+        var changeScale = Body(source, "private void ChangeScale(short delta)");
+        Assert.Contains("MonitorPlacementService.ApplyWheelDelta(", changeScale, StringComparison.Ordinal);
+        Assert.Contains("StartPlacementSaveTimer();", changeScale, StringComparison.Ordinal);
+        Assert.Contains("_dragging", changeScale, StringComparison.Ordinal);
+
+        // The drag animation starts only once the screen-space gesture has
+        // left the system drag threshold.
+        var continueDrag = Body(source, "private void ContinueDrag(LPARAM lParam)");
+        Assert.Contains("_gesture.Move(", continueDrag, StringComparison.Ordinal);
+        Assert.True(
+            continueDrag.IndexOf("_gesture.Move(", StringComparison.Ordinal)
+                < continueDrag.IndexOf("NotifyDragState(true)", StringComparison.Ordinal));
+        Assert.DoesNotContain("_dragOriginX", source, StringComparison.Ordinal);
+
+        // Click-vs-drag is decided by the screen-space gesture, never by
+        // comparing window-relative points (the window moves with the cursor).
+        var handleMessage = Body(source, "private void HandleMessage(uint message, WPARAM wParam, LPARAM lParam)");
+        Assert.Contains("_gesture.Release(", handleMessage, StringComparison.Ordinal);
+        Assert.Contains("_gesture.TakeDoubleClickFollowsPetBodyClick()", handleMessage, StringComparison.Ordinal);
+        Assert.Contains("case WmTimer:", handleMessage, StringComparison.Ordinal);
+    }
+
+    private static string Body(string source, string signature)
+    {
+        var start = source.IndexOf(signature, StringComparison.Ordinal);
+        Assert.True(start >= 0, $"Expected '{signature}'.");
+        var end = source.IndexOf("\n    }\n", start, StringComparison.Ordinal);
+        Assert.True(end > start);
+        return source[start..end];
+    }
 }
