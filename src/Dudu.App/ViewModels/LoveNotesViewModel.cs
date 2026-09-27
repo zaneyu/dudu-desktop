@@ -13,6 +13,7 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
     private RemoteEnvelope? _selectedRemoteEnvelope;
     private RemoteEnvelope? _openedRemoteEnvelope;
     private string? _openedRemoteNoteText;
+    private string? _chosenLocalNoteText;
     private string _draftText = string.Empty;
     private bool _draftEnabled = true;
 
@@ -94,13 +95,28 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
         }
     }
 
-    /// <summary>"save opened note" only applies to a revealed incoming note -- not
-    /// to nothing, and not to a jar note shown by "let dudu choose".</summary>
+    /// <summary>"save opened note" only applies to a revealed incoming note --
+    /// not to nothing. A "let dudu choose" pick is shown separately
+    /// (<see cref="ChosenLocalNoteText"/>) and never touches it.</summary>
     public bool CanSaveOpenedNote => OpenedRemoteEnvelope is not null;
 
     /// <summary>Drives the jar's empty-state copy.</summary>
     public bool HasNoLocalNotes => LocalNotes.Count == 0;
     public string? OpenedRemoteNoteText { get => _openedRemoteNoteText; private set => SetProperty(ref _openedRemoteNoteText, value); }
+
+    /// <summary>The local note "let dudu choose" picked. Shown in the note jar
+    /// section, separate from the incoming "opened note" box, so a pick never
+    /// replaces an encrypted note she opened but has not saved yet.</summary>
+    public string? ChosenLocalNoteText
+    {
+        get => _chosenLocalNoteText;
+        private set
+        {
+            if (SetProperty(ref _chosenLocalNoteText, value)) OnPropertyChanged(nameof(HasChosenLocalNote));
+        }
+    }
+
+    public bool HasChosenLocalNote => !string.IsNullOrWhiteSpace(ChosenLocalNoteText);
     public string DraftText { get => _draftText; set => SetProperty(ref _draftText, value); }
     public bool DraftEnabled { get => _draftEnabled; set => SetProperty(ref _draftEnabled, value); }
     public int DailyLocalNoteLimit => _context.CurrentPreferences.LocalNoteDailyLimit;
@@ -286,9 +302,7 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
         {
             var note = await _context.NoteSelector.SelectAsync(true, cancellationToken)
                 ?? throw new InvalidOperationException("add a note to the jar or turn one on first");
-            OpenedRemoteEnvelope = null;
-            OpenedRemoteNoteText = note.Text;
-            OnPropertyChanged(nameof(HasOpenedRemoteNote));
+            ChosenLocalNoteText = note.Text;
         });
 
     private void Replace(LocalLoveNote note)

@@ -611,9 +611,13 @@ public sealed class RemindersTasksLoveNotesUxTests
         await viewModel.RevealRemoteNoteCommand.ExecuteAsync(viewModel.PendingRemoteNotes.Single());
         Assert.True(viewModel.CanSaveOpenedNote);
 
+        var opened = viewModel.OpenedRemoteNoteText;
         await viewModel.ShowLocalNoteCommand.ExecuteAsync(null);
-        Assert.Equal("you got this", viewModel.OpenedRemoteNoteText);
-        Assert.False(viewModel.CanSaveOpenedNote);
+        // The pick shows in the jar and leaves the revealed incoming note
+        // (and its save button) alone.
+        Assert.Equal("you got this", viewModel.ChosenLocalNoteText);
+        Assert.Equal(opened, viewModel.OpenedRemoteNoteText);
+        Assert.True(viewModel.CanSaveOpenedNote);
     }
 
     [Fact]

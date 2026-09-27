@@ -81,6 +81,15 @@ public sealed class LocalNoteSelector
             .Where(note => !recent.Contains(note.Id))
             .ToArray();
 
+        if (eligible.Length == 0 && manualRequest)
+        {
+            // Skipping the two most recent notes keeps unprompted picks fresh,
+            // but with only one or two enabled notes it leaves nothing -- and a
+            // pick she explicitly asked for must not fail as if the jar were
+            // empty. A manual request falls back to every enabled note.
+            eligible = notes.ToArray();
+        }
+
         if (eligible.Length == 0)
         {
             return null;

@@ -52,6 +52,10 @@
                             <Button Grid.Column="1" Content="new note" Command="{x:Bind ViewModel.NewNoteCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="LoveNotesNew" AutomationProperties.Name="new note" />
                             <Button Grid.Row="1" Grid.ColumnSpan="2" Content="let dudu choose" Command="{x:Bind ViewModel.ShowLocalNoteCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="LoveNotesChoose" AutomationProperties.Name="let dudu choose" />
                         </Grid>
+                        <StackPanel Spacing="4" Visibility="{x:Bind ViewModel.HasChosenLocalNote, Mode=OneWay}">
+                            <TextBlock Text="dudu picked this one for you" Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" />
+                            <TextBlock Text="{x:Bind ViewModel.ChosenLocalNoteText, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" AutomationProperties.AutomationId="LoveNotesChosen" AutomationProperties.Name="{x:Bind ViewModel.ChosenLocalNoteText, Mode=OneWay}" />
+                        </StackPanel>
                         <!-- Destructive: kept on its own row, away from save (DESIGN.md). -->
                         <Button Content="delete selected" Command="{x:Bind ViewModel.RequestDeleteLocalNoteCommand}" CommandParameter="{x:Bind ViewModel.SelectedNote, Mode=OneWay}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="LoveNotesDelete" AutomationProperties.Name="delete selected" />
                         <Border Style="{StaticResource ConfirmCardStyle}" Visibility="{x:Bind ViewModel.IsConfirmingDeleteNote, Mode=OneWay}" AutomationProperties.AutomationId="LoveNotesDeleteConfirmationPanel" AutomationProperties.Name="delete note confirmation panel">
