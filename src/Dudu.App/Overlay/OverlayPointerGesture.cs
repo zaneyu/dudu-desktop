@@ -14,11 +14,15 @@ internal sealed class OverlayPointerGesture
     /// <summary>Fallback for SM_CXDRAG / SM_CYDRAG (the Windows default).</summary>
     public const int DefaultDragThreshold = 4;
 
+    /// <summary>Fallback for GetDoubleClickTime (the Windows default).</summary>
+    public const int DefaultDoubleClickMilliseconds = 500;
+
     private PixelPoint _originScreen;
     private PixelRect _startBounds;
     private int _thresholdX = DefaultDragThreshold;
     private int _thresholdY = DefaultDragThreshold;
     private bool _lastReleaseWasPetBodyClick;
+    private long _petBodyToggleSuppressedUntilMs = long.MinValue;
 
     /// <summary>A pet-body press is in progress.</summary>
     public bool IsPressed { get; private set; }
@@ -95,6 +99,22 @@ internal sealed class OverlayPointerGesture
         _lastReleaseWasPetBodyClick = false;
         return result;
     }
+
+    /// <summary>
+    /// A pet-body double-click just opened Home. Windows delivers a third
+    /// rapid click as a plain down/up (never a second WM_LBUTTONDBLCLK), so
+    /// without a quiet period that third click toggled the bubble straight
+    /// back open next to Home. Pet-body toggles are ignored until
+    /// <paramref name="quietMilliseconds"/> (the system double-click time)
+    /// has passed.
+    /// </summary>
+    public void NoteDoubleClickOpenedHome(long nowMilliseconds, int quietMilliseconds) =>
+        _petBodyToggleSuppressedUntilMs = nowMilliseconds
+            + (quietMilliseconds > 0 ? quietMilliseconds : DefaultDoubleClickMilliseconds);
+
+    /// <summary>True while the quiet period after a pet double-click lasts.</summary>
+    public bool IsPetBodyToggleSuppressed(long nowMilliseconds) =>
+        nowMilliseconds < _petBodyToggleSuppressedUntilMs;
 
     private bool ExceedsThreshold(PixelPoint screen) =>
         Math.Abs((long)screen.X - _originScreen.X) > _thresholdX

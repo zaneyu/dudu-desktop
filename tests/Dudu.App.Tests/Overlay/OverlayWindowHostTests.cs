@@ -214,6 +214,30 @@ public sealed class OverlayWindowHostTests
         Assert.Contains("case WmTimer:", handleMessage, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public void Context_menu_never_opens_while_the_left_button_holds_capture(bool captured, bool expected)
+    {
+        Assert.Equal(expected, OverlayWindowHost.ShouldShowContextMenu(captured));
+    }
+
+    [Fact]
+    public void Host_gates_the_menu_on_capture_uses_per_monitor_drag_thresholds_and_quiets_a_third_click()
+    {
+        var source = OverlaySourceFiles.Read("src", "Dudu.App", "Overlay", "OverlayWindowHost.cs");
+        var handleMessage = Body(source, "private void HandleMessage(uint message, WPARAM wParam, LPARAM lParam)");
+
+        Assert.Contains("ShouldShowContextMenu(_dragging)", handleMessage, StringComparison.Ordinal);
+        Assert.Contains("_gesture.IsPetBodyToggleSuppressed(", handleMessage, StringComparison.Ordinal);
+        Assert.Contains("_gesture.NoteDoubleClickOpenedHome(", handleMessage, StringComparison.Ordinal);
+
+        var beginDrag = Body(source, "private bool BeginDrag(LPARAM lParam)");
+        Assert.Contains("GetDragThreshold(SYSTEM_METRICS_INDEX.SM_CXDRAG, _currentDpi)", beginDrag, StringComparison.Ordinal);
+        Assert.Contains("GetDragThreshold(SYSTEM_METRICS_INDEX.SM_CYDRAG, _currentDpi)", beginDrag, StringComparison.Ordinal);
+        Assert.Contains("GetSystemMetricsForDpi(", source, StringComparison.Ordinal);
+    }
+
     private static string Body(string source, string signature)
     {
         var start = source.IndexOf(signature, StringComparison.Ordinal);

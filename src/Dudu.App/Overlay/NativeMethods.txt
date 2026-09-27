@@ -72,6 +72,8 @@ TrackPopupMenuEx
 DestroyMenu
 GetCursorPos
 GetSystemMetrics
+GetSystemMetricsForDpi
+GetDoubleClickTime
 SYSTEM_METRICS_INDEX
 SetTimer
 KillTimer

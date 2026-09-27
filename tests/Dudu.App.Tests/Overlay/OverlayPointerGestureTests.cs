@@ -107,4 +107,37 @@ public sealed class OverlayPointerGestureTests
 
         Assert.False(gesture.TakeDoubleClickFollowsPetBodyClick());
     }
+
+    [Fact]
+    public void Third_rapid_click_after_a_pet_double_click_does_not_toggle_the_bubble()
+    {
+        // DOWN, UP, DBLCLK (opens Home), UP, then a third DOWN/UP inside the
+        // double-click time: Windows sends it as a plain click, which used to
+        // toggle the bubble back open next to Home.
+        var gesture = new OverlayPointerGesture();
+        gesture.NoteDoubleClickOpenedHome(nowMilliseconds: 10_000, quietMilliseconds: 500);
+
+        Assert.True(gesture.IsPetBodyToggleSuppressed(10_000));
+        Assert.True(gesture.IsPetBodyToggleSuppressed(10_499));
+        Assert.False(gesture.IsPetBodyToggleSuppressed(10_500));
+    }
+
+    [Fact]
+    public void Pet_body_toggle_is_not_suppressed_before_any_double_click()
+    {
+        var gesture = new OverlayPointerGesture();
+
+        Assert.False(gesture.IsPetBodyToggleSuppressed(0));
+        Assert.False(gesture.IsPetBodyToggleSuppressed(long.MinValue + 1));
+    }
+
+    [Fact]
+    public void Invalid_double_click_time_falls_back_to_the_default_quiet_period()
+    {
+        var gesture = new OverlayPointerGesture();
+        gesture.NoteDoubleClickOpenedHome(nowMilliseconds: 0, quietMilliseconds: 0);
+
+        Assert.True(gesture.IsPetBodyToggleSuppressed(OverlayPointerGesture.DefaultDoubleClickMilliseconds - 1));
+        Assert.False(gesture.IsPetBodyToggleSuppressed(OverlayPointerGesture.DefaultDoubleClickMilliseconds));
+    }
 }

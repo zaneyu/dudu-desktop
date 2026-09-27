@@ -1013,7 +1013,8 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                 var wasPetBodyClick = _gesture.Release(TryGetCursorScreenPoint());
                 var toggleActionSurface = _petBodyPointerArmed
                     && !_suppressPetBodyToggleOnNextUp
-                    && wasPetBodyClick;
+                    && wasPetBodyClick
+                    && !_gesture.IsPetBodyToggleSuppressed(Environment.TickCount64);
                 _suppressPetBodyToggleOnNextUp = false;
                 _petBodyPointerArmed = false;
                 SettleDraggedWindow();
@@ -1068,12 +1069,23 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                 ReleasePointerCapture();
                 _petBodyPointerArmed = BeginDrag(lParam);
                 _suppressPetBodyToggleOnNextUp = true;
+                // A third rapid click arrives as a plain down/up; keep it
+                // from toggling the bubble back open next to Home.
+                _gesture.NoteDoubleClickOpenedHome(
+                    Environment.TickCount64,
+                    (int)Math.Min(int.MaxValue, PInvoke.GetDoubleClickTime()));
                 _ = OverlayNativeCallbackObserver.ObserveAsync(
                     _openHome(CancellationToken.None),
                     _diagnostic);
                 break;
             case WmRButtonUp:
-                _showContextMenu();
+                // While the left button holds capture (a press or drag on the
+                // pet), a right-button release is delivered here too; opening
+                // the menu then popped it mid-gesture.
+                if (ShouldShowContextMenu(_dragging))
+                {
+                    _showContextMenu();
+                }
                 break;
             case WmMouseWheel:
                 ChangeScale((short)((long)wParam.Value >> 16));
@@ -1157,8 +1169,8 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         _gesture.Press(
             cursor,
             _windowBounds,
-            PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXDRAG),
-            PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CYDRAG));
+            GetDragThreshold(SYSTEM_METRICS_INDEX.SM_CXDRAG, _currentDpi),
+            GetDragThreshold(SYSTEM_METRICS_INDEX.SM_CYDRAG, _currentDpi));
         // A scroll-resize just before this drag can leave a pending placement
         // save (_placementDirty from ChangeScale); commit it instead of
         // unconditionally discarding it, or the resize is lost forever once
@@ -1203,6 +1215,22 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             EnumerateMonitors());
         _placementDirty = true;
     }
+
+    /// <summary>
+    /// The drag threshold for the monitor the pet is on. Plain
+    /// GetSystemMetrics reports the system DPI's value to a per-monitor-aware
+    /// process, so on a higher-DPI monitor the threshold was only a few
+    /// physical pixels and a slightly shaky click became a drag.
+    /// </summary>
+    private static int GetDragThreshold(SYSTEM_METRICS_INDEX index, int dpi)
+    {
+        var value = dpi > 0 ? PInvoke.GetSystemMetricsForDpi(index, (uint)dpi) : 0;
+        return value > 0 ? value : PInvoke.GetSystemMetrics(index);
+    }
+
+    /// <summary>The context menu never opens while the left button holds
+    /// capture for a press or drag on the pet.</summary>
+    internal static bool ShouldShowContextMenu(bool leftButtonCaptured) => !leftButtonCaptured;
 
     private static PixelPoint? TryGetCursorScreenPoint() =>
         PInvoke.GetCursorPos(out var cursor) ? new PixelPoint(cursor.X, cursor.Y) : null;
