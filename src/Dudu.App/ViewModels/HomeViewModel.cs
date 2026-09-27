@@ -464,11 +464,11 @@ public sealed class HomeViewModel : FeatureViewModelBase
     {
         if (countdown is null)
         {
-            ErrorMessage = SelectOneFirstMessage;
+            ReportError(SelectOneFirstMessage);
             return;
         }
 
-        ErrorMessage = null;
+        ClearMessages();
         PendingDeleteCountdown = countdown;
     }
 

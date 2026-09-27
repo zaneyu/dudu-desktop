@@ -355,7 +355,7 @@ public sealed class RemindersViewModel : FeatureViewModelBase
     {
         if (reminder is null)
         {
-            ErrorMessage = SelectOneFirstMessage;
+            ReportError(SelectOneFirstMessage);
             return;
         }
 
@@ -363,11 +363,11 @@ public sealed class RemindersViewModel : FeatureViewModelBase
         {
             // Saving "helpful defaults" recreates these rows, so a delete would
             // quietly come back; point her at the switch that actually works.
-            ErrorMessage = "this one comes from helpful defaults, turn it off there instead";
+            ReportError("this one comes from helpful defaults, turn it off there instead");
             return;
         }
 
-        ErrorMessage = null;
+        ClearMessages();
         PendingDeleteReminder = reminder;
     }
 

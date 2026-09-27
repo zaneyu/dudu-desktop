@@ -217,11 +217,11 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
     {
         if (task is null)
         {
-            ErrorMessage = SelectOneFirstMessage;
+            ReportError(SelectOneFirstMessage);
             return;
         }
 
-        ErrorMessage = null;
+        ClearMessages();
         PendingDeleteTask = task;
     }
 
