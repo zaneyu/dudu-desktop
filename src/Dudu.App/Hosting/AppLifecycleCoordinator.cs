@@ -169,29 +169,42 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
         // launch/activation, see WindowsCompanionRuntime.ActivateAsync):
         // quiet hours never veto the overlay's visibility (see TryCanShow),
         // so this always shows the pet regardless of the hour.
-        if (!TryCanShow(fullscreen, snapshot.Locked, snapshot.Suspended, "hotkey-gate"))
+        //
+        // Home opens regardless of the veto: "the tray and global hotkey
+        // remain available" while paused, locked or fullscreen-hidden, and
+        // returning before _openHome made the hotkey (and second launch,
+        // which routes here) do nothing at all. Only the overlay show below
+        // is gated -- a vetoed gesture neither writes the desired-visible
+        // flag nor shows the pet.
+        var showOverlay = TryCanShow(fullscreen, snapshot.Locked, snapshot.Suspended, "hotkey-gate");
+        if (showOverlay)
         {
-            return;
-        }
-
-        await _gate.WaitAsync(cancellationToken);
-        try
-        {
-            ThrowIfDisposed();
-            if (_locked != snapshot.Locked
-                || _suspended != snapshot.Suspended
-                || _fullscreenHidden != snapshot.FullscreenHidden)
+            await _gate.WaitAsync(cancellationToken);
+            try
             {
-                return;
+                ThrowIfDisposed();
+                if (_locked != snapshot.Locked
+                    || _suspended != snapshot.Suspended
+                    || _fullscreenHidden != snapshot.FullscreenHidden)
+                {
+                    showOverlay = false;
+                }
+                else
+                {
+                    _userVisible = true;
+                }
             }
-
-            _userVisible = true;
+            finally { _gate.Release(); }
         }
-        finally { _gate.Release(); }
 
         if (_openHome is not null)
         {
             await _openHome(cancellationToken);
+        }
+
+        if (!showOverlay)
+        {
+            return;
         }
 
         // Finding 1: _openHome above can run arbitrarily long (it pumps the
