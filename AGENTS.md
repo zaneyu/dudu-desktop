@@ -610,7 +610,9 @@ authoritative for future changes.
   where one is composed, else legacy diagnostic, else a `Trace` line with
   operation + exception type/HResult only. Operation names in use:
   `hotkey-attach`, `hotkey-set-gesture`, `hotkey-restore` (a saved shortcut
-  that could not be re-registered at startup; falls back to the default), `tray-attach`, `tray-recreate`,
+  that could not be re-registered at startup; falls back to the default),
+  `pause-persist` (a pause she chose could not be saved for the next start;
+  the pause itself still applies), `tray-attach`, `tray-recreate`,
   `tray-menu-state` (the tray menu falls back to neutral labels),
   `pet-context-menu` (right-click on the pet showing the tray menu),
   `taskbar-tray-recreate`, `overlay-create`, `overlay-dispose`,

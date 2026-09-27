@@ -59,4 +59,77 @@ public sealed class PausePolicyTests
         Assert.Equal(PauseMode.None, store.GetEffective(now).Mode);
         Assert.Equal(PauseMode.None, store.Current.Mode);
     }
+
+    [Fact]
+    public void Pause_persists_on_every_change_she_makes_but_not_on_restore_or_automatic_end()
+    {
+        // The pause used to live only in memory and was lost on restart.
+        var persisted = new List<PauseState>();
+        var fullscreen = false;
+        var store = new PauseStateStore(() => fullscreen, persisted.Add);
+
+        store.Restore(new PauseState(PauseMode.Indefinite, null));
+        Assert.Empty(persisted);
+        Assert.Equal(PauseMode.Indefinite, store.Current.Mode);
+
+        var oneHour = PausePolicy.ForOneHour(Now);
+        store.Set(oneHour);
+        var untilFullscreenEnds = new PauseState(PauseMode.UntilFullscreenEnds, null);
+        store.Set(untilFullscreenEnds);
+        fullscreen = true;
+        store.GetEffective(Now);
+        fullscreen = false;
+        Assert.Equal(PauseMode.None, store.GetEffective(Now).Mode);
+        store.Set(PauseState.None);
+
+        // The fullscreen-driven end is not persisted (a persisted
+        // "until fullscreen ends" restores as not paused anyway).
+        Assert.Equal([oneHour, untilFullscreenEnds, PauseState.None], persisted);
+    }
+
+    [Fact]
+    public void A_throwing_persist_callback_never_breaks_the_pause()
+    {
+        var store = new PauseStateStore(persist: _ => throw new InvalidOperationException("disk full"));
+
+        store.Set(new PauseState(PauseMode.Indefinite, null));
+
+        Assert.Equal(PauseMode.Indefinite, store.Current.Mode);
+    }
+
+    [Fact]
+    public void Persisted_pause_round_trips_through_preference_fields()
+    {
+        foreach (var state in new[]
+        {
+            new PauseState(PauseMode.Indefinite, null),
+            PausePolicy.ForOneHour(Now),
+            PausePolicy.ForFiveMinutes(Now),
+            PausePolicy.UntilTomorrowAtSeven(Now, TimeZoneInfo.Utc),
+        })
+        {
+            var (mode, expires) = PausePersistence.ToPreference(state);
+            Assert.Equal(state, PausePersistence.FromPreference(mode, expires, Now));
+        }
+
+        Assert.Equal(((string?)null, (DateTimeOffset?)null), PausePersistence.ToPreference(PauseState.None));
+    }
+
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData("None", null)]
+    [InlineData("oneHour", "2026-09-11T11:00:00Z")]
+    [InlineData("3", "2026-09-11T11:00:00Z")]
+    [InlineData("NotAMode", null)]
+    [InlineData("OneHour", null)]
+    [InlineData("OneHour", "2026-09-11T09:59:00Z")]
+    [InlineData("UntilFullscreenEnds", null)]
+    public void Unknown_expired_or_fullscreen_bound_persisted_pauses_restore_as_not_paused(
+        string? mode,
+        string? expiresUtc)
+    {
+        var expires = expiresUtc is null ? (DateTimeOffset?)null : DateTimeOffset.Parse(expiresUtc);
+
+        Assert.Equal(PauseState.None, PausePersistence.FromPreference(mode, expires, Now));
+    }
 }

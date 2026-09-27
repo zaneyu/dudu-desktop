@@ -53,7 +53,8 @@ public sealed class GlobalShortcutPreferenceTests
         await using (var connection = await fixture.Database.CreateConnectionAsync(cancellationToken))
         {
             await using var command = connection.CreateCommand();
-            command.CommandText = "ALTER TABLE preferences DROP COLUMN global_shortcut; UPDATE schema_version SET version = 11 WHERE id = 1;";
+            // Version 11 also predates 0013_pause_preferences.sql's columns.
+            command.CommandText = "ALTER TABLE preferences DROP COLUMN global_shortcut; ALTER TABLE preferences DROP COLUMN pause_mode; ALTER TABLE preferences DROP COLUMN pause_expires_utc; UPDATE schema_version SET version = 11 WHERE id = 1;";
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
@@ -65,7 +66,7 @@ public sealed class GlobalShortcutPreferenceTests
         await using var versionConnection = await fixture.Database.CreateConnectionAsync(cancellationToken);
         await using var version = versionConnection.CreateCommand();
         version.CommandText = "SELECT version FROM schema_version WHERE id = 1;";
-        Assert.Equal(12L, Convert.ToInt64(await version.ExecuteScalarAsync(cancellationToken)));
+        Assert.Equal(13L, Convert.ToInt64(await version.ExecuteScalarAsync(cancellationToken)));
     }
 
     [Fact]

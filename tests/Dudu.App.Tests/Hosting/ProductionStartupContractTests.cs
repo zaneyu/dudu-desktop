@@ -11,6 +11,26 @@ namespace Dudu.App.Tests.Hosting;
 public sealed class ProductionStartupContractTests
 {
     [Fact]
+    public void Production_pause_is_restored_from_and_persisted_to_preferences()
+    {
+        // The tray/overlay pause used to live only in memory and was lost on
+        // every restart. Asserted from source because the composition needs
+        // real Win32 handles.
+        var root = FindRepositoryRoot();
+        var composition = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.App", "Hosting", "WindowsCompanionProductionComposition.cs"));
+
+        var store = composition.IndexOf("var pause = new PauseStateStore(", StringComparison.Ordinal);
+        var persist = composition.IndexOf("persist: databaseUnavailable", store, StringComparison.Ordinal);
+        var commit = composition.IndexOf("preferenceMutations.CommitAsync(", persist, StringComparison.Ordinal);
+        var restore = composition.IndexOf("pause.Restore(PausePersistence.FromPreference(", StringComparison.Ordinal);
+        var runtime = composition.IndexOf("WindowsCompanionRuntime.CreateAsync(", StringComparison.Ordinal);
+
+        Assert.True(store >= 0 && persist > store && commit > persist);
+        Assert.True(restore > store && runtime > restore, "Expected the pause restored before the runtime starts.");
+    }
+
+    [Fact]
     public void Safe_mode_returns_before_constructing_native_overlay_runtime()
     {
         var root = FindRepositoryRoot();

@@ -505,8 +505,32 @@ public static class WindowsCompanionProductionComposition
             // the tray check mark, muted sounds) stayed on until she resumed
             // by hand. The gateway tracks fullscreen from the event source;
             // before it is composed there is no fullscreen to have seen.
+            PauseStateStore? pauseStore = null;
             var pause = new PauseStateStore(
-                isFullscreen: () => presentationGateway?.IsFullscreen ?? false);
+                isFullscreen: () => presentationGateway?.IsFullscreen ?? false,
+                // Persisted without a runtime re-apply (CommitAsync), reading
+                // the store's latest state at commit time so two quick
+                // changes can never leave the older one on disk. Nothing to
+                // persist to while the database is unavailable.
+                persist: databaseUnavailable
+                    ? null
+                    : changed => _ = ObserveNativeCallbackAsync(
+                        preferenceMutations.CommitAsync(
+                            current =>
+                            {
+                                var (mode, expiresUtc) = PausePersistence.ToPreference(pauseStore!.Current);
+                                return current with { PauseMode = mode, PauseExpiresUtc = expiresUtc };
+                            },
+                            (_, updated, token) => preferencesRepository.SaveAsync(updated, token)),
+                        "pause-persist",
+                        host.ErrorReporter));
+            pauseStore = pause;
+            // The pause she chose in an earlier run (the tray/overlay pause
+            // used to be lost on every restart).
+            pause.Restore(PausePersistence.FromPreference(
+                preferences.PauseMode,
+                preferences.PauseExpiresUtc,
+                DateTimeOffset.UtcNow));
             var runtimePreferences = new RuntimePreferencesState(preferences);
             var audioManifestPath = ResolveAudioManifestPath(assetsRoot);
             AudioCatalog audioCatalog;

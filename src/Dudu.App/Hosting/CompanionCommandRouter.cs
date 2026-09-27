@@ -15,6 +15,7 @@ public sealed class PauseStateStore : IPauseStateStore
 {
     private readonly object _gate = new();
     private readonly Func<bool>? _isFullscreen;
+    private readonly Action<PauseState>? _persist;
     private PauseState _current = PauseState.None;
     private bool _fullscreenSeenDuringPause;
 
@@ -26,9 +27,30 @@ public sealed class PauseStateStore : IPauseStateStore
     /// "till fullscreen done" and anything that treats every non-None pause
     /// as paused (audio cues) stayed muted until she resumed by hand.
     /// </param>
-    public PauseStateStore(Func<bool>? isFullscreen = null)
+    /// <param name="persist">
+    /// Called (outside the lock, never throwing into the caller) after every
+    /// pause she chooses, so the pause survives a restart; it used to live
+    /// only in memory. <see cref="Restore"/> does not call it, and neither
+    /// does an automatic end (expiry or a finished fullscreen session):
+    /// <see cref="PausePersistence.FromPreference"/> already restores those
+    /// as not paused.
+    /// </param>
+    public PauseStateStore(Func<bool>? isFullscreen = null, Action<PauseState>? persist = null)
     {
         _isFullscreen = isFullscreen;
+        _persist = persist;
+    }
+
+    /// <summary>Loads the pause persisted by an earlier run, without
+    /// persisting it again.</summary>
+    public void Restore(PauseState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        lock (_gate)
+        {
+            _current = state;
+            _fullscreenSeenDuringPause = false;
+        }
     }
 
     public PauseState Current
@@ -43,6 +65,12 @@ public sealed class PauseStateStore : IPauseStateStore
         {
             _current = state;
             _fullscreenSeenDuringPause = false;
+        }
+
+        if (_persist is not null)
+        {
+            try { _persist(state); }
+            catch { }
         }
     }
 
