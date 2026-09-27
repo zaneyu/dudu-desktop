@@ -562,6 +562,42 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task New_countdown_and_new_task_start_fresh_instead_of_overwriting_the_selection()
+    {
+        // Once a countdown or task was selected there was no way to start a
+        // fresh one: typing a new title and saving overwrote the selection.
+        var fixture = FeatureFixture.Create();
+        var ct = TestContext.Current.CancellationToken;
+        var home = new HomeViewModel(fixture.Context)
+        {
+            CountdownTitle = "Anniversary",
+            CountdownTargetUtc = DateTimeOffset.Parse("2026-12-01T12:00:00Z"),
+        };
+        await home.SaveCountdownAsync(ct);
+        home.SelectCountdown(Assert.Single(fixture.Countdowns.Items));
+
+        home.NewCountdownCommand.Execute(null);
+        Assert.Null(home.SelectedCountdown);
+        Assert.Equal(string.Empty, home.CountdownTitle);
+        Assert.Null(home.CountdownTargetUtc);
+        home.CountdownTitle = "Visit";
+        home.CountdownTargetUtc = DateTimeOffset.Parse("2026-12-20T12:00:00Z");
+        await home.SaveCountdownAsync(ct);
+        Assert.Equal(2, fixture.Countdowns.Items.Count);
+
+        var tasks = new TasksFocusViewModel(fixture.Context) { Title = "book dinner" };
+        await tasks.SaveTaskCommand.ExecuteAsync(null);
+        tasks.SelectTask(tasks.ActiveTasks.Single());
+
+        tasks.NewTaskCommand.Execute(null);
+        Assert.Null(tasks.SelectedTask);
+        Assert.Equal(string.Empty, tasks.Title);
+        tasks.Title = "buy flowers";
+        await tasks.SaveTaskCommand.ExecuteAsync(null);
+        Assert.Equal(2, tasks.ActiveTasks.Count);
+    }
+
+    [Fact]
     public async Task Countdown_deletion_requires_a_separate_confirmation()
     {
         var fixture = FeatureFixture.Create();

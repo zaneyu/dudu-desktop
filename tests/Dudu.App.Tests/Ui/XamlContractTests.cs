@@ -386,6 +386,24 @@ public sealed class XamlContractTests
         Assert.Contains("Trace.TraceError", methodBody, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Tasks_and_countdowns_offer_a_new_action_and_mirror_the_selection()
+    {
+        // Once an item was selected there was no way to start a fresh one
+        // (typing a new title overwrote it), and the countdown list kept its
+        // highlight after the view model cleared the selection.
+        var root = FindRepositoryRoot();
+        var home = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml"));
+        var tasks = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "TasksFocusPage.xaml"));
+
+        Assert.Contains("Command=\"{x:Bind ViewModel.NewCountdownCommand}\"", home);
+        Assert.Contains("AutomationProperties.AutomationId=\"HomeNewCountdown\"", home);
+        Assert.Contains("SelectedItem=\"{x:Bind ViewModel.SelectedCountdown, Mode=OneWay}\"", home);
+        Assert.Contains("Command=\"{x:Bind ViewModel.NewTaskCommand}\"", tasks);
+        Assert.Contains("AutomationProperties.AutomationId=\"TasksNew\"", tasks);
+        Assert.Contains("SelectedItem=\"{x:Bind ViewModel.SelectedTask, Mode=OneWay}\"", tasks);
+    }
+
     private static string FindRepositoryRoot()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

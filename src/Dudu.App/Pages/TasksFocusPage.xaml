@@ -76,7 +76,14 @@
                         <TextBox Header="notes" Text="{x:Bind ViewModel.Notes, Mode=TwoWay}" TextWrapping="Wrap" AcceptsReturn="True" AutomationProperties.AutomationId="TasksNotes" AutomationProperties.Name="notes" />
                         <TextBox x:Name="TaskDueBox" Header="due date and time" TextChanged="TaskDueBox_TextChanged" PlaceholderText="optional" AutomationProperties.AutomationId="TasksDue" AutomationProperties.Name="due date and time" />
                         <TextBlock x:Name="TaskDueValidation" TextWrapping="Wrap" Foreground="{ThemeResource ErrorBrush}" Visibility="Collapsed" AutomationProperties.AutomationId="TasksDueValidation" AutomationProperties.Name="due date validation" />
-                        <Button x:Name="SaveTaskButton" Content="save task" Command="{x:Bind ViewModel.SaveTaskCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="TasksSave" AutomationProperties.Name="save task" HorizontalAlignment="Left" />
+                        <Grid ColumnSpacing="8" RowSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Button x:Name="SaveTaskButton" Content="save task" Command="{x:Bind ViewModel.SaveTaskCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="TasksSave" AutomationProperties.Name="save task" HorizontalAlignment="Stretch" />
+                            <Button Grid.Column="1" Content="new task" Command="{x:Bind ViewModel.NewTaskCommand}" AutomationProperties.AutomationId="TasksNew" AutomationProperties.Name="new task" HorizontalAlignment="Stretch" />
+                        </Grid>
                     </StackPanel>
                 </Border>
 

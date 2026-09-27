@@ -30,6 +30,7 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
         DeleteTaskCommand = new AsyncRelayCommand<TaskItem>((item, ct) => DeleteTaskAsync(item, ct));
         RequestDeleteTaskCommand = new RelayCommand<TaskItem>(RequestDeleteTask);
         CancelDeleteTaskCommand = new RelayCommand(() => PendingDeleteTask = null);
+        NewTaskCommand = new RelayCommand(() => SelectTask(null));
         // Each focus button is only enabled in a state where its transition can
         // succeed; they used to be enabled all the time, so "pause" while paused
         // or "start" while running just produced an error.
@@ -50,6 +51,9 @@ public sealed class TasksFocusViewModel : FeatureViewModelBase
     public IAsyncRelayCommand<TaskItem> DeleteTaskCommand { get; }
     public IRelayCommand<TaskItem> RequestDeleteTaskCommand { get; }
     public IRelayCommand CancelDeleteTaskCommand { get; }
+    /// <summary>Clears the task editor so the next save creates a new task
+    /// instead of overwriting the one selected in the list.</summary>
+    public IRelayCommand NewTaskCommand { get; }
     public IAsyncRelayCommand StartFocusCommand { get; }
     public IAsyncRelayCommand PauseFocusCommand { get; }
     public IAsyncRelayCommand ResumeFocusCommand { get; }

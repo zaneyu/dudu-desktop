@@ -154,10 +154,17 @@
                                 <TextBox Header="title" Text="{x:Bind ViewModel.CountdownTitle, Mode=TwoWay}" PlaceholderText="for example, next visit" AutomationProperties.AutomationId="HomeCountdownTitle" AutomationProperties.Name="title" />
                                 <TextBox x:Name="CountdownTargetBox" Header="target" PlaceholderText="blank means tmrw" TextChanged="CountdownTarget_Changed" AutomationProperties.AutomationId="HomeCountdownTarget" AutomationProperties.Name="target" />
                                 <TextBlock x:Name="CountdownTargetValidation" TextWrapping="Wrap" Foreground="{ThemeResource ErrorBrush}" Visibility="Collapsed" AutomationProperties.AutomationId="HomeCountdownTargetValidation" AutomationProperties.Name="countdown target validation" />
-                                <Button x:Name="HomeSaveCountdownButton" Content="save countdown" Command="{x:Bind ViewModel.CreateCountdownCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="HomeSaveCountdown" AutomationProperties.Name="save" />
+                                <Grid ColumnSpacing="8" RowSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Button x:Name="HomeSaveCountdownButton" Content="save countdown" Command="{x:Bind ViewModel.CreateCountdownCommand}" Style="{StaticResource PrimaryButtonStyle}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="HomeSaveCountdown" AutomationProperties.Name="save" />
+                                    <Button Grid.Column="1" Content="new countdown" Command="{x:Bind ViewModel.NewCountdownCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="HomeNewCountdown" AutomationProperties.Name="new countdown" />
+                                </Grid>
                             </StackPanel>
                         </Expander>
-                        <ListView ItemsSource="{x:Bind ViewModel.Countdowns, Mode=OneWay}" SelectionChanged="CountdownList_SelectionChanged" MaxHeight="220" AutomationProperties.AutomationId="HomeCountdownList" AutomationProperties.Name="countdowns list">
+                        <ListView ItemsSource="{x:Bind ViewModel.Countdowns, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.SelectedCountdown, Mode=OneWay}" SelectionChanged="CountdownList_SelectionChanged" MaxHeight="220" AutomationProperties.AutomationId="HomeCountdownList" AutomationProperties.Name="countdowns list">
                             <ListView.ItemTemplate>
                                 <DataTemplate x:DataType="models:Countdown"><TextBlock Text="{x:Bind Title}" Margin="4" TextWrapping="Wrap" /></DataTemplate>
                             </ListView.ItemTemplate>
