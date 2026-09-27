@@ -29,7 +29,6 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private const nint SpiSetWorkArea = 0x002F;
     private const uint WmLButtonDown = 0x0201;
     private const uint WmLButtonUp = 0x0202;
-    private const uint WmLButtonDoubleClick = 0x0203;
     private const uint WmRButtonUp = 0x0205;
     private const uint WmMouseMove = 0x0200;
     private const uint WmMouseWheel = 0x020A;
@@ -58,10 +57,12 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         | WINDOW_EX_STYLE.WS_EX_NOACTIVATE;
 
     /// <summary>
-    /// Window class style for the pet window. CS_DBLCLKS is required for
-    /// WM_LBUTTONDBLCLK (double-click to open Home) to ever be delivered.
+    /// Window class style for the pet window. Deliberately omits CS_DBLCLKS:
+    /// every click on Dudu pets it, so the second click of a double-click
+    /// must arrive as an ordinary WM_LBUTTONDOWN/UP pair (a second pet), never
+    /// as WM_LBUTTONDBLCLK.
     /// </summary>
-    internal const WNDCLASS_STYLES PetWindowClassStyle = WNDCLASS_STYLES.CS_DBLCLKS;
+    internal const WNDCLASS_STYLES PetWindowClassStyle = 0;
     private static readonly TimeSpan ShutdownTimeout = TimeSpan.FromSeconds(5);
     // ~30 window moves per second keeps an idle walk smooth without a busy loop.
     private static readonly TimeSpan WanderStepInterval = TimeSpan.FromMilliseconds(33);
@@ -76,9 +77,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
 
     private readonly IFramePresenter _presenter;
     private readonly PixelSize _nominalSize;
-    private readonly Func<CancellationToken, Task> _openHome;
     private readonly Func<PetPlacement, CancellationToken, Task>? _persistPlacementAsync;
-    private readonly Action _showContextMenu;
     private readonly Action<uint, nint, nint>? _systemMessageHandler;
     private Func<uint, nint, nint, bool>? _runtimeMessageHandler;
     private Action<bool>? _dragStateHandler;
@@ -106,7 +105,6 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private bool _actionSurfacePointerArmed;
     private OverlaySurfaceAction? _armedOverlayAction;
     private bool _petBodyPointerArmed;
-    private bool _suppressPetBodyToggleOnNextUp;
     private bool _placementDirty;
     private readonly OverlayPointerGesture _gesture = new();
     private bool _shutdownIssued;
@@ -118,8 +116,6 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         IFramePresenter presenter,
         PetPlacement placement,
         PixelSize nominalSize,
-        Func<CancellationToken, Task>? openHome,
-        Action? showContextMenu,
         IReadOnlyList<PixelRect>? bubbleHitRegions,
         Action<Exception>? diagnostic,
         Action<uint, nint, nint>? systemMessageHandler,
@@ -135,9 +131,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         }
 
         _nominalSize = nominalSize;
-        _openHome = openHome ?? (_ => Task.CompletedTask);
         _persistPlacementAsync = persistPlacementAsync;
-        _showContextMenu = showContextMenu ?? (() => { });
         _systemMessageHandler = systemMessageHandler;
         _bubbleHitRegions = bubbleHitRegions?.ToArray() ?? [];
         _diagnostic = diagnostic ?? DefaultDiagnostic;
@@ -164,8 +158,6 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         IFramePresenter presenter,
         PetPlacement placement,
         PixelSize nominalSize,
-        Func<CancellationToken, Task>? openHome = null,
-        Action? showContextMenu = null,
         IReadOnlyList<PixelRect>? bubbleHitRegions = null,
         Action<Exception>? diagnostic = null,
         Action<uint, nint, nint>? systemMessageHandler = null,
@@ -177,8 +169,6 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             presenter,
             placement,
             nominalSize,
-            openHome,
-            showContextMenu,
             bubbleHitRegions,
             diagnostic,
             systemMessageHandler,
@@ -996,7 +986,6 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             switch (message)
             {
             case WmLButtonDown:
-                _gesture.NoteButtonDown();
                 if (TryArmActionSurfacePointer(lParam)) break;
                 _petBodyPointerArmed = BeginDrag(lParam);
                 break;
@@ -1004,18 +993,13 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                 ContinueDrag(lParam);
                 break;
             case WmLButtonUp:
-                var releasedPoint = GetClientPoint(lParam);
                 // Click-vs-drag is decided in screen space by the gesture
                 // (the window follows the cursor, so client points cannot
                 // tell a slow drag from a click). Decide BEFORE releasing
                 // capture: ReleaseCapture synchronously delivers
                 // WM_CAPTURECHANGED, which cancels the gesture.
-                var wasPetBodyClick = _gesture.Release(TryGetCursorScreenPoint());
-                var toggleActionSurface = _petBodyPointerArmed
-                    && !_suppressPetBodyToggleOnNextUp
-                    && wasPetBodyClick
-                    && !_gesture.IsPetBodyToggleSuppressed(Environment.TickCount64);
-                _suppressPetBodyToggleOnNextUp = false;
+                var released = _gesture.Release(TryGetCursorScreenPoint());
+                var wasPetBodyClick = _petBodyPointerArmed && released;
                 _petBodyPointerArmed = false;
                 SettleDraggedWindow();
                 CommitPlacementIfDirty();
@@ -1023,68 +1007,20 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                 if (_actionSurfacePointerArmed)
                 {
                     _actionSurfacePointerArmed = false;
-                    _gesture.ClearPetBodyClick();
                     _ = TryHandleActionSurfacePointer(lParam);
                 }
-                else if (toggleActionSurface && _actionSurface is not null)
+                else if (wasPetBodyClick)
                 {
-                    _actionSurface.ToggleFromPetBody(
-                        new PixelRect(0, 0, _windowBounds.Width, _windowBounds.Height),
-                        new PixelPoint(releasedPoint.X, releasedPoint.Y));
-                    // Remember that this click toggled the bubble so a
-                    // WM_LBUTTONDBLCLK completing a double-click on the pet
-                    // opens Home instead of arming whatever bubble action the
-                    // first click just placed under the cursor.
-                    _gesture.NotePetBodyClick();
+                    PetFromClick();
                 }
-                else
-                {
-                    _gesture.ClearPetBodyClick();
-                }
-                break;
-            case WmLButtonDoubleClick:
-                var petBodyDoubleClick = _gesture.TakeDoubleClickFollowsPetBodyClick();
-                if (!petBodyDoubleClick && TryArmActionSurfacePointer(lParam))
-                {
-                    // A double-click landing on an open bubble's action behaves
-                    // exactly like an ordinary down-click on it: the paired
-                    // WM_LBUTTONUP above still dispatches it through
-                    // TryHandleActionSurfacePointer. Handling this any other
-                    // way here used to dispatch the action AND open Home, and
-                    // dropped every other rapid click on the same button.
-                    break;
-                }
-
-                // The pet body's first click of this double-click already ran
-                // its own WM_LBUTTONUP and toggled the action bubble; close it
-                // before opening Home so the two don't end up stacked (and so
-                // the bubble action it put under the cursor is never armed),
-                // and suppress the paired WM_LBUTTONUP's bubble toggle so it
-                // doesn't immediately reopen what was just closed. Arm drag
-                // from this second press exactly like a normal
-                // WM_LBUTTONDOWN would.
-                _armedOverlayAction = null;
-                _actionSurfacePointerArmed = false;
-                _actionSurface?.Close();
-                ReleasePointerCapture();
-                _petBodyPointerArmed = BeginDrag(lParam);
-                _suppressPetBodyToggleOnNextUp = true;
-                // A third rapid click arrives as a plain down/up; keep it
-                // from toggling the bubble back open next to Home.
-                _gesture.NoteDoubleClickOpenedHome(
-                    Environment.TickCount64,
-                    (int)Math.Min(int.MaxValue, PInvoke.GetDoubleClickTime()));
-                _ = OverlayNativeCallbackObserver.ObserveAsync(
-                    _openHome(CancellationToken.None),
-                    _diagnostic);
                 break;
             case WmRButtonUp:
-                // While the left button holds capture (a press or drag on the
-                // pet), a right-button release is delivered here too; opening
-                // the menu then popped it mid-gesture.
-                if (ShouldShowContextMenu(_dragging))
+                // A right-click pets Dudu too; nothing pops up. While the
+                // left button holds capture (a press or drag on the pet) the
+                // release is delivered here as well and is ignored.
+                if (ShouldPetOnRightClick(_dragging))
                 {
-                    _showContextMenu();
+                    PetFromClick();
                 }
                 break;
             case WmMouseWheel:
@@ -1121,7 +1057,6 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                 _actionSurfacePointerArmed = false;
                 _armedOverlayAction = null;
                 _petBodyPointerArmed = false;
-                _suppressPetBodyToggleOnNextUp = false;
                 break;
             case WmDestroy:
                 StopPlacementSaveTimer();
@@ -1228,9 +1163,20 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         return value > 0 ? value : PInvoke.GetSystemMetrics(index);
     }
 
-    /// <summary>The context menu never opens while the left button holds
+    /// <summary>A right-click never pets while the left button holds
     /// capture for a press or drag on the pet.</summary>
-    internal static bool ShouldShowContextMenu(bool leftButtonCaptured) => !leftButtonCaptured;
+    internal static bool ShouldPetOnRightClick(bool leftButtonCaptured) => !leftButtonCaptured;
+
+    /// <summary>Clicking Dudu plays the petting reaction (the same shared
+    /// affection path as Home's "pet dudu") and never opens a bubble, menu, or
+    /// window. Queued in click order; a failure goes to diagnostics only.</summary>
+    private void PetFromClick()
+    {
+        if (_actionSurface is { } surface)
+        {
+            _actionDispatchQueue.EnqueuePet(surface);
+        }
+    }
 
     private static PixelPoint? TryGetCursorScreenPoint() =>
         PInvoke.GetCursorPos(out var cursor) ? new PixelPoint(cursor.X, cursor.Y) : null;

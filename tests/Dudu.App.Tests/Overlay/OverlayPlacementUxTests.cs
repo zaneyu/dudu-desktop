@@ -110,7 +110,7 @@ public sealed class OverlayPlacementUxTests
     {
         var source = ReadRepositoryFile("src", "Dudu.App", "Overlay", "OverlayWindowHost.cs");
 
-        var up = Slice(source, "case WmLButtonUp:", "case WmLButtonDoubleClick:");
+        var up = Slice(source, "case WmLButtonUp:", "case WmRButtonUp:");
         Assert.True(
             up.IndexOf("SettleDraggedWindow();", StringComparison.Ordinal)
                 < up.IndexOf("CommitPlacementIfDirty();", StringComparison.Ordinal),

@@ -54,4 +54,48 @@ public sealed class OverlayActionSurfaceControllerTests
         Assert.Equal(OverlayActionSurfaceKind.Status, surface.Kind);
         Assert.Equal("reaction failed", surface.ErrorMessage);
     }
+
+    [Fact]
+    public async Task Clicking_dudu_plays_the_petting_reaction_and_opens_nothing()
+    {
+        var presented = new List<string>();
+        using var surface = new OverlayActionSurfaceController();
+        var context = OverlayTestFeatureContext.Create(presentOneShotPetAsync: (_, dismissalId, _) =>
+        {
+            presented.Add(dismissalId);
+            return Task.CompletedTask;
+        });
+        surface.Bind(new OverlayCommandRouter(context, (_, _) => Task.CompletedTask));
+
+        await surface.PetFromBodyAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(["petted"], presented);
+        Assert.Equal(OverlayActionSurfaceKind.Closed, surface.Kind);
+        Assert.Null(surface.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task A_failed_pet_from_a_click_propagates_without_painting_an_error_panel()
+    {
+        using var surface = new OverlayActionSurfaceController();
+        var context = OverlayTestFeatureContext.Create(presentOneShotPetAsync: (_, _, _) =>
+            Task.FromException(new InvalidOperationException("reaction failed")));
+        surface.Bind(new OverlayCommandRouter(context, (_, _) => Task.CompletedTask));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => surface.PetFromBodyAsync(TestContext.Current.CancellationToken));
+
+        Assert.Equal(OverlayActionSurfaceKind.Closed, surface.Kind);
+        Assert.Null(surface.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task Clicking_dudu_before_the_router_is_bound_is_a_quiet_no_op()
+    {
+        using var surface = new OverlayActionSurfaceController();
+
+        await surface.PetFromBodyAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(OverlayActionSurfaceKind.Closed, surface.Kind);
+    }
 }

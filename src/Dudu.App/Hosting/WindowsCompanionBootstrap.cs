@@ -751,12 +751,6 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                 presenter,
                 placement,
                 nominalSize,
-                openHome,
-                // Right-clicking the pet used to do nothing; it now offers the
-                // same menu as the tray icon. The tray is composed just below
-                // (and may already be disposed during shutdown), so it is
-                // read when the click happens, never captured up front.
-                showContextMenu: () => ShowTrayMenuFromPet(tray, errorReporter),
                 systemMessageHandler: (message, wParam, lParam) =>
                 {
                     _ = events.HandleWindowMessage(message, wParam, lParam);
@@ -1278,32 +1272,6 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
     /// exception type/HResult only. Never throws and never changes the
     /// caller's cleanup behavior.
     /// </summary>
-    /// <summary>The pet's right-click menu: the tray's own menu, or nothing
-    /// when the tray is not composed (yet) or already disposed. Runs on the
-    /// overlay owner thread, which is the tray's owner thread too.</summary>
-    internal static void ShowTrayMenuFromPet(TrayIconService? tray, IAppHostErrorReporter? errorReporter)
-    {
-        if (tray is null)
-        {
-            return;
-        }
-
-        try
-        {
-            _ = tray.ShowMenu();
-        }
-        catch (ObjectDisposedException)
-        {
-            // Shutdown raced the click; there is no menu to show any more.
-        }
-        catch (Exception exception)
-        {
-            ReportStaticFailure(errorReporter, PetContextMenuOperation, exception);
-        }
-    }
-
-    internal const string PetContextMenuOperation = "pet-context-menu";
-
     internal static void ReportStaticFailure(
         IAppHostErrorReporter? errorReporter,
         string operation,

@@ -21,9 +21,9 @@ public sealed class OverlayStaticGuardTests
             OverlayWindowHost.PetWindowExStyle);
         Assert.False(OverlayWindowHost.PetWindowExStyle.HasFlag(WINDOW_EX_STYLE.WS_EX_TRANSPARENT));
 
-        // CS_DBLCLKS is required for WM_LBUTTONDBLCLK (double-click to open
-        // Home) to ever be delivered to the window procedure.
-        Assert.True(OverlayWindowHost.PetWindowClassStyle.HasFlag(WNDCLASS_STYLES.CS_DBLCLKS));
+        // No CS_DBLCLKS: every click pets Dudu, so a double-click must arrive
+        // as two ordinary clicks rather than a WM_LBUTTONDBLCLK.
+        Assert.False(OverlayWindowHost.PetWindowClassStyle.HasFlag(WNDCLASS_STYLES.CS_DBLCLKS));
     }
 
     [Fact]

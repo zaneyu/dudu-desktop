@@ -67,21 +67,6 @@ public sealed class TrayMenuUxTests
         Assert.Null(native.LastItems);
     }
 
-    [Fact]
-    public void The_tray_menu_can_be_shown_from_another_surface_and_routes_its_choice()
-    {
-        var native = new RecordingTrayNativeApi { Selected = TrayCommand.PauseOneHour };
-        var commands = new List<TrayCommand>();
-        using var service = new TrayIconService(native, commands.Add);
-
-        Assert.False(service.ShowMenu());
-        service.Attach(42);
-
-        Assert.True(service.ShowMenu());
-        Assert.NotNull(native.LastItems);
-        Assert.Equal([TrayCommand.PauseOneHour], commands);
-    }
-
     [Theory]
     [InlineData(TrayCommand.PauseOneHour)]
     [InlineData(TrayCommand.PauseUntilTomorrowAtSeven)]

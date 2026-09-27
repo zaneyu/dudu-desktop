@@ -107,13 +107,7 @@ using var presenter = new LayeredFramePresenter();
 using var host = await OverlayWindowHost.CreateAsync(
     presenter,
     new PetPlacement("MISSING", 0.8, 0.8, 1),
-    animation.NominalSize,
-    openHome: _ =>
-    {
-        Console.WriteLine("OpenHome callback");
-        return Task.CompletedTask;
-    },
-    showContextMenu: () => Console.WriteLine("Context menu callback"));
+    animation.NominalSize);
 
 using var frame = composer.Compose(pack, animation, 0);
 await presenter.PresentAsync(frame, CancellationToken.None);
@@ -134,7 +128,7 @@ Console.WriteLine("1. Click a transparent corner over Notepad: Notepad must rece
 Console.WriteLine("2. Click a visible pixel: overlay must receive the click without changing the foreground application.");
 Console.WriteLine("3. Drag from a visible pixel across the monitor; release. The pet must stay at the dropped position after a display/DPI refresh.");
 Console.WriteLine("4. Hover the pet and wheel up/down. Scale must change only within 0.5x..2x and the window must remain visible.");
-Console.WriteLine("5. Double-click the visible pet for OpenHome and right-click it for Context menu; neither may activate the overlay.");
+Console.WriteLine("5. Left-, right- and double-click the visible pet: no menu, bubble or window may open, and the overlay must not activate.");
 Console.WriteLine();
 Console.Write("Enter PASS or FAIL (include a short reason for FAIL): ");
 var verdict = Console.ReadLine()?.Trim();

@@ -46,6 +46,17 @@ internal sealed class OverlayActionDispatchQueue : IDisposable
         EnqueueCore(token => surface.HandlePresentedActionAsync(action, token));
     }
 
+    /// <summary>A click on Dudu's body: pet it, in click order.</summary>
+    public void EnqueuePet(OverlayActionSurfaceController surface)
+    {
+        ArgumentNullException.ThrowIfNull(surface);
+        EnqueueCore(async token =>
+        {
+            await surface.PetFromBodyAsync(token).ConfigureAwait(false);
+            return true;
+        });
+    }
+
     private void EnqueueCore(Func<CancellationToken, Task<bool>> dispatch)
     {
         lock (_gate)

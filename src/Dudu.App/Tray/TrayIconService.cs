@@ -219,29 +219,6 @@ public sealed class TrayIconService : IDisposable, IAsyncDisposable
         return true;
     }
 
-    /// <summary>
-    /// Shows the same menu a right-click on the tray icon shows, for other
-    /// surfaces that should offer it (a right-click on the pet itself).
-    /// Must run on the owner thread, like the tray callback it mirrors.
-    /// Returns false when the tray is not attached or already disposed.
-    /// </summary>
-    public bool ShowMenu()
-    {
-        nint ownerWindow;
-        lock (_gate)
-        {
-            if (_disposed || _ownerWindow == 0) return false;
-            ownerWindow = _ownerWindow;
-        }
-
-        if (_native.TrackPopupMenu(ownerWindow, BuildMenu()) is { } selected)
-        {
-            ExecuteCommand(selected);
-        }
-
-        return true;
-    }
-
     public void ExecuteCommand(TrayCommand command)
     {
         Action<TrayCommand> handler;

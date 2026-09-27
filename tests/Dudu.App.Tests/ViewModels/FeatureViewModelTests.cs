@@ -2466,7 +2466,7 @@ public sealed class FeatureViewModelTests
         var anchor = new Dudu.Core.Assets.PixelPoint(320, 400);
 
         Assert.Equal(OverlayActionSurfaceKind.Closed, surface.Kind);
-        surface.ToggleFromPetBody(workArea, anchor);
+        surface.Open(workArea, anchor);
         Assert.Equal(OverlayActionSurfaceKind.Primary, surface.Kind);
         var comfort = surface.Arrangement!.PrimaryActions.Single(item => item.Action == OverlayAction.ComfortMe);
         await surface.HandlePointerAsync(Center(comfort.HitRegion), TestContext.Current.CancellationToken);
@@ -2477,7 +2477,7 @@ public sealed class FeatureViewModelTests
         await surface.HandlePointerAsync(Center(close.HitRegion), TestContext.Current.CancellationToken);
         Assert.Equal(OverlayActionSurfaceKind.Closed, surface.Kind);
 
-        surface.ToggleFromPetBody(workArea, anchor);
+        surface.Open(workArea, anchor);
         var tasks = surface.Arrangement!.PrimaryActions.Single(item => item.Action == OverlayAction.Tasks);
         await surface.HandlePointerAsync(Center(tasks.HitRegion), TestContext.Current.CancellationToken);
         Assert.Equal(["tasks"], destinations);

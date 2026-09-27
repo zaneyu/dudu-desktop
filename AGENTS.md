@@ -614,7 +614,6 @@ authoritative for future changes.
   `pause-persist` (a pause she chose could not be saved for the next start;
   the pause itself still applies), `tray-attach`, `tray-recreate`,
   `tray-menu-state` (the tray menu falls back to neutral labels),
-  `pet-context-menu` (right-click on the pet showing the tray menu),
   `taskbar-tray-recreate`, `overlay-create`, `overlay-dispose`,
   `overlay-message-loop`, `fullscreen-poll` (fail-closed to hidden, unchanged),
   native callbacks (`session-lock/unlock`, `suspend`, `resume`,

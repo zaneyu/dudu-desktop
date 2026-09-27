@@ -1,12 +1,10 @@
-using Dudu.App.Hosting;
-using Dudu.App.Tray;
 using Xunit;
 
 namespace Dudu.App.Tests.Hosting;
 
 /// <summary>
 /// Production wiring for chrome fixes whose building blocks already existed but were
-/// never connected: the tray menu's state provider, the pet's right-click menu, the
+/// never connected: the tray menu's state provider, the
 /// fullscreen reading that lets "pause until fullscreen ends" end, the audio pause
 /// gate, and the toast click router. The composition root needs WinUI to run, so the
 /// wiring is pinned as source text (like ProductionStartupContractTests) and the
@@ -15,53 +13,12 @@ namespace Dudu.App.Tests.Hosting;
 public sealed class ChromeWiringUxTests
 {
     [Fact]
-    public void Right_click_on_the_pet_shows_the_tray_menu()
-    {
-        var native = new RecordingTrayNativeApi();
-        using var tray = new TrayIconService(native, _ => { });
-        tray.Attach(42);
-
-        WindowsCompanionRuntime.ShowTrayMenuFromPet(tray, errorReporter: null);
-
-        Assert.Equal(1, native.MenuShown);
-        Assert.Equal(42, native.LastOwner);
-    }
-
-    [Fact]
-    public void Right_click_before_the_tray_exists_or_after_it_is_gone_is_a_quiet_no_op()
-    {
-        var reporter = new RecordingErrorReporter();
-        WindowsCompanionRuntime.ShowTrayMenuFromPet(null, reporter);
-
-        var native = new RecordingTrayNativeApi();
-        var tray = new TrayIconService(native, _ => { });
-        tray.Attach(42);
-        tray.Dispose();
-        WindowsCompanionRuntime.ShowTrayMenuFromPet(tray, reporter);
-
-        Assert.Equal(0, native.MenuShown);
-        Assert.Empty(reporter.Operations);
-    }
-
-    [Fact]
-    public void A_failing_pet_menu_is_reported_and_never_escapes_the_window_procedure()
-    {
-        var reporter = new RecordingErrorReporter();
-        using var tray = new TrayIconService(new RecordingTrayNativeApi { Throw = true }, _ => { });
-        tray.Attach(42);
-
-        WindowsCompanionRuntime.ShowTrayMenuFromPet(tray, reporter);
-
-        Assert.Equal([WindowsCompanionRuntime.PetContextMenuOperation], reporter.Operations);
-    }
-
-    [Fact]
-    public void Runtime_gives_the_tray_its_menu_state_and_the_pet_its_context_menu()
+    public void Runtime_gives_the_tray_its_menu_state_and_the_pet_no_context_menu()
     {
         var runtime = ReadHosting("WindowsCompanionBootstrap.cs");
         var create = Slice(runtime, "public static async Task<WindowsCompanionRuntime> CreateAsync(", "catch\n");
 
-        Assert.Contains("showContextMenu: () => ShowTrayMenuFromPet(tray, errorReporter)", create);
+        Assert.DoesNotContain("showContextMenu", create);
         Assert.Contains("menuState: () => new TrayMenuState(", create);
         Assert.Contains("menuOverlay.IsVisible,", create);
         Assert.Contains("pauseState?.Invoke().Mode ?? PauseMode.None", create);
@@ -104,7 +61,7 @@ public sealed class ChromeWiringUxTests
     {
         var agents = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "AGENTS.md"));
 
-        Assert.Contains("`pet-context-menu`", agents);
+        Assert.DoesNotContain("`pet-context-menu`", agents);
         Assert.Contains("`reminder-toast-action`", agents);
         Assert.Contains("`notification-invoked`", agents);
         Assert.Contains("`tray-menu-state`", agents);
@@ -137,31 +94,5 @@ public sealed class ChromeWiringUxTests
         }
 
         throw new DirectoryNotFoundException("Repository root not found.");
-    }
-
-    private sealed class RecordingTrayNativeApi : ITrayNativeApi
-    {
-        public bool Throw { get; init; }
-        public int MenuShown { get; private set; }
-        public nint LastOwner { get; private set; }
-
-        public bool Add(nint ownerWindow, uint callbackMessage, string tooltip) => true;
-        public bool Remove(nint ownerWindow) => true;
-        public bool Recreate(nint ownerWindow, uint callbackMessage, string tooltip) => true;
-
-        public TrayCommand? TrackPopupMenu(nint ownerWindow, IReadOnlyList<TrayMenuItem> items)
-        {
-            if (Throw) throw new InvalidOperationException("menu failed");
-            MenuShown++;
-            LastOwner = ownerWindow;
-            return null;
-        }
-    }
-
-    private sealed class RecordingErrorReporter : IAppHostErrorReporter
-    {
-        private readonly List<string> _operations = new();
-        public IReadOnlyList<string> Operations => _operations;
-        public void Report(string operation, Exception exception) => _operations.Add(operation);
     }
 }

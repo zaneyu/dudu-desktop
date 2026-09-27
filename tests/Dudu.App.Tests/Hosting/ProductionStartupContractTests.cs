@@ -176,7 +176,7 @@ public sealed class ProductionStartupContractTests
         var dispatcher = File.ReadAllText(Path.Combine(
             root, "src", "Dudu.App", "System", "AwaitableUiDispatcher.cs"));
 
-        Assert.Contains("ToggleFromPetBody(", host);
+        Assert.Contains("_actionDispatchQueue.EnqueuePet(", host);
         Assert.Contains("_actionDispatchQueue.Enqueue", host);
         Assert.DoesNotContain("OverlayActionSurfaceObserver.ObserveAsync", host);
         Assert.Contains("DispatcherQueue.GetForCurrentThread()", app);

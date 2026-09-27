@@ -210,27 +210,42 @@ public sealed class OverlayWindowHostTests
         // comparing window-relative points (the window moves with the cursor).
         var handleMessage = Body(source, "private void HandleMessage(uint message, WPARAM wParam, LPARAM lParam)");
         Assert.Contains("_gesture.Release(", handleMessage, StringComparison.Ordinal);
-        Assert.Contains("_gesture.TakeDoubleClickFollowsPetBodyClick()", handleMessage, StringComparison.Ordinal);
         Assert.Contains("case WmTimer:", handleMessage, StringComparison.Ordinal);
     }
 
     [Theory]
     [InlineData(false, true)]
     [InlineData(true, false)]
-    public void Context_menu_never_opens_while_the_left_button_holds_capture(bool captured, bool expected)
+    public void Right_click_never_pets_while_the_left_button_holds_capture(bool captured, bool expected)
     {
-        Assert.Equal(expected, OverlayWindowHost.ShouldShowContextMenu(captured));
+        Assert.Equal(expected, OverlayWindowHost.ShouldPetOnRightClick(captured));
     }
 
     [Fact]
-    public void Host_gates_the_menu_on_capture_uses_per_monitor_drag_thresholds_and_quiets_a_third_click()
+    public void Clicking_dudu_pets_it_and_never_opens_a_bubble_menu_or_home()
     {
         var source = OverlaySourceFiles.Read("src", "Dudu.App", "Overlay", "OverlayWindowHost.cs");
         var handleMessage = Body(source, "private void HandleMessage(uint message, WPARAM wParam, LPARAM lParam)");
 
-        Assert.Contains("ShouldShowContextMenu(_dragging)", handleMessage, StringComparison.Ordinal);
-        Assert.Contains("_gesture.IsPetBodyToggleSuppressed(", handleMessage, StringComparison.Ordinal);
-        Assert.Contains("_gesture.NoteDoubleClickOpenedHome(", handleMessage, StringComparison.Ordinal);
+        // Left and right clicks both play the petting reaction through the
+        // ordered dispatch queue; nothing pops up.
+        var up = handleMessage[handleMessage.IndexOf("case WmLButtonUp:", StringComparison.Ordinal)..handleMessage.IndexOf("case WmRButtonUp:", StringComparison.Ordinal)];
+        Assert.Contains("PetFromClick();", up, StringComparison.Ordinal);
+        var right = handleMessage[handleMessage.IndexOf("case WmRButtonUp:", StringComparison.Ordinal)..handleMessage.IndexOf("case WmMouseWheel:", StringComparison.Ordinal)];
+        Assert.Contains("ShouldPetOnRightClick(_dragging)", right, StringComparison.Ordinal);
+        Assert.Contains("PetFromClick();", right, StringComparison.Ordinal);
+        Assert.Contains("_actionDispatchQueue.EnqueuePet(surface)", Body(source, "private void PetFromClick()"), StringComparison.Ordinal);
+
+        Assert.DoesNotContain("ToggleFromPetBody", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("_showContextMenu", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("_openHome", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("WmLButtonDoubleClick", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Host_uses_per_monitor_drag_thresholds()
+    {
+        var source = OverlaySourceFiles.Read("src", "Dudu.App", "Overlay", "OverlayWindowHost.cs");
 
         var beginDrag = Body(source, "private bool BeginDrag(LPARAM lParam)");
         Assert.Contains("GetDragThreshold(SYSTEM_METRICS_INDEX.SM_CXDRAG, _currentDpi)", beginDrag, StringComparison.Ordinal);

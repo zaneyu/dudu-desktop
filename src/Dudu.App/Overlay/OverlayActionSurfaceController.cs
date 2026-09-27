@@ -42,11 +42,21 @@ public sealed class OverlayActionSurfaceController : IDisposable
         router.ComfortPanelChanged += OnComfortPanelChanged;
     }
 
-    public void ToggleFromPetBody(PixelRect workArea, PixelPoint petAnchor)
+    /// <summary>A click on Dudu's body: plays the petting reaction through the
+    /// bound router and never opens this surface. Faults propagate to the
+    /// caller (the host's dispatch queue reports them to diagnostics) instead
+    /// of painting an error panel over the pet.</summary>
+    public Task PetFromBodyAsync(CancellationToken cancellationToken = default)
     {
-        bool close;
-        lock (_gate) close = _kind != OverlayActionSurfaceKind.Closed;
-        if (close) Close(); else Open(workArea, petAnchor);
+        OverlayCommandRouter? router;
+        lock (_gate)
+        {
+            ThrowIfDisposed();
+            router = _router;
+        }
+        return router is null
+            ? Task.CompletedTask
+            : router.ExecuteAsync(OverlayAction.Pet, cancellationToken);
     }
 
     public void Open(PixelRect workArea, PixelPoint petAnchor)
