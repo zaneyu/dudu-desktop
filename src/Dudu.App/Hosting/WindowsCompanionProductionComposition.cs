@@ -807,7 +807,7 @@ public static class WindowsCompanionProductionComposition
                             _ = StartAnimationPlayback(animationEngine.PlayAsync(
                                 pet.Current,
                                 AnimationOptionsFor(runtimePreferences.Current),
-                                CancellationToken.None));
+                                CancellationToken.None), host.ErrorReporter);
                         }
                         finally
                         {
@@ -829,7 +829,8 @@ public static class WindowsCompanionProductionComposition
                         animationEngine.PlayAsync(
                             pet.Current,
                             AnimationOptionsFor(preferences),
-                            cancellationToken));
+                            cancellationToken),
+                        host.ErrorReporter);
                     await overlay.SetActionSurfaceAsync(actionSurface, cancellationToken);
                 },
                 initialUserVisible: showOverlay,
@@ -855,7 +856,8 @@ public static class WindowsCompanionProductionComposition
                         animationEngine.PlayAsync(
                             pet.Current,
                             AnimationOptionsFor(updated),
-                            token));
+                            token),
+                        host.ErrorReporter);
                 },
                 presentationEnvironment: new DelegatingPresentationEnvironmentSink(
                     locked => presentationGateway?.SetSessionLocked(locked),
@@ -965,7 +967,7 @@ public static class WindowsCompanionProductionComposition
                                 pet.Current,
                                 AnimationOptionsFor(runtimePreferences.Current),
                                 token);
-                            _ = StartAnimationPlayback(playback);
+                            _ = StartAnimationPlayback(playback, host.ErrorReporter);
                         }
                     }
                     finally
@@ -1038,7 +1040,7 @@ public static class WindowsCompanionProductionComposition
                         {
                             ReducedMotionEnabled = runtimePreferences.Current.ReducedMotion,
                             OutfitKey = outfit ?? RuntimeOutfitKey(runtimePreferences.Current),
-                        }, token));
+                        }, token), host.ErrorReporter);
                     return Task.CompletedTask;
                 },
                 setGlobalShortcutAsync: runtime.SetGlobalShortcutAsync,
@@ -1264,9 +1266,13 @@ public static class WindowsCompanionProductionComposition
         }
     }
 
-    private static Task StartAnimationPlayback(Task playback)
+    /// <summary>Observes a fire-and-forget playback. A fault (for example a
+    /// frame the composer cannot decode) leaves the pet unpainted, so it is
+    /// reported as <c>animation-playback</c> to diagnostics.log instead of a
+    /// Trace line nobody can read afterwards.</summary>
+    private static Task StartAnimationPlayback(Task playback, IAppHostErrorReporter errorReporter)
     {
-        _ = ObserveAnimationAsync(playback);
+        _ = ObserveNativeCallbackAsync(playback, "animation-playback", errorReporter);
         return Task.CompletedTask;
     }
 
@@ -1516,21 +1522,6 @@ public static class WindowsCompanionProductionComposition
         // no separator convention at all. The router never throws; it reports its own
         // failures (notification-invoked / reminder-toast-action).
         _ = router.HandleAsync(arguments, CancellationToken.None);
-    }
-
-    private static async Task ObserveAnimationAsync(Task playback)
-    {
-        try
-        {
-            await playback;
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        catch (Exception exception)
-        {
-            Trace.TraceError("Dudu animation playback failed: {0}", exception);
-        }
     }
 
     internal static async Task ObserveNativeCallbackAsync(

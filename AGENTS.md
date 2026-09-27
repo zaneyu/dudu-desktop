@@ -631,7 +631,8 @@ authoritative for future changes.
   `pet-activity` (an idle fidget/wander could not be scheduled or played;
   Dudu just stays idle), `pet-wander` (the overlay glide for a wander
   failed part-way; the walk stops where it is and the placement is still
-  saved),
+  saved), `animation-playback` (a fire-and-forget pet playback faulted,
+  e.g. a frame the composer could not decode, leaving the pet unpainted),
   `reconcile-visibility` (both `AppLifecycleCoordinator.ReconcileVisibilityAsync`
   and `AppHost`'s wrapper around it report under this one name),
   `presentation-held-load`, `presentation-held-persist`,

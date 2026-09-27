@@ -186,6 +186,31 @@ public sealed class ProductionStartupContractTests
     }
 
     [Fact]
+    public void Faulted_pet_playback_is_reported_to_the_host_error_reporter()
+    {
+        // A fire-and-forget playback that faulted (e.g. an undecodable frame)
+        // left the pet unpainted with only a Trace line behind it.
+        var root = FindRepositoryRoot();
+        var composition = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "Dudu.App",
+            "Hosting",
+            "WindowsCompanionProductionComposition.cs"));
+
+        Assert.Contains(
+            "ObserveNativeCallbackAsync(playback, \"animation-playback\", errorReporter)",
+            composition);
+        Assert.DoesNotContain("ObserveAnimationAsync", composition);
+        var calls = composition.Split("StartAnimationPlayback(").Skip(1).ToArray();
+        Assert.NotEmpty(calls);
+        Assert.All(calls, call => Assert.Contains(
+            "rrorReporter",
+            call[..call.IndexOf(';')],
+            StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Production_overlay_persists_dropped_drag_placements()
     {
         var root = FindRepositoryRoot();
