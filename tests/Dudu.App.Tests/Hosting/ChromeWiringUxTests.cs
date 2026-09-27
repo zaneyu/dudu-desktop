@@ -31,7 +31,7 @@ public sealed class ChromeWiringUxTests
         var composition = ReadHosting("WindowsCompanionProductionComposition.cs");
 
         Assert.DoesNotContain("new PauseStateStore()", composition);
-        Assert.Contains("new PauseStateStore(\n                isFullscreen: () => presentationGateway?.IsFullscreen ?? false)", composition);
+        Assert.Contains("new PauseStateStore(\n                isFullscreen: () => presentationGateway?.IsFullscreen ?? false,", composition);
 
         // Any non-None mode used to count as paused, so "pause until fullscreen ends"
         // muted sounds before fullscreen had even started.
