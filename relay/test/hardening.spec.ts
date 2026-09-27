@@ -97,7 +97,8 @@ describe("rate limiting", () => {
     }
     const blocked = await redeem(pairing.code);
     expect(blocked.status).toBe(429);
-  });
+    // 22 sequential worker requests: well past vitest's 5s default on a loaded Windows runner.
+  }, 30_000);
 });
 
 describe("message status lifetime", () => {

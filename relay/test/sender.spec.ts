@@ -6,7 +6,7 @@
  * page is covered end-to-end by `e2e/`.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { addRecentStatus, describeRecentStatus, StatusTracker } from "../sender-src/status.js";
+import { addRecentStatus, clearRecent, describeRecentStatus, StatusTracker } from "../sender-src/status.js";
 import {
   measureNote,
   MessageComposer,
@@ -224,6 +224,19 @@ describe("sender disconnect", () => {
     await disconnect();
     expect(loadStoredDevice()).toBeNull();
   });
+
+  it("clears the paired state when the relay says the session is already gone", async () => {
+    // A key rotation on the desktop or the session expiry revokes the session server-side; the
+    // relay then answers 401. Treating that as a failure left Disconnect permanently stuck.
+    const fingerprint = await sha256HexForPublicKey(RECIPIENT_PUBLIC_KEY);
+    installFetch(() => jsonOk({ deviceId: "device-1", publicKey: RECIPIENT_PUBLIC_KEY, publicKeyFingerprint: fingerprint }));
+    await pairWithCode("123456");
+    installFetch(() => new Response(null, { status: 401 }));
+
+    await disconnect();
+
+    expect(loadStoredDevice()).toBeNull();
+  });
 });
 
 describe("composer draft id", () => {
@@ -319,14 +332,111 @@ describe("sender status polling", () => {
     try {
       addRecentStatus("test-message", "queued");
       tracker.start();
-      await vi.advanceTimersByTimeAsync(30_000);
+      // start() checks once immediately, so a returning visit does not wait a full interval.
+      await vi.advanceTimersByTimeAsync(0);
       expect(fetchStatus).toHaveBeenCalledTimes(1);
       expect(replaceChildren).toHaveBeenLastCalledWith({ textContent: "status no longer available" });
-      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.advanceTimersByTimeAsync(90_000);
       expect(fetchStatus).toHaveBeenCalledTimes(1);
     } finally {
       tracker.stop();
       vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("sender status tracker", () => {
+  beforeEach(() => {
+    const entries = new Map<string, string>();
+    vi.stubGlobal("sessionStorage", {
+      getItem: (key: string) => entries.get(key) ?? null,
+      setItem: (key: string, value: string) => entries.set(key, value),
+      removeItem: (key: string) => entries.delete(key),
+    });
+    vi.stubGlobal("document", {
+      visibilityState: "visible",
+      createElement: () => ({ textContent: "" }),
+    });
+  });
+
+  it("keeps an entry's send time when its status changes", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonOk({ messageId: "m1", status: "delivered" })));
+    const replaceChildren = vi.fn();
+    const tracker = new StatusTracker({ replaceChildren } as unknown as HTMLElement, vi.fn());
+    const sentUtc = "2026-01-02T03:04:00.000Z";
+    try {
+      addRecentStatus("m1", "queued", { sentUtc });
+      tracker.start();
+      await waitFor(() => replaceChildren.mock.calls.length > 0);
+      const line = (replaceChildren.mock.lastCall?.[0] as { textContent: string }).textContent;
+      expect(line).toBe(describeRecentStatus({ messageId: "m1", status: "delivered", sentUtc }));
+      expect(line.startsWith("sent ")).toBe(true);
+    } finally {
+      tracker.stop();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("does not overlap a refresh with a poll already in flight", async () => {
+    let release: () => void = () => undefined;
+    const fetchStatus = vi.fn(
+      () => new Promise<Response>((resolve) => (release = () => resolve(jsonOk({ messageId: "m1", status: "delivered" })))),
+    );
+    vi.stubGlobal("fetch", fetchStatus);
+    const tracker = new StatusTracker({ replaceChildren: vi.fn() } as unknown as HTMLElement, vi.fn());
+    try {
+      addRecentStatus("m1", "queued");
+      tracker.start();
+      void tracker.refresh();
+      void tracker.refresh();
+      expect(fetchStatus).toHaveBeenCalledTimes(1);
+      release();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    } finally {
+      tracker.stop();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("stops a pass part-way once stopped, without reporting a session loss over the new state", async () => {
+    const onUnauthorized = vi.fn();
+    let tracker: StatusTracker | null = null;
+    const fetchStatus = vi.fn(async () => {
+      // The first lookup's answer arrives after the page already disconnected.
+      tracker?.stop();
+      return new Response(null, { status: 401 });
+    });
+    vi.stubGlobal("fetch", fetchStatus);
+    tracker = new StatusTracker({ replaceChildren: vi.fn() } as unknown as HTMLElement, onUnauthorized);
+    try {
+      addRecentStatus("m1", "queued");
+      addRecentStatus("m2", "queued");
+      tracker.start();
+      await waitFor(() => fetchStatus.mock.calls.length > 0);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(fetchStatus).toHaveBeenCalledTimes(1);
+      expect(onUnauthorized).not.toHaveBeenCalled();
+    } finally {
+      tracker.stop();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("never fails a send over blocked session storage", () => {
+    vi.stubGlobal("sessionStorage", {
+      getItem: () => null,
+      setItem: () => {
+        throw new Error("QuotaExceededError");
+      },
+      removeItem: () => {
+        throw new Error("SecurityError");
+      },
+    });
+    try {
+      expect(() => addRecentStatus("m1", "queued")).not.toThrow();
+      expect(() => clearRecent()).not.toThrow();
+    } finally {
       vi.unstubAllGlobals();
     }
   });
@@ -412,7 +522,7 @@ interface UxHarness {
   composer: MessageComposer;
 }
 
-function buildUxComposer(): UxHarness {
+function buildUxComposer(reactionInputs: FakeElement[] = []): UxHarness {
   const named = [
     "form",
     "textArea",
@@ -433,7 +543,7 @@ function buildUxComposer(): UxHarness {
   }
   const losses: ComposerSessionLoss[] = [];
   let sent = 0;
-  const composer = new MessageComposer({ ...elements, reactionInputs: [] } as unknown as ComposerElements, {
+  const composer = new MessageComposer({ ...elements, reactionInputs } as unknown as ComposerElements, {
     onUnauthorized: (reason) => void losses.push(reason),
     onSent: () => void (sent += 1),
   });
@@ -598,6 +708,57 @@ describe("composer session loss and retry", () => {
     expect(posted).toHaveLength(2);
     expect(posted[1].messageId).not.toBe(posted[0].messageId);
     expect(posted[1].createdUtc >= posted[0].createdUtc).toBe(true);
+  });
+
+  it("re-encrypts a retry whose envelope has grown too old for the relay to accept", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const posted: EncryptedEnvelopeV1[] = [];
+      let status = 500;
+      installFetch((url, init) => {
+        if (url === "/v1/messages") {
+          posted.push(JSON.parse(String(init?.body)) as EncryptedEnvelopeV1);
+          return status === 500
+            ? jsonOk({ error: "internal", message: "nope" }, 500)
+            : jsonOk({ messageId: posted[posted.length - 1].messageId, status: "queued" }, 202);
+        }
+        throw new Error(`Unexpected request to ${url}`);
+      });
+      const { elements } = buildUxComposer();
+      elements.textArea.value = "unchanged note";
+      elements.form.dispatch("submit");
+      await waitFor(() => elements.sendStatus.textContent === "aiyo couldnt send try again");
+
+      // Past the relay's one-hour createdUtc window: resending the cached envelope would 422.
+      vi.setSystemTime(Date.now() + 61 * 60 * 1000);
+      status = 202;
+      elements.form.dispatch("submit");
+      await waitFor(() => elements.sendStatus.textContent === "Queued securely");
+      expect(posted).toHaveLength(2);
+      expect(posted[1].messageId).not.toBe(posted[0].messageId);
+      expect(Date.parse(posted[1].createdUtc)).toBeGreaterThan(Date.parse(posted[0].createdUtc));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resets the reaction to none after a successful note", async () => {
+    installFetch((url, init) =>
+      url === "/v1/messages"
+        ? jsonOk({ messageId: (JSON.parse(String(init?.body)) as EncryptedEnvelopeV1).messageId, status: "queued" }, 202)
+        : new Response(null, { status: 404 }),
+    );
+    const none = Object.assign(new UxFakeElement(), { value: "none" });
+    const heart = Object.assign(new UxFakeElement(), { value: "heart" });
+    const { elements } = buildUxComposer([none, heart]);
+    none.checked = false;
+    heart.checked = true;
+    elements.textArea.value = "with a heart";
+    elements.form.dispatch("submit");
+    await waitFor(() => elements.sendStatus.textContent === "Queued securely");
+
+    expect(heart.checked).toBe(false);
+    expect(none.checked).toBe(true);
   });
 });
 

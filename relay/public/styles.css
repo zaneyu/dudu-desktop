@@ -169,7 +169,8 @@ legend {
   min-width: 44px;
   padding: 10px 18px;
   border-radius: 10px;
-  border: 1px solid var(--border);
+  /* A cream button on the white card is only identifiable by its edge (WCAG 1.4.11, 3:1). */
+  border: 1px solid var(--field-border);
   background: var(--cream);
   color: var(--ink);
   cursor: pointer;
@@ -226,6 +227,13 @@ dialog {
   border-radius: var(--radius);
   padding: 16px;
   background: var(--cream);
+}
+
+/* The preview must look like the note: keep its line breaks, and wrap a long link or unbroken
+   string instead of pushing the card wider than a phone screen. */
+#preview-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 dialog::backdrop {
