@@ -425,6 +425,56 @@ public sealed class XamlContractTests
     }
 
     [Fact]
+    public void Primary_buttons_stay_a_plain_style_and_meet_text_contrast()
+    {
+        // Audit regression: white on the old coral was only ~4.0:1. PrimaryButtonStyle
+        // must not be BasedOn a framework style: that StaticResource lookup from a merged
+        // theme dictionary cannot be verified off Windows and a miss fails startup.
+        var root = FindRepositoryRoot();
+        var controls = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Themes", "Controls.xaml"));
+        var colors = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Themes", "Colors.xaml"));
+
+        Assert.Contains("<Style x:Key=\"PrimaryButtonStyle\" TargetType=\"Button\">", controls);
+        var themes = Regex.Matches(
+            colors,
+            "<ResourceDictionary x:Key=\"(?<theme>\\w+)\">(?<body>.*?)</ResourceDictionary>",
+            RegexOptions.Singleline)
+            .ToDictionary(match => match.Groups["theme"].Value, match => match.Groups["body"].Value);
+        foreach (var theme in new[] { "Default", "Light", "Dark" })
+        {
+            var body = themes[theme];
+            var ratio = ContrastRatio(BrushColor(body, "CoralActionBrush"), BrushColor(body, "PrimaryButtonForegroundBrush"));
+            Assert.True(ratio >= 4.5, $"{theme} CoralActionBrush: {ratio:F2}:1 is below 4.5:1");
+        }
+    }
+
+    private static string BrushColor(string dictionary, string key)
+    {
+        var match = Regex.Match(dictionary, $"<SolidColorBrush x:Key=\"{key}\" Color=\"#(?<color>[0-9A-Fa-f]{{6,8}})\" />");
+        Assert.True(match.Success, $"{key} is missing a literal color.");
+        var color = match.Groups["color"].Value;
+        return color.Length == 8 ? color[2..] : color;
+    }
+
+    private static double ContrastRatio(string first, string second)
+    {
+        static double Luminance(string hex)
+        {
+            static double Channel(string part)
+            {
+                var value = Convert.ToInt32(part, 16) / 255.0;
+                return value <= 0.03928 ? value / 12.92 : Math.Pow((value + 0.055) / 1.055, 2.4);
+            }
+
+            return (0.2126 * Channel(hex[..2])) + (0.7152 * Channel(hex[2..4])) + (0.0722 * Channel(hex[4..6]));
+        }
+
+        var a = Luminance(first);
+        var b = Luminance(second);
+        return (Math.Max(a, b) + 0.05) / (Math.Min(a, b) + 0.05);
+    }
+
+    [Fact]
     public void Appearance_shows_the_shortcut_fallback_next_to_the_shortcut_box()
     {
         var root = FindRepositoryRoot();
