@@ -330,12 +330,21 @@ public sealed class OverlayActionSurfaceController : IDisposable
         }
     }
 
+    /// <summary>
+    /// Actions whose work is a one-shot pet reaction: ExecuteAsync awaits the
+    /// whole animation, so the bubble must close BEFORE it starts or the
+    /// reaction plays hidden underneath the open bubble.
+    /// </summary>
+    internal static bool ClosesBeforeExecuting(OverlayAction action) =>
+        action is OverlayAction.Pet or OverlayAction.DrinkWater;
+
     private async Task DispatchPrimaryAsync(
         OverlayCommandRouter router,
         OverlayAction action,
         long expectedVersion,
         CancellationToken cancellationToken)
     {
+        var errorVersion = expectedVersion;
         try
         {
             if (action == OverlayAction.ComfortMe)
@@ -348,10 +357,17 @@ public sealed class OverlayActionSurfaceController : IDisposable
                     _version++;
                 }
             }
+            else if (ClosesBeforeExecuting(action))
+            {
+                // A failure still surfaces as a status error on the
+                // now-closed surface (SetError against the closed version).
+                if (TryClose(expectedVersion, router, out var closedVersion)) errorVersion = closedVersion;
+                await router.ExecuteAsync(action, cancellationToken);
+            }
             else
             {
                 await router.ExecuteAsync(action, cancellationToken);
-                if (!TryClose(expectedVersion, router)) return;
+                if (!TryClose(expectedVersion, router, out _)) return;
             }
             lock (_gate)
             {
@@ -364,7 +380,7 @@ public sealed class OverlayActionSurfaceController : IDisposable
         catch (OperationCanceledException) { throw; }
         catch (Exception exception)
         {
-            SetError(exception.Message, expectedVersion);
+            SetError(exception.Message, errorVersion);
             return;
         }
         RaiseChanged();
@@ -385,7 +401,7 @@ public sealed class OverlayActionSurfaceController : IDisposable
                 _errorMessage = null;
             }
             if ((action is ComfortAction.Close or ComfortAction.ReadALoveNote)
-                && !TryClose(expectedVersion, router)) return;
+                && !TryClose(expectedVersion, router, out _)) return;
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception exception)
@@ -451,16 +467,17 @@ public sealed class OverlayActionSurfaceController : IDisposable
             : null;
     }
 
-    private bool TryClose(long expectedVersion, OverlayCommandRouter router)
+    private bool TryClose(long expectedVersion, OverlayCommandRouter router, out long closedVersion)
     {
         lock (_gate)
         {
+            closedVersion = _version;
             if (_version != expectedVersion) return false;
             _arrangement = null;
             _comfortArrangement = null;
             _kind = OverlayActionSurfaceKind.Closed;
             _errorMessage = null;
-            _version++;
+            closedVersion = ++_version;
         }
         router.CancelBreathing(closePanel: true);
         RaiseChanged();
