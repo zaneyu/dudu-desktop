@@ -46,20 +46,6 @@ public sealed class OnboardingViewModelTests
         Assert.True(fixture.SavedPreferences.BreakRemindersEnabled);
         Assert.Single(fixture.SavedPlacements);
         Assert.Equal("MONITOR-2", fixture.SavedPlacements[0].MonitorDeviceName);
-        Assert.Equal(4, fixture.Reminders.Saved.Count);
-        Assert.Equal(
-            new[] { false, true },
-            fixture.Reminders.Saved
-                .Where(reminder => reminder.Id is "default-hydration" or "default-break")
-                .OrderBy(reminder => reminder.Id == "default-break")
-                .Select(reminder => reminder.Enabled));
-        Assert.All(fixture.Reminders.Saved.Where(reminder =>
-            reminder.Id is "default-hydration" or "default-break"), reminder =>
-            Assert.Equal(fixture.SavedPreferences!.QuietHours, reminder.QuietHours));
-        Assert.All(fixture.Reminders.Saved.Where(reminder =>
-            reminder.Id is Dudu.Core.Reminders.LocalReminderDefaults.EveningCheckInId
-                or Dudu.Core.Reminders.LocalReminderDefaults.BedtimeId), reminder =>
-            Assert.Null(reminder.QuietHours));
         Assert.Equal(new[] { "commit", "runtime" }, fixture.Events);
     }
 
@@ -78,7 +64,6 @@ public sealed class OnboardingViewModelTests
         Assert.Null(fixture.SavedProfile);
         Assert.Null(fixture.SavedPreferences);
         Assert.Empty(fixture.SavedPlacements);
-        Assert.Empty(fixture.Reminders.Saved);
     }
 
     [Fact]
@@ -301,9 +286,8 @@ public sealed class OnboardingViewModelTests
             Preferences = new RecordingPreferencesRepository();
             Profiles = new RecordingProfileRepository();
             Placements = new RecordingPlacementRepository();
-            Reminders = new RecordingReminderRepository();
             Events = events ?? [];
-            UnitOfWork = new RecordingUnitOfWork(Profiles, Preferences, Placements, Reminders, failCommit, Events);
+            UnitOfWork = new RecordingUnitOfWork(Profiles, Preferences, Placements, failCommit, Events);
             StartupWriter = new RecordingStartupWriter();
             Startup = new StartupRegistrationService(
                 "/opt/dudu/Dudu.exe",
@@ -352,7 +336,6 @@ public sealed class OnboardingViewModelTests
         public RecordingPreferencesRepository Preferences { get; }
         public RecordingProfileRepository Profiles { get; }
         public RecordingPlacementRepository Placements { get; }
-        public RecordingReminderRepository Reminders { get; }
         public RecordingUnitOfWork UnitOfWork { get; }
         public StartupRegistrationService Startup { get; }
         public RecordingStartupWriter StartupWriter { get; }
@@ -458,32 +441,10 @@ public sealed class OnboardingViewModelTests
         }
     }
 
-    private sealed class RecordingReminderRepository : IReminderRepository, IReminderWriter
-    {
-        public List<Reminder> Saved { get; } = [];
-        public Task<IReadOnlyList<Reminder>> LoadDueAsync(DateTimeOffset utcNow, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<Reminder>>(Saved);
-        public Task<bool> RecordOccurrencesAndAdvanceAsync(Reminder reminder, IReadOnlyList<ReminderOccurrence> occurrences, DateTimeOffset? nextDueUtc, CancellationToken cancellationToken) =>
-            Task.FromResult(true);
-        public Task SaveAsync(Reminder reminder, CancellationToken cancellationToken = default)
-        {
-            Saved.RemoveAll(item => item.Id == reminder.Id);
-            Saved.Add(reminder);
-            return Task.CompletedTask;
-        }
-        public List<Reminder> Snapshot() => [.. Saved];
-        public void Restore(IEnumerable<Reminder> snapshot)
-        {
-            Saved.Clear();
-            Saved.AddRange(snapshot);
-        }
-    }
-
     private sealed class RecordingUnitOfWork(
         RecordingProfileRepository profiles,
         RecordingPreferencesRepository preferences,
         RecordingPlacementRepository placements,
-        RecordingReminderRepository reminders,
         bool failCommit,
         List<string> events) : IAppUnitOfWork
     {
@@ -495,10 +456,9 @@ public sealed class OnboardingViewModelTests
             var profile = profiles.Saved;
             var savedPreferences = preferences.Saved;
             var placementsSnapshot = placements.Snapshot();
-            var remindersSnapshot = reminders.Snapshot();
             try
             {
-                await action(new RecordingContext(profiles, preferences, placements, reminders), cancellationToken);
+                await action(new RecordingContext(profiles, preferences, placements), cancellationToken);
                 if (failCommit) throw new InvalidOperationException("simulated commit failure");
                 events.Add("commit");
             }
@@ -507,7 +467,6 @@ public sealed class OnboardingViewModelTests
                 profiles.Restore(profile);
                 preferences.Restore(savedPreferences);
                 placements.Restore(placementsSnapshot);
-                reminders.Restore(remindersSnapshot);
                 throw;
             }
         }
@@ -519,8 +478,7 @@ public sealed class OnboardingViewModelTests
     private sealed class RecordingContext(
         IProfileRepository profiles,
         IPreferencesRepository preferences,
-        IPetPlacementRepository placements,
-        IReminderRepository reminders) : IAppUnitOfWorkContext
+        IPetPlacementRepository placements) : IAppUnitOfWorkContext
     {
         public ICheckInRepository CheckIns => throw new NotSupportedException();
         public ICountdownRepository Countdowns => throw new NotSupportedException();
@@ -530,7 +488,6 @@ public sealed class OnboardingViewModelTests
         public IPreferencesRepository Preferences => preferences;
         public IProfileRepository Profiles => profiles;
         public IRemoteEnvelopeRepository RemoteEnvelopes => throw new NotSupportedException();
-        public IReminderRepository Reminders => reminders;
         public ITaskRepository Tasks => throw new NotSupportedException();
     }
 }

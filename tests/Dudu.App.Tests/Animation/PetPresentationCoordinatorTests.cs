@@ -53,7 +53,6 @@ public sealed class PetPresentationCoordinatorTests
     [InlineData(PetState.Idle, "drag", AudioCueEvent.Drag, AudioCuePriority.Interactive)]
     [InlineData(PetState.RemoteNote, "note-arrival", AudioCueEvent.RemoteNote, AudioCuePriority.Background)]
     [InlineData(PetState.WelcomeBack, "welcome-back", AudioCueEvent.Greeting, AudioCuePriority.Background)]
-    [InlineData(PetState.Reminder, "reminder", AudioCueEvent.Reminder, AudioCuePriority.Background)]
     public void User_actions_get_interactive_priority_and_arrivals_stay_background(
         PetState state,
         string animationKey,

@@ -22,8 +22,6 @@ public sealed class CompanionFeatureContext
         PreferenceMutationCoordinator preferenceMutations,
         IProfileRepository profiles,
         IPetPlacementRepository petPlacements,
-        IReminderRepository reminders,
-        IReminderWriter reminderWriter,
         ITaskRepository tasks,
         IFocusSessionRepository focusSessions,
         ILocalNoteRepository localNotes,
@@ -50,8 +48,6 @@ public sealed class CompanionFeatureContext
         Func<CancellationToken, Task>? deleteRemoteDataAsync = null,
         Func<string?, CancellationToken, Task>? applyOutfitAsync = null,
         Func<string, CancellationToken, Task>? setGlobalShortcutAsync = null,
-        Func<string, CancellationToken, Task>? dismissReminderNotificationAsync = null,
-        Func<string, CancellationToken, Task>? discardHeldReminderAsync = null,
         Func<string, CancellationToken, Task>? discardHeldLocalNoteAsync = null,
         Func<string, CancellationToken, Task>? discardHeldRemoteNoteAsync = null,
         Func<CancellationToken, Task>? discardHeldRemoteNotesAsync = null,
@@ -65,8 +61,6 @@ public sealed class CompanionFeatureContext
         PreferenceMutations = preferenceMutations ?? throw new ArgumentNullException(nameof(preferenceMutations));
         Profiles = profiles ?? throw new ArgumentNullException(nameof(profiles));
         PetPlacements = petPlacements ?? throw new ArgumentNullException(nameof(petPlacements));
-        Reminders = reminders ?? throw new ArgumentNullException(nameof(reminders));
-        ReminderWriter = reminderWriter ?? throw new ArgumentNullException(nameof(reminderWriter));
         Tasks = tasks ?? throw new ArgumentNullException(nameof(tasks));
         FocusSessions = focusSessions ?? throw new ArgumentNullException(nameof(focusSessions));
         LocalNotes = localNotes ?? throw new ArgumentNullException(nameof(localNotes));
@@ -132,8 +126,6 @@ public sealed class CompanionFeatureContext
         SetGlobalShortcutAsync = setGlobalShortcutAsync ?? ((_, _) => Task.FromException(
             new NotSupportedException("oh no shortcuts not ready yet")));
         GetGlobalShortcutStatus = getGlobalShortcutStatus ?? (() => null);
-        DismissReminderNotificationAsync = dismissReminderNotificationAsync ?? ((_, _) => Task.CompletedTask);
-        DiscardHeldReminderAsync = discardHeldReminderAsync ?? ((_, _) => Task.CompletedTask);
         DiscardHeldLocalNoteAsync = discardHeldLocalNoteAsync ?? ((_, _) => Task.CompletedTask);
         DiscardHeldRemoteNoteAsync = discardHeldRemoteNoteAsync ?? ((_, _) => Task.CompletedTask);
         DiscardHeldRemoteNotesAsync = discardHeldRemoteNotesAsync ?? (_ => Task.CompletedTask);
@@ -149,8 +141,6 @@ public sealed class CompanionFeatureContext
     public PreferenceMutationCoordinator PreferenceMutations { get; }
     public IProfileRepository Profiles { get; }
     public IPetPlacementRepository PetPlacements { get; }
-    public IReminderRepository Reminders { get; }
-    public IReminderWriter ReminderWriter { get; }
     public ITaskRepository Tasks { get; }
     public IFocusSessionRepository FocusSessions { get; }
     public ILocalNoteRepository LocalNotes { get; }
@@ -211,22 +201,14 @@ public sealed class CompanionFeatureContext
     /// <summary>Null while the saved global shortcut is the one registered;
     /// otherwise why a different one (or none) is in effect.</summary>
     public Func<string?> GetGlobalShortcutStatus { get; }
-    /// <summary>Best-effort removal of a reminder's toast after the user
-    /// acknowledged it (Done or Snooze).</summary>
-    public Func<string, CancellationToken, Task> DismissReminderNotificationAsync { get; }
-
-    /// <summary>Best-effort removal of a reminder's queued/held presentation
-    /// (in PresentationCoordinator's in-memory queue and its persisted row)
-    /// after the user completed it directly from the Reminders page, so a
-    /// copy that was queued or held back does not surface again later.</summary>
-    public Func<string, CancellationToken, Task> DiscardHeldReminderAsync { get; }
-
-    /// <summary>Same as <see cref="DiscardHeldReminderAsync"/> but for a
-    /// local note, keyed by note id, after it was deleted from the note
-    /// jar.</summary>
+    /// <summary>Best-effort removal of a local note's queued/held
+    /// presentation (in PresentationCoordinator's in-memory queue and its
+    /// persisted row), keyed by note id, after it was deleted from the note
+    /// jar, so a copy that was queued or held back does not surface again
+    /// later.</summary>
     public Func<string, CancellationToken, Task> DiscardHeldLocalNoteAsync { get; }
 
-    /// <summary>Same as <see cref="DiscardHeldReminderAsync"/> but for a
+    /// <summary>Same as <see cref="DiscardHeldLocalNoteAsync"/> but for a
     /// single remote note, keyed by message id, after it was consumed
     /// (saved to the jar) or deleted.</summary>
     public Func<string, CancellationToken, Task> DiscardHeldRemoteNoteAsync { get; }
@@ -244,38 +226,6 @@ public sealed class CompanionFeatureContext
         Func<Preferences, Preferences> update,
         CancellationToken cancellationToken = default) =>
         await PreferenceMutations.UpdateAsync(update, cancellationToken);
-
-    public async Task<Preferences> UpdatePreferencesAndDefaultRemindersAsync(
-        Func<Preferences, Preferences> update,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(update);
-        IReadOnlyList<Reminder> previousDefaults = [];
-        return await PreferenceMutations.UpdateTransactionalAsync(
-            update,
-            async (_, updated, token) =>
-            {
-                previousDefaults = (await Reminders.ListAsync(token))
-                    .Where(reminder => reminder.Id is "default-hydration" or "default-break"
-                        or Dudu.Core.Reminders.LocalReminderDefaults.EveningCheckInId
-                        or Dudu.Core.Reminders.LocalReminderDefaults.BedtimeId)
-                    .ToArray();
-                await FeatureTransactions.SavePreferencesAndDefaultRemindersAsync(
-                    updated,
-                    Clock.UtcNow.ToUniversalTime(),
-                    Clock.LocalTimeZone,
-                    token);
-            },
-            async (previous, _, token) =>
-            {
-                await FeatureTransactions.RestorePreferencesAndDefaultRemindersAsync(
-                    previous,
-                    previousDefaults,
-                    token);
-            },
-            applyRuntime: true,
-            cancellationToken);
-    }
 }
 
 public abstract class FeatureViewModelBase : CommunityToolkit.Mvvm.ComponentModel.ObservableObject

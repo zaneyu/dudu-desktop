@@ -65,48 +65,6 @@ public abstract class SqliteRepository
     protected static string? ReadString(SqliteDataReader reader, int ordinal) =>
         reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
 
-    protected static int WeekdayMask(IReadOnlySet<DayOfWeek> days) =>
-        days.Aggregate(0, (mask, day) => mask | (1 << (int)day));
-
-    protected static IReadOnlySet<DayOfWeek> ReadWeekdays(int mask) =>
-        Enum.GetValues<DayOfWeek>().Where(day => (mask & (1 << (int)day)) != 0).ToHashSet();
-
-    protected static (int Kind, string? LocalTime, int? Weekdays, long? IntervalSeconds, string? FirstDueUtc)
-        EncodeRule(RecurrenceRule rule)
-    {
-        return rule switch
-        {
-            RecurrenceRule.Once => (0, null, null, null, null),
-            RecurrenceRule.Daily daily => (1, Time(daily.LocalTime), null, null, null),
-            RecurrenceRule.SelectedWeekdays selected =>
-                (2, Time(selected.LocalTime), WeekdayMask(selected.Days), null, null),
-            RecurrenceRule.Interval interval =>
-                (3, null, null, interval.Period.Ticks, Utc(interval.FirstDueUtc)),
-            _ => throw new ArgumentOutOfRangeException(nameof(rule), "Unknown recurrence rule."),
-        };
-    }
-
-    protected static RecurrenceRule DecodeRule(
-        int kind,
-        object? localTime,
-        object? weekdays,
-        object? intervalSeconds,
-        object? firstDueUtc)
-    {
-        return kind switch
-        {
-            0 => new RecurrenceRule.Once(),
-            1 => new RecurrenceRule.Daily(ReadTime(localTime!)),
-            2 => new RecurrenceRule.SelectedWeekdays(
-                ReadWeekdays(Convert.ToInt32(weekdays, CultureInfo.InvariantCulture)),
-                ReadTime(localTime!)),
-            3 => new RecurrenceRule.Interval(
-                TimeSpan.FromTicks(Convert.ToInt64(intervalSeconds, CultureInfo.InvariantCulture)),
-                ReadNullableUtc(firstDueUtc)),
-            _ => throw new InvalidDataException($"Unknown reminder recurrence kind {kind}."),
-        };
-    }
-
     protected static QuietHours? ReadQuietHours(
         object? enabled,
         object? start,

@@ -5,7 +5,6 @@ using Dudu.Core.Focus;
 using Dudu.Core.Models;
 using Dudu.Core.Notes;
 using Dudu.Core.Pet;
-using Dudu.Core.Reminders;
 using Dudu.Core.Tasks;
 using Dudu.Core.Time;
 using Dudu.Infrastructure.Crypto;
@@ -41,9 +40,6 @@ public static class DependencyInjection
         RegisterRepository<PreferencesRepository, IPreferencesRepository>(services);
         RegisterRepository<ProfileRepository, IProfileRepository>(services);
         RegisterRepository<RemoteEnvelopeRepository, IRemoteEnvelopeRepository>(services);
-        RegisterRepository<ReminderRepository, IReminderRepository>(services);
-        services.AddSingleton<IReminderWriter>(static provider =>
-            provider.GetRequiredService<ReminderRepository>());
         RegisterRepository<TaskRepository, ITaskRepository>(services);
 
         services.AddSingleton<AppUnitOfWork>();
@@ -55,12 +51,10 @@ public static class DependencyInjection
         services.AddSingleton<IClock, SystemClock>();
         services.AddSingleton<IRandomSource, CryptographicRandomSource>();
         services.AddSingleton<Preferences>(static _ => Preferences.Default);
-        services.AddSingleton<IReminderDueSink, NullReminderDueSink>();
 
         services.AddSingleton<CheckInService>();
         services.AddSingleton<FocusService>();
         services.AddSingleton<TaskService>();
-        services.AddSingleton<ReminderEngine>();
         services.AddSingleton<LocalNoteSelector>(static provider => new LocalNoteSelector(
             provider.GetRequiredService<ILocalNoteRepository>(),
             provider.GetRequiredService<IClock>(),
@@ -117,18 +111,6 @@ public static class DependencyInjection
         {
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(exclusiveMax);
             return RandomNumberGenerator.GetInt32(exclusiveMax);
-        }
-    }
-
-    private sealed class NullReminderDueSink : IReminderDueSink
-    {
-        public Task NotifyAsync(
-            ReminderOccurrence occurrence,
-            CancellationToken cancellationToken)
-        {
-            ArgumentNullException.ThrowIfNull(occurrence);
-            cancellationToken.ThrowIfCancellationRequested();
-            return Task.CompletedTask;
         }
     }
 

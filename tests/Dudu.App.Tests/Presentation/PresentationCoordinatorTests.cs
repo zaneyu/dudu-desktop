@@ -14,9 +14,11 @@ namespace Dudu.App.Tests.Presentation;
 
 public sealed class PresentationCoordinatorTests
 {
+    private const string NoteOne = "11111111-1111-4111-8111-111111111111";
+    private const string NoteTwo = "22222222-2222-4222-8222-222222222222";
+
     [Theory]
     [InlineData(PresentationItemKind.RemoteNote, AudioCueEvent.RemoteNote)]
-    [InlineData(PresentationItemKind.Reminder, AudioCueEvent.Reminder)]
     [InlineData(PresentationItemKind.LocalNote, AudioCueEvent.ManualInteraction)]
     public void Notification_audio_mapping_uses_the_expected_cue(
         PresentationItemKind kind,
@@ -25,7 +27,6 @@ public sealed class PresentationCoordinatorTests
         var item = kind switch
         {
             PresentationItemKind.RemoteNote => DurableNotification.RemoteNote(Guid.NewGuid().ToString("D")),
-            PresentationItemKind.Reminder => DurableNotification.Reminder("reminder-1", "Stretch"),
             PresentationItemKind.LocalNote => DurableNotification.LocalNote(
                 new LocalLoveNote("note-1", "hello"),
                 "greeting"),
@@ -66,7 +67,7 @@ public sealed class PresentationCoordinatorTests
             });
 
         var publish = coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
 
@@ -106,7 +107,7 @@ public sealed class PresentationCoordinatorTests
             });
 
         await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
         Assert.Equal(1, policy.QueuedCount);
@@ -137,7 +138,7 @@ public sealed class PresentationCoordinatorTests
             });
 
         await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
 
@@ -162,7 +163,7 @@ public sealed class PresentationCoordinatorTests
             playAudioAsync: (_, _) => throw failure);
 
         await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
 
@@ -191,109 +192,12 @@ public sealed class PresentationCoordinatorTests
             });
 
         await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
 
         Assert.Equal(["visual", "audio", "notification"], order);
-        Assert.Equal(1, notifications.ReminderCalls);
-    }
-
-    [Fact]
-    public async Task Bedtime_routine_presents_at_the_start_of_quiet_hours_but_other_routines_stay_held()
-    {
-        // The bedtime routine is scheduled at 22:00 -- exactly when the
-        // recommended quiet hours (22:00-07:00) begin -- and expires at the
-        // next local midnight. Routines never bypassed suppression, so it was
-        // held for quiet hours and purged before they ended: it never
-        // appeared at all with the recommended settings.
-        var now = new DateTimeOffset(2026, 9, 11, 22, 0, 0, TimeSpan.Zero);
-        var policy = new PresentationPolicy(TimeSpan.Zero);
-        var notifications = new RecordingNotificationService();
-        var played = 0;
-        var coordinator = new PresentationCoordinator(
-            policy,
-            notifications,
-            PetStateMachine.CreateIdle(),
-            (_, _, _) => { played++; return Task.CompletedTask; },
-            () => AnimationOptions.Default,
-            isQuietHours: () => true,
-            pauseState: () => PauseState.None,
-            petGate: new SemaphoreSlim(1, 1),
-            utcNow: () => now);
-
-        await coordinator.PublishAsync(
-            DurableNotification.Reminder(
-                Dudu.Core.Reminders.LocalReminderDefaults.BedtimeId,
-                "goodnight",
-                body: "sleep well",
-                animationKey: "sticker-025",
-                expiresUtc: now.AddHours(2)),
-            bypassSuppression: false,
-            CancellationToken.None);
-
-        Assert.Equal(1, played);
-        Assert.Equal(1, notifications.ReminderCalls);
-        Assert.Equal(0, policy.QueuedCount);
-
-        // Every other routine is still held by quiet hours.
-        await coordinator.PublishAsync(
-            DurableNotification.Reminder(
-                Dudu.Core.Reminders.LocalReminderDefaults.EveningCheckInId,
-                "check in",
-                body: "how was today",
-                expiresUtc: now.AddHours(2)),
-            bypassSuppression: false,
-            CancellationToken.None);
-
-        Assert.Equal(1, played);
-        Assert.Equal(1, notifications.ReminderCalls);
-        Assert.Equal(1, policy.QueuedCount);
-    }
-
-    [Fact]
-    public async Task Bedtime_routine_still_waits_for_pause_or_fullscreen_and_releases_while_quiet()
-    {
-        // Only quiet hours are ignored: a pause (or fullscreen, lock, focus,
-        // a hidden pet) still holds the bedtime routine, and once that ends
-        // it is released even though quiet hours are still on.
-        var now = new DateTimeOffset(2026, 9, 11, 22, 0, 0, TimeSpan.Zero);
-        var policy = new PresentationPolicy(TimeSpan.Zero);
-        var pause = new PauseState(PauseMode.Indefinite, null);
-        var fullscreen = false;
-        var played = 0;
-        var coordinator = new PresentationCoordinator(
-            policy,
-            new RecordingNotificationService(),
-            PetStateMachine.CreateIdle(),
-            (_, _, _) => { played++; return Task.CompletedTask; },
-            () => AnimationOptions.Default,
-            isQuietHours: () => true,
-            pauseState: () => pause,
-            petGate: new SemaphoreSlim(1, 1),
-            isFullscreenNow: () => fullscreen,
-            utcNow: () => now);
-
-        await coordinator.PublishAsync(
-            DurableNotification.Reminder(
-                Dudu.Core.Reminders.LocalReminderDefaults.BedtimeId,
-                "goodnight",
-                body: "sleep well",
-                expiresUtc: now.AddHours(2)),
-            bypassSuppression: false,
-            CancellationToken.None);
-        Assert.Equal(0, played);
-        Assert.Equal(1, policy.QueuedCount);
-
-        pause = PauseState.None;
-        fullscreen = true;
-        await coordinator.TickAsync(CancellationToken.None);
-        Assert.Equal(0, played);
-
-        fullscreen = false;
-        await coordinator.TickAsync(CancellationToken.None);
-        Assert.Equal(1, played);
-        Assert.Equal(0, policy.QueuedCount);
+        Assert.Equal(1, notifications.RemoteNoteCalls);
     }
 
     [Fact]
@@ -322,7 +226,7 @@ public sealed class PresentationCoordinatorTests
             errorReporter: reporter);
 
         await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
 
@@ -369,14 +273,14 @@ public sealed class PresentationCoordinatorTests
             });
 
         await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
 
         // The cue is still in flight (releaseAudio has not been set), yet
         // the notification already went out.
         Assert.Equal(["visual", "audio-started", "notification"], order);
-        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.Equal(1, notifications.RemoteNoteCalls);
 
         releaseAudio.SetResult();
         await audioFinished.Task.WaitAsync(TestContext.Current.CancellationToken);
@@ -484,7 +388,7 @@ public sealed class PresentationCoordinatorTests
             isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1));
-        var item = DurableNotification.Reminder("reminder-1", "Stretch");
+        var item = DurableNotification.RemoteNote(NoteOne);
 
         var firstPublish = coordinator.PublishAsync(item, bypassSuppression: false, CancellationToken.None);
         // The first PublishAsync call runs synchronously up to the blocked
@@ -497,7 +401,7 @@ public sealed class PresentationCoordinatorTests
         await firstPublish;
 
         Assert.Equal(1, playCount);
-        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.Equal(1, notifications.RemoteNoteCalls);
     }
 
     [Fact]
@@ -515,7 +419,7 @@ public sealed class PresentationCoordinatorTests
             isQuietHours: () => true,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1));
-        var item = DurableNotification.Reminder("reminder-1", "Stretch");
+        var item = DurableNotification.RemoteNote(NoteOne);
 
         await coordinator.PublishAsync(item, bypassSuppression: false, CancellationToken.None);
         await coordinator.PublishAsync(item, bypassSuppression: false, CancellationToken.None);
@@ -545,7 +449,7 @@ public sealed class PresentationCoordinatorTests
             isQuietHours: () => quiet,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1));
-        var item = DurableNotification.Reminder("reminder-1", "Stretch");
+        var item = DurableNotification.RemoteNote(NoteOne);
 
         // Suppressed: the item is queued, not presented.
         await coordinator.PublishAsync(item, bypassSuppression: false, CancellationToken.None);
@@ -566,7 +470,7 @@ public sealed class PresentationCoordinatorTests
         await tick;
 
         Assert.Equal(1, playCount);
-        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.Equal(1, notifications.RemoteNoteCalls);
     }
 
     [Fact]
@@ -593,13 +497,13 @@ public sealed class PresentationCoordinatorTests
         // can hold it back -- the same spot a tick-path race lands on.
         pet.Handle(new PetEvent.DragStarted());
         await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: true,
             CancellationToken.None);
         pet.Handle(new PetEvent.DragEnded());
         pet.Handle(new PetEvent.EatingStarted("meal-1"));
         await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-2", "Drink"),
+            DurableNotification.RemoteNote(NoteTwo),
             bypassSuppression: true,
             CancellationToken.None);
 
@@ -623,7 +527,7 @@ public sealed class PresentationCoordinatorTests
             petGate: new SemaphoreSlim(1, 1));
 
         await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
 
@@ -635,9 +539,9 @@ public sealed class PresentationCoordinatorTests
     {
         // Regression for H1(a): PresentAsync's finally block used to call
         // Dismissed(item.Id) unconditionally, even when playback failed —
-        // so a reminder that failed to play vanished from the pet's pending
+        // so a note that failed to play vanished from the pet's pending
         // set (and thus from Select()'s ranking) even though the policy
-        // still requeues it for a later tick. The reminder must stay latched
+        // still requeues it for a later tick. The note must stay latched
         // in the state machine until a presentation actually succeeds.
         var pet = PetStateMachine.CreateIdle();
         var policy = new PresentationPolicy(TimeSpan.Zero);
@@ -652,12 +556,12 @@ public sealed class PresentationCoordinatorTests
             petGate: new SemaphoreSlim(1, 1));
 
         await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
 
         Assert.Equal(1, policy.QueuedCount);
-        Assert.Equal(PetState.Reminder, pet.Current.State);
+        Assert.Equal(PetState.RemoteNote, pet.Current.State);
         Assert.Equal(1, pet.PendingCount);
     }
 
@@ -684,14 +588,14 @@ public sealed class PresentationCoordinatorTests
         coordinator.SetUserVisible(false);
 
         await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
 
         Assert.Equal(0, played);
         Assert.Equal(PetState.Idle, pet.Current.State);
         Assert.Equal(1, policy.QueuedCount);
-        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.Equal(1, notifications.RemoteNoteCalls);
 
         // Un-hiding releases the queued item through the normal tick path —
         // the toast must not fire a second time for the same item.
@@ -699,60 +603,7 @@ public sealed class PresentationCoordinatorTests
         await coordinator.TickAsync(CancellationToken.None);
 
         Assert.Equal(1, played);
-        Assert.Equal(1, notifications.ReminderCalls);
-    }
-
-    [Fact]
-    public async Task An_item_expired_while_held_does_not_swallow_a_later_same_key_toast()
-    {
-        // Regression: an item toasted-while-held that then expires before
-        // ever reaching a real presentation (PresentationPolicy.Decide
-        // silently purges it from the queue) used to leave its key latched
-        // in _toastedWhileHeldIds forever. A future item recurring under the
-        // same key (e.g. a daily routine reminder) would then find that
-        // stale entry and skip its own Windows toast.
-        var pet = PetStateMachine.CreateIdle();
-        var policy = new PresentationPolicy(TimeSpan.Zero);
-        var notifications = new RecordingNotificationService();
-        var now = DateTimeOffset.Parse("2026-09-19T08:00:00Z");
-        var coordinator = new PresentationCoordinator(
-            policy,
-            notifications,
-            pet,
-            (_, _, _) => Task.CompletedTask,
-            () => AnimationOptions.Default,
-            isQuietHours: () => false,
-            pauseState: () => PauseState.None,
-            petGate: new SemaphoreSlim(1, 1),
-            utcNow: () => now);
-        coordinator.SetUserVisible(false);
-
-        var expiring = DurableNotification.Reminder(
-            "reminder-1",
-            "Stretch",
-            expiresUtc: now.AddMinutes(1));
-        await coordinator.PublishAsync(expiring, bypassSuppression: false, CancellationToken.None);
-
-        // The immediate toast for the held item.
-        Assert.Equal(1, notifications.ReminderCalls);
-        Assert.Equal(1, policy.QueuedCount);
-
-        // Let the queued item expire and get silently purged by a tick —
-        // it never reaches a real presentation.
-        now = now.AddMinutes(2);
-        await coordinator.TickAsync(CancellationToken.None);
-        Assert.Equal(0, policy.QueuedCount);
-        Assert.Equal(1, notifications.ReminderCalls);
-
-        // A new item recurring under the same key (unsuppressed this time)
-        // must still get its own toast.
-        coordinator.SetUserVisible(true);
-        await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
-            bypassSuppression: false,
-            CancellationToken.None);
-
-        Assert.Equal(2, notifications.ReminderCalls);
+        Assert.Equal(1, notifications.RemoteNoteCalls);
     }
 
     [Fact]
@@ -784,50 +635,24 @@ public sealed class PresentationCoordinatorTests
         coordinator.SetUserVisible(false);
 
         await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
 
         // The immediate toast for the held item.
-        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.Equal(1, notifications.RemoteNoteCalls);
 
         coordinator.SetUserVisible(true);
 
         // First release attempt: playback fails, item is requeued.
         await coordinator.TickAsync(CancellationToken.None);
         Assert.Equal(1, policy.QueuedCount);
-        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.Equal(1, notifications.RemoteNoteCalls);
 
         // Retry succeeds — must not toast a second time in total.
         await coordinator.TickAsync(CancellationToken.None);
         Assert.Equal(0, policy.QueuedCount);
-        Assert.Equal(1, notifications.ReminderCalls);
-    }
-
-    [Fact]
-    public async Task Reminder_presentation_is_acknowledged_so_the_pet_returns_to_idle()
-    {
-        // Regression for B5: before this fix, only LocalNote presentations
-        // were acknowledged in PresentAsync's finally block, so a due
-        // reminder's id sat in the state machine's pending set forever and
-        // Select() kept ranking PetState.Reminder above everything else.
-        var pet = PetStateMachine.CreateIdle();
-        var coordinator = new PresentationCoordinator(
-            new PresentationPolicy(TimeSpan.Zero),
-            new RecordingNotificationService(),
-            pet,
-            (_, _, _) => Task.CompletedTask,
-            () => AnimationOptions.Default,
-            isQuietHours: () => false,
-            pauseState: () => PauseState.None,
-            petGate: new SemaphoreSlim(1, 1));
-
-        await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
-            bypassSuppression: false,
-            CancellationToken.None);
-
-        Assert.Equal(PetState.Idle, pet.Current.State);
+        Assert.Equal(1, notifications.RemoteNoteCalls);
     }
 
     [Fact]
@@ -853,13 +678,13 @@ public sealed class PresentationCoordinatorTests
     }
 
     [Fact]
-    public async Task A_second_reminder_still_shows_while_the_first_is_acknowledged()
+    public async Task A_second_note_still_shows_while_the_first_is_acknowledged()
     {
         // The coalesced-card design (PetStateMachine.PendingCount) must
         // survive the per-item acknowledgement: dismissing the item that was
-        // just shown should not touch a different reminder still pending.
+        // just shown should not touch a different note still pending.
         var pet = PetStateMachine.CreateIdle();
-        pet.Handle(new PetEvent.ReminderDue("reminder-2"));
+        pet.Handle(new PetEvent.RemoteNoteArrived(NoteTwo));
         var coordinator = new PresentationCoordinator(
             new PresentationPolicy(TimeSpan.Zero),
             new RecordingNotificationService(),
@@ -871,11 +696,11 @@ public sealed class PresentationCoordinatorTests
             petGate: new SemaphoreSlim(1, 1));
 
         await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
 
-        Assert.Equal(PetState.Reminder, pet.Current.State);
+        Assert.Equal(PetState.RemoteNote, pet.Current.State);
         Assert.Equal(1, pet.PendingCount);
     }
 
@@ -1064,18 +889,11 @@ public sealed class PresentationCoordinatorTests
 
         public RecordingNotificationService(List<string>? order = null) => _order = order;
 
-        public int ReminderCalls { get; private set; }
         public int RemoteNoteCalls { get; private set; }
-
-        public Task ShowReminderAsync(string reminderId, string title, CancellationToken cancellationToken)
-        {
-            _order?.Add("notification");
-            ReminderCalls++;
-            return Task.CompletedTask;
-        }
 
         public Task ShowRemoteNoteArrivalAsync(Guid messageId, CancellationToken cancellationToken)
         {
+            _order?.Add("notification");
             RemoteNoteCalls++;
             return Task.CompletedTask;
         }
@@ -1083,9 +901,6 @@ public sealed class PresentationCoordinatorTests
 
     private sealed class FailingNotificationService : INotificationService
     {
-        public Task ShowReminderAsync(string reminderId, string title, CancellationToken cancellationToken) =>
-            throw new InvalidOperationException("simulated toast failure");
-
         public Task ShowRemoteNoteArrivalAsync(Guid messageId, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("simulated toast failure");
     }

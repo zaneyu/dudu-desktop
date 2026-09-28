@@ -7,34 +7,30 @@ namespace Dudu.App.Tests.Hosting;
 public sealed class AppHostTests
 {
     [Fact]
-    public async Task Startup_tick_advances_the_reminder_engine_but_does_not_release_held_presentations()
+    public async Task Startup_starts_the_gateway_but_does_not_release_held_presentations()
     {
-        // Finding 2: RunStartAsync used to run the presentation gateway's
+        // Finding 2: RunStartAsync must not run the presentation gateway's
         // release tick (TickAsync) as part of starting up, before
         // WindowsCompanionBootstrap has pushed real fullscreen/session-lock
         // state (via the events sink) or run the startup visibility gate --
-        // so a held item could be released, animated into a window that
-        // might not even be shown yet, and its row deleted on "success", all
-        // before the app's actual visibility state was known. The reminder
-        // engine itself must still tick at startup; only the presentation
-        // release is deferred to the first regularly scheduled 30 s tick.
+        // otherwise a held item could be released, animated into a window
+        // that might not even be shown yet, and its row deleted on
+        // "success", all before the app's actual visibility state was known.
+        // The release is deferred to the first regularly scheduled 30 s tick.
         var cancellationToken = TestContext.Current.CancellationToken;
         var root = Path.Combine(Path.GetTempPath(), $"dudu-apphost-{Guid.NewGuid():N}");
         try
         {
-            var reminderService = new RecordingReminderService();
             var timerFactory = new ManualTimerFactory();
             var gateway = new RecordingPresentationGateway();
             var host = new AppHost(
                 AppPaths.ForRoot(root),
                 new NoOpDatabase(),
-                reminderService,
                 timerFactory);
             host.AttachPresentationGateway(gateway);
 
             await host.StartAsync(cancellationToken);
 
-            Assert.Equal(1, reminderService.TickCalls);
             Assert.Equal(1, gateway.StartCalls);
             Assert.Equal(0, gateway.TickCalls);
 
@@ -43,7 +39,6 @@ public sealed class AppHostTests
             timerFactory.Timer!.SignalTick();
             await gateway.TickInvoked.Task.WaitAsync(cancellationToken);
 
-            Assert.Equal(2, reminderService.TickCalls);
             Assert.Equal(1, gateway.TickCalls);
 
             await host.DisposeAsync();
@@ -59,17 +54,6 @@ public sealed class AppHostTests
         public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
-    }
-
-    private sealed class RecordingReminderService : IAppHostReminderService
-    {
-        public int TickCalls { get; private set; }
-
-        public Task TickAsync(CancellationToken cancellationToken = default)
-        {
-            TickCalls++;
-            return Task.CompletedTask;
-        }
     }
 
     private sealed class RecordingPresentationGateway : IAppHostPresentationGateway

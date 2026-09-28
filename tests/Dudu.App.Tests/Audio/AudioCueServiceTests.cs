@@ -26,7 +26,6 @@ public sealed class AudioCueServiceTests
         {
             (AudioCueEvent.Greeting, new[] { "tata-lala", "dudu-lalala" }),
             (AudioCueEvent.RemoteNote, new[] { "bubu-dudu-atata", "dudu-atatata" }),
-            (AudioCueEvent.Reminder, new[] { "dudu-yapapa", "tata-lala" }),
             (AudioCueEvent.Celebration, new[] { "dudu-atatata", "bubu-dudu-atata" }),
             (AudioCueEvent.ManualInteraction, new[] { "dudu-lalala", "dudu-yapapa" }),
             (AudioCueEvent.Petted, new[] { "dudu-lalala", "tata-lala" }),

@@ -189,8 +189,6 @@ public sealed class ConnectionViewModelForgetPairingTests
             preferenceMutations,
             new FakeProfileRepository(),
             new FakePlacementRepository(),
-            new FakeReminderRepository(),
-            new FakeReminderRepository(),
             tasks,
             focusSessions,
             localNotes,
@@ -298,18 +296,6 @@ public sealed class ConnectionViewModelForgetPairingTests
         public Task DeleteAsync(string monitorDeviceName, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
-    private sealed class FakeReminderRepository : IReminderRepository, IReminderWriter
-    {
-        public Task<IReadOnlyList<Reminder>> LoadDueAsync(DateTimeOffset utcNow, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<Reminder>>([]);
-        public Task<bool> RecordOccurrencesAndAdvanceAsync(
-            Reminder reminder,
-            IReadOnlyList<ReminderOccurrence> occurrences,
-            DateTimeOffset? nextDueUtc,
-            CancellationToken cancellationToken) => Task.FromResult(true);
-        public Task SaveAsync(Reminder reminder, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    }
-
     private sealed class FakeTaskRepository : ITaskRepository
     {
         public Task<TaskItem?> GetAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult<TaskItem?>(null);
@@ -395,14 +381,6 @@ public sealed class ConnectionViewModelForgetPairingTests
 
     private sealed class ThrowingFeatureTransactions : ICompanionFeatureTransactions
     {
-        public Task SavePreferencesAndDefaultRemindersAsync(
-            Preferences preferences, DateTimeOffset nowUtc, TimeZoneInfo localTimeZone,
-            CancellationToken cancellationToken = default) =>
-            Task.FromException(new NotSupportedException("not needed for this test"));
-        public Task RestorePreferencesAndDefaultRemindersAsync(
-            Preferences preferences, IReadOnlyList<Reminder> previousDefaultReminders,
-            CancellationToken cancellationToken = default) =>
-            Task.FromException(new NotSupportedException("not needed for this test"));
         public Task SaveRemoteNoteAndConsumeEnvelopeAsync(
             LocalLoveNote note, string messageId, DateTimeOffset processedUtc,
             CancellationToken cancellationToken = default) =>

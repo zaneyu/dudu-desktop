@@ -7,7 +7,6 @@ using Dudu.Core.Abstractions;
 using Dudu.Core.Models;
 using Dudu.Core.Notes;
 using Dudu.Core.Pet;
-using Dudu.Core.Reminders;
 using Xunit;
 
 namespace Dudu.App.Tests.Presentation;
@@ -15,45 +14,13 @@ namespace Dudu.App.Tests.Presentation;
 /// <summary>
 /// P2 sink visibility: presentation/notification catch-alls route through
 /// the shared <see cref="IAppHostErrorReporter"/> with fixed operation
-/// names carrying the exception type only — never note, reminder, or toast
+/// names carrying the exception type only — never note or toast
 /// content. Durability behavior (no rollback, no broken loops) is unchanged.
 /// </summary>
 public sealed class SinkDiagnosticsTests
 {
     private static readonly DateTimeOffset DueUtc =
         DateTimeOffset.Parse("2026-09-17T20:00:00Z");
-
-    [Fact]
-    public async Task Reminder_sink_failure_reports_reminder_notify_without_throwing()
-    {
-        var failure = new InvalidOperationException("gateway down");
-        var reporter = new RecordingErrorReporter();
-        var reminders = new RecordingReminderRepository(
-            new Reminder(
-                "reminder-1",
-                "Stretch",
-                null,
-                true,
-                new RecurrenceRule.Daily(new TimeOnly(20, 0)),
-                "UTC",
-                QuietHoursBehavior.DeliverImmediately,
-                MissedOccurrencePolicy.Skip,
-                DueUtc));
-        var sink = new ReminderDueSink(
-            reminders,
-            () => new ThrowingGateway(failure),
-            reporter);
-
-        // Must not throw: the occurrence is already durably recorded and the
-        // reminder tick must continue.
-        await sink.NotifyAsync(
-            new ReminderOccurrence("reminder-1", DueUtc),
-            TestContext.Current.CancellationToken);
-
-        var report = Assert.Single(reporter.Reports);
-        Assert.Equal("reminder-notify", report.Operation);
-        Assert.Same(failure, report.Exception);
-    }
 
     [Fact]
     public async Task Remote_note_sink_failure_reports_remote_note_notify_without_throwing()
@@ -110,7 +77,7 @@ public sealed class SinkDiagnosticsTests
             petGate: new SemaphoreSlim(1, 1),
             utcNow: () => DueUtc,
             errorReporter: reporter);
-        var item = DurableNotification.Reminder("reminder-1", "Stretch");
+        var item = DurableNotification.RemoteNote("11111111-1111-4111-8111-111111111111");
 
         // Must not throw: the item is requeued for the next tick.
         await coordinator.PublishAsync(item, bypassSuppression: false, TestContext.Current.CancellationToken);
@@ -153,7 +120,7 @@ public sealed class SinkDiagnosticsTests
             new ThrowingSink(failure),
             errorReporter: reporter);
 
-        await service.ShowReminderAsync("reminder-1", "Stretch", TestContext.Current.CancellationToken);
+        await service.ShowRemoteNoteArrivalAsync(Guid.NewGuid(), TestContext.Current.CancellationToken);
 
         Assert.False(service.NotificationsAvailable);
         var report = Assert.Single(reporter.Reports);
@@ -203,29 +170,8 @@ public sealed class SinkDiagnosticsTests
             Task.FromException(failure);
     }
 
-    private sealed class RecordingReminderRepository(params Reminder[] reminders) : IReminderRepository
-    {
-        public Task<IReadOnlyList<Reminder>> ListAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<Reminder>>(reminders);
-
-        public Task<IReadOnlyList<Reminder>> LoadDueAsync(
-            DateTimeOffset utcNow,
-            CancellationToken cancellationToken) => throw new NotSupportedException();
-
-        public Task<bool> RecordOccurrencesAndAdvanceAsync(
-            Reminder reminder,
-            IReadOnlyList<ReminderOccurrence> occurrences,
-            DateTimeOffset? nextDueUtc,
-            CancellationToken cancellationToken) => throw new NotSupportedException();
-    }
-
     private sealed class RecordingNotificationService : INotificationService
     {
-        public Task ShowReminderAsync(
-            string reminderId,
-            string title,
-            CancellationToken cancellationToken) => Task.CompletedTask;
-
         public Task ShowRemoteNoteArrivalAsync(
             Guid messageId,
             CancellationToken cancellationToken) => Task.CompletedTask;
@@ -236,11 +182,6 @@ public sealed class SinkDiagnosticsTests
     {
         public Task<bool> TryRegisterAsync(CancellationToken cancellationToken) =>
             Task.FromException<bool>(failure);
-
-        public Task ShowReminderAsync(
-            string reminderId,
-            string title,
-            CancellationToken cancellationToken) => Task.CompletedTask;
 
         public Task ShowRemoteNoteArrivalAsync(
             Guid messageId,

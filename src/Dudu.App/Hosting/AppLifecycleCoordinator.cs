@@ -343,7 +343,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
     /// leaves behind (e.g. a pause active at sign-in). Nothing previously
     /// retried that show once the veto's reason ended, so the pet stayed
     /// invisible for the rest of the session. Ticked from <c>AppHost</c>'s
-    /// existing 30 s reminder tick, before the presentation gateway's own
+    /// existing 30 s presentation tick, before the presentation gateway's own
     /// release -- no new timer. Exception-safe: a failure here must never
     /// interrupt that tick.
     /// </summary>
@@ -744,13 +744,13 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
 
         // Finding 5: resume the host only after _locked/_suspended are
         // cleared and the overlay is back up. _host.ResumeAsync can run an
-        // immediate catch-up reminder tick (AppHost.RunResumeTickAsync),
+        // immediate catch-up presentation tick (AppHost.RunResumeTickAsync),
         // which reconciles visibility and releases the presentation
         // gateway's queue synchronously. Doing that before the flags above
         // were cleared used to make the catch-up reconcile see stale
         // locked/suspended state, veto, and push the gateway back to
-        // user-hidden -- stranding a reminder that became due exactly at
-        // unlock until the next periodic tick (~30 s later) instead of
+        // user-hidden -- stranding a note held until unlock
+        // until the next periodic tick (~30 s later) instead of
         // surfacing it at unlock.
         await _host.ResumeAsync(cancellationToken);
 

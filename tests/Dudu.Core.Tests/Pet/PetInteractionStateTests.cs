@@ -116,18 +116,18 @@ public sealed class PetInteractionStateTests
     }
 
     [Fact]
-    public void Eating_holds_notes_reminders_and_ambient_back_like_focus()
+    public void Eating_holds_notes_and_ambient_back_like_focus()
     {
         var machine = PetStateMachine.CreateIdle();
         machine.Handle(new PetEvent.EatingStarted("meal-1"));
         machine.Handle(new PetEvent.RemoteNoteArrived("m-1"));
-        machine.Handle(new PetEvent.ReminderDue("r-1"));
 
+        Assert.Equal(PetState.Eating, machine.Current.State);
         Assert.Equal(PetState.Eating, machine.Handle(new PetEvent.AmbientRequested("blink")).State);
 
         var afterMeal = machine.Handle(new PetEvent.EatingEnded("meal-1"));
         Assert.Equal(PetState.RemoteNote, afterMeal.State);
-        Assert.Equal(PetState.Reminder, machine.Handle(new PetEvent.Dismissed("m-1")).State);
+        Assert.Equal(PetState.Idle, machine.Handle(new PetEvent.Dismissed("m-1")).State);
     }
 
     [Fact]

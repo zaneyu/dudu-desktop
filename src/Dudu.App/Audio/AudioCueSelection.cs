@@ -8,7 +8,6 @@ public enum AudioCueEvent
 {
     Greeting,
     RemoteNote,
-    Reminder,
     Celebration,
     ManualInteraction,
     Petted,
@@ -28,7 +27,6 @@ public static class AudioCueSelection
         {
             [AudioCueEvent.Greeting] = ["tata-lala", "dudu-lalala"],
             [AudioCueEvent.RemoteNote] = ["bubu-dudu-atata", "dudu-atatata"],
-            [AudioCueEvent.Reminder] = ["dudu-yapapa", "tata-lala"],
             [AudioCueEvent.Celebration] = ["dudu-atatata", "bubu-dudu-atata"],
             [AudioCueEvent.ManualInteraction] = ["dudu-lalala", "dudu-yapapa"],
             [AudioCueEvent.Petted] = ["dudu-lalala", "tata-lala"],
@@ -50,7 +48,6 @@ public static class AudioCueSelection
             PetState.WelcomeBack => AudioCueEvent.Greeting,
             PetState.FocusTransition => AudioCueEvent.Celebration,
             PetState.RemoteNote => AudioCueEvent.RemoteNote,
-            PetState.Reminder => AudioCueEvent.Reminder,
             PetState.Comfort => AudioCueEvent.ManualInteraction,
             // Keyed on the animation key, not a PetState, so interaction
             // states added later (drag, pet, tantrum, eat-together) are
@@ -116,7 +113,6 @@ public static class AudioCueSelection
         return notification.Kind switch
         {
             PresentationItemKind.RemoteNote => AudioCueEvent.RemoteNote,
-            PresentationItemKind.Reminder => AudioCueEvent.Reminder,
             PresentationItemKind.LocalNote when notification.AnimationKey is { } key
                 && Dudu.Core.Assets.AssetManifestContract.IsStickerAnimationKey(key) => AudioCueEvent.Sticker,
             PresentationItemKind.LocalNote => AudioCueEvent.ManualInteraction,

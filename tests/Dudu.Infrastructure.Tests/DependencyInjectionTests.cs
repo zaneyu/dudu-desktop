@@ -11,14 +11,29 @@ namespace Dudu.Infrastructure.Tests;
 
 public sealed class DependencyInjectionTests
 {
+    [Theory]
+    [InlineData("Dudu.Core.Reminders.ReminderEngine")]
+    [InlineData("Dudu.Core.Reminders.ReminderScheduler")]
+    [InlineData("Dudu.Core.Reminders.LocalReminderDefaults")]
+    [InlineData("Dudu.Core.Abstractions.IReminderRepository")]
+    [InlineData("Dudu.Core.Models.Reminder")]
+    public void Removed_reminder_types_no_longer_exist(string typeName)
+    {
+        Assert.Null(typeof(Preferences).Assembly.GetType(typeName));
+    }
+
+    [Fact]
+    public void Removed_reminder_repository_no_longer_exists()
+    {
+        Assert.Null(typeof(Database).Assembly.GetType("Dudu.Infrastructure.Data.Repositories.ReminderRepository"));
+    }
+
     [Fact]
     public async Task Infrastructure_registration_resolves_every_repository_once()
     {
         using var fixture = ServiceFixture.Build();
         using var provider = fixture.Provider;
 
-        Assert.IsType<ReminderRepository>(provider.GetRequiredService<IReminderRepository>());
-        Assert.IsType<ReminderRepository>(provider.GetRequiredService<IReminderWriter>());
         Assert.IsType<CheckInRepository>(provider.GetRequiredService<ICheckInRepository>());
         Assert.IsType<CountdownRepository>(provider.GetRequiredService<ICountdownRepository>());
         Assert.IsType<FocusSessionRepository>(provider.GetRequiredService<IFocusSessionRepository>());
@@ -44,9 +59,6 @@ public sealed class DependencyInjectionTests
         Assert.Same(
             provider.GetRequiredService<FocusSessionRepository>(),
             provider.GetRequiredService<IFocusSessionRepository>());
-        Assert.Same(
-            provider.GetRequiredService<IReminderRepository>(),
-            provider.GetRequiredService<IReminderWriter>());
         Assert.Same(
             provider.GetRequiredService<Database>(),
             provider.GetRequiredService<Database>());

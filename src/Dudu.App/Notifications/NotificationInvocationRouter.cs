@@ -4,36 +4,23 @@ using Dudu.App.Hosting;
 namespace Dudu.App.Notifications;
 
 /// <summary>
-/// Acts on a toast click while Dudu is running:
-/// <list type="bullet">
-/// <item>a body click opens the page the toast is about (Love Notes for a
-/// note, Reminders for a reminder);</item>
-/// <item>Done / Snooze on a reminder toast complete or snooze the reminder in
-/// the background via <see cref="ReminderToastActions"/>, without pulling the
-/// settings window up. If that is not possible (not composed yet, or the
-/// save failed) the toast is dismissed only for Done, and the Reminders page
-/// is opened so she can finish it there instead of the click being lost.</item>
-/// </list>
-/// Malformed or unknown activations are ignored. Never throws.
+/// Acts on a toast click while Dudu is running: a note toast click opens the
+/// Love Notes page. Malformed or unknown activations -- including a retired
+/// reminder toast's Done/Snooze/body click left in Action Center by an older
+/// build -- parse to null and are ignored. Never throws.
 /// </summary>
 public sealed class NotificationInvocationRouter
 {
     public const string NavigateOperation = "notification-invoked";
 
     private readonly Func<string, CancellationToken, Task> _navigateAsync;
-    private readonly Func<ReminderToastActions?> _reminderActions;
-    private readonly Func<string, CancellationToken, Task> _dismissReminderAsync;
     private readonly IAppHostErrorReporter? _errorReporter;
 
     public NotificationInvocationRouter(
         Func<string, CancellationToken, Task> navigateAsync,
-        Func<ReminderToastActions?> reminderActions,
-        Func<string, CancellationToken, Task> dismissReminderAsync,
         IAppHostErrorReporter? errorReporter = null)
     {
         _navigateAsync = navigateAsync ?? throw new ArgumentNullException(nameof(navigateAsync));
-        _reminderActions = reminderActions ?? throw new ArgumentNullException(nameof(reminderActions));
-        _dismissReminderAsync = dismissReminderAsync ?? throw new ArgumentNullException(nameof(dismissReminderAsync));
         _errorReporter = errorReporter;
     }
 
@@ -45,8 +32,7 @@ public sealed class NotificationInvocationRouter
     /// <summary>
     /// Acts on an already parsed activation. Also used on a cold start, where
     /// the click launched Dudu and is only acted on once the runtime is
-    /// composed: a Done/Snooze then works the same as while running instead of
-    /// only opening the Reminders page.
+    /// composed.
     /// </summary>
     public async Task HandleActivationAsync(
         NotificationActivation? activation,
@@ -54,7 +40,12 @@ public sealed class NotificationInvocationRouter
     {
         try
         {
-            await HandleCoreAsync(activation, cancellationToken);
+            if (activation is null)
+            {
+                return;
+            }
+
+            await _navigateAsync(activation.Destination, cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -63,49 +54,6 @@ public sealed class NotificationInvocationRouter
         {
             Report(NavigateOperation, exception);
         }
-    }
-
-    /// <summary>True for a reminder toast's Done/Snooze button, which is
-    /// carried out without opening the settings window (it only opens the
-    /// Reminders page if the action could not be carried out).</summary>
-    public static bool ActsInBackground(NotificationActivation? activation) =>
-        activation is { ReminderId: not null }
-        && activation.Action is NotificationActivationAction.ReminderDone
-            or NotificationActivationAction.ReminderSnooze;
-
-    private async Task HandleCoreAsync(NotificationActivation? activation, CancellationToken cancellationToken)
-    {
-        if (activation is null)
-        {
-            return;
-        }
-
-        if (ActsInBackground(activation) && activation.ReminderId is { } reminderId)
-        {
-            var actions = _reminderActions();
-            var handled = actions is not null && (activation.Action == NotificationActivationAction.ReminderDone
-                ? await actions.CompleteAsync(reminderId, cancellationToken)
-                : await actions.SnoozeAsync(reminderId, cancellationToken));
-            if (handled)
-            {
-                return;
-            }
-
-            if (activation.Action == NotificationActivationAction.ReminderDone)
-            {
-                // Done is an acknowledgement either way; drop the stale copy.
-                try
-                {
-                    await _dismissReminderAsync(reminderId, cancellationToken);
-                }
-                catch (Exception exception) when (exception is not OperationCanceledException)
-                {
-                    Report(ReminderToastActions.Operation, exception);
-                }
-            }
-        }
-
-        await _navigateAsync(activation.Destination, cancellationToken);
     }
 
     private void Report(string operation, Exception exception)

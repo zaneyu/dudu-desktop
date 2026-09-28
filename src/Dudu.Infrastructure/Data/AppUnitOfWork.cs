@@ -68,7 +68,6 @@ internal sealed class AppUnitOfWorkContext : IAppUnitOfWorkContext
         Preferences = new PreferencesRepository(database, transactionContext);
         Profiles = new ProfileRepository(database, transactionContext);
         RemoteEnvelopes = new RemoteEnvelopeRepository(database, transactionContext);
-        Reminders = new ReminderRepository(database, transactionContext);
         Tasks = new TaskRepository(database, transactionContext);
     }
 
@@ -80,6 +79,5 @@ internal sealed class AppUnitOfWorkContext : IAppUnitOfWorkContext
     public IPreferencesRepository Preferences { get; }
     public IProfileRepository Profiles { get; }
     public IRemoteEnvelopeRepository RemoteEnvelopes { get; }
-    public IReminderRepository Reminders { get; }
     public ITaskRepository Tasks { get; }
 }

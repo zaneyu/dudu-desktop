@@ -108,7 +108,7 @@ uninstall/reinstall acceptance.
    dotnet run --project tests/Dudu.WindowsHarness -c Release -- --scenario long-run --hours 8 --output artifacts/stability/eight-hour.json
    ```
    Exits 0 only when the process never crashed, GDI and USER handle counts never grew more than
-   5%, working set never grew faster than 1 MB/hour, and no duplicate reminder-occurrence or
+   5%, working set never grew faster than 1 MB/hour, and no duplicate
    remote-note row was found (`StabilityThresholds.Evaluate` in
    `tests/Dudu.WindowsHarness/LongRunScenario.cs`). The duplicate-row check can only catch a
    regression in the database's own primary-key guarantees — see that file's doc comment for why

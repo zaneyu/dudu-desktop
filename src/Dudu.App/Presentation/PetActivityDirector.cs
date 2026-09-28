@@ -11,7 +11,7 @@ namespace Dudu.App.Presentation;
 /// <see cref="PetActivityScheduler"/> whether an idle fidget or a short wander is
 /// due, and plays it through the shared one-shot path only while the pet is
 /// plainly idle. Silent (motion clips have no audio cue), never preempts a note,
-/// reminder, comfort, or focus, and fully off under reduced motion.
+/// comfort, or focus, and fully off under reduced motion.
 /// </summary>
 public sealed class PetActivityDirector : IAsyncDisposable
 {

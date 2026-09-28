@@ -5,52 +5,26 @@ namespace Dudu.App.Tests.Presentation;
 
 public sealed class PresentationPolicyTests
 {
-    [Fact]
-    public void Expired_reminder_is_removed_without_delaying_the_next_durable_item()
-    {
-        var now = DateTimeOffset.Parse("2026-09-18T00:00:00Z");
-        var policy = new PresentationPolicy(TimeSpan.FromMinutes(2));
-        var expired = DurableNotification.Reminder("bedtime", "Goodnight", expiresUtc: now);
-        var generic = DurableNotification.Reminder("generic", "Stretch");
-        policy.Enqueue(expired);
-        policy.Enqueue(generic);
-
-        var decision = policy.Decide(false, false, false, nowUtc: now);
-
-        Assert.Equal(generic, Assert.Single(decision.ToPresent));
-        Assert.False(policy.IsQueued(expired));
-        Assert.Equal(0, policy.QueuedCount);
-        Assert.True(policy.Enqueue(DurableNotification.Reminder("bedtime", "Goodnight", expiresUtc: now.AddDays(1))));
-    }
+    private const string NoteOne = "11111111-1111-4111-8111-111111111111";
+    private const string NoteTwo = "22222222-2222-4222-8222-222222222222";
 
     [Fact]
-    public void Quiet_hours_alone_release_only_the_bedtime_routine_and_keep_the_rest_in_order()
+    public void Quiet_hours_alone_hold_every_item_and_release_them_in_order_afterwards()
     {
+        // No item kind ignores quiet hours any more (the bedtime routine that
+        // did went with reminders), so quiet hours hold everything.
         var now = DateTimeOffset.Parse("2026-09-18T22:00:00Z");
         var policy = new PresentationPolicy(TimeSpan.Zero);
-        var first = DurableNotification.Reminder("generic-1", "Stretch");
-        var bedtime = DurableNotification.Reminder(
-            Dudu.Core.Reminders.LocalReminderDefaults.BedtimeId, "Goodnight", expiresUtc: now.AddHours(2));
-        var evening = DurableNotification.Reminder(
-            Dudu.Core.Reminders.LocalReminderDefaults.EveningCheckInId, "Check in", expiresUtc: now.AddHours(2));
-        var second = DurableNotification.Reminder("generic-2", "Water");
+        var first = DurableNotification.RemoteNote(NoteOne);
+        var second = DurableNotification.RemoteNote(NoteTwo);
         policy.Enqueue(first);
-        policy.Enqueue(bedtime);
-        policy.Enqueue(evening);
         policy.Enqueue(second);
 
-        // Quiet plus anything else still holds everything.
-        Assert.Empty(policy.Decide(nowQuiet: true, fullscreen: true, paused: false, nowUtc: now).ToPresent);
-        Assert.Empty(policy.Decide(nowQuiet: true, fullscreen: false, paused: false, nowUtc: now, userHidden: true).ToPresent);
+        var held = policy.Decide(nowQuiet: true, fullscreen: false, paused: false, nowUtc: now);
+        Assert.Empty(held.ToPresent);
+        Assert.Equal(2, held.RemainingQueuedCount);
 
-        var decision = policy.Decide(nowQuiet: true, fullscreen: false, paused: false, nowUtc: now);
-        Assert.Equal(bedtime, Assert.Single(decision.ToPresent));
-        Assert.Equal(3, decision.RemainingQueuedCount);
-        Assert.Empty(policy.Decide(nowQuiet: true, fullscreen: false, paused: false, nowUtc: now).ToPresent);
-
-        // Once quiet hours end, the others come out in their original order.
         Assert.Equal(first, Assert.Single(policy.Decide(false, false, false, nowUtc: now).ToPresent));
-        Assert.Equal(evening, Assert.Single(policy.Decide(false, false, false, nowUtc: now).ToPresent));
         Assert.Equal(second, Assert.Single(policy.Decide(false, false, false, nowUtc: now).ToPresent));
     }
 
@@ -80,8 +54,8 @@ public sealed class PresentationPolicyTests
     public void Decide_withholds_a_second_release_within_the_minimum_silent_interval()
     {
         var policy = new PresentationPolicy(TimeSpan.FromSeconds(90));
-        policy.Enqueue(DurableNotification.Reminder("reminder-1", "Stretch"));
-        policy.Enqueue(DurableNotification.Reminder("reminder-2", "Hydrate"));
+        policy.Enqueue(DurableNotification.RemoteNote(NoteOne));
+        policy.Enqueue(DurableNotification.RemoteNote(NoteTwo));
         var start = new DateTimeOffset(2026, 9, 11, 10, 0, 0, TimeSpan.Zero);
 
         var first = policy.Decide(nowQuiet: false, fullscreen: false, paused: false, nowUtc: start);
@@ -104,11 +78,11 @@ public sealed class PresentationPolicyTests
     }
 
     [Fact]
-    public void Enqueue_does_not_double_queue_the_same_reminder()
+    public void Enqueue_does_not_double_queue_the_same_note()
     {
         var policy = new PresentationPolicy(TimeSpan.Zero);
-        var first = policy.Enqueue(DurableNotification.Reminder("reminder-1", "Stretch"));
-        var second = policy.Enqueue(DurableNotification.Reminder("reminder-1", "Stretch"));
+        var first = policy.Enqueue(DurableNotification.RemoteNote(NoteOne));
+        var second = policy.Enqueue(DurableNotification.RemoteNote(NoteOne));
 
         Assert.True(first);
         Assert.False(second);
@@ -139,7 +113,7 @@ public sealed class PresentationPolicyTests
     public void IsQueued_reflects_queue_membership_until_Decide_releases_the_item()
     {
         var policy = new PresentationPolicy(TimeSpan.Zero);
-        var item = DurableNotification.Reminder("reminder-1", "Stretch");
+        var item = DurableNotification.RemoteNote(NoteOne);
         policy.Enqueue(item);
 
         Assert.True(policy.IsQueued(item));

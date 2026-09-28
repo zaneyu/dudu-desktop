@@ -71,8 +71,8 @@ themselves.
   (`sender-src/pairing.ts`, `verifyStoredSession`) and drops to an explicit "key changed, pair
   again" warning rather than silently re-encrypting to a new one — which catches a later swap, not
   a relay that was already lying at the moment of first pairing.
-- **A relay outage never blocks local functionality.** Reminders, tasks, focus sessions, and every
-  other local-only entity above are scheduled and presented entirely locally; `AppHost` ticks the
-  local reminder service before it ever attempts to start remote sync, and a remote-sync failure
+- **A relay outage never blocks local functionality.** Every local-only entity above is
+  presented entirely locally; `AppHost` starts the local presentation gateway (and its 30-second
+  presentation tick) before it ever attempts to start remote sync, and a remote-sync failure
   is caught and reported, never allowed to stop the host (see `tests/Dudu.Infrastructure.Tests/Security/PrivacyBoundaryTests.cs`,
-  `Worker_outage_does_not_stop_local_reminders`).
+  `Worker_outage_does_not_stop_local_presentations`).

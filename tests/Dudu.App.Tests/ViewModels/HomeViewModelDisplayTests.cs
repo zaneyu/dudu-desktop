@@ -13,7 +13,6 @@ public sealed class HomeViewModelDisplayTests
     [InlineData(PetState.FocusTransition)]
     [InlineData(PetState.WelcomeBack)]
     [InlineData(PetState.Comfort)]
-    [InlineData(PetState.Reminder)]
     [InlineData(PetState.Ambient)]
     [InlineData(PetState.Focus)]
     [InlineData(PetState.Idle)]

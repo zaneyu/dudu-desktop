@@ -6,7 +6,7 @@ namespace Dudu.Core.Pet;
 public sealed class PetStateMachine
 {
     /// <summary>
-    /// Upper bound for queued reminder/note ids. The pending sets are only used
+    /// Upper bound for queued note ids. The pending sets are only used
     /// for a single coalesced display card, so anything beyond the newest N is
     /// dropped (oldest first) instead of growing without bound across a session.
     /// </summary>
@@ -25,8 +25,6 @@ public sealed class PetStateMachine
     public const string TantrumBubble = "pet me!! 😤";
 
     private readonly object _sync = new();
-    private readonly HashSet<string> _dueReminderIds = new(StringComparer.Ordinal);
-    private readonly List<string> _dueReminderOrder = [];
     private readonly HashSet<string> _remoteMessageIds = new(StringComparer.Ordinal);
     private readonly List<string> _remoteMessageOrder = [];
     private PetPresentation _current;
@@ -61,7 +59,7 @@ public sealed class PetStateMachine
     }
 
     /// <summary>
-    /// Number of pending reminder/note ids backing the coalesced display cards.
+    /// Number of pending note ids backing the coalesced display card.
     /// Exposed for diagnostics and tests; the display itself stays a single card.
     /// </summary>
     public int PendingCount
@@ -70,7 +68,7 @@ public sealed class PetStateMachine
         {
             lock (_sync)
             {
-                return _dueReminderIds.Count + _remoteMessageIds.Count;
+                return _remoteMessageIds.Count;
             }
         }
     }
@@ -141,10 +139,6 @@ public sealed class PetStateMachine
 
             case PetEvent.RemoteNoteArrived remoteNote:
                 AddPending(_remoteMessageIds, _remoteMessageOrder, remoteNote.MessageId);
-                break;
-
-            case PetEvent.ReminderDue reminder:
-                AddPending(_dueReminderIds, _dueReminderOrder, reminder.ReminderId);
                 break;
 
             case PetEvent.FocusStarted focus:
@@ -283,26 +277,14 @@ public sealed class PetStateMachine
             return Present(PetState.Interaction, _interactionAnimation, BubbleFor(_interactionAnimation));
         }
 
-        // Pending notes and reminders each coalesce into a single display card
-        // no matter how many ids are queued behind it.
+        // Pending notes coalesce into a single display card no matter how
+        // many ids are queued behind it.
         if (!_paused && !IsQuietCompanyActive() && _remoteMessageIds.Count > 0)
         {
             var body = _remoteMessageIds.Count > 1
                 ? $"{_remoteMessageIds.Count} notes waiting"
                 : null;
             return new(PetState.RemoteNote, "note-arrival", "A note arrived 💌", body, true);
-        }
-
-        if (!_paused && !IsQuietCompanyActive() && _dueReminderIds.Count > 0)
-        {
-            var body = _dueReminderIds.Count > 1
-                ? $"{_dueReminderIds.Count} reminders due"
-                : null;
-            // Reminder has no separate source clip. The note-arrival pose is
-            // the closest real Dudu interaction and keeps a due reminder from
-            // degrading to the generic idle fallback.
-            var presentation = Present(PetState.Reminder, "note-arrival");
-            return body is null ? presentation : presentation with { BubbleBody = body };
         }
 
         if (_focusTransition is not null)
@@ -361,12 +343,6 @@ public sealed class PetStateMachine
             return;
         }
 
-        if (_dueReminderIds.Remove(itemId))
-        {
-            _dueReminderOrder.Remove(itemId);
-            return;
-        }
-
         if (string.Equals(itemId, "comfort", StringComparison.Ordinal)
             || string.Equals(itemId, "comfort-hug", StringComparison.Ordinal))
         {
@@ -413,7 +389,7 @@ public sealed class PetStateMachine
     private bool IsEatingLatched() => _eatingId is not null;
 
     /// <summary>Focus and eating both keep Dudu as quiet company: unsolicited
-    /// notes, reminders, and ambient moments wait until they end.</summary>
+    /// notes and ambient moments wait until they end.</summary>
     private bool IsQuietCompanyActive() => IsFocusLatched() || IsEatingLatched();
 
     private static bool IsAllowedAmbientAnimation(string animationKey)

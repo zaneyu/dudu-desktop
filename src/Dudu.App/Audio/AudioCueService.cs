@@ -4,7 +4,7 @@ using Dudu.Core.Models;
 namespace Dudu.App.Audio;
 
 /// <summary>
-/// <see cref="AudioCuePriority.Background"/>: note/reminder arrival, welcome
+/// <see cref="AudioCuePriority.Background"/>: note arrival, welcome
 /// back, ambient stickers -- never interrupts a playing cue and honours every
 /// cooldown. <see cref="AudioCuePriority.Interactive"/>: a direct user action
 /// (pet, drink, eat, drag, comfort) -- always answered with a sound.

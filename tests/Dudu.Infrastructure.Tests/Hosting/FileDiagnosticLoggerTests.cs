@@ -112,10 +112,10 @@ public sealed class FileDiagnosticLoggerTests
             factory.CreateLogger("Dudu.AppHost").LogError(
                 new InvalidOperationException("composite check failed"),
                 "Dudu AppHost operation {Operation} failed.",
-                "reminder-scheduler");
+                "presentation-scheduler");
 
             var contents = File.ReadAllText(Path.Combine(paths.Logs, "diagnostics.log"));
-            Assert.Contains("reminder-scheduler", contents, StringComparison.Ordinal);
+            Assert.Contains("presentation-scheduler", contents, StringComparison.Ordinal);
             Assert.Contains("composite check failed", contents, StringComparison.Ordinal);
         }
         finally

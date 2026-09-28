@@ -136,8 +136,6 @@ public sealed class ComfortBreathingInterruptTests
             new PreferenceMutationCoordinator(preferences, Stub<IPreferencesRepository>()),
             Stub<IProfileRepository>(),
             Stub<IPetPlacementRepository>(),
-            Stub<IReminderRepository>(),
-            Stub<IReminderWriter>(),
             tasks,
             Stub<IFocusSessionRepository>(),
             Stub<ILocalNoteRepository>(),

@@ -7,7 +7,6 @@ using Dudu.App.Overlay;
 using Dudu.App.System;
 using Dudu.Core.Abstractions;
 using Dudu.Core.Models;
-using Dudu.Core.Reminders;
 
 namespace Dudu.App.ViewModels;
 
@@ -452,16 +451,6 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
                             await context.Profiles.SaveAsync(profile, transactionToken);
                             await context.Preferences.SaveAsync(updated, transactionToken);
                             await context.PetPlacements.SaveAsync(placement, transactionToken);
-                            if (context.Reminders is IReminderWriter reminderWriter)
-                            {
-                                foreach (var reminder in LocalReminderDefaults.Create(
-                                    updated,
-                                    DateTimeOffset.UtcNow,
-                                    TimeZoneInfo.Local))
-                                {
-                                    await reminderWriter.SaveAsync(reminder, transactionToken);
-                                }
-                            }
                         }, token);
                     },
                     cancellationToken);

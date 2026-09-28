@@ -143,15 +143,7 @@ public sealed partial class App : Application
             _bootstrap = _startupRunner?.Bootstrap;
             var notificationActivation = _notificationActivation;
             var notificationRouter = _settingsContext?.NotificationRouter;
-            // A toast Done/Snooze that launched Dudu is carried out in the
-            // background like it is while running, so it does not also pull
-            // Home up (unless onboarding still has to happen). The router
-            // opens Reminders itself if the action could not be carried out.
-            var answeredInBackground = notificationRouter is not null
-                && NotificationInvocationRouter.ActsInBackground(notificationActivation)
-                && _settingsContext?.Profile?.OnboardingComplete == true;
             if (_settingsContext is not null
-                && !answeredInBackground
                 && CompanionLaunchOptions.Parse(_launchArguments)
                     .ShouldOpenSettings(_settingsContext.Profile))
             {
@@ -499,9 +491,8 @@ public sealed partial class App : Application
                 (activation.Data as AppNotificationActivatedEventArgs)?.Arguments)
             : null;
 
-    // Every parsed activation has a page; a reminder body click
-    // (open-reminder) used to map to nothing here, so a toast click that
-    // launched Dudu opened Home instead of Reminders.
+    // Every parsed activation has a page (Love Notes). A retired reminder
+    // toast parses to null above, so it never reaches this.
     private static string? NotificationDestination(NotificationActivation? activation) =>
         activation?.Destination;
 

@@ -81,10 +81,6 @@ internal sealed class SettingsDataPagesFixture
         Func<CancellationToken, Task>? deleteRemoteDataAsync = null,
         Func<string, CancellationToken, Task>? setGlobalShortcutAsync = null,
         IFocusSessionRepository? focusSessions = null,
-        IReminderRepository? reminders = null,
-        IReminderWriter? reminderWriter = null,
-        Func<string, CancellationToken, Task>? dismissReminderNotificationAsync = null,
-        Func<string, CancellationToken, Task>? discardHeldReminderAsync = null,
         Func<PetEvent, CancellationToken, Task>? presentPetAsync = null,
         Func<string?>? getGlobalShortcutStatus = null,
         Func<CancellationToken, Task>? stopRemoteSyncAsync = null,
@@ -113,8 +109,6 @@ internal sealed class SettingsDataPagesFixture
             preferenceMutations,
             new EmptyProfileRepository(),
             placements,
-            reminders ?? new EmptyReminderRepository(),
-            reminderWriter ?? new EmptyReminderRepository(),
             tasks,
             focusSessionRepository,
             localNotes,
@@ -134,8 +128,6 @@ internal sealed class SettingsDataPagesFixture
             deleteRemoteDataAsync: deleteRemoteDataAsync,
             setGlobalShortcutAsync: setGlobalShortcutAsync,
             presentPetAsync: presentPetAsync,
-            dismissReminderNotificationAsync: dismissReminderNotificationAsync,
-            discardHeldReminderAsync: discardHeldReminderAsync,
             getGlobalShortcutStatus: getGlobalShortcutStatus,
             stopRemoteSyncAsync: stopRemoteSyncAsync,
             startRemoteSyncAsync: startRemoteSyncAsync,
@@ -307,20 +299,6 @@ internal sealed class SettingsDataPagesFixture
         public Task SaveAsync(Profile profile, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
-    private sealed class EmptyReminderRepository : IReminderRepository, IReminderWriter
-    {
-        public Task<IReadOnlyList<Reminder>> ListAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<Reminder>>([]);
-        public Task<IReadOnlyList<Reminder>> LoadDueAsync(DateTimeOffset utcNow, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<Reminder>>([]);
-        public Task<bool> RecordOccurrencesAndAdvanceAsync(
-            Reminder reminder,
-            IReadOnlyList<ReminderOccurrence> occurrences,
-            DateTimeOffset? nextDueUtc,
-            CancellationToken cancellationToken) => Task.FromResult(true);
-        public Task SaveAsync(Reminder reminder, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    }
-
     private sealed class EmptyTaskRepository : ITaskRepository
     {
         public Task<TaskItem?> GetAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult<TaskItem?>(null);
@@ -392,7 +370,7 @@ internal sealed class SettingsDataPagesFixture
 
     /// <summary>Records save-and-consume calls and applies them to the in-memory note and
     /// envelope stores as one unit: nothing changes when <see cref="FailNextRemoteCommit"/>
-    /// is set. The preference/reminder transactions are not needed by these tests.</summary>
+    /// is set.</summary>
     internal sealed class RecordingFeatureTransactions(
         MemoryLocalNoteRepository localNotes,
         MemoryRemoteEnvelopeRepository remoteEnvelopes) : ICompanionFeatureTransactions
@@ -400,14 +378,6 @@ internal sealed class SettingsDataPagesFixture
         public List<string> ConsumedMessageIds { get; } = [];
         public bool FailNextRemoteCommit { get; set; }
 
-        public Task SavePreferencesAndDefaultRemindersAsync(
-            Preferences preferences, DateTimeOffset nowUtc, TimeZoneInfo localTimeZone,
-            CancellationToken cancellationToken = default) =>
-            Task.FromException(new NotSupportedException("not needed for these tests"));
-        public Task RestorePreferencesAndDefaultRemindersAsync(
-            Preferences preferences, IReadOnlyList<Reminder> previousDefaultReminders,
-            CancellationToken cancellationToken = default) =>
-            Task.FromException(new NotSupportedException("not needed for these tests"));
         public async Task SaveRemoteNoteAndConsumeEnvelopeAsync(
             LocalLoveNote note, string messageId, DateTimeOffset processedUtc,
             CancellationToken cancellationToken = default)

@@ -38,6 +38,5 @@ public interface IAppUnitOfWorkContext
     IPreferencesRepository Preferences { get; }
     IProfileRepository Profiles { get; }
     IRemoteEnvelopeRepository RemoteEnvelopes { get; }
-    IReminderRepository Reminders { get; }
     ITaskRepository Tasks { get; }
 }

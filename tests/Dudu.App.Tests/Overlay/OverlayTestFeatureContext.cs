@@ -32,15 +32,12 @@ internal static class OverlayTestFeatureContext
         var localNotes = Inert<ILocalNoteRepository>();
         var checkIns = Inert<ICheckInRepository>();
         var focusSessions = Inert<IFocusSessionRepository>();
-        var reminders = Inert<IReminderRepository>();
         var pet = PetStateMachine.CreateIdle();
         return new CompanionFeatureContext(
             clock,
             new PreferenceMutationCoordinator(preferences, preferenceRepository),
             Inert<IProfileRepository>(),
             Inert<IPetPlacementRepository>(),
-            reminders,
-            Inert<IReminderWriter>(),
             tasks,
             focusSessions,
             localNotes,

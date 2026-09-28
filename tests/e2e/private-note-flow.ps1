@@ -22,14 +22,13 @@
     5. Confirms the relay's `messages` table has gone back to zero rows for this run (acknowledgment
        deletes the row — see `relay/src/db/messages.ts`'s `ackMessage`), i.e. no ciphertext is left
        over after acknowledgment.
-    6. Kills Wrangler, then: (a) launches `tests/Dudu.WindowsHarness`'s own `outage-reminder`
-       scenario, which schedules a real local reminder through the real `AppHost` /
-       `ReminderEngine` / `PresentationCoordinator` path and waits for it to actually fire --
-       this script then waits no more than twice the scheduled delay for the harness's
-       `REMINDER-PRESENTED <id>` sentinel line, proving a due local reminder still fires with
+    6. Kills Wrangler, then: (a) launches `tests/Dudu.WindowsHarness`'s own `outage-presentation`
+       scenario, which holds a partner-note arrival while paused and then releases it through the
+       real `AppHost` presentation tick / `PresentationCoordinator` path -- this script waits for
+       the harness's `PRESENTED <id>` sentinel line, proving local presentation still works with
        Wrangler dead, not merely that it would in isolation; and (b) also runs the existing xunit
        proof covering the same guarantee from the Infrastructure side
-       (`PrivacyBoundaryTests.Worker_outage_does_not_stop_local_reminders`).
+       (`PrivacyBoundaryTests.Worker_outage_does_not_stop_local_presentations`).
 
     Exits 0 only if every one of the above holds. Never prints the note text itself except inside
     an explicitly-labelled diagnostic line, and never prints tokens, pairing codes beyond what the
@@ -386,21 +385,21 @@ try {
         $failures.Add("The Windows harness exited with code $harnessExitCode.")
     }
 
-    # --- Step 7: kill Wrangler, then prove outage does not stop local reminders ------------------
+    # --- Step 7: kill Wrangler, then prove outage does not stop local presentation --------------
     Write-Step "Stopping Wrangler to simulate a relay outage."
     try { $wranglerProcess.Kill() } catch { }
     try { $wranglerProcess.WaitForExit(10000) } catch { }
 
     # Ruling #3 (task-21-review-1.md, Important) requires the script itself -- not only a separate
-    # xunit test -- to prove a due local reminder still fires after Wrangler is dead. The
-    # `outage-reminder` harness scenario schedules a reminder through the real reminder path
-    # (`AppHost` + `ReminderEngine` + `PresentationCoordinator`, no relay base URL configured) and
-    # prints `REMINDER-PRESENTED <id>` only once the presentation gateway actually presents it.
-    $dueReminderSeconds = 5
-    Write-Step "Launching tests/Dudu.WindowsHarness -- --scenario outage-reminder --due-reminder-seconds $dueReminderSeconds (Wrangler is down)."
+    # xunit test -- to prove local presentation still works after Wrangler is dead. The
+    # `outage-presentation` harness scenario holds a partner-note arrival while paused and releases
+    # it through the real presentation path (`AppHost` presentation tick + `PresentationCoordinator`,
+    # no relay base URL configured), printing `PRESENTED <id>` only once the presentation gateway
+    # actually presents it.
+    Write-Step "Launching tests/Dudu.WindowsHarness -- --scenario outage-presentation (Wrangler is down)."
     $outageHarnessPsi = [System.Diagnostics.ProcessStartInfo]::new()
     $outageHarnessPsi.FileName = "dotnet"
-    $outageHarnessPsi.Arguments = "run --project `"$harnessProject`" -c Release -- --scenario outage-reminder --due-reminder-seconds $dueReminderSeconds"
+    $outageHarnessPsi.Arguments = "run --project `"$harnessProject`" -c Release -- --scenario outage-presentation"
     $outageHarnessPsi.WorkingDirectory = $repoRoot
     $outageHarnessPsi.RedirectStandardOutput = $true
     $outageHarnessPsi.RedirectStandardError = $true
@@ -408,8 +407,8 @@ try {
 
     $outageHarnessProcess = [System.Diagnostics.Process]::new()
     $outageHarnessProcess.StartInfo = $outageHarnessPsi
-    $reminderPresentedSignal = [System.Threading.SemaphoreSlim]::new(0)
-    $script:reminderPresentedId = $null
+    $presentedSignal = [System.Threading.SemaphoreSlim]::new(0)
+    $script:presentedId = $null
     $outageHarnessTranscript = [System.Text.StringBuilder]::new()
 
     $outageHarnessOutputHandler = {
@@ -417,9 +416,9 @@ try {
         if ($null -eq $eventArgs.Data) { return }
         $line = $eventArgs.Data
         [void]$outageHarnessTranscript.AppendLine($line)
-        if ($line -match '^REMINDER-PRESENTED (?<id>\S+)$') {
-            $script:reminderPresentedId = $Matches.id
-            $reminderPresentedSignal.Release() | Out-Null
+        if ($line -match '^PRESENTED (?<id>\S+)$') {
+            $script:presentedId = $Matches.id
+            $presentedSignal.Release() | Out-Null
         }
     }
     Register-ObjectEvent -InputObject $outageHarnessProcess -EventName OutputDataReceived -Action $outageHarnessOutputHandler | Out-Null
@@ -430,23 +429,21 @@ try {
         $outageHarnessProcess.BeginOutputReadLine()
         $outageHarnessProcess.BeginErrorReadLine()
 
-        # Review I8: `2 * $dueReminderSeconds` is 10 seconds, which is the reminder's own due
-        # delay and nothing else -- the harness still has to restore, build, start, and JIT
-        # before that clock is even meaningful, so the wait was timing the toolchain, not the
-        # behaviour under test. The fixed 60-second floor covers all of that; the multiple keeps
-        # the wait proportional if the due delay is ever raised.
-        $reminderWaitSeconds = 60 + 2 * $dueReminderSeconds
-        if (-not $reminderPresentedSignal.Wait([TimeSpan]::FromSeconds($reminderWaitSeconds))) {
-            $failures.Add("The outage-reminder harness never printed REMINDER-PRESENTED within $reminderWaitSeconds seconds of a relay outage.")
+        # Review I8: the harness still has to restore, build, start, and JIT before the
+        # behaviour under test even runs, so the wait is a fixed 60-second floor that covers the
+        # toolchain, not the (immediate) release itself.
+        $presentedWaitSeconds = 60
+        if (-not $presentedSignal.Wait([TimeSpan]::FromSeconds($presentedWaitSeconds))) {
+            $failures.Add("The outage-presentation harness never printed PRESENTED within $presentedWaitSeconds seconds of a relay outage.")
         } else {
-            Write-Step "Harness presented the due reminder ($script:reminderPresentedId) with Wrangler down."
+            Write-Step "Harness presented the held note ($script:presentedId) with Wrangler down."
         }
 
         if (-not $outageHarnessProcess.WaitForExit(15000)) {
-            $failures.Add("The outage-reminder harness did not exit within 15 seconds.")
+            $failures.Add("The outage-presentation harness did not exit within 15 seconds.")
             try { $outageHarnessProcess.Kill() } catch { }
         } elseif ($outageHarnessProcess.ExitCode -ne 0) {
-            $failures.Add("The outage-reminder harness exited with code $($outageHarnessProcess.ExitCode). Transcript: $($outageHarnessTranscript.ToString())")
+            $failures.Add("The outage-presentation harness exited with code $($outageHarnessProcess.ExitCode). Transcript: $($outageHarnessTranscript.ToString())")
         }
     } finally {
         if (-not $outageHarnessProcess.HasExited) {
@@ -454,10 +451,10 @@ try {
         }
     }
 
-    Write-Step "Running the xunit proof that a relay outage never stops local reminders."
-    & dotnet test $infrastructureTestsProject --filter "FullyQualifiedName~Worker_outage_does_not_stop_local_reminders"
+    Write-Step "Running the xunit proof that a relay outage never stops local presentation."
+    & dotnet test $infrastructureTestsProject --filter "FullyQualifiedName~Worker_outage_does_not_stop_local_presentations"
     if ($LASTEXITCODE -ne 0) {
-        $failures.Add("Worker_outage_does_not_stop_local_reminders did not pass after Wrangler was killed.")
+        $failures.Add("Worker_outage_does_not_stop_local_presentations did not pass after Wrangler was killed.")
     }
 }
 finally {
@@ -492,5 +489,5 @@ if ($failures.Count -gt 0) {
     exit 1
 }
 
-Write-Host "PASS: private note delivered, revealed, acknowledged, and never leaked in transit or at rest; a relay outage did not stop local reminders."
+Write-Host "PASS: private note delivered, revealed, acknowledged, and never leaked in transit or at rest; a relay outage did not stop local presentation."
 exit 0

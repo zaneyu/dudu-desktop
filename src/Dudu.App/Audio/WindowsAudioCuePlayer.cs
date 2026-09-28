@@ -33,7 +33,7 @@ public sealed partial class WindowsAudioCuePlayer : IAudioCuePlayer, IAudioCuePl
     /// Bound on a single native start/stop call. PlaySound returns as soon as
     /// the sound has started, but it opens the wave device on first use; a
     /// wedged audio driver must never stall the caller (the 30-second
-    /// reminder tick or an explicit pet action) behind it.
+    /// presentation tick or an explicit pet action) behind it.
     /// </summary>
     internal static readonly TimeSpan NativeCallTimeout = TimeSpan.FromSeconds(2);
 

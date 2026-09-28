@@ -8,7 +8,6 @@ using Dudu.Core.Focus;
 using Dudu.Core.Models;
 using Dudu.Core.Notes;
 using Dudu.Core.Pet;
-using Dudu.Core.Reminders;
 using Dudu.Core.Tasks;
 using Dudu.Core.Time;
 using Xunit;
@@ -110,29 +109,24 @@ public sealed class LoveNotesUxTests
     {
         private Fixture(
             FakeClock clock,
-            FakeReminderRepository reminders,
             FakeLocalNoteRepository localNotes,
             FakeRemoteEnvelopeRepository remoteNotes,
             CompanionFeatureContext context)
         {
             Clock = clock;
-            Reminders = reminders;
             LocalNotes = localNotes;
             RemoteNotes = remoteNotes;
             Context = context;
         }
 
         public FakeClock Clock { get; }
-        public FakeReminderRepository Reminders { get; }
         public FakeLocalNoteRepository LocalNotes { get; }
         public FakeRemoteEnvelopeRepository RemoteNotes { get; }
         public CompanionFeatureContext Context { get; }
 
         public static Fixture Create(
             string now = "2026-09-12T10:00:00Z",
-            TimeZoneInfo? zone = null,
-            Func<string, CancellationToken, Task>? dismissReminderNotificationAsync = null,
-            Func<string, CancellationToken, Task>? discardHeldReminderAsync = null)
+            TimeZoneInfo? zone = null)
         {
             var clock = new FakeClock(DateTimeOffset.Parse(now), zone ?? TimeZoneInfo.Utc);
             var preferences = new Preferences(
@@ -140,7 +134,6 @@ public sealed class LoveNotesUxTests
                 new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
                 false, 3, true, false, true, TimeSpan.FromMinutes(15));
             var preferenceRepository = new FakePreferencesRepository();
-            var reminders = new FakeReminderRepository();
             var tasks = new FakeTaskRepository();
             var focusSessions = new FakeFocusRepository();
             var localNotes = new FakeLocalNoteRepository();
@@ -151,8 +144,6 @@ public sealed class LoveNotesUxTests
                 new PreferenceMutationCoordinator(preferences, preferenceRepository),
                 new FakeProfileRepository(),
                 new FakePlacementRepository(),
-                reminders,
-                reminders,
                 tasks,
                 focusSessions,
                 localNotes,
@@ -166,10 +157,8 @@ public sealed class LoveNotesUxTests
                 new FakePairing(),
                 new FakeFeatureTransactions(localNotes, remoteNotes),
                 PetStateMachine.CreateIdle(),
-                revealRemoteNoteAsync: (_, _) => Task.FromResult(new RevealedRemoteNote("you can do it", "none")),
-                dismissReminderNotificationAsync: dismissReminderNotificationAsync,
-                discardHeldReminderAsync: discardHeldReminderAsync);
-            return new Fixture(clock, reminders, localNotes, remoteNotes, context);
+                revealRemoteNoteAsync: (_, _) => Task.FromResult(new RevealedRemoteNote("you can do it", "none")));
+            return new Fixture(clock, localNotes, remoteNotes, context);
         }
     }
 
@@ -182,40 +171,6 @@ public sealed class LoveNotesUxTests
     private sealed class FixedRandom : IRandomSource
     {
         public int Next(int exclusiveMax) => 0;
-    }
-
-    /// <summary>Models ReminderRepository's compare-and-set: completing a stale
-    /// copy of a row fails exactly like production.</summary>
-    private sealed class FakeReminderRepository : IReminderRepository, IReminderWriter
-    {
-        public List<Reminder> Items { get; } = [];
-        public Task<IReadOnlyList<Reminder>> ListAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<Reminder>>(Items.ToArray());
-        public Task<IReadOnlyList<Reminder>> LoadDueAsync(DateTimeOffset utcNow, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<Reminder>>(Items.ToArray());
-        public Task<bool> RecordOccurrencesAndAdvanceAsync(
-            Reminder reminder,
-            IReadOnlyList<ReminderOccurrence> occurrences,
-            DateTimeOffset? nextDueUtc,
-            CancellationToken cancellationToken)
-        {
-            var index = Items.FindIndex(item => item.Id == reminder.Id);
-            if (index < 0 || Items[index] != reminder) return Task.FromResult(false);
-            Items[index] = reminder with { NextDueUtc = nextDueUtc, SnoozedUntilUtc = null };
-            return Task.FromResult(true);
-        }
-        public Task SaveAsync(Reminder reminder, CancellationToken cancellationToken = default)
-        {
-            ReminderScheduler.ValidateForSave(reminder);
-            var index = Items.FindIndex(item => item.Id == reminder.Id);
-            if (index >= 0) Items[index] = reminder; else Items.Add(reminder);
-            return Task.CompletedTask;
-        }
-        public Task DeleteAsync(string reminderId, CancellationToken cancellationToken = default)
-        {
-            Items.RemoveAll(item => item.Id == reminderId);
-            return Task.CompletedTask;
-        }
     }
 
     private sealed class FakeLocalNoteRepository : ILocalNoteRepository
@@ -350,16 +305,7 @@ public sealed class LoveNotesUxTests
         FakeLocalNoteRepository localNotes,
         FakeRemoteEnvelopeRepository remoteNotes) : ICompanionFeatureTransactions
     {
-        public Task SavePreferencesAndDefaultRemindersAsync(
-            Preferences preferences,
-            DateTimeOffset nowUtc,
-            TimeZoneInfo localTimeZone,
-            CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-        public Task RestorePreferencesAndDefaultRemindersAsync(
-            Preferences preferences,
-            IReadOnlyList<Reminder> previousDefaultReminders,
-            CancellationToken cancellationToken = default) => Task.CompletedTask;
 
         public async Task SaveRemoteNoteAndConsumeEnvelopeAsync(
             LocalLoveNote note,

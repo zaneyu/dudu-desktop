@@ -1,86 +1,101 @@
+using Dudu.App.Hosting;
 using Dudu.App.Notifications;
-using Dudu.Core.Abstractions;
-using Dudu.Core.Models;
-using Dudu.Core.Time;
 using Xunit;
 
 namespace Dudu.App.Tests.Notifications;
 
 /// <summary>
 /// A toast click that launches Dudu (cold start) is handled by App once the
-/// runtime is composed. A reminder body click (open-reminder) used to map to
-/// no page there, and Done/Snooze only opened Reminders instead of being
-/// carried out. App now hands the parsed activation to the same
-/// <see cref="NotificationInvocationRouter"/> used while running.
+/// runtime is composed, through the same <see cref="NotificationInvocationRouter"/>
+/// used while running. Reminders were removed, so a reminder toast an older
+/// build left in Action Center must do nothing at all when clicked -- cold or
+/// running: no action, no navigation (there is no Reminders page), no throw.
 /// </summary>
 public sealed class NotificationColdStartTests
 {
-    private static readonly DateTimeOffset NineAm = new(2026, 9, 14, 9, 0, 0, TimeSpan.Zero);
+    public static TheoryData<string> LegacyReminderArguments =>
+    [
+        "action=reminder-done&reminderId=r-1",
+        "action=reminder-snooze&reminderId=r-1",
+        "action=open-reminder&reminderId=r-1",
+        "action=reminder-done;reminderId=default-hydration",
+        "action=reminder-snooze;reminderId=default-break",
+        "action=open-reminder;reminderId=default-hydration",
+    ];
 
     [Theory]
-    [InlineData("action=reminder-done&reminderId=r-1", true)]
-    [InlineData("action=reminder-snooze&reminderId=r-1", true)]
-    [InlineData("action=open-reminder&reminderId=r-1", false)]
-    [InlineData("action=open-note&messageId=11111111-1111-4111-8111-111111111111", false)]
-    public void Only_done_and_snooze_are_answered_in_the_background(string arguments, bool background)
-    {
-        Assert.Equal(background, NotificationInvocationRouter.ActsInBackground(NotificationActivation.TryParse(arguments)));
-    }
-
-    [Fact]
-    public void Nothing_is_answered_in_the_background_without_an_activation() =>
-        Assert.False(NotificationInvocationRouter.ActsInBackground(null));
-
-    [Fact]
-    public async Task A_cold_start_reminder_body_click_opens_home()
+    [MemberData(nameof(LegacyReminderArguments))]
+    public async Task A_cold_start_legacy_reminder_click_does_nothing(string arguments)
     {
         var navigated = new List<string>();
+        var reporter = new RecordingReporter();
         var router = new NotificationInvocationRouter(
             (destination, _) => { navigated.Add(destination); return Task.CompletedTask; },
-            () => null,
-            (_, _) => Task.CompletedTask);
+            reporter);
 
-        await router.HandleActivationAsync(
-            NotificationActivation.TryParse("action=open-reminder&reminderId=r-1"),
-            TestContext.Current.CancellationToken);
+        // Exactly what App does on a cold start: parse the launching
+        // activation, then hand it to the composed router.
+        var activation = NotificationActivation.TryParse(arguments);
+        await router.HandleActivationAsync(activation, TestContext.Current.CancellationToken);
 
-        Assert.Equal(["home"], navigated);
+        Assert.Null(activation);
+        Assert.Empty(navigated);
+        Assert.Empty(reporter.Operations);
     }
 
-    [Fact]
-    public async Task A_cold_start_snooze_is_carried_out_without_opening_settings()
+    [Theory]
+    [InlineData("reminder-done")]
+    [InlineData("reminder-snooze")]
+    [InlineData("open-reminder")]
+    public async Task A_running_legacy_reminder_click_does_nothing(string action)
     {
-        var reminder = new Reminder(
-            "r-cold",
-            "Stretch",
-            null,
-            true,
-            new RecurrenceRule.Once(),
-            "UTC",
-            QuietHoursBehavior.DeliverImmediately,
-            MissedOccurrencePolicy.LatestOnly,
-            null);
-        var repository = new SingleRowRepository(reminder);
-        var dismissed = new List<string>();
-        var actions = new ReminderToastActions(
-            new FixedClock(NineAm),
-            repository,
-            (id, _) => { dismissed.Add(id); return Task.CompletedTask; },
-            (_, _) => Task.CompletedTask);
         var navigated = new List<string>();
+        var reporter = new RecordingReporter();
         var router = new NotificationInvocationRouter(
             (destination, _) => { navigated.Add(destination); return Task.CompletedTask; },
-            () => actions,
-            (_, _) => Task.CompletedTask);
+            reporter);
 
-        // The one-time reminder fired in the previous run (NextDueUtc null).
-        await router.HandleActivationAsync(
-            NotificationActivation.TryParse("action=reminder-snooze&reminderId=r-cold"),
+        // The overload the composition's NotificationInvoked handler calls
+        // with the SDK's own parsed argument map.
+        await router.HandleAsync(
+            new Dictionary<string, string>
+            {
+                ["action"] = action,
+                ["reminderId"] = "default-hydration",
+            },
             TestContext.Current.CancellationToken);
 
         Assert.Empty(navigated);
-        Assert.Equal(["r-cold"], dismissed);
-        Assert.Equal(NineAm.AddMinutes(15), repository.Row.NextDueUtc);
+        Assert.Empty(reporter.Operations);
+    }
+
+    [Fact]
+    public async Task A_note_toast_click_opens_love_notes()
+    {
+        var navigated = new List<string>();
+        var router = new NotificationInvocationRouter(
+            (destination, _) => { navigated.Add(destination); return Task.CompletedTask; });
+
+        await router.HandleActivationAsync(
+            NotificationActivation.TryParse("action=open-note&messageId=11111111-1111-4111-8111-111111111111"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal(["notes"], navigated);
+    }
+
+    [Fact]
+    public async Task A_navigation_failure_is_reported_not_thrown()
+    {
+        var reporter = new RecordingReporter();
+        var router = new NotificationInvocationRouter(
+            (_, _) => throw new InvalidOperationException("dispatcher gone"),
+            reporter);
+
+        await router.HandleActivationAsync(
+            NotificationActivation.TryParse("action=open-note&messageId=11111111-1111-4111-8111-111111111111"),
+            TestContext.Current.CancellationToken);
+
+        Assert.Equal([NotificationInvocationRouter.NavigateOperation], reporter.Operations);
     }
 
     [Fact]
@@ -91,15 +106,14 @@ public sealed class NotificationColdStartTests
         var composition = File.ReadAllText(Path.Combine(
             root, "src", "Dudu.App", "Hosting", "WindowsCompanionProductionComposition.cs"));
 
+        Assert.Contains("if (notificationActivation is not null)", app, StringComparison.Ordinal);
         Assert.Contains("notificationRouter.HandleActivationAsync(notificationActivation", app, StringComparison.Ordinal);
         Assert.Contains("activation?.Destination", app, StringComparison.Ordinal);
         Assert.Contains("NotificationRouter = composedNotificationRouter", composition, StringComparison.Ordinal);
-        Assert.Contains("ReminderActions = reminderToastActions", composition, StringComparison.Ordinal);
-        Assert.Contains(".OccurrenceDelivered +=", composition, StringComparison.Ordinal);
-        Assert.Contains(
-            $"`{ReminderToastActions.PageOperation}`",
-            File.ReadAllText(Path.Combine(root, "AGENTS.md")),
-            StringComparison.Ordinal);
+        // No reminder toast path survives anywhere in the activation wiring.
+        Assert.DoesNotContain("ActsInBackground", app, StringComparison.Ordinal);
+        Assert.DoesNotContain("ReminderToastActions", composition, StringComparison.Ordinal);
+        Assert.DoesNotContain("ReminderActions", composition, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryRoot()
@@ -118,31 +132,10 @@ public sealed class NotificationColdStartTests
         throw new DirectoryNotFoundException("Repository root was not found from the test output path.");
     }
 
-    private sealed class FixedClock(DateTimeOffset utcNow) : IClock
+    private sealed class RecordingReporter : IAppHostErrorReporter
     {
-        public DateTimeOffset UtcNow => utcNow;
-        public TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
-    }
+        public List<string> Operations { get; } = [];
 
-    private sealed class SingleRowRepository(Reminder row) : IReminderRepository
-    {
-        public Reminder Row { get; private set; } = row;
-
-        public Task<IReadOnlyList<Reminder>> ListAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<Reminder>>([Row]);
-
-        public Task<IReadOnlyList<Reminder>> LoadDueAsync(DateTimeOffset utcNow, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<Reminder>>([]);
-
-        public Task<bool> RecordOccurrencesAndAdvanceAsync(
-            Reminder reminder,
-            IReadOnlyList<ReminderOccurrence> occurrences,
-            DateTimeOffset? nextDueUtc,
-            CancellationToken cancellationToken)
-        {
-            if (reminder != Row) return Task.FromResult(false);
-            Row = Row with { NextDueUtc = nextDueUtc, SnoozedUntilUtc = null };
-            return Task.FromResult(true);
-        }
+        public void Report(string operation, Exception exception) => Operations.Add(operation);
     }
 }

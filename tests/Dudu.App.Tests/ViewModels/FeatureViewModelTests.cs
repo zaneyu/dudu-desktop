@@ -13,7 +13,6 @@ using Dudu.Core.Focus;
 using Dudu.Core.Models;
 using Dudu.Core.Notes;
 using Dudu.Core.Pet;
-using Dudu.Core.Reminders;
 using Dudu.Core.Tasks;
 using Dudu.Core.Time;
 using Xunit;
@@ -291,37 +290,6 @@ public sealed class FeatureViewModelTests
         await viewModel.RevealRemoteNoteAsync(envelope, TestContext.Current.CancellationToken);
         Assert.Null(viewModel.ErrorMessage);
         return viewModel;
-    }
-
-    [Fact]
-    public async Task Routine_reminder_with_unknown_time_zone_still_presents_in_utc()
-    {
-        var fixture = FeatureFixture.Create();
-        var ct = TestContext.Current.CancellationToken;
-        var published = new List<DurableNotification>();
-        var sink = new ReminderDueSink(fixture.Reminders, () => new CapturingGateway(published));
-        var reminder = fixture.Reminder with
-        {
-            Id = LocalReminderDefaults.EveningCheckInId,
-            LocalTimeZoneId = "Nope/Nowhere",
-        };
-        fixture.Reminders.Items.Add(reminder);
-
-        await sink.NotifyAsync(
-            new ReminderOccurrence(reminder.Id, DateTimeOffset.Parse("2026-09-12T10:00:00Z")),
-            ct);
-
-        var item = Assert.Single(published);
-        Assert.Equal(new DateTimeOffset(2026, 9, 13, 0, 0, 0, TimeSpan.Zero), item.ExpiresUtc);
-    }
-
-    private sealed class CapturingGateway(List<DurableNotification> published) : IUnsolicitedPresentationGateway
-    {
-        public Task PublishAsync(DurableNotification item, bool bypassSuppression, CancellationToken cancellationToken)
-        {
-            published.Add(item);
-            return Task.CompletedTask;
-        }
     }
 
     [Fact]
@@ -722,15 +690,15 @@ public sealed class FeatureViewModelTests
     public async Task Router_pet_greeting_restores_the_next_durable_pet_state()
     {
         var fixture = FeatureFixture.Create();
-        fixture.Context.Pet.Handle(new PetEvent.ReminderDue("next-reminder"));
+        fixture.Context.Pet.Handle(new PetEvent.RemoteNoteArrived("next-note"));
         var router = new OverlayCommandRouter(fixture.Context);
 
         await router.ExecuteAsync(OverlayAction.Pet, TestContext.Current.CancellationToken);
 
-        Assert.Equal(PetState.Reminder, fixture.Context.Pet.Current.State);
+        Assert.Equal(PetState.RemoteNote, fixture.Context.Pet.Current.State);
         Assert.Equal(
             PetState.Idle,
-            fixture.Context.Pet.Handle(new PetEvent.Dismissed("next-reminder")).State);
+            fixture.Context.Pet.Handle(new PetEvent.Dismissed("next-note")).State);
     }
 
     [Fact]
@@ -787,7 +755,7 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
-    public async Task Router_eat_together_toggles_a_meal_that_holds_reminders_back()
+    public async Task Router_eat_together_toggles_a_meal_that_holds_notes_back()
     {
         var fixture = FeatureFixture.Create();
         var router = new OverlayCommandRouter(
@@ -800,14 +768,14 @@ public sealed class FeatureViewModelTests
         Assert.True(router.IsEating);
         Assert.Equal("done eating", router.LabelFor(OverlayAction.EatTogether));
         Assert.Equal("eat", fixture.Context.Pet.Current.AnimationKey);
-        Assert.Equal(PetState.Eating, fixture.Context.Pet.Handle(new PetEvent.ReminderDue("r-1")).State);
+        Assert.Equal(PetState.Eating, fixture.Context.Pet.Handle(new PetEvent.RemoteNoteArrived("m-1")).State);
 
         await router.ExecuteAsync(OverlayAction.EatTogether, TestContext.Current.CancellationToken);
 
         Assert.False(router.IsEating);
         Assert.Equal("eat together", router.LabelFor(OverlayAction.EatTogether));
         Assert.False(fixture.Context.Pet.IsEatingActive);
-        Assert.Equal(PetState.Reminder, fixture.Context.Pet.Current.State);
+        Assert.Equal(PetState.RemoteNote, fixture.Context.Pet.Current.State);
     }
 
     [Fact]
@@ -1351,7 +1319,6 @@ public sealed class FeatureViewModelTests
     {
         private FeatureFixture(
             FakeClock clock,
-            FakeReminderRepository reminders,
             FakeLocalNoteRepository localNotes,
             FakeRemoteEnvelopeRepository remoteNotes,
             FakePreferencesRepository preferences,
@@ -1367,7 +1334,6 @@ public sealed class FeatureViewModelTests
             List<(PetEvent Event, string DismissalId)> oneShotPresentations)
         {
             Clock = clock;
-            Reminders = reminders;
             LocalNotes = localNotes;
             RemoteNotes = remoteNotes;
             Preferences = preferences;
@@ -1384,7 +1350,6 @@ public sealed class FeatureViewModelTests
         }
 
         public FakeClock Clock { get; }
-        public FakeReminderRepository Reminders { get; }
         public FakeLocalNoteRepository LocalNotes { get; }
         public FakeRemoteEnvelopeRepository RemoteNotes { get; }
         public FakePreferencesRepository Preferences { get; }
@@ -1398,16 +1363,6 @@ public sealed class FeatureViewModelTests
         public CompanionFeatureContext Context { get; }
         public List<string> Events { get; }
         public List<(PetEvent Event, string DismissalId)> OneShotPresentations { get; }
-        public Reminder Reminder { get; } = new(
-            "reminder-1",
-            "Drink water",
-            null,
-            true,
-            new RecurrenceRule.Once(),
-            "UTC",
-            QuietHoursBehavior.WaitUntilQuietHoursEnd,
-            MissedOccurrencePolicy.LatestOnly,
-            DateTimeOffset.Parse("2026-09-12T10:00:00Z"));
 
         public static FeatureFixture Create(
             Func<CancellationToken, Task>? restoreAsync = null,
@@ -1415,8 +1370,6 @@ public sealed class FeatureViewModelTests
             Func<CancellationToken, Task>? deleteRemoteDataAsync = null,
             Func<RemoteEnvelope, CancellationToken, Task<RevealedRemoteNote>>? revealRemoteNoteAsync = null,
             IPairingService? pairing = null,
-            Func<string, CancellationToken, Task>? discardHeldReminderAsync = null,
-            Func<string, CancellationToken, Task>? dismissReminderNotificationAsync = null,
             Func<PetEvent, CancellationToken, Task>? beforePresent = null)
         {
             var clock = new FakeClock("2026-09-12T10:00:00Z");
@@ -1434,7 +1387,6 @@ public sealed class FeatureViewModelTests
             var preferenceRepository = new FakePreferencesRepository();
             var profileRepository = new FakeProfileRepository();
             var placementRepository = new FakePlacementRepository();
-            var reminders = new FakeReminderRepository(events);
             var tasks = new FakeTaskRepository();
             var focusSessions = new FakeFocusRepository();
             var localNotes = new FakeLocalNoteRepository();
@@ -1446,7 +1398,7 @@ public sealed class FeatureViewModelTests
             var checkInService = new CheckInService(checkIns, clock);
             var noteSelector = new LocalNoteSelector(localNotes, clock, new FixedRandom(), preferences);
             var pause = PauseState.None;
-            var transactions = new FakeFeatureTransactions(preferenceRepository, reminders, localNotes, remoteNotes);
+            var transactions = new FakeFeatureTransactions(localNotes, remoteNotes);
             var runtimePreferences = new FakeRuntimePreferences(preferences);
             var preferenceMutations = new PreferenceMutationCoordinator(
                 preferences,
@@ -1458,8 +1410,6 @@ public sealed class FeatureViewModelTests
                 preferenceMutations,
                 profileRepository,
                 placementRepository,
-                reminders,
-                reminders,
                 tasks,
                 focusSessions,
                 localNotes,
@@ -1503,12 +1453,9 @@ public sealed class FeatureViewModelTests
                     ?? ((_, _) => Task.FromResult(new RevealedRemoteNote("You can do it", "none"))),
                 restoreAsync: restoreAsync,
                 deleteLocalDataAsync: deleteLocalDataAsync,
-                deleteRemoteDataAsync: deleteRemoteDataAsync,
-                discardHeldReminderAsync: discardHeldReminderAsync,
-                dismissReminderNotificationAsync: dismissReminderNotificationAsync);
+                deleteRemoteDataAsync: deleteRemoteDataAsync);
             return new FeatureFixture(
                 clock,
-                reminders,
                 localNotes,
                 remoteNotes,
                 preferenceRepository,
@@ -1534,29 +1481,6 @@ public sealed class FeatureViewModelTests
     private sealed class FixedRandom : IRandomSource
     {
         public int Next(int exclusiveMax) => 0;
-    }
-
-    private sealed class FakeReminderRepository(List<string> events) : IReminderRepository, IReminderWriter
-    {
-        public List<Reminder> Items { get; } = [];
-        public Task<IReadOnlyList<Reminder>> ListAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<Reminder>>(Items);
-        public Task<IReadOnlyList<Reminder>> LoadDueAsync(DateTimeOffset utcNow, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<Reminder>>(Items);
-        public Task<bool> RecordOccurrencesAndAdvanceAsync(Reminder reminder, IReadOnlyList<ReminderOccurrence> occurrences, DateTimeOffset? nextDueUtc, CancellationToken cancellationToken)
-        {
-            events.Add("repository.complete");
-            return Task.FromResult(true);
-        }
-        public Task SaveAsync(Reminder reminder, CancellationToken cancellationToken = default)
-        {
-            var index = Items.FindIndex(item => item.Id == reminder.Id);
-            if (index >= 0) Items[index] = reminder; else Items.Add(reminder);
-            return Task.CompletedTask;
-        }
-        public Task DeleteAsync(string reminderId, CancellationToken cancellationToken = default)
-        {
-            Items.RemoveAll(item => item.Id == reminderId);
-            return Task.CompletedTask;
-        }
     }
 
     private sealed class FakeLocalNoteRepository : ILocalNoteRepository
@@ -1761,140 +1685,10 @@ public sealed class FeatureViewModelTests
     }
 
     private sealed class FakeFeatureTransactions(
-        IPreferencesRepository preferences,
-        FakeReminderRepository reminders,
         FakeLocalNoteRepository localNotes,
         FakeRemoteEnvelopeRepository remoteNotes) : ICompanionFeatureTransactions
     {
-        public bool FailNextReminderCommit { get; set; }
         public bool FailNextRemoteCommit { get; set; }
-
-        public async Task SavePreferencesAndDefaultRemindersAsync(
-            Preferences value,
-            DateTimeOffset nowUtc,
-            TimeZoneInfo localTimeZone,
-            CancellationToken cancellationToken = default)
-        {
-            if (FailNextReminderCommit)
-            {
-                FailNextReminderCommit = false;
-                throw new IOException("injected reminder transaction failure");
-            }
-            await preferences.SaveAsync(value, cancellationToken);
-
-            // Mirrors CompanionFeatureTransactionService.SavePreferencesAndDefaultRemindersAsync:
-            // carry NextDueUtc/SnoozedUntilUtc over from the existing row when
-            // nothing that determines the schedule actually changed, keep
-            // Rule/QuietHoursBehavior/MissedPolicy from the existing row (they
-            // are a hardcoded per-id default in Create, never derived from
-            // Preferences), recompute NextDueUtc from that preserved rule when
-            // re-enabling, and preserve a user-edited (or cleared) Title/Details.
-            var existing = (await reminders.ListAsync(cancellationToken))
-                .ToDictionary(item => item.Id, StringComparer.Ordinal);
-            foreach (var reminder in Dudu.Core.Reminders.LocalReminderDefaults.Create(
-                value,
-                nowUtc,
-                localTimeZone))
-            {
-                var toSave = reminder;
-                if (existing.TryGetValue(reminder.Id, out var previous))
-                {
-                    toSave = toSave with
-                    {
-                        Rule = previous.Rule,
-                        QuietHoursBehavior = previous.QuietHoursBehavior,
-                        MissedPolicy = previous.MissedPolicy,
-                    };
-
-                    if (previous.Enabled == reminder.Enabled
-                        && previous.LocalTimeZoneId == reminder.LocalTimeZoneId)
-                    {
-                        toSave = toSave with
-                        {
-                            NextDueUtc = previous.NextDueUtc,
-                            SnoozedUntilUtc = previous.SnoozedUntilUtc,
-                        };
-                    }
-                    else if (reminder.Enabled)
-                    {
-                        // Re-enabling, or staying enabled with a changed
-                        // LocalTimeZoneId: recompute from the preserved rule.
-                        // No `?? reminder.NextDueUtc` fallback -- a preserved
-                        // rule with no next occurrence (e.g. a completed
-                        // Once-edited default) must stay null.
-                        //
-                        // Re-anchor two days before now, but ONLY for a
-                        // wall-clock rule (Daily/SelectedWeekdays) with no old
-                        // due time to anchor on (previous.NextDueUtc is null)
-                        // or whose zone actually changed -- see
-                        // CompanionFeatureTransactionService.SavePreferencesAndDefaultRemindersAsync
-                        // for the full reasoning: Once must never be
-                        // cancelled by a tz change (NextOccurrence has no
-                        // fallthrough case for it), Interval must not be
-                        // needlessly pushed by up to one period, "now"
-                        // itself is unsafe as an anchor because a now inside
-                        // quiet hours would land on quiet-hours end instead
-                        // of the next wall-clock occurrence, and NextOccurrence
-                        // never does catch-up/missed-occurrence delivery (only
-                        // Reconcile does, which this call path doesn't use),
-                        // so a further-back anchor is safe here.
-                        var reAnchorForZoneChange = toSave.Rule is Dudu.Core.Models.RecurrenceRule.Daily
-                                or Dudu.Core.Models.RecurrenceRule.SelectedWeekdays
-                            && (previous.NextDueUtc is null
-                                || previous.LocalTimeZoneId != reminder.LocalTimeZoneId);
-                        var anchor = reAnchorForZoneChange
-                            ? nowUtc.ToUniversalTime().AddDays(-2)
-                            : previous.NextDueUtc;
-                        toSave = toSave with
-                        {
-                            NextDueUtc = Dudu.Core.Reminders.ReminderScheduler.NextOccurrence(
-                                toSave with { NextDueUtc = anchor, SnoozedUntilUtc = null },
-                                nowUtc.ToUniversalTime(),
-                                localTimeZone),
-                            SnoozedUntilUtc = null,
-                        };
-                    }
-                    else
-                    {
-                        // Disabling: carry the real NextDueUtc forward so it
-                        // doesn't get poisoned with Create's shipped value,
-                        // which would become the anchor for a later re-enable
-                        // -- except when the zone ALSO changed on this save,
-                        // for a wall-clock rule: keeping the old due time
-                        // would stamp the NEW LocalTimeZoneId onto an instant
-                        // still anchored to the OLD zone's wall clock. Null
-                        // it instead so the re-enable arm's null-anchor case
-                        // above re-derives it fresh.
-                        var zoneChangedWhileDisabled = previous.LocalTimeZoneId != reminder.LocalTimeZoneId
-                            && toSave.Rule is Dudu.Core.Models.RecurrenceRule.Daily
-                                or Dudu.Core.Models.RecurrenceRule.SelectedWeekdays;
-                        toSave = toSave with
-                        {
-                            NextDueUtc = zoneChangedWhileDisabled ? null : previous.NextDueUtc,
-                        };
-                    }
-
-                    if (!Dudu.Core.Reminders.LocalReminderDefaults.IsKnownDefaultTitle(reminder.Id, previous.Title))
-                    {
-                        toSave = toSave with { Title = previous.Title };
-                    }
-                    if (!Dudu.Core.Reminders.LocalReminderDefaults.IsKnownDefaultDetails(reminder.Id, previous.Details ?? string.Empty))
-                    {
-                        toSave = toSave with { Details = previous.Details };
-                    }
-                }
-
-                // See CompanionFeatureTransactionService.SavePreferencesAndDefaultRemindersAsync:
-                // insurance against a recompute above returning null for a
-                // non-Once rule, which would otherwise trip ValidateForSave.
-                if (toSave.Enabled && toSave.NextDueUtc is null && toSave.Rule is not Dudu.Core.Models.RecurrenceRule.Once)
-                {
-                    toSave = toSave with { NextDueUtc = reminder.NextDueUtc };
-                }
-
-                await reminders.SaveAsync(toSave, cancellationToken);
-            }
-        }
 
         public async Task SaveRemoteNoteAndConsumeEnvelopeAsync(
             LocalLoveNote note,
@@ -1914,21 +1708,6 @@ public sealed class FeatureViewModelTests
             }
         }
 
-        public async Task RestorePreferencesAndDefaultRemindersAsync(
-            Preferences value,
-            IReadOnlyList<Reminder> previousDefaultReminders,
-            CancellationToken cancellationToken = default)
-        {
-            await preferences.SaveAsync(value, cancellationToken);
-            await reminders.DeleteAsync("default-hydration", cancellationToken);
-            await reminders.DeleteAsync("default-break", cancellationToken);
-            await reminders.DeleteAsync(Dudu.Core.Reminders.LocalReminderDefaults.EveningCheckInId, cancellationToken);
-            await reminders.DeleteAsync(Dudu.Core.Reminders.LocalReminderDefaults.BedtimeId, cancellationToken);
-            foreach (var reminder in previousDefaultReminders)
-            {
-                await reminders.SaveAsync(reminder, cancellationToken);
-            }
-        }
     }
 
     private sealed class FakeRuntimePreferences(Preferences initial)

@@ -14,28 +14,34 @@ public sealed class NotificationActivationTests
         Assert.NotNull(activation);
         Assert.Equal(NotificationActivationAction.OpenNote, activation!.Action);
         Assert.Equal("11111111-1111-4111-8111-111111111111", activation.MessageId);
-        Assert.Null(activation.ReminderId);
+        Assert.Equal("notes", activation.Destination);
     }
 
-    [Fact]
-    public void TryParse_resolves_a_reminder_done_activation()
+    [Theory]
+    [InlineData("action=reminder-done&reminderId=r1")]
+    [InlineData("action=reminder-snooze&reminderId=r1")]
+    [InlineData("action=open-reminder&reminderId=r1")]
+    [InlineData("action=reminder-done;reminderId=default-hydration")]
+    [InlineData("action=reminder-snooze;reminderId=default-break")]
+    [InlineData("action=open-reminder;reminderId=default-hydration")]
+    public void Legacy_reminder_toast_actions_parse_to_null(string arguments)
     {
-        var activation = NotificationActivation.TryParse("action=reminder-done&reminderId=reminder-1");
-
-        Assert.NotNull(activation);
-        Assert.Equal(NotificationActivationAction.ReminderDone, activation!.Action);
-        Assert.Equal("reminder-1", activation.ReminderId);
-        Assert.Null(activation.MessageId);
+        // Reminders were removed; a reminder toast an older build left in Action Center
+        // must be ignored exactly like any unknown activation, never act or open a page.
+        Assert.Null(NotificationActivation.TryParse(arguments));
     }
 
-    [Fact]
-    public void TryParse_resolves_a_reminder_snooze_activation()
+    [Theory]
+    [InlineData("reminder-done")]
+    [InlineData("reminder-snooze")]
+    [InlineData("open-reminder")]
+    public void Legacy_reminder_toast_actions_in_the_sdk_argument_map_parse_to_null(string action)
     {
-        var activation = NotificationActivation.TryParse("action=reminder-snooze&reminderId=reminder-2");
-
-        Assert.NotNull(activation);
-        Assert.Equal(NotificationActivationAction.ReminderSnooze, activation!.Action);
-        Assert.Equal("reminder-2", activation.ReminderId);
+        Assert.Null(NotificationActivation.TryParse(new Dictionary<string, string>
+        {
+            ["action"] = action,
+            ["reminderId"] = "default-hydration",
+        }));
     }
 
     [Fact]
@@ -59,13 +65,14 @@ public sealed class NotificationActivationTests
         // .Arguments -- the SDK's own parsed map -- so no separator convention is guessed at all.
         var activation = NotificationActivation.TryParse(new Dictionary<string, string>
         {
-            ["action"] = "reminder-snooze",
-            ["reminderId"] = "reminder-2",
+            ["action"] = "open-note",
+            ["messageId"] = "22222222-2222-4222-8222-222222222222",
         });
 
         Assert.NotNull(activation);
-        Assert.Equal(NotificationActivationAction.ReminderSnooze, activation!.Action);
-        Assert.Equal("reminder-2", activation.ReminderId);
+        Assert.Equal(NotificationActivationAction.OpenNote, activation!.Action);
+        Assert.Equal("22222222-2222-4222-8222-222222222222", activation.MessageId);
+        Assert.Equal("notes", activation.Destination);
     }
 
     [Theory]

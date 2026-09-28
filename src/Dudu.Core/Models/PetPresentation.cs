@@ -4,7 +4,6 @@ public enum PetState
 {
     Comfort,
     RemoteNote,
-    Reminder,
     FocusTransition,
     WelcomeBack,
     Ambient,

@@ -75,14 +75,6 @@ public sealed record CompanionSettingsContext(
     public IReadOnlyList<string> AvailableOutfitKeys { get; init; } = ["base"];
 
     /// <summary>
-    /// The one reminder Done/Snooze service shared by the toast buttons and
-    /// the Reminders page, so both follow the same rules and the page can
-    /// refresh when a toast answered a reminder while it was open. Null when
-    /// no feature runtime is composed (safe mode).
-    /// </summary>
-    public ReminderToastActions? ReminderActions { get; init; }
-
-    /// <summary>
     /// Handles a toast click that launched Dudu (cold start) once the runtime
     /// is composed, exactly like a click while running. Null when toast
     /// activation is unavailable (safe mode); App then only opens the page.
@@ -142,9 +134,8 @@ public sealed record CompanionLaunchOptions(bool Background, bool SelfTest = fal
 }
 
 /// <summary>
-/// Overrides Dudu.Infrastructure's Null* safe defaults for
-/// <see cref="IReminderDueSink"/> and <see cref="IRemoteNoteArrivalSink"/>
-/// with the real WinUI-backed sinks. Extracted out of the composition root so
+/// Overrides Dudu.Infrastructure's Null* safe default for
+/// <see cref="IRemoteNoteArrivalSink"/> with the real WinUI-backed sink. Extracted out of the composition root so
 /// a real <see cref="IServiceCollection"/> can be built and its resolved
 /// types asserted in a test, instead of only pattern-matching the
 /// composition source as text -- a source-text test still passes with the
@@ -158,10 +149,6 @@ internal static class ProductionPresentationSinks
     {
         ArgumentNullException.ThrowIfNull(gateway);
         return services
-            .AddSingleton<IReminderDueSink>(provider => new ReminderDueSink(
-                provider.GetRequiredService<IReminderRepository>(),
-                gateway,
-                profiles: provider.GetRequiredService<IProfileRepository>()))
             .AddSingleton<IRemoteNoteArrivalSink>(provider => new RemoteNoteArrivalSink(gateway));
     }
 }
@@ -231,15 +218,10 @@ public static class WindowsCompanionProductionComposition
         // The real presentation gateway does not exist yet at this point: it
         // depends on the pet state machine, animation engine, and pause
         // store, all of which are only available once the overlay is
-        // composed further below. IReminderDueSink must be registered before
-        // BuildServiceProvider (ReminderEngine resolves it eagerly), so it
-        // captures this variable and resolves the gateway lazily once the
-        // rest of the runtime is ready.
+        // composed further below. IRemoteNoteArrivalSink must be registered
+        // before BuildServiceProvider, so it captures this variable and
+        // resolves the gateway lazily once the rest of the runtime is ready.
         PresentationCoordinator? presentationGateway = null;
-        // Toast Done/Snooze handling; composed once the feature services
-        // exist (after the overlay), while the toast handler that uses it is
-        // registered earlier, inside initializeOverlay.
-        ReminderToastActions? reminderToastActions = null;
         // Kept for a toast click that launched Dudu (handled by App once the
         // runtime is composed); set inside initializeOverlay below.
         NotificationInvocationRouter? composedNotificationRouter = null;
@@ -259,18 +241,10 @@ public static class WindowsCompanionProductionComposition
             .BuildServiceProvider();
         var host = new AppHost(services, paths);
         WireDataFailureDiagnostics(services, paths);
-        if (services.GetService<IReminderDueSink>() is ReminderDueSink reminderDueSink)
-        {
-            // The sink was eagerly resolved during AppHost construction,
-            // before the host's error reporter existed; attach it now so
-            // reminder-notify diagnostics reach the shared sink.
-            reminderDueSink.ErrorReporter = host.ErrorReporter;
-        }
-
         if (services.GetService<IRemoteNoteArrivalSink>() is RemoteNoteArrivalSink remoteNoteArrivalSink)
         {
-            // Same reasoning as the reminder sink above: the host's error
-            // reporter does not exist yet when this sink is registered.
+            // The host's error reporter does not exist yet when this sink is
+            // registered; attach it now so its diagnostics reach the shared sink.
             remoteNoteArrivalSink.ErrorReporter = host.ErrorReporter;
         }
         var composer = default(SkiaFrameComposer);
@@ -414,9 +388,10 @@ public static class WindowsCompanionProductionComposition
             // it is fine to leak for that duration, same as every other
             // handler this composition method wires up.
             //
-            // The 30-second reminder tick (ReminderEngine.TickAsync, via
-            // AppHost) completes an expired focus session on the user's
-            // behalf, but nothing else ever raises FocusEnded for that path
+            // FocusService.CompleteExpiredAsync completes an expired focus
+            // session on the user's behalf (the retired reminder engine's
+            // tick used to call it; focus itself is being removed), but
+            // nothing else ever raises FocusEnded for that path
             // (only TasksFocusViewModel.EndFocusAsync does, for a manual
             // end) — without this, the pet stays latched in Focus, which
             // suppresses every reminder and note presentation until restart.
@@ -651,8 +626,6 @@ public static class WindowsCompanionProductionComposition
                     AppNotificationService invokedNotifications = notificationService;
                     var notificationRouter = CreateNotificationInvocationRouter(
                         actions,
-                        invokedNotifications,
-                        () => reminderToastActions,
                         host.ErrorReporter);
                     composedNotificationRouter = notificationRouter;
                     try
@@ -743,15 +716,13 @@ public static class WindowsCompanionProductionComposition
                         // Finding B: the events sink and startup visibility
                         // gate that push real fullscreen/lock/visibility
                         // state both run later, after this method returns --
-                        // this gateway must start user-hidden so the
-                        // startup reminder tick's direct call into the
-                        // reminder engine (AppHost.RunReminderTickAsync
-                        // still runs that unconditionally; only its
-                        // reconcile and its queue release are deferred via
-                        // releasePresentations: false, see the comment
-                        // there) cannot animate an overdue reminder straight
-                        // into a window that is not shown yet and delete
-                        // its row on that "successful" presentation.
+                        // this gateway must start user-hidden so a publish
+                        // that arrives before AppHost's first presentation
+                        // tick has reconciled visibility (AppHost's startup
+                        // only starts this gateway, see the comment there)
+                        // cannot animate a held item straight into a window
+                        // that is not shown yet and delete its row on that
+                        // "successful" presentation.
                         initialUserHidden: true,
                         affection: affection);
                     // Idle fidgets and short wanders between notes, built from the
@@ -927,9 +898,6 @@ public static class WindowsCompanionProductionComposition
                 preferenceMutations,
                 profileRepository,
                 services.GetRequiredService<IPetPlacementRepository>(),
-                services.GetRequiredService<IReminderRepository>(),
-                services.GetRequiredService<IReminderRepository>() as IReminderWriter
-                    ?? throw new InvalidOperationException("Reminder writer is not registered."),
                 services.GetRequiredService<ITaskRepository>(),
                 services.GetRequiredService<IFocusSessionRepository>(),
                 services.GetRequiredService<ILocalNoteRepository>(),
@@ -1058,11 +1026,6 @@ public static class WindowsCompanionProductionComposition
                 },
                 setGlobalShortcutAsync: runtime.SetGlobalShortcutAsync,
                 getGlobalShortcutStatus: () => runtime.GlobalShortcutStatus,
-                dismissReminderNotificationAsync: (reminderId, token) =>
-                    notificationService?.DismissReminderAsync(reminderId, token) ?? Task.CompletedTask,
-                discardHeldReminderAsync: (reminderId, token) =>
-                    presentationGateway?.DiscardHeldAsync(PresentationItemKind.Reminder, reminderId, token)
-                        ?? Task.CompletedTask,
                 discardHeldLocalNoteAsync: (noteId, token) =>
                     presentationGateway?.DiscardHeldAsync(PresentationItemKind.LocalNote, noteId, token)
                         ?? Task.CompletedTask,
@@ -1089,20 +1052,6 @@ public static class WindowsCompanionProductionComposition
                 stopRemoteSyncAsync: token => remoteSync?.StopAsync(token) ?? Task.CompletedTask,
                 startRemoteSyncAsync: token => remoteSync?.StartAsync(token) ?? Task.CompletedTask,
                 remoteDeleteAvailable: remoteSync is not null);
-            reminderToastActions = new ReminderToastActions(
-                featureContext.Clock,
-                featureContext.Reminders,
-                featureContext.DismissReminderNotificationAsync,
-                featureContext.DiscardHeldReminderAsync,
-                featureContext.PresentPetAsync,
-                host.ErrorReporter);
-            // The row alone cannot tell an announced occurrence from a pending
-            // one once the engine has advanced it; the engine reports each
-            // announcement so Done/Snooze from the page answer that occurrence
-            // instead of consuming the next one. Subscribed before the host
-            // starts ticking (the runtime is only started after this returns).
-            services.GetRequiredService<Dudu.Core.Reminders.ReminderEngine>().OccurrenceDelivered +=
-                reminderToastActions.RecordAnnounced;
             var overlayRouter = new OverlayCommandRouter(
                 featureContext,
                 (destination, token) => DispatchSettingsDestinationAsync(actions, destination, token));
@@ -1126,7 +1075,6 @@ public static class WindowsCompanionProductionComposition
                 Features = featureContext,
                 ActionSurface = actionSurface,
                 OverlayCommands = overlayRouter,
-                ReminderActions = reminderToastActions,
                 NotificationRouter = composedNotificationRouter,
                 ErrorReporter = host.ErrorReporter,
                 AvailableOutfitKeys = pack.Manifest.Outfits.Keys
@@ -1395,15 +1343,11 @@ public static class WindowsCompanionProductionComposition
         // the database, settings services, and the recoverable settings surface alive.
         var profileRepository = services.GetRequiredService<IProfileRepository>();
         var placements = services.GetRequiredService<IPetPlacementRepository>();
-        var reminderRepository = services.GetRequiredService<IReminderRepository>();
         var featureContext = new CompanionFeatureContext(
             services.GetRequiredService<IClock>(),
             preferenceMutations,
             profileRepository,
             placements,
-            reminderRepository,
-            reminderRepository as IReminderWriter
-                ?? throw new InvalidOperationException("Reminder writer is not registered."),
             services.GetRequiredService<ITaskRepository>(),
             services.GetRequiredService<IFocusSessionRepository>(),
             services.GetRequiredService<ILocalNoteRepository>(),
@@ -1518,20 +1462,16 @@ public static class WindowsCompanionProductionComposition
     }
 
     /// <summary>
-    /// Builds the toast click handler: a body click opens the matching page,
-    /// and a reminder's Done/Snooze buttons complete or snooze the reminder
+    /// Builds the toast click handler: a note toast click opens Love Notes
     /// (see <see cref="NotificationInvocationRouter"/>). A malformed or
-    /// unknown activation is ignored rather than throwing.
+    /// unknown activation -- including a retired reminder toast -- is ignored
+    /// rather than throwing.
     /// </summary>
     internal static NotificationInvocationRouter CreateNotificationInvocationRouter(
         CompanionUiActions actions,
-        AppNotificationService notifications,
-        Func<ReminderToastActions?> reminderActions,
         IAppHostErrorReporter? errorReporter) =>
         new(
             (destination, token) => DispatchSettingsDestinationAsync(actions, destination, token),
-            reminderActions,
-            notifications.DismissReminderAsync,
             errorReporter);
 
     private static void HandleNotificationInvoked(
@@ -1542,7 +1482,7 @@ public static class WindowsCompanionProductionComposition
         // parser that split on '&' while the Windows App SDK writes ';' -- so every click
         // resolved to null. invokedArgs.Arguments is the SDK's own parsed map, which needs
         // no separator convention at all. The router never throws; it reports its own
-        // failures (notification-invoked / reminder-toast-action).
+        // failures (notification-invoked).
         _ = router.HandleAsync(arguments, CancellationToken.None);
     }
 

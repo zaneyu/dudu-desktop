@@ -338,39 +338,6 @@ public sealed class DatabaseTests
     }
 
     [Fact]
-    public async Task Reminder_list_includes_disabled_reminders_for_settings_editing()
-    {
-        await using var fixture = await DatabaseFixture.CreateAsync();
-        var cancellationToken = TestContext.Current.CancellationToken;
-        var repository = new ReminderRepository(fixture.Database);
-        var first = new Reminder("first", "First", null, true, new RecurrenceRule.Once(), "UTC",
-            QuietHoursBehavior.DeliverImmediately, MissedOccurrencePolicy.LatestOnly,
-            DateTimeOffset.Parse("2026-09-12T09:00:00Z"));
-        var second = first with { Id = "second", Title = "Second", Enabled = false };
-        await repository.SaveAsync(first, cancellationToken);
-        await repository.SaveAsync(second, cancellationToken);
-
-        Assert.Equal([first, second], await repository.ListAsync(cancellationToken));
-    }
-
-    [Fact]
-    public async Task Snoozed_due_reminder_is_not_selected_until_its_persisted_snooze_expires()
-    {
-        await using var fixture = await DatabaseFixture.CreateAsync();
-        var cancellationToken = TestContext.Current.CancellationToken;
-        var repository = new ReminderRepository(fixture.Database);
-        var reminder = new Reminder("snoozed", "Snoozed", null, true, new RecurrenceRule.Once(), "UTC",
-            QuietHoursBehavior.DeliverImmediately, MissedOccurrencePolicy.LatestOnly,
-            DateTimeOffset.Parse("2026-09-12T09:00:00Z"),
-            DateTimeOffset.Parse("2026-09-12T10:15:00Z"));
-        await repository.SaveAsync(reminder, cancellationToken);
-
-        Assert.Empty(await repository.LoadDueAsync(DateTimeOffset.Parse("2026-09-12T10:00:00Z"), cancellationToken));
-        Assert.Equal([reminder.Id], (await repository.LoadDueAsync(
-            DateTimeOffset.Parse("2026-09-12T10:15:00Z"), cancellationToken)).Select(item => item.Id));
-    }
-
-    [Fact]
     public async Task Consuming_a_remote_envelope_marks_and_removes_it_so_refresh_cannot_resurrect_it()
     {
         await using var fixture = await DatabaseFixture.CreateAsync();
@@ -403,30 +370,6 @@ public sealed class DatabaseTests
             cancellationToken);
 
         await notes.DeleteAsync(note.Id, cancellationToken);
-
-        Assert.Empty(await held.ListAsync(cancellationToken));
-    }
-
-    [Fact]
-    public async Task Deleting_a_reminder_removes_its_held_presentation_row()
-    {
-        // M3: same dangling-reference concern as the local-note delete above, keyed
-        // "Reminder:<id>".
-        await using var fixture = await DatabaseFixture.CreateAsync();
-        var cancellationToken = TestContext.Current.CancellationToken;
-        var reminders = new ReminderRepository(fixture.Database);
-        var held = new HeldPresentationRepository(fixture.Database);
-        var reminder = new Reminder("held-reminder", "Stretch", null, true, new RecurrenceRule.Once(), "UTC",
-            QuietHoursBehavior.DeliverImmediately, MissedOccurrencePolicy.LatestOnly,
-            DateTimeOffset.Parse("2026-09-12T09:00:00Z"));
-        await reminders.SaveAsync(reminder, cancellationToken);
-        await held.SaveAsync(
-            new HeldPresentation(
-                "Reminder:held-reminder", "Reminder", "held-reminder", "Stretch", null, null, null,
-                DateTimeOffset.Parse("2026-09-19T08:00:00Z"), Toasted: false),
-            cancellationToken);
-
-        await reminders.DeleteAsync(reminder.Id, cancellationToken);
 
         Assert.Empty(await held.ListAsync(cancellationToken));
     }
@@ -625,27 +568,6 @@ public sealed class DatabaseTests
             FocusStatus.Paused, DateTimeOffset.Parse("2026-09-11T17:04:00Z"));
         await focusRepository.SaveAsync(focus, cancellationToken);
         Assert.Equal(focus, await focusRepository.GetAsync(focus.Id, cancellationToken));
-
-        var reminderRepository = new ReminderRepository(fixture.Database);
-        var reminder = new Reminder("reminder", "title", null, true,
-            new RecurrenceRule.SelectedWeekdays([DayOfWeek.Monday, DayOfWeek.Friday], new TimeOnly(8, 5)),
-            "UTC", QuietHoursBehavior.WaitUntilQuietHoursEnd, MissedOccurrencePolicy.LatestOnly,
-            DateTimeOffset.Parse("2026-09-11T08:05:00Z"), null,
-            new QuietHours(true, new TimeOnly(22, 0), new TimeOnly(7, 0)));
-        await reminderRepository.SaveAsync(reminder, cancellationToken);
-        var loadedReminder = (await reminderRepository.LoadDueAsync(
-            DateTimeOffset.Parse("2026-09-11T09:00:00Z"), cancellationToken)).Single();
-        Assert.Equal(reminder.Id, loadedReminder.Id);
-        Assert.Equal(reminder.NextDueUtc, loadedReminder.NextDueUtc);
-        var loadedWeekdays = Assert.IsType<RecurrenceRule.SelectedWeekdays>(loadedReminder.Rule);
-        Assert.Equal(((RecurrenceRule.SelectedWeekdays)reminder.Rule).LocalTime, loadedWeekdays.LocalTime);
-        Assert.Equal(((RecurrenceRule.SelectedWeekdays)reminder.Rule).Days, loadedWeekdays.Days);
-        Assert.Equal(reminder.QuietHours, loadedReminder.QuietHours);
-
-        var completedOnce = reminder with { Id = "completed-once", Rule = new RecurrenceRule.Once(), NextDueUtc = null };
-        await reminderRepository.SaveAsync(completedOnce, cancellationToken);
-        Assert.Null((await reminderRepository.ListAsync(cancellationToken))
-            .Single(item => item.Id == completedOnce.Id).NextDueUtc);
 
         var countdownRepository = new CountdownRepository(fixture.Database);
         var countdown = new Countdown("countdown", "event",
@@ -1566,32 +1488,6 @@ public sealed class DatabaseTests
         Assert.Equal(
             "2026-09-19T20:00:00-05:00",
             (await repository.GetAsync("upcoming", cancellationToken))?.DeliverAfterUtc);
-    }
-
-    [Fact]
-    public async Task Record_advance_returns_false_on_a_lost_compare_and_set_race()
-    {
-        await using var fixture = await DatabaseFixture.CreateAsync();
-        var cancellationToken = TestContext.Current.CancellationToken;
-        var repository = new ReminderRepository(fixture.Database);
-        var reminder = new Reminder("cas", "CAS", null, true, new RecurrenceRule.Once(), "UTC",
-            QuietHoursBehavior.DeliverImmediately, MissedOccurrencePolicy.LatestOnly,
-            DateTimeOffset.Parse("2026-09-12T09:00:00Z"));
-        await repository.SaveAsync(reminder, cancellationToken);
-
-        // A concurrent edit wins first: the due instant moves under us.
-        await using (var connection = await fixture.Database.CreateConnectionAsync(cancellationToken))
-        await using (var command = connection.CreateCommand())
-        {
-            command.CommandText = "UPDATE reminders SET next_due_utc = $next WHERE id = 'cas';";
-            command.Parameters.AddWithValue("$next", "2026-09-13T09:00:00+00:00");
-            await command.ExecuteNonQueryAsync(cancellationToken);
-        }
-
-        var stale = reminder;
-        var occurrence = new ReminderOccurrence("cas", DateTimeOffset.Parse("2026-09-12T09:00:00Z"));
-        Assert.False(await repository.RecordOccurrencesAndAdvanceAsync(
-            stale, [occurrence], DateTimeOffset.Parse("2026-09-13T09:00:00Z"), cancellationToken));
     }
 
     [Fact]

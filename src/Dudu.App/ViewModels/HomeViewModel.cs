@@ -74,7 +74,6 @@ public sealed class HomeViewModel : FeatureViewModelBase
     {
         PetState.Comfort => "comforting u",
         PetState.RemoteNote => "holding a note for u",
-        PetState.Reminder => "showing a reminder",
         PetState.FocusTransition => "wrapping up a focus session",
         PetState.WelcomeBack => "saying welcome back",
         PetState.Ambient => "having a little moment",

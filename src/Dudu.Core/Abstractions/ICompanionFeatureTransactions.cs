@@ -8,17 +8,6 @@ namespace Dudu.Core.Abstractions;
 /// </summary>
 public interface ICompanionFeatureTransactions
 {
-    Task SavePreferencesAndDefaultRemindersAsync(
-        Preferences preferences,
-        DateTimeOffset nowUtc,
-        TimeZoneInfo localTimeZone,
-        CancellationToken cancellationToken = default);
-
-    Task RestorePreferencesAndDefaultRemindersAsync(
-        Preferences preferences,
-        IReadOnlyList<Reminder> previousDefaultReminders,
-        CancellationToken cancellationToken = default);
-
     Task SaveRemoteNoteAndConsumeEnvelopeAsync(
         LocalLoveNote note,
         string messageId,

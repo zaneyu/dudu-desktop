@@ -16,16 +16,6 @@ public abstract record PetEvent
         }
     }
 
-    public sealed record ReminderDue : PetEvent
-    {
-        public string ReminderId { get; }
-
-        public ReminderDue(string reminderId)
-        {
-            ReminderId = RequireId(reminderId, nameof(reminderId));
-        }
-    }
-
     public sealed record FocusStarted : PetEvent
     {
         public string FocusId { get; }

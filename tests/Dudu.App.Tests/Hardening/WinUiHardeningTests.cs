@@ -88,10 +88,12 @@ public sealed class WinUiHardeningTests
     [Fact]
     public void Notification_activation_constrains_ids()
     {
-        Assert.NotNull(NotificationActivation.TryParse("action=reminder-done&reminderId=default-hydration"));
-        Assert.Null(NotificationActivation.TryParse("action=reminder-done&reminderId=../evil"));
-        Assert.Null(NotificationActivation.TryParse("action=reminder-done&reminderId=" + new string('a', 200)));
-        Assert.Null(NotificationActivation.TryParse("action=reminder-done&reminderId=a/b"));
+        Assert.NotNull(NotificationActivation.TryParse("action=open-note&messageId=11111111-1111-4111-8111-111111111111"));
+        Assert.Null(NotificationActivation.TryParse("action=open-note&messageId=../evil"));
+        Assert.Null(NotificationActivation.TryParse("action=open-note&messageId=" + new string('a', 200)));
+        Assert.Null(NotificationActivation.TryParse("action=open-note&messageId=a/b"));
+        // A retired reminder toast never parses, even with a well-formed id.
+        Assert.Null(NotificationActivation.TryParse("action=reminder-done&reminderId=default-hydration"));
     }
 
     [Fact]
@@ -241,8 +243,6 @@ public sealed class WinUiHardeningTests
     {
         public int Shown { get; private set; }
         public bool NotificationsAvailable => true;
-        public Task ShowReminderAsync(string id, string title, CancellationToken ct)
-        { Shown++; return Task.CompletedTask; }
         public Task ShowRemoteNoteArrivalAsync(Guid id, CancellationToken ct)
         { Shown++; return Task.CompletedTask; }
     }

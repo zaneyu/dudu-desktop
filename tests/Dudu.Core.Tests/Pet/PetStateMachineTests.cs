@@ -7,27 +7,15 @@ namespace Dudu.Core.Tests.Pet;
 public sealed class PetStateMachineTests
 {
     [Fact]
-    public void Manual_comfort_outranks_note_and_reminder()
+    public void Manual_comfort_outranks_a_note()
     {
         var machine = PetStateMachine.CreateIdle();
-        machine.Handle(new PetEvent.ReminderDue("medicine"));
         machine.Handle(new PetEvent.RemoteNoteArrived("m-1"));
 
         var result = machine.Handle(new PetEvent.ComfortRequested());
 
         Assert.Equal(PetState.Comfort, result.State);
         Assert.Equal("comfort-hug", result.AnimationKey);
-    }
-
-    [Fact]
-    public void Reminder_uses_the_real_note_arrival_pose_instead_of_a_missing_clip()
-    {
-        var machine = PetStateMachine.CreateIdle();
-
-        var result = machine.Handle(new PetEvent.ReminderDue("medicine"));
-
-        Assert.Equal(PetState.Reminder, result.State);
-        Assert.Equal("note-arrival", result.AnimationKey);
     }
 
     [Fact]
@@ -181,23 +169,23 @@ public sealed class PetStateMachineTests
         var machine = PetStateMachine.CreateIdle();
         for (var index = 0; index < 60; index++)
         {
-            machine.Handle(new PetEvent.ReminderDue($"reminder-{index}"));
+            machine.Handle(new PetEvent.RemoteNoteArrived($"note-{index}"));
         }
 
         Assert.Equal(50, machine.PendingCount);
         var coalesced = machine.Current;
-        Assert.Equal(PetState.Reminder, coalesced.State);
-        Assert.Equal("50 reminders due", coalesced.BubbleBody);
+        Assert.Equal(PetState.RemoteNote, coalesced.State);
+        Assert.Equal("50 notes waiting", coalesced.BubbleBody);
 
         // The oldest ten were evicted, so dismissing one is a no-op.
         Assert.Equal(
-            PetState.Reminder,
-            machine.Handle(new PetEvent.Dismissed("reminder-0")).State);
+            PetState.RemoteNote,
+            machine.Handle(new PetEvent.Dismissed("note-0")).State);
         Assert.Equal(50, machine.PendingCount);
 
         for (var index = 10; index < 60; index++)
         {
-            machine.Handle(new PetEvent.Dismissed($"reminder-{index}"));
+            machine.Handle(new PetEvent.Dismissed($"note-{index}"));
         }
 
         Assert.Equal(0, machine.PendingCount);
@@ -216,25 +204,6 @@ public sealed class PetStateMachineTests
 
         Assert.Equal(PetState.RemoteNote, machine.Current.State);
         Assert.Equal("2 notes waiting", machine.Current.BubbleBody);
-    }
-
-    [Fact]
-    public void Acknowledging_a_presented_reminder_clears_it_so_select_returns_to_idle()
-    {
-        // PresentationCoordinator now dismisses a Reminder/RemoteNote item by
-        // id once it has finished presenting it, the same way it already did
-        // for a LocalNote — this is that acknowledgement's effect on the
-        // state machine itself. Before that fix, nothing but a manual
-        // Settings "complete" ever called Dismissed for these ids, so the
-        // pet stayed on the note-arrival pose forever after the first due
-        // reminder.
-        var machine = PetStateMachine.CreateIdle();
-        machine.Handle(new PetEvent.ReminderDue("medicine"));
-        Assert.Equal(PetState.Reminder, machine.Current.State);
-
-        var result = machine.Handle(new PetEvent.Dismissed("medicine"));
-
-        Assert.Equal(PetState.Idle, result.State);
     }
 
     [Fact]
@@ -285,15 +254,6 @@ public sealed class PetStateMachineTests
                 var machine = PetStateMachine.CreateIdle();
                 machine.Handle(new PetEvent.RemoteNoteArrived("m-1"));
                 Assert.Equal(PetState.Idle, machine.Handle(new PetEvent.Dismissed("m-1")).State);
-            },
-
-            // Reminder: cleared by Dismissed(reminderId), now fired by
-            // PresentationCoordinator once the reminder has been shown.
-            [PetState.Reminder] = () =>
-            {
-                var machine = PetStateMachine.CreateIdle();
-                machine.Handle(new PetEvent.ReminderDue("medicine"));
-                Assert.Equal(PetState.Idle, machine.Handle(new PetEvent.Dismissed("medicine")).State);
             },
 
             // FocusTransition: cleared by PresentationAcknowledged (fired

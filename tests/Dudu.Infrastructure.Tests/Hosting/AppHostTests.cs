@@ -10,6 +10,8 @@ public sealed class AppHostTests
     public async Task Concurrent_and_repeated_starts_are_single_flight_and_idempotent()
     {
         using var fixture = new AppHostFixture();
+        var gateway = new TestPresentationGateway();
+        fixture.Host.AttachPresentationGateway(gateway);
         fixture.Database.InitializationGate = NewSource();
 
         var firstStart = fixture.Host.StartAsync(CancellationToken.None);
@@ -22,20 +24,19 @@ public sealed class AppHostTests
         await fixture.Host.StartAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(1, fixture.Database.InitializeCount);
-        Assert.Equal(1, fixture.Reminder.TickCount);
+        Assert.Equal(1, gateway.StartCount);
         Assert.Equal(1, fixture.TimerFactory.CreateCount);
         await fixture.Host.StopAsync(TestContext.Current.CancellationToken);
     }
 
     [Fact]
-    public async Task Startup_waits_for_migration_before_first_tick_and_starts_scheduler()
+    public async Task Startup_waits_for_migration_and_starts_the_thirty_second_scheduler()
     {
         using var fixture = new AppHostFixture();
 
         await fixture.Host.StartAsync(TestContext.Current.CancellationToken);
 
         Assert.True(fixture.Database.Initialized);
-        Assert.Equal(1, fixture.Reminder.TickCount);
         Assert.Equal(TimeSpan.FromSeconds(30), fixture.TimerFactory.Interval);
         Assert.Equal(1, fixture.TimerFactory.CreateCount);
 
@@ -44,42 +45,149 @@ public sealed class AppHostTests
     }
 
     [Fact]
-    public async Task Failed_migration_does_not_start_reminder_scheduler()
+    public async Task Failed_migration_does_not_start_the_gateway_or_the_scheduler()
     {
         using var fixture = new AppHostFixture();
+        var calls = new List<string>();
+        fixture.Host.AttachPresentationGateway(new TestPresentationGateway(calls));
         fixture.Database.InitializationException = new InvalidOperationException("migration failed");
 
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => fixture.Host.StartAsync(TestContext.Current.CancellationToken));
 
-        Assert.Equal(0, fixture.Reminder.TickCount);
+        Assert.Empty(calls);
         Assert.Equal(0, fixture.TimerFactory.CreateCount);
         await fixture.Host.StopAsync(TestContext.Current.CancellationToken);
     }
 
     [Fact]
-    public async Task Resume_runs_one_additional_reminder_tick()
+    public async Task Startup_starts_the_gateway_without_reconciling_or_releasing()
     {
+        // Startup runs before WindowsCompanionBootstrap pushes the real
+        // fullscreen/lock/visibility state, so it must only start the
+        // gateway (reloading held rows) -- never reconcile visibility or
+        // release a held presentation. The first timer tick does both.
         using var fixture = new AppHostFixture();
+        var calls = new List<string>();
+        fixture.Host.AttachPresentationGateway(new TestPresentationGateway(calls));
+        fixture.Host.AttachVisibilityReconciler(new TestVisibilityReconciler(calls));
+
         await fixture.Host.StartAsync(TestContext.Current.CancellationToken);
 
-        await fixture.Host.ResumeAsync(TestContext.Current.CancellationToken);
-
-        Assert.Equal(2, fixture.Reminder.TickCount);
+        Assert.Equal(["start"], calls);
         await fixture.Host.StopAsync(TestContext.Current.CancellationToken);
     }
 
     [Fact]
-    public async Task Scheduler_uses_thirty_second_timer_and_reports_tick_failures()
+    public async Task Gateway_is_started_after_db_init_and_disposed_on_stop()
     {
         using var fixture = new AppHostFixture();
-        fixture.Reminder.ThrowOnScheduledTick = true;
+        var gateway = new TestPresentationGateway(databaseInitialized: () => fixture.Database.Initialized);
+        fixture.Host.AttachPresentationGateway(gateway);
+
+        await fixture.Host.StartAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, gateway.StartCount);
+        Assert.True(gateway.DatabaseInitializedAtStart);
+        Assert.Equal(0, gateway.TickCount);
+        Assert.Equal(0, gateway.DisposeCount);
+
+        await fixture.Host.StopAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, gateway.DisposeCount);
+    }
+
+    [Fact]
+    public async Task Timer_signal_reconciles_then_ticks_the_gateway()
+    {
+        using var fixture = new AppHostFixture();
+        var calls = new List<string>();
+        var gateway = new TestPresentationGateway(calls);
+        fixture.Host.AttachPresentationGateway(gateway);
+        fixture.Host.AttachVisibilityReconciler(new TestVisibilityReconciler(calls));
         await fixture.Host.StartAsync(TestContext.Current.CancellationToken);
 
         fixture.TimerFactory.Timer.Signal();
+        await gateway.Ticked.Task.WaitAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(["start", "reconcile", "tick"], gateway.SnapshotCalls());
+        await fixture.Host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task Timer_ticks_the_gateway_with_no_reconciler_attached()
+    {
+        using var fixture = new AppHostFixture();
+        var gateway = new TestPresentationGateway();
+        fixture.Host.AttachPresentationGateway(gateway);
+        await fixture.Host.StartAsync(TestContext.Current.CancellationToken);
+
+        fixture.TimerFactory.Timer.Signal();
+        await gateway.Ticked.Task.WaitAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, gateway.TickCount);
+        await fixture.Host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task Resume_reconciles_then_ticks_the_gateway()
+    {
+        using var fixture = new AppHostFixture();
+        var calls = new List<string>();
+        fixture.Host.AttachPresentationGateway(new TestPresentationGateway(calls));
+        fixture.Host.AttachVisibilityReconciler(new TestVisibilityReconciler(calls));
+        await fixture.Host.StartAsync(TestContext.Current.CancellationToken);
+
+        await fixture.Host.ResumeAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(["start", "reconcile", "tick"], calls);
+        await fixture.Host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task Resume_before_start_does_nothing()
+    {
+        using var fixture = new AppHostFixture();
+        var calls = new List<string>();
+        fixture.Host.AttachPresentationGateway(new TestPresentationGateway(calls));
+        fixture.Host.AttachVisibilityReconciler(new TestVisibilityReconciler(calls));
+
+        await fixture.Host.ResumeAsync(TestContext.Current.CancellationToken);
+
+        Assert.Empty(calls);
+    }
+
+    [Fact]
+    public async Task Throwing_gateway_tick_is_reported_and_the_scheduler_keeps_ticking()
+    {
+        using var fixture = new AppHostFixture();
+        var gateway = new TestPresentationGateway { ThrowOnTick = true };
+        fixture.Host.AttachPresentationGateway(gateway);
+        await fixture.Host.StartAsync(TestContext.Current.CancellationToken);
+
+        fixture.TimerFactory.Timer.Signal();
+        await fixture.Errors.WaitForOperationAsync(
+            "presentation-gateway-tick",
+            TestContext.Current.CancellationToken);
+
+        gateway.ThrowOnTick = false;
+        fixture.TimerFactory.Timer.Signal();
+        await gateway.Ticked.Task.WaitAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, gateway.TickCount);
+        await fixture.Host.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    public async Task Scheduler_failure_is_reported_as_presentation_scheduler()
+    {
+        using var fixture = new AppHostFixture();
+        await fixture.Host.StartAsync(TestContext.Current.CancellationToken);
+
+        fixture.TimerFactory.Timer.Fail(new InvalidOperationException("timer failed"));
         await fixture.Errors.Reported.Task.WaitAsync(TestContext.Current.CancellationToken);
 
-        Assert.Equal("reminder-scheduler", fixture.Errors.LastOperation);
+        Assert.Equal("presentation-scheduler", fixture.Errors.LastOperation);
         Assert.Equal(TimeSpan.FromSeconds(30), fixture.TimerFactory.Interval);
         await fixture.Host.StopAsync(TestContext.Current.CancellationToken);
     }
@@ -88,11 +196,13 @@ public sealed class AppHostTests
     public async Task Shutdown_is_bounded_and_does_not_dispose_database_while_resume_is_live()
     {
         using var fixture = new AppHostFixture(stopTimeout: TimeSpan.FromMilliseconds(100));
+        var gateway = new TestPresentationGateway();
+        fixture.Host.AttachPresentationGateway(gateway);
         await fixture.Host.StartAsync(TestContext.Current.CancellationToken);
-        fixture.Reminder.BlockNextTick = true;
+        gateway.BlockNextTick = true;
 
         var resumeTask = fixture.Host.ResumeAsync(TestContext.Current.CancellationToken);
-        await fixture.Reminder.BlockEntered.Task.WaitAsync(TestContext.Current.CancellationToken);
+        await gateway.BlockEntered.Task.WaitAsync(TestContext.Current.CancellationToken);
 
         var stopwatch = Stopwatch.StartNew();
         await fixture.Host.StopAsync(TestContext.Current.CancellationToken);
@@ -101,7 +211,7 @@ public sealed class AppHostTests
         Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(1));
         Assert.False(fixture.Database.Disposed);
 
-        fixture.Reminder.ReleaseBlockedTick();
+        gateway.ReleaseBlockedTick();
         await resumeTask;
         await fixture.Database.DisposedSignal.Task.WaitAsync(TestContext.Current.CancellationToken);
         Assert.True(fixture.Database.Disposed);
@@ -111,17 +221,19 @@ public sealed class AppHostTests
     public async Task Shutdown_is_bounded_when_cancellation_callback_is_slow_and_throws()
     {
         using var fixture = new AppHostFixture(stopTimeout: TimeSpan.FromMilliseconds(100));
+        var gateway = new TestPresentationGateway();
+        fixture.Host.AttachPresentationGateway(gateway);
         await fixture.Host.StartAsync(TestContext.Current.CancellationToken);
-        fixture.Reminder.BlockNextTick = true;
-        fixture.Reminder.CancellationCallback = () =>
+        gateway.BlockNextTick = true;
+        gateway.CancellationCallback = () =>
         {
-            fixture.Reminder.CancellationCallbackEntered.TrySetResult(true);
+            gateway.CancellationCallbackEntered.TrySetResult(true);
             Thread.Sleep(300);
             throw new InvalidOperationException("cancellation callback failed");
         };
 
         var resumeTask = fixture.Host.ResumeAsync(TestContext.Current.CancellationToken);
-        await fixture.Reminder.BlockEntered.Task.WaitAsync(TestContext.Current.CancellationToken);
+        await gateway.BlockEntered.Task.WaitAsync(TestContext.Current.CancellationToken);
 
         var stopwatch = Stopwatch.StartNew();
         await fixture.Host.StopAsync(TestContext.Current.CancellationToken);
@@ -130,7 +242,7 @@ public sealed class AppHostTests
         Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(1));
         Assert.False(fixture.Database.Disposed);
 
-        fixture.Reminder.ReleaseBlockedTick();
+        gateway.ReleaseBlockedTick();
         await resumeTask;
         await fixture.Database.DisposedSignal.Task.WaitAsync(TestContext.Current.CancellationToken);
         await fixture.Errors.WaitForOperationAsync(
@@ -169,118 +281,10 @@ public sealed class AppHostTests
     }
 
     [Fact]
-    public async Task Presentation_gateway_is_started_after_db_init_then_ticked_per_reminder_tick_then_disposed()
-    {
-        using var fixture = new AppHostFixture();
-        var gateway = new TestPresentationGateway(
-            () => fixture.Database.Initialized,
-            () => fixture.Reminder.TickCount);
-        fixture.Host.AttachPresentationGateway(gateway);
-
-        await fixture.Host.StartAsync(TestContext.Current.CancellationToken);
-
-        // StartAsync must run after the database has finished initializing
-        // and before the first reminder tick has happened.
-        Assert.Equal(1, gateway.StartCount);
-        Assert.True(gateway.DatabaseInitializedAtStart);
-        Assert.Equal(0, gateway.ReminderTickCountAtStart);
-
-        // Finding 2: the startup reminder tick advances the reminder engine
-        // but must not release held presentations -- by the time StartAsync
-        // returns, the events sink and startup visibility gate that push
-        // real fullscreen/lock/visibility state have not run yet (they run
-        // later, in WindowsCompanionBootstrap), so releasing here would
-        // animate a held item into a window that may not even be shown and
-        // then delete its row on success. TickAsync is deferred to the
-        // first regularly scheduled tick, below.
-        Assert.Equal(0, gateway.TickCount);
-        Assert.Equal(-1, gateway.ReminderTickCountAtFirstGatewayTick);
-        Assert.Equal(0, gateway.DisposeCount);
-
-        await fixture.Host.ResumeAsync(TestContext.Current.CancellationToken);
-
-        // The first tick that actually releases presentations: by the time
-        // it runs, the reminder service's tick count has already advanced
-        // twice (the startup tick plus this one).
-        Assert.Equal(1, gateway.TickCount);
-        Assert.Equal(2, gateway.ReminderTickCountAtFirstGatewayTick);
-        Assert.Equal(2, gateway.ReminderTickCountAtLastGatewayTick);
-        Assert.Equal(0, gateway.DisposeCount);
-
-        await fixture.Host.StopAsync(TestContext.Current.CancellationToken);
-
-        Assert.Equal(1, gateway.DisposeCount);
-    }
-
-    [Fact]
-    public async Task Presentation_gateway_release_also_fires_from_the_schedulers_own_timer_signal()
-    {
-        // Finding I: the existing coverage above for a presentation-gateway
-        // release only ever drove it through ResumeAsync, which calls
-        // RunReminderTickAsync directly -- never through the scheduler's own
-        // 30 s timer signal, which is how production actually reaches that
-        // same code on an ordinary tick (see TestTimer / TimerFactory.Timer
-        // below). Assert the same release behavior when reached that way.
-        using var fixture = new AppHostFixture();
-        var gateway = new TestPresentationGateway(
-            () => fixture.Database.Initialized,
-            () => fixture.Reminder.TickCount);
-        fixture.Host.AttachPresentationGateway(gateway);
-
-        await fixture.Host.StartAsync(TestContext.Current.CancellationToken);
-        Assert.Equal(0, gateway.TickCount);
-
-        fixture.TimerFactory.Timer.Signal();
-        await gateway.Ticked.Task.WaitAsync(TestContext.Current.CancellationToken);
-
-        Assert.Equal(1, gateway.TickCount);
-        // The startup tick (deferred release) plus this signaled tick.
-        Assert.Equal(2, gateway.ReminderTickCountAtFirstGatewayTick);
-
-        await fixture.Host.StopAsync(TestContext.Current.CancellationToken);
-    }
-
-    [Fact]
-    public async Task Reconcile_runs_before_the_reminder_engine_ticks_not_after()
-    {
-        // Finding A(3): ReconcileVisibilityAsync must run at the START of a
-        // reminder tick that does reconcile, not just right before the
-        // presentation release. The reminder engine's own TickAsync can
-        // itself publish through the presentation gateway (a newly-due
-        // reminder), so reconciling only right before the release left that
-        // publish evaluated against a pet the sink might still believe is
-        // hidden from an earlier vetoed show that has since cleared.
-        //
-        // Round 3 finding 3 (pre-handoff audit): the startup tick must not
-        // reconcile at all, not just defer its release -- at that point the
-        // events sink and startup visibility gate have not run yet (they run
-        // later, in WindowsCompanionBootstrap, only after this host's
-        // StartAsync returns), so every flag reconcile would read is still
-        // at its unset default. Reconciling there used to show the overlay
-        // and push a real SetUserVisible(true) before any of that state was
-        // known, defeating the presentation gateway's initialUserHidden
-        // start. So only the resume tick reconciles here -- once, with the
-        // reminder tick count still reflecting the startup tick that already
-        // ran (1), not yet the resume tick about to run.
-        using var fixture = new AppHostFixture();
-        var reconciler = new TestVisibilityReconciler(() => fixture.Reminder.TickCount);
-        fixture.Host.AttachVisibilityReconciler(reconciler);
-
-        await fixture.Host.StartAsync(TestContext.Current.CancellationToken);
-        await fixture.Host.ResumeAsync(TestContext.Current.CancellationToken);
-
-        Assert.Equal(1, reconciler.Calls);
-        Assert.Equal([1], reconciler.ReminderTickCountAtEachReconcile);
-        Assert.Equal(2, fixture.Reminder.TickCount);
-
-        await fixture.Host.StopAsync(TestContext.Current.CancellationToken);
-    }
-
-    [Fact]
     public async Task Remote_sync_starts_only_when_attached_and_is_disposed_on_stop()
     {
         // Relay configured: the fake stands in for a RemoteSyncService wrapper;
-        // AppHost starts it after the reminder scheduler and disposes it on stop.
+        // AppHost starts it after the presentation scheduler and disposes it on stop.
         using var configured = new AppHostFixture();
         var remoteSync = new TestRemoteSync(() => configured.TimerFactory.CreateCount);
         configured.Host.AttachRemoteSync(remoteSync);
@@ -326,44 +330,84 @@ public sealed class AppHostTests
     }
 
     private sealed class TestPresentationGateway(
-        Func<bool>? databaseInitialized = null,
-        Func<int>? reminderTickCount = null) : IAppHostPresentationGateway
+        List<string>? calls = null,
+        Func<bool>? databaseInitialized = null) : IAppHostPresentationGateway
     {
+        private readonly object _sync = new();
+        private TaskCompletionSource<bool>? _blockedTick;
+
         public int StartCount { get; private set; }
         public int TickCount { get; private set; }
         public int DisposeCount { get; private set; }
         public bool DatabaseInitializedAtStart { get; private set; }
-        public int ReminderTickCountAtStart { get; private set; }
-        public int ReminderTickCountAtFirstGatewayTick { get; private set; } = -1;
-        public int ReminderTickCountAtLastGatewayTick { get; private set; }
+        public bool ThrowOnTick { get; set; }
+        public bool BlockNextTick { get; set; }
+        public Action? CancellationCallback { get; set; }
+        public TaskCompletionSource<bool> BlockEntered { get; } = NewSource();
+        public TaskCompletionSource<bool> CancellationCallbackEntered { get; } = NewSource();
 
         /// <summary>
-        /// Finding I: lets a test wait deterministically for a release
-        /// reached through the scheduler's own timer signal instead of the
-        /// synchronous ResumeAsync path, which the other tests above use.
+        /// Lets a test wait deterministically for a tick reached through the
+        /// scheduler's own timer signal instead of the synchronous
+        /// ResumeAsync path. Completed only by a tick that did not throw.
         /// </summary>
         public TaskCompletionSource<bool> Ticked { get; } = NewSource();
+
+        public string[] SnapshotCalls()
+        {
+            if (calls is null)
+            {
+                return [];
+            }
+
+            lock (calls)
+            {
+                return calls.ToArray();
+            }
+        }
 
         public Task StartAsync(CancellationToken cancellationToken = default)
         {
             StartCount++;
             DatabaseInitializedAtStart = databaseInitialized?.Invoke() ?? false;
-            ReminderTickCountAtStart = reminderTickCount?.Invoke() ?? 0;
+            Record("start");
             return Task.CompletedTask;
         }
 
-        public Task TickAsync(CancellationToken cancellationToken = default)
+        public async Task TickAsync(CancellationToken cancellationToken = default)
         {
             TickCount++;
-            var count = reminderTickCount?.Invoke() ?? 0;
-            if (ReminderTickCountAtFirstGatewayTick < 0)
+            Record("tick");
+            if (ThrowOnTick)
             {
-                ReminderTickCountAtFirstGatewayTick = count;
+                throw new InvalidOperationException("gateway tick failed");
             }
 
-            ReminderTickCountAtLastGatewayTick = count;
+            if (BlockNextTick)
+            {
+                lock (_sync)
+                {
+                    BlockNextTick = false;
+                    _blockedTick = NewSource();
+                    if (CancellationCallback is not null)
+                    {
+                        cancellationToken.Register(CancellationCallback);
+                    }
+                    BlockEntered.TrySetResult(true);
+                }
+
+                await _blockedTick.Task;
+            }
+
             Ticked.TrySetResult(true);
-            return Task.CompletedTask;
+        }
+
+        public void ReleaseBlockedTick()
+        {
+            lock (_sync)
+            {
+                _blockedTick?.TrySetResult(true);
+            }
         }
 
         public ValueTask DisposeAsync()
@@ -371,17 +415,30 @@ public sealed class AppHostTests
             DisposeCount++;
             return ValueTask.CompletedTask;
         }
+
+        private void Record(string call)
+        {
+            if (calls is null)
+            {
+                return;
+            }
+
+            lock (calls)
+            {
+                calls.Add(call);
+            }
+        }
     }
 
-    private sealed class TestVisibilityReconciler(Func<int> reminderTickCount) : IAppHostVisibilityReconciler
+    private sealed class TestVisibilityReconciler(List<string> calls) : IAppHostVisibilityReconciler
     {
-        public int Calls { get; private set; }
-        public List<int> ReminderTickCountAtEachReconcile { get; } = [];
-
         public Task ReconcileVisibilityAsync(CancellationToken cancellationToken = default)
         {
-            Calls++;
-            ReminderTickCountAtEachReconcile.Add(reminderTickCount());
+            lock (calls)
+            {
+                calls.Add("reconcile");
+            }
+
             return Task.CompletedTask;
         }
     }
@@ -397,7 +454,6 @@ public sealed class AppHostTests
         {
             Directory.CreateDirectory(_root);
             Database = new TestDatabase();
-            Reminder = new TestReminderService();
             TimerFactory = new TestTimerFactory();
             Errors = new TestErrorReporter();
             Host = new AppHost(
@@ -408,14 +464,12 @@ public sealed class AppHostTests
                     Path.Combine(_root, "secrets"),
                     Path.Combine(_root, "logs")),
                 Database,
-                Reminder,
                 TimerFactory,
                 Errors,
                 stopTimeout);
         }
 
         public TestDatabase Database { get; }
-        public TestReminderService Reminder { get; }
         public TestTimerFactory TimerFactory { get; }
         public TestErrorReporter Errors { get; }
         public AppHost Host { get; }
@@ -469,52 +523,6 @@ public sealed class AppHostTests
         }
     }
 
-    private sealed class TestReminderService : IAppHostReminderService
-    {
-        private readonly object _sync = new();
-        private TaskCompletionSource<bool>? _blockedTick;
-
-        public bool BlockNextTick { get; set; }
-        public bool ThrowOnScheduledTick { get; set; }
-        public Action? CancellationCallback { get; set; }
-        public int TickCount { get; private set; }
-        public TaskCompletionSource<bool> BlockEntered { get; } = NewSource();
-        public TaskCompletionSource<bool> CancellationCallbackEntered { get; } = NewSource();
-
-        public async Task TickAsync(CancellationToken cancellationToken = default)
-        {
-            TickCount++;
-            if (ThrowOnScheduledTick && TickCount > 1)
-            {
-                throw new InvalidOperationException("scheduled tick failed");
-            }
-
-            if (BlockNextTick)
-            {
-                lock (_sync)
-                {
-                    BlockNextTick = false;
-                    _blockedTick = NewSource();
-                    if (CancellationCallback is not null)
-                    {
-                        cancellationToken.Register(CancellationCallback);
-                    }
-                    BlockEntered.TrySetResult(true);
-                }
-
-                await _blockedTick.Task;
-            }
-        }
-
-        public void ReleaseBlockedTick()
-        {
-            lock (_sync)
-            {
-                _blockedTick?.TrySetResult(true);
-            }
-        }
-    }
-
     private sealed class TestTimerFactory : IAppHostTimerFactory
     {
         public TimeSpan Interval { get; private set; }
@@ -539,6 +547,14 @@ public sealed class AppHostTests
             lock (_sync)
             {
                 _next.TrySetResult(true);
+            }
+        }
+
+        public void Fail(Exception exception)
+        {
+            lock (_sync)
+            {
+                _next.TrySetException(exception);
             }
         }
 

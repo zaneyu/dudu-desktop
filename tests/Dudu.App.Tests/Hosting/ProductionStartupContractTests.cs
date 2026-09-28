@@ -55,8 +55,8 @@ public sealed class ProductionStartupContractTests
     [Fact]
     public void Remote_note_arrival_sink_overrides_the_infrastructure_null_default()
     {
-        // Dudu.Infrastructure.DependencyInjection registers NullRemoteNoteArrivalSink (and
-        // NullReminderDueSink) as safe library-level defaults; that registration itself is
+        // Dudu.Infrastructure.DependencyInjection registers NullRemoteNoteArrivalSink as a
+        // safe library-level default; that registration itself is
         // asserted below by source, since it is a simple library-level default with no
         // reason to change. The override in the App composition root is instead asserted by
         // building a real ServiceCollection through AddProductionPresentationSinks (below):
@@ -70,42 +70,8 @@ public sealed class ProductionStartupContractTests
         Assert.Contains(
             "services.AddSingleton<IRemoteNoteArrivalSink, NullRemoteNoteArrivalSink>();",
             dependencyInjection);
-        Assert.Contains(
-            "services.AddSingleton<IReminderDueSink, NullReminderDueSink>();",
-            dependencyInjection);
-    }
-
-    [Fact]
-    public void Production_reminder_due_sink_registration_passes_the_profile_repository()
-    {
-        // Resolving IReminderDueSink to the ReminderDueSink type (below) would still
-        // pass even if the `profiles:` argument were dropped from the registration --
-        // it is an optional constructor parameter, so the sink would silently fall
-        // back to never personalising a toast with the saved recipient name. This
-        // asserts the wiring itself, by source, the same way the null-default
-        // override above is asserted.
-        var root = FindRepositoryRoot();
-        var composition = File.ReadAllText(Path.Combine(
-            root,
-            "src",
-            "Dudu.App",
-            "Hosting",
-            "WindowsCompanionProductionComposition.cs"));
-
-        var reminderSinkRegistration = composition.IndexOf(
-            "AddSingleton<IReminderDueSink>(provider => new ReminderDueSink(",
-            StringComparison.Ordinal);
-        var remoteNoteSinkRegistration = composition.IndexOf(
-            "AddSingleton<IRemoteNoteArrivalSink>(provider => new RemoteNoteArrivalSink(",
-            StringComparison.Ordinal);
-        var profilesArgument = composition.IndexOf(
-            "profiles: provider.GetRequiredService<IProfileRepository>()",
-            StringComparison.Ordinal);
-
-        Assert.True(reminderSinkRegistration >= 0);
-        Assert.True(remoteNoteSinkRegistration > reminderSinkRegistration);
-        Assert.True(profilesArgument > reminderSinkRegistration);
-        Assert.True(profilesArgument < remoteNoteSinkRegistration);
+        // Reminders were removed end to end: no reminder sink is registered anywhere.
+        Assert.DoesNotContain("ReminderDueSink", dependencyInjection, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -129,7 +95,6 @@ public sealed class ProductionStartupContractTests
                     "The presentation gateway is not ready."))
                 .BuildServiceProvider();
 
-            Assert.IsType<ReminderDueSink>(provider.GetRequiredService<IReminderDueSink>());
             Assert.IsType<RemoteNoteArrivalSink>(provider.GetRequiredService<IRemoteNoteArrivalSink>());
         }
         finally

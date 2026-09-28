@@ -290,7 +290,6 @@ public sealed partial class SettingsWindow : UserControl
     {
         PetState.Comfort => "dudu has u",
         PetState.RemoteNote => "dudu brought a note",
-        PetState.Reminder => "dudu remembers",
         PetState.Focus => "dudu is staying close",
         PetState.FocusTransition => "dudu says well done",
         PetState.WelcomeBack => "dudu missed u",
