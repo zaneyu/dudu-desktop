@@ -217,25 +217,6 @@
                         </ItemsControl>
                     </StackPanel>
                 </Border>
-
-                <Border Style="{StaticResource CardStyle}">
-                    <StackPanel Spacing="8">
-                        <Grid ColumnSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="🚀" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
-                            <TextBlock Grid.Column="1" Text="when windows starts" Style="{StaticResource SectionHeadingStyle}" />
-                        </Grid>
-                        <CheckBox x:Name="StartupToggle" Content="launch dudu when i sign in" Checked="StartupToggle_Changed" Unchecked="StartupToggle_Changed" AutomationProperties.AutomationId="SettingsLaunchAtSignIn" AutomationProperties.Name="launch dudu when i sign in" />
-                        <TextBlock Text="startup registration is managed locally on this pc" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
-                        <StackPanel x:Name="StartupRecoveryPanel" Spacing="8" Visibility="Collapsed">
-                            <TextBlock x:Name="StartupRecoveryMessage" AutomationProperties.AutomationId="HomeStartupRecoveryMessage" AutomationProperties.Name="startup recovery message" Foreground="{ThemeResource WarningBrush}" TextWrapping="Wrap" />
-                            <Button x:Name="RetryStartupButton" Content="retry startup registration" AutomationProperties.AutomationId="HomeRetryStartupRegistration" AutomationProperties.Name="retry startup registration" Click="RetryStartupButton_Click" />
-                        </StackPanel>
-                    </StackPanel>
-                </Border>
             </StackPanel>
         </ScrollViewer>
 

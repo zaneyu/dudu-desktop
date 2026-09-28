@@ -56,7 +56,10 @@ public sealed class CompanionFeatureContext
         Func<string, CancellationToken, Task>? discardHeldRemoteNoteAsync = null,
         Func<CancellationToken, Task>? discardHeldRemoteNotesAsync = null,
         AffectionTracker? affection = null,
-        Func<string?>? getGlobalShortcutStatus = null)
+        Func<string?>? getGlobalShortcutStatus = null,
+        Func<CancellationToken, Task>? stopRemoteSyncAsync = null,
+        Func<CancellationToken, Task>? startRemoteSyncAsync = null,
+        bool remoteDeleteAvailable = false)
     {
         Clock = clock ?? throw new ArgumentNullException(nameof(clock));
         PreferenceMutations = preferenceMutations ?? throw new ArgumentNullException(nameof(preferenceMutations));
@@ -134,6 +137,9 @@ public sealed class CompanionFeatureContext
         DiscardHeldLocalNoteAsync = discardHeldLocalNoteAsync ?? ((_, _) => Task.CompletedTask);
         DiscardHeldRemoteNoteAsync = discardHeldRemoteNoteAsync ?? ((_, _) => Task.CompletedTask);
         DiscardHeldRemoteNotesAsync = discardHeldRemoteNotesAsync ?? (_ => Task.CompletedTask);
+        StopRemoteSyncAsync = stopRemoteSyncAsync ?? (_ => Task.CompletedTask);
+        StartRemoteSyncAsync = startRemoteSyncAsync ?? (_ => Task.CompletedTask);
+        RemoteDeleteAvailable = remoteDeleteAvailable;
     }
 
     public IClock Clock { get; }
@@ -187,6 +193,19 @@ public sealed class CompanionFeatureContext
     public Func<CancellationToken, Task> RestoreAsync { get; }
     public Func<CancellationToken, Task> DeleteLocalDataAsync { get; }
     public Func<CancellationToken, Task> DeleteRemoteDataAsync { get; }
+
+    /// <summary>True only when a relay is configured (the production composition has a
+    /// remote sync loop). Offline builds and safe mode leave it false, so "delete my data"
+    /// wipes this pc only there, without treating the missing relay as a failure.</summary>
+    public bool RemoteDeleteAvailable { get; }
+
+    /// <summary>Stops the remote sync loop so no poll can re-register a fresh device
+    /// between the remote delete and the local wipe. No-op without a relay.</summary>
+    public Func<CancellationToken, Task> StopRemoteSyncAsync { get; }
+
+    /// <summary>Restarts the remote sync loop after a remote delete that did not
+    /// complete, so nothing was wiped and notes keep arriving. No-op without a relay.</summary>
+    public Func<CancellationToken, Task> StartRemoteSyncAsync { get; }
     public Func<string?, CancellationToken, Task> ApplyOutfitAsync { get; }
     public Func<string, CancellationToken, Task> SetGlobalShortcutAsync { get; }
     /// <summary>Null while the saved global shortcut is the one registered;

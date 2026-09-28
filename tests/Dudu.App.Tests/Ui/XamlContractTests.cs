@@ -78,9 +78,9 @@ public sealed class XamlContractTests
         };
         var expectedNamedElements = new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
-            ["HomePage"] = ["HomeNextReminder", "HomeActiveFocus", "HomePetState", "HomePetAnimation", "HomeActionStatus", "HomeNextCountdown", "CountdownTargetBox", "CountdownTargetValidation", "HomeSaveCountdownButton", "HomeCheckInSummary", "HomeCheckInHistory", "StartupToggle", "StartupRecoveryPanel", "StartupRecoveryMessage", "RetryStartupButton"],
+            ["HomePage"] = ["HomeNextReminder", "HomeActiveFocus", "HomePetState", "HomePetAnimation", "HomeActionStatus", "HomeNextCountdown", "CountdownTargetBox", "CountdownTargetValidation", "HomeSaveCountdownButton", "HomeCheckInSummary", "HomeCheckInHistory"],
             ["LoveNotesPage"] = ["LoveNotesDailyLimit", "LoveNotesPendingCount"],
-            ["SettingsPage"] = ["ThemeBox", "ConnectionAvailability", "ConnectionPairingCode", "ConnectionCodeExpiry", "ConnectionSessionCount"],
+            ["SettingsPage"] = ["ThemeBox", "StartupToggle", "StartupRecoveryPanel", "StartupRecoveryMessage", "RetryStartupButton", "ConnectionAvailability", "ConnectionPairingCode", "ConnectionCodeExpiry", "ConnectionSessionCount"],
         };
         var viewModelSources = pageContracts.ToDictionary(
             pair => pair.Key,
@@ -194,13 +194,13 @@ public sealed class XamlContractTests
         {
             ["HomePage.xaml"] = ["ViewModel.PauseDescription", "ViewModel.PetCommand", "ViewModel.PauseForOneHourCommand", "ViewModel.ResumeCommand", "ViewModel.CountdownTitle", "ViewModel.Countdowns", "ViewModel.CreateCountdownCommand", "ViewModel.SelectedCountdown", "ViewModel.DeleteCountdownCommand", "ViewModel.CheckInNote", "ViewModel.RecordCheckInCommand", "ViewModel.StatusMessage", "ViewModel.ErrorMessage"],
             ["LoveNotesPage.xaml"] = ["ViewModel.LocalNotes", "ViewModel.PendingRemoteNotes", "ViewModel.SaveLocalNoteCommand", "ViewModel.DeleteLocalNoteCommand", "ViewModel.ShowLocalNoteCommand", "ViewModel.SaveOpenedNoteCommand"],
-            ["SettingsPage.xaml"] = ["ViewModel.SaveCommand", "ViewModel.SavePlacementCommand", "ViewModel.SaveShortcutCommand", "ViewModel.Connection.CreateCodeCommand", "ViewModel.Connection.RequestRevokeSessionsCommand", "ViewModel.Connection.RequestDeleteRemoteDeviceCommand", "ViewModel.Connection.RequestForgetPairingCommand", "ViewModel.Connection.ConfirmCommand", "ViewModel.Connection.CancelConfirmationCommand"],
+            ["SettingsPage.xaml"] = ["ViewModel.SaveCommand", "ViewModel.SavePlacementCommand", "ViewModel.SaveShortcutCommand", "ViewModel.Connection.CreateCodeCommand", "ViewModel.Connection.RequestRevokeSessionsCommand", "ViewModel.Connection.RequestDeleteRemoteDeviceCommand", "ViewModel.Connection.RequestForgetPairingCommand", "ViewModel.Connection.ConfirmCommand", "ViewModel.Connection.CancelConfirmationCommand", "ViewModel.RequestDeleteMyDataCommand", "ViewModel.ConfirmDeleteMyDataCommand", "ViewModel.CancelDeleteMyDataCommand", "ViewModel.WipeThisPcOnlyCommand", "ViewModel.IsDeleteConfirmVisible", "ViewModel.IsWipeThisPcOnlyVisible"],
         };
         var expectedLabels = new[]
         {
             "home", "love notes", "settings",
             "dudu status", "local note jar", "incoming notes",
-            "look and motion", "pet options", "shortcut", "partner connection", "pairing status", "paired sessions",
+            "look and motion", "when windows starts", "pet options", "shortcut", "partner connection", "pairing status", "paired sessions", "your data",
             "dudu actions", "comfort actions",
         };
 
@@ -356,24 +356,27 @@ public sealed class XamlContractTests
         // InitializeComponent(), before Page_Loaded ever runs and before
         // _suppressStartupToggle exists, so setting IsChecked there fired the
         // Checked/Unchecked handler unsuppressed and performed a real OS
-        // startup-registration write on every Home page load. The checkbox state must
+        // startup-registration write on every page load. The checkbox (moved from Home to
+        // Settings) state must
         // instead come only from RefreshStartupRecovery(), which sets it under the
         // suppression flag, and that must run before (not after) the view-model refresh
         // so the checkbox reflects the real state immediately.
         var root = FindRepositoryRoot();
+        var settingsXaml = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "SettingsPage.xaml"));
+        var checkboxMatch = Regex.Match(settingsXaml, "<CheckBox x:Name=\"StartupToggle\"[^>]*/>");
+        Assert.True(checkboxMatch.Success, "StartupToggle CheckBox not found in SettingsPage.xaml.");
         var homeXaml = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml"));
-        var checkboxMatch = Regex.Match(homeXaml, "<CheckBox x:Name=\"StartupToggle\"[^>]*/>");
-        Assert.True(checkboxMatch.Success, "StartupToggle CheckBox not found in HomePage.xaml.");
+        Assert.DoesNotContain("StartupToggle", homeXaml, StringComparison.Ordinal);
         Assert.DoesNotContain("IsChecked", checkboxMatch.Value, StringComparison.Ordinal);
 
         // Finding 9 (test bug): normalized before the embedded-newline
         // search below, for the same CRLF-checkout reason as appCode above.
-        var homeCode = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml.cs")).Replace("\r\n", "\n");
-        var loadedStart = homeCode.IndexOf("private async void Page_Loaded(", StringComparison.Ordinal);
-        var loadedEnd = homeCode.IndexOf("\n    }", loadedStart, StringComparison.Ordinal);
+        var settingsCode = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "SettingsPage.xaml.cs")).Replace("\r\n", "\n");
+        var loadedStart = settingsCode.IndexOf("private async void Page_Loaded(", StringComparison.Ordinal);
+        var loadedEnd = settingsCode.IndexOf("\n    }", loadedStart, StringComparison.Ordinal);
         Assert.True(loadedStart >= 0);
         Assert.True(loadedEnd > loadedStart);
-        var loadedBody = homeCode[loadedStart..loadedEnd];
+        var loadedBody = settingsCode[loadedStart..loadedEnd];
 
         var refreshRecoveryIndex = loadedBody.IndexOf("RefreshStartupRecovery();", StringComparison.Ordinal);
         var refreshAsyncIndex = loadedBody.IndexOf("await ViewModel.RefreshAsync();", StringComparison.Ordinal);
@@ -396,12 +399,12 @@ public sealed class XamlContractTests
         var root = FindRepositoryRoot();
         // Finding 9 (test bug): normalized before the embedded-newline
         // search below, for the same CRLF-checkout reason as appCode above.
-        var homeCode = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml.cs")).Replace("\r\n", "\n");
-        var methodStart = homeCode.IndexOf("private void RefreshStartupRecovery()", StringComparison.Ordinal);
-        Assert.True(methodStart >= 0, "HomePage.xaml.cs no longer declares RefreshStartupRecovery().");
-        var methodEnd = homeCode.IndexOf("\n    }", methodStart, StringComparison.Ordinal);
+        var settingsCode = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "SettingsPage.xaml.cs")).Replace("\r\n", "\n");
+        var methodStart = settingsCode.IndexOf("private void RefreshStartupRecovery()", StringComparison.Ordinal);
+        Assert.True(methodStart >= 0, "SettingsPage.xaml.cs no longer declares RefreshStartupRecovery().");
+        var methodEnd = settingsCode.IndexOf("\n    }", methodStart, StringComparison.Ordinal);
         Assert.True(methodEnd > methodStart);
-        var methodBody = homeCode[methodStart..methodEnd];
+        var methodBody = settingsCode[methodStart..methodEnd];
 
         Assert.Contains("try", methodBody, StringComparison.Ordinal);
         Assert.Contains("catch (Exception exception)", methodBody, StringComparison.Ordinal);

@@ -74,10 +74,6 @@ namespace Dudu.App.Pages
         private Button HomeSaveCountdownButton = null!;
         private TextBlock HomeCheckInSummary = null!;
         private ItemsControl HomeCheckInHistory = null!;
-        private CheckBox StartupToggle = null!;
-        private StackPanel StartupRecoveryPanel = null!;
-        private TextBlock StartupRecoveryMessage = null!;
-        private Button RetryStartupButton = null!;
 
         private void InitializeComponent()
         {
@@ -92,10 +88,6 @@ namespace Dudu.App.Pages
             HomeSaveCountdownButton = new Button();
             HomeCheckInSummary = new TextBlock();
             HomeCheckInHistory = new ItemsControl();
-            StartupToggle = new CheckBox();
-            StartupRecoveryPanel = new StackPanel { Visibility = Visibility.Collapsed };
-            StartupRecoveryMessage = new TextBlock();
-            RetryStartupButton = new Button();
         }
     }
 
@@ -114,6 +106,10 @@ namespace Dudu.App.Pages
     public sealed partial class SettingsPage
     {
         private ComboBox ThemeBox = null!;
+        private CheckBox StartupToggle = null!;
+        private StackPanel StartupRecoveryPanel = null!;
+        private TextBlock StartupRecoveryMessage = null!;
+        private Button RetryStartupButton = null!;
         private TextBlock ConnectionAvailability = null!;
         private TextBlock ConnectionPairingCode = null!;
         private TextBlock ConnectionCodeExpiry = null!;
@@ -122,6 +118,10 @@ namespace Dudu.App.Pages
         private void InitializeComponent()
         {
             ThemeBox = new ComboBox();
+            StartupToggle = new CheckBox();
+            StartupRecoveryPanel = new StackPanel { Visibility = Visibility.Collapsed };
+            StartupRecoveryMessage = new TextBlock();
+            RetryStartupButton = new Button();
             ConnectionAvailability = new TextBlock();
             ConnectionPairingCode = new TextBlock();
             ConnectionCodeExpiry = new TextBlock();

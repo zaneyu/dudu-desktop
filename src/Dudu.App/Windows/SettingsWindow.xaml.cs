@@ -367,13 +367,14 @@ public sealed partial class SettingsWindow : UserControl
 
         _homePage = new HomePage(
             new HomeViewModel(features),
-            _context.StartupSettings,
             _context.OverlayCommands);
         _loveNotesPage = new LoveNotesPage(new LoveNotesViewModel(features));
-        _settingsPage = new SettingsPage(new SettingsViewModel(
-            features,
-            ApplyRequestedTheme,
-            _context.AvailableOutfitKeys));
+        _settingsPage = new SettingsPage(
+            new SettingsViewModel(
+                features,
+                ApplyRequestedTheme,
+                _context.AvailableOutfitKeys),
+            _context.StartupSettings);
         _featurePagesInitialized = true;
     }
 

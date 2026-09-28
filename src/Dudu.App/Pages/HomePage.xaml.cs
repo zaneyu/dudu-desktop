@@ -11,17 +11,14 @@ namespace Dudu.App.Pages;
 public sealed partial class HomePage : Page
 {
     private readonly OverlayCommandRouter? _overlayCommands;
-    private bool _suppressStartupToggle;
     private DispatcherTimer? _focusCountdownTimer;
     private DispatcherTimer? _partnerClockTimer;
 
     public HomePage(
         HomeViewModel viewModel,
-        StartupSettingsService startup,
         OverlayCommandRouter? overlayCommands = null)
     {
         ViewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
-        Startup = startup ?? throw new ArgumentNullException(nameof(startup));
         _overlayCommands = overlayCommands;
         InitializeComponent();
         DataContext = ViewModel;
@@ -31,16 +28,9 @@ public sealed partial class HomePage : Page
     }
 
     public HomeViewModel ViewModel { get; }
-    public StartupSettingsService Startup { get; }
 
     private async void Page_Loaded(object sender, RoutedEventArgs args)
     {
-        // Run before the (possibly slow, possibly failing) view-model refresh so the
-        // checkbox reflects the real startup registration immediately: the XAML no
-        // longer binds StartupToggle.IsChecked, so until this runs it would otherwise
-        // sit at the CheckBox default instead of the actual state.
-        RefreshStartupRecovery();
-
         // The focus line was computed once per refresh, so a running session sat at
         // "25 min left" for as long as Home stayed open. Tick it while Home is shown.
         if (_focusCountdownTimer is null)
@@ -123,55 +113,6 @@ public sealed partial class HomePage : Page
                 exception.GetType().Name,
                 exception.HResult);
         }
-    }
-
-    private void RefreshStartupRecovery()
-    {
-        // Called from async void handlers (Page_Loaded, RetryStartupButton_Click,
-        // StartupToggle_Changed) with no surrounding try/catch of their own -- an
-        // unhandled throw here would crash the process, so this guards its own body.
-        try
-        {
-            var visible = Startup.NeedsReconciliation;
-            StartupRecoveryPanel.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
-            SetAccessibleText(StartupRecoveryMessage, visible
-                ? Startup.ReconciliationError ?? "aiyo startup registration needs another try"
-                : string.Empty);
-
-            // Sets the checkbox's initial and every subsequent state imperatively (the XAML
-            // does not bind IsChecked at all -- x:Bind evaluates during InitializeComponent,
-            // before this suppression flag exists, so a OneTime IsChecked binding would fire
-            // Checked/Unchecked and perform a real OS startup-registration write on every
-            // Home load). Also keeps the checkbox on the last applied state after a failed
-            // write is reverted and "try again" then succeeds.
-            _suppressStartupToggle = true;
-            try
-            {
-                StartupToggle.IsChecked = Startup.ActualLaunchAtSignIn;
-            }
-            finally
-            {
-                _suppressStartupToggle = false;
-            }
-        }
-        catch (Exception exception)
-        {
-            global::System.Diagnostics.Trace.TraceError("Dudu startup recovery refresh failed: {0}", exception);
-        }
-    }
-
-    private async void RetryStartupButton_Click(object sender, RoutedEventArgs args)
-    {
-        try
-        {
-            await Startup.RetryStartupRegistrationAsync();
-        }
-        catch (Exception exception)
-        {
-            global::System.Diagnostics.Trace.TraceError("Dudu startup retry failed: {0}", exception);
-        }
-
-        RefreshStartupRecovery();
     }
 
     private void CountdownList_SelectionChanged(object sender, SelectionChangedEventArgs args)
@@ -280,36 +221,6 @@ public sealed partial class HomePage : Page
             SetAccessibleText(HomeActionStatus, HomeViewModel.DescribeError(exception));
             global::System.Diagnostics.Trace.TraceError("Dudu comfort action failed: {0}", exception);
         }
-    }
-
-    private async void StartupToggle_Changed(object sender, RoutedEventArgs args)
-    {
-        if (_suppressStartupToggle) return;
-        if (sender is not CheckBox toggle || toggle.IsChecked is not bool enabled) return;
-        try
-        {
-            await Startup.SetLaunchAtSignInAsync(enabled);
-        }
-        catch (Exception exception)
-        {
-            // Current.LaunchAtSignIn already records the desired (failed) state, so
-            // reverting to it would be a no-op. Fall back to what the OS actually has
-            // registered, and suppress this handler first so setting IsChecked here
-            // does not re-enter it through the Checked/Unchecked events.
-            _suppressStartupToggle = true;
-            try
-            {
-                toggle.IsChecked = Startup.ActualLaunchAtSignIn;
-            }
-            finally
-            {
-                _suppressStartupToggle = false;
-            }
-
-            global::System.Diagnostics.Trace.TraceError("Dudu startup setting failed: {0}", exception);
-        }
-
-        RefreshStartupRecovery();
     }
 
     /// <summary>Code-behind status text must also become the element's UIA name: a

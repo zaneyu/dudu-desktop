@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Dudu.App.System;
 using Dudu.Core.Assets;
@@ -6,10 +7,16 @@ using Dudu.Core.Models;
 
 namespace Dudu.App.ViewModels;
 
-/// <summary>The one Settings destination: look and motion, pet options, shortcut and
-/// the partner connection (the old Appearance page, with Connection folded in).</summary>
+/// <summary>The one Settings destination: look and motion, pet options, shortcut,
+/// the partner connection (the old Appearance page, with Connection folded in) and
+/// "delete my data".</summary>
 public sealed class SettingsViewModel : FeatureViewModelBase
 {
+    internal const string RemoteUnreachableMessage =
+        "couldn't reach the partner server, so your partner can still send here. "
+        + "try again when you're online, or wipe this pc only";
+    internal const string WipedMessage = "all cleaned up -- restart dudu to start fresh";
+
     private readonly CompanionFeatureContext _context;
     private readonly Action<AppTheme> _applyShellTheme;
     private AppTheme _theme;
@@ -28,6 +35,9 @@ public sealed class SettingsViewModel : FeatureViewModelBase
     private double _soundVolume;
     private string _globalShortcut = "Ctrl+Alt+D";
     private string _shortcutStatus = string.Empty;
+    private bool _isDeleteConfirmVisible;
+    private bool _isWipeThisPcOnlyVisible;
+    private bool _deleteInProgress;
 
     public SettingsViewModel(
         CompanionFeatureContext context,
@@ -58,6 +68,21 @@ public sealed class SettingsViewModel : FeatureViewModelBase
         SavePlacementCommand = new AsyncRelayCommand((CancellationToken ct) => SavePlacementAsync(ct));
         ApplyOutfitCommand = new AsyncRelayCommand((CancellationToken ct) => ApplyOutfitAsync(ct));
         SaveShortcutCommand = new AsyncRelayCommand((CancellationToken ct) => SaveShortcutAsync(ct));
+        RequestDeleteMyDataCommand = new RelayCommand(RequestDeleteMyData, CanStartDelete);
+        CancelDeleteMyDataCommand = new RelayCommand(CancelDeleteMyData, CanStartDelete);
+        ConfirmDeleteMyDataCommand = new AsyncRelayCommand(
+            (CancellationToken ct) => DeleteMyDataAsync(ct),
+            CanStartDelete);
+        WipeThisPcOnlyCommand = new AsyncRelayCommand(
+            (CancellationToken ct) => WipeThisPcOnlyAsync(ct),
+            CanStartDelete);
+    }
+
+    protected override void OnPropertyChanged(PropertyChangedEventArgs e)
+    {
+        base.OnPropertyChanged(e);
+        if (e.PropertyName != nameof(IsBusy)) return;
+        NotifyDeleteCommandsChanged();
     }
 
     /// <summary>The "partner connection" section of the page.</summary>
@@ -66,6 +91,25 @@ public sealed class SettingsViewModel : FeatureViewModelBase
     public IAsyncRelayCommand SavePlacementCommand { get; }
     public IAsyncRelayCommand ApplyOutfitCommand { get; }
     public IAsyncRelayCommand SaveShortcutCommand { get; }
+    public IRelayCommand RequestDeleteMyDataCommand { get; }
+    public IRelayCommand CancelDeleteMyDataCommand { get; }
+    public IAsyncRelayCommand ConfirmDeleteMyDataCommand { get; }
+    public IAsyncRelayCommand WipeThisPcOnlyCommand { get; }
+
+    /// <summary>Shows the "are u sure" panel under the delete button.</summary>
+    public bool IsDeleteConfirmVisible
+    {
+        get => _isDeleteConfirmVisible;
+        private set => SetProperty(ref _isDeleteConfirmVisible, value);
+    }
+
+    /// <summary>Shown only after the partner server could not be reached: nothing was
+    /// wiped, and this offers to clean up this pc alone.</summary>
+    public bool IsWipeThisPcOnlyVisible
+    {
+        get => _isWipeThisPcOnlyVisible;
+        private set => SetProperty(ref _isWipeThisPcOnlyVisible, value);
+    }
     public ObservableCollection<string> OutfitOptions { get; }
     public ObservableCollection<string> MonitorOptions { get; } = [];
     public bool CanPersistOutfit => OutfitOptions.Count > 1;
@@ -448,5 +492,125 @@ public sealed class SettingsViewModel : FeatureViewModelBase
 
         var localMidnight = new DateTime(year, value.Month, value.Day, 0, 0, 0, DateTimeKind.Unspecified);
         return new DateTimeOffset(localMidnight, _context.Clock.LocalTimeZone.GetUtcOffset(localMidnight));
+    }
+    /// <summary>"Delete my data". With a relay configured it stops the sync loop, deletes
+    /// the remote device first and only then wipes this pc; if the remote delete does not
+    /// complete, the loop is restarted, nothing is wiped, and "wipe this pc only" is
+    /// offered. Offline builds and safe mode wipe this pc only, without an error. Every
+    /// step runs through RunAsync so nothing escapes into an async void XAML handler.</summary>
+    public async Task DeleteMyDataAsync(CancellationToken cancellationToken = default)
+    {
+        if (_deleteInProgress) return;
+        SetDeleteInProgress(true);
+        try
+        {
+            IsDeleteConfirmVisible = false;
+            IsWipeThisPcOnlyVisible = false;
+            if (_context.RemoteDeleteAvailable)
+            {
+                var remoteDeleted = false;
+                try
+                {
+                    if (!await RunAsync(() => _context.StopRemoteSyncAsync(cancellationToken)))
+                    {
+                        return; // RunAsync already reported the error
+                    }
+
+                    remoteDeleted = await RunAsync(() => _context.DeleteRemoteDataAsync(cancellationToken));
+                }
+                finally
+                {
+                    // Also on cancellation: the loop must never stay stopped when the
+                    // device was not deleted, or partner notes silently stop arriving.
+                    if (!remoteDeleted) await RestartRemoteSyncAsync();
+                }
+
+                if (!remoteDeleted)
+                {
+                    // Replaces RunAsync's text: the relay's own error may carry detail
+                    // that does not belong on screen.
+                    ReportError(RemoteUnreachableMessage);
+                    IsWipeThisPcOnlyVisible = true;
+                    return;
+                }
+            }
+
+            await WipeLocalAsync(cancellationToken);
+        }
+        finally
+        {
+            SetDeleteInProgress(false);
+        }
+    }
+
+    /// <summary>Wipes this pc only (the local half of "delete my data"). Offered after
+    /// the partner server could not be reached.</summary>
+    public async Task WipeThisPcOnlyAsync(CancellationToken cancellationToken = default)
+    {
+        if (_deleteInProgress) return;
+        SetDeleteInProgress(true);
+        try
+        {
+            IsDeleteConfirmVisible = false;
+            await WipeLocalAsync(cancellationToken);
+        }
+        finally
+        {
+            SetDeleteInProgress(false);
+        }
+    }
+
+    private async Task WipeLocalAsync(CancellationToken cancellationToken)
+    {
+        if (await RunAsync(() => _context.DeleteLocalDataAsync(cancellationToken), WipedMessage))
+        {
+            IsWipeThisPcOnlyVisible = false;
+        }
+    }
+
+    private async Task RestartRemoteSyncAsync()
+    {
+        try
+        {
+            // Not the caller's token: a cancelled delete must still resume syncing.
+            await _context.StartRemoteSyncAsync(CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            global::System.Diagnostics.Trace.TraceWarning(
+                "Dudu remote sync restart after delete failed: {0} 0x{1:X8}",
+                exception.GetType().Name,
+                exception.HResult);
+        }
+    }
+
+    private void RequestDeleteMyData()
+    {
+        ClearMessages();
+        IsWipeThisPcOnlyVisible = false;
+        IsDeleteConfirmVisible = true;
+    }
+
+    private void CancelDeleteMyData()
+    {
+        ClearMessages();
+        IsDeleteConfirmVisible = false;
+    }
+
+    private bool CanStartDelete() => !IsBusy && !_deleteInProgress;
+
+    private void SetDeleteInProgress(bool value)
+    {
+        _deleteInProgress = value;
+        NotifyDeleteCommandsChanged();
+    }
+
+    private void NotifyDeleteCommandsChanged()
+    {
+        // The constructor's base ObservableObject can raise before the commands exist.
+        RequestDeleteMyDataCommand?.NotifyCanExecuteChanged();
+        CancelDeleteMyDataCommand?.NotifyCanExecuteChanged();
+        ConfirmDeleteMyDataCommand?.NotifyCanExecuteChanged();
+        WipeThisPcOnlyCommand?.NotifyCanExecuteChanged();
     }
 }

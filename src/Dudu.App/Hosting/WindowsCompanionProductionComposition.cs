@@ -1075,7 +1075,14 @@ public static class WindowsCompanionProductionComposition
                         throw new NotSupportedException(result.ErrorMessage ?? "Remote-device deletion is unavailable.");
                     }
                 },
-                affection: affection);
+                affection: affection,
+                // "Delete my data" goes remote first only when a relay is configured; the
+                // sync loop is stopped around the remote delete so no poll can re-register
+                // a fresh device before the local wipe, and restarted if the remote delete
+                // did not complete (nothing is wiped then).
+                stopRemoteSyncAsync: token => remoteSync?.StopAsync(token) ?? Task.CompletedTask,
+                startRemoteSyncAsync: token => remoteSync?.StartAsync(token) ?? Task.CompletedTask,
+                remoteDeleteAvailable: remoteSync is not null);
             reminderToastActions = new ReminderToastActions(
                 featureContext.Clock,
                 featureContext.Reminders,
