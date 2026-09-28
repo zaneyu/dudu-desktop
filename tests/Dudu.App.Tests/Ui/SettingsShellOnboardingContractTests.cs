@@ -19,7 +19,7 @@ public sealed class SettingsShellOnboardingContractTests
             shell,
             "<NavigationViewItem\\s[^>]*?(/?)>(.*?)(?=<NavigationViewItem\\s|</NavigationView.MenuItems>)",
             RegexOptions.Singleline);
-        Assert.Equal(7, items.Count);
+        Assert.Equal(3, items.Count);
         foreach (Match item in items)
         {
             Assert.True(item.Groups[1].Value.Length == 0, $"Navigation item has no icon: {item.Value}");
