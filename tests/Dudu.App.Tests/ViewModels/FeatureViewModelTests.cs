@@ -8,7 +8,6 @@ using Dudu.App.System;
 using Dudu.App.ViewModels;
 using Dudu.Core.Abstractions;
 using Dudu.Core.Assets;
-using Dudu.Core.CheckIns;
 using Dudu.Core.Models;
 using Dudu.Core.Pet;
 using Dudu.Core.Time;
@@ -1321,7 +1320,6 @@ public sealed class FeatureViewModelTests
             FakePreferencesRepository preferences,
             FakePlacementRepository placements,
             FakeProfileRepository profiles,
-            FakeCountdownRepository countdowns,
             FakeFeatureTransactions transactions,
             FakeRuntimePreferences runtimePreferences,
             CompanionFeatureContext context,
@@ -1334,7 +1332,6 @@ public sealed class FeatureViewModelTests
             Preferences = preferences;
             Placements = placements;
             Profiles = profiles;
-            Countdowns = countdowns;
             Transactions = transactions;
             RuntimePreferences = runtimePreferences;
             Context = context;
@@ -1348,7 +1345,6 @@ public sealed class FeatureViewModelTests
         public FakePreferencesRepository Preferences { get; }
         public FakePlacementRepository Placements { get; }
         public FakeProfileRepository Profiles { get; }
-        public FakeCountdownRepository Countdowns { get; }
         public FakeFeatureTransactions Transactions { get; }
         public FakeRuntimePreferences RuntimePreferences { get; }
         public CompanionFeatureContext Context { get; }
@@ -1380,9 +1376,6 @@ public sealed class FeatureViewModelTests
             var placementRepository = new FakePlacementRepository();
             var localNotes = new FakeLocalNoteRepository();
             var remoteNotes = new FakeRemoteEnvelopeRepository();
-            var countdowns = new FakeCountdownRepository();
-            var checkIns = new FakeCheckInRepository();
-            var checkInService = new CheckInService(checkIns, clock);
             var pause = PauseState.None;
             var transactions = new FakeFeatureTransactions(localNotes, remoteNotes);
             var runtimePreferences = new FakeRuntimePreferences(preferences);
@@ -1398,9 +1391,6 @@ public sealed class FeatureViewModelTests
                 placementRepository,
                 localNotes,
                 remoteNotes,
-                countdowns,
-                checkIns,
-                checkInService,
                 pairing ?? new FakePairing(),
                 transactions,
                 pet,
@@ -1441,7 +1431,6 @@ public sealed class FeatureViewModelTests
                 preferenceRepository,
                 placementRepository,
                 profileRepository,
-                countdowns,
                 transactions,
                 runtimePreferences,
                 context,
@@ -1534,28 +1523,6 @@ public sealed class FeatureViewModelTests
             return Task.CompletedTask;
         }
         public Task DeleteAsync(string monitorDeviceName, CancellationToken cancellationToken) { _items.Remove(monitorDeviceName); return Task.CompletedTask; }
-    }
-
-    private sealed class FakeCountdownRepository : ICountdownRepository
-    {
-        private readonly Dictionary<string, Countdown> _items = [];
-        public IReadOnlyCollection<Countdown> Items => _items.Values;
-        public Task<Countdown?> GetAsync(string id, CancellationToken cancellationToken) => Task.FromResult(_items.GetValueOrDefault(id));
-        public Task<IReadOnlyList<Countdown>> ListAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<Countdown>>(_items.Values.ToArray());
-        public Task SaveAsync(Countdown countdown, CancellationToken cancellationToken) { _items[countdown.Id] = countdown; return Task.CompletedTask; }
-        public Task DeleteAsync(string id, CancellationToken cancellationToken) { _items.Remove(id); return Task.CompletedTask; }
-    }
-
-    private sealed class FakeCheckInRepository : ICheckInRepository
-    {
-        private readonly List<MoodCheckIn> _items = [];
-        public Task SaveAsync(MoodCheckIn checkIn, CancellationToken cancellationToken)
-        {
-            _items.Add(checkIn);
-            return Task.CompletedTask;
-        }
-        public Task<IReadOnlyList<MoodCheckIn>> ListSinceAsync(DateTimeOffset sinceUtc, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<MoodCheckIn>>(_items.Where(item => item.CreatedUtc >= sinceUtc).ToArray());
     }
 
     private sealed class FakePairing : IPairingService

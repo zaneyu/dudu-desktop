@@ -480,8 +480,6 @@ public sealed class OnboardingViewModelTests
         IPreferencesRepository preferences,
         IPetPlacementRepository placements) : IAppUnitOfWorkContext
     {
-        public ICheckInRepository CheckIns => throw new NotSupportedException();
-        public ICountdownRepository Countdowns => throw new NotSupportedException();
         public ILocalNoteRepository LocalNotes => throw new NotSupportedException();
         public IPetPlacementRepository PetPlacements => placements;
         public IPreferencesRepository Preferences => preferences;

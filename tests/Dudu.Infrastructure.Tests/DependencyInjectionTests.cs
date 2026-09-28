@@ -36,14 +36,36 @@ public sealed class DependencyInjectionTests
         Assert.Null(typeof(Database).Assembly.GetType(typeName));
     }
 
+    [Theory]
+    [InlineData("Dudu.Core.Countdowns.CountdownService")]
+    [InlineData("Dudu.Core.CheckIns.CheckInService")]
+    [InlineData("Dudu.Core.Reminders.ReminderEngine")]
+    [InlineData("Dudu.Core.Focus.FocusService")]
+    [InlineData("Dudu.Core.Tasks.TaskService")]
+    [InlineData("Dudu.Core.Notes.LocalNoteSelector")]
+    [InlineData("Dudu.Core.Models.Countdown")]
+    [InlineData("Dudu.Core.Models.MoodCheckIn")]
+    [InlineData("Dudu.Core.Abstractions.ICountdownRepository")]
+    [InlineData("Dudu.Core.Abstractions.ICheckInRepository")]
+    public void Removed_feature_types_no_longer_exist(string typeName)
+    {
+        Assert.Null(typeof(Dudu.Core.Models.Preferences).Assembly.GetType(typeName));
+    }
+
+    [Theory]
+    [InlineData("Dudu.Infrastructure.Data.Repositories.CountdownRepository")]
+    [InlineData("Dudu.Infrastructure.Data.Repositories.CheckInRepository")]
+    public void Removed_countdown_and_check_in_repositories_no_longer_exist(string typeName)
+    {
+        Assert.Null(typeof(Database).Assembly.GetType(typeName));
+    }
+
     [Fact]
     public async Task Infrastructure_registration_resolves_every_repository_once()
     {
         using var fixture = ServiceFixture.Build();
         using var provider = fixture.Provider;
 
-        Assert.IsType<CheckInRepository>(provider.GetRequiredService<ICheckInRepository>());
-        Assert.IsType<CountdownRepository>(provider.GetRequiredService<ICountdownRepository>());
         Assert.IsType<HeldPresentationRepository>(provider.GetRequiredService<IHeldPresentationRepository>());
         Assert.IsType<LocalNoteRepository>(provider.GetRequiredService<ILocalNoteRepository>());
         Assert.IsType<PetPlacementRepository>(provider.GetRequiredService<IPetPlacementRepository>());

@@ -9,7 +9,7 @@ namespace Dudu.UiTests;
 
 /// <summary>
 /// Windows-only end-to-end coverage of the whole companion journey: onboarding, a reminder and a
-/// task created and completed, a one-minute focus session run to completion, a check-in, revealing
+/// task created and completed, a one-minute focus session run to completion, revealing
 /// a fixture remote note, an appearance change, a backup, a restart, and persistence across that
 /// restart. The executable is supplied by the Windows publish job so this project remains
 /// buildable on non-Windows hosts without weakening the WinUI product target.
@@ -86,11 +86,6 @@ public sealed class FullJourneyTests
                 () => Find(window, "FocusHistoryList").FindFirstDescendant(cf => cf.ByName("completed")) is not null,
                 TimeSpan.FromSeconds(90));
 
-            Navigate(window, "NavHome", "HomePageTitle");
-            Find(window, "HomeCheckInNote").AsTextBox().Enter($"journey-check-in-{marker}");
-            Find(window, "HomeSaveCheckIn").AsButton().Invoke();
-            WaitForText(window, "HomeStatusMessage", "oki noted mwamwa");
-
             Navigate(window, "NavLoveNotes", "LoveNotesPageTitle");
             RevealFirstPendingRemoteNote(window);
             Assert.Equal(FixtureNoteText, Find(window, "LoveNotesOpened").AsTextBox().Text);
@@ -124,10 +119,6 @@ public sealed class FullJourneyTests
             Navigate(windowAfterRestart, "NavTasksFocus", "TasksPageTitle");
             Assert.NotNull(Find(windowAfterRestart, "TasksCompletedList").FindFirstDescendant(cf => cf.ByName(taskTitle)));
             Assert.NotNull(Find(windowAfterRestart, "FocusHistoryList").FindFirstDescendant(cf => cf.ByName("completed")));
-
-            Navigate(windowAfterRestart, "NavHome", "HomePageTitle");
-            Assert.NotNull(Find(windowAfterRestart, "HomeCheckInHistory").FindFirstDescendant(
-                cf => cf.ByName($"journey-check-in-{marker}")));
 
             Navigate(windowAfterRestart, "NavAppearance", "AppearancePageTitle");
             Assert.True(Find(windowAfterRestart, "AppearanceReducedMotion").AsCheckBox().IsChecked);

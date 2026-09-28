@@ -1,7 +1,6 @@
 using Dudu.App.Hosting;
 using Dudu.App.ViewModels;
 using Dudu.Core.Abstractions;
-using Dudu.Core.CheckIns;
 using Dudu.Core.Models;
 using Dudu.Core.Pet;
 using Dudu.Core.Time;
@@ -177,7 +176,6 @@ public sealed class ConnectionViewModelForgetPairingTests
         var preferenceRepository = new FakePreferencesRepository();
         var preferenceMutations = new PreferenceMutationCoordinator(preferences, preferenceRepository);
         var localNotes = new FakeLocalNoteRepository();
-        var checkIns = new FakeCheckInRepository();
 
         return new CompanionFeatureContext(
             clock,
@@ -186,9 +184,6 @@ public sealed class ConnectionViewModelForgetPairingTests
             new FakePlacementRepository(),
             localNotes,
             remoteEnvelopes,
-            new FakeCountdownRepository(),
-            checkIns,
-            new CheckInService(checkIns, clock),
             new FakePairing(remoteEnvelopes, wipesEnvelopesOnForget, availabilityToReport, sessionCountToReport),
             new ThrowingFeatureTransactions(),
             PetStateMachine.CreateIdle(),
@@ -279,22 +274,6 @@ public sealed class ConnectionViewModelForgetPairingTests
             Task.FromResult<IReadOnlyList<PetPlacement>>([]);
         public Task SaveAsync(PetPlacement placement, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task DeleteAsync(string monitorDeviceName, CancellationToken cancellationToken) => Task.CompletedTask;
-    }
-
-    private sealed class FakeCountdownRepository : ICountdownRepository
-    {
-        public Task<Countdown?> GetAsync(string id, CancellationToken cancellationToken) => Task.FromResult<Countdown?>(null);
-        public Task<IReadOnlyList<Countdown>> ListAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<Countdown>>([]);
-        public Task SaveAsync(Countdown countdown, CancellationToken cancellationToken) => Task.CompletedTask;
-        public Task DeleteAsync(string id, CancellationToken cancellationToken) => Task.CompletedTask;
-    }
-
-    private sealed class FakeCheckInRepository : ICheckInRepository
-    {
-        public Task SaveAsync(MoodCheckIn checkIn, CancellationToken cancellationToken) => Task.CompletedTask;
-        public Task<IReadOnlyList<MoodCheckIn>> ListSinceAsync(DateTimeOffset sinceUtc, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<MoodCheckIn>>([]);
     }
 
     private sealed class FakeLocalNoteRepository : ILocalNoteRepository

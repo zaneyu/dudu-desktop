@@ -1,36 +1,11 @@
-using Dudu.Core.Abstractions;
 using Dudu.Core.Assets;
-using Dudu.Core.CheckIns;
-using Dudu.Core.Countdowns;
 using Dudu.Core.Models;
-using Dudu.Core.Time;
 using Xunit;
 
 namespace Dudu.Core.Tests.Companion;
 
 public sealed class CompanionFeatureTests
 {
-    [Fact]
-    public async Task Check_in_summary_never_calls_a_remote_dependency()
-    {
-        var repository = new SpyCheckInRepository();
-        var service = new CheckInService(
-            repository,
-            new FakeClock("2026-09-11T10:00:00Z"));
-
-        await service.RecordAsync(
-            MoodChoice.Tired,
-            "long day",
-            TestContext.Current.CancellationToken);
-
-        var summary = await service.SummarizeAsync(
-            7,
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(1, summary.Counts[MoodChoice.Tired]);
-        Assert.Equal(0, repository.RemoteCallCount);
-    }
-
     [Fact]
     public void Automatic_outfit_uses_anniversary_then_base_fallback()
     {
@@ -57,10 +32,6 @@ public sealed class CompanionFeatureTests
 
         Assert.Equal("anniversary", selected);
     }
-
-    [Fact]
-    public void Past_countdown_is_zero() =>
-        Assert.Equal(TimeSpan.Zero, CompanionFixtures.PastCountdown().Remaining);
 
     [Fact]
     public void Missing_seasonal_art_falls_back_to_base() =>
@@ -118,108 +89,4 @@ public sealed class CompanionFeatureTests
         NominalSize = new PixelSize(1, 1),
         ReducedMotion = file + ".png",
     };
-
-    [Fact]
-    public async Task Check_in_summary_uses_local_dates_and_normalizes_utc()
-    {
-        var clock = new FakeClock("2026-09-11T00:30:00-07:00")
-        {
-            LocalTimeZone = TimeZoneInfo.CreateCustomTimeZone(
-                "local",
-                TimeSpan.FromHours(-7),
-                "local",
-                "local"),
-        };
-        var repository = new SpyCheckInRepository();
-        var service = new CheckInService(repository, clock);
-
-        var checkIn = await service.RecordAsync(
-            MoodChoice.Great,
-            "  rested  ",
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(DateTimeOffset.Parse("2026-09-11T07:30:00Z"), checkIn.CreatedUtc);
-        Assert.Equal("rested", checkIn.Note);
-        Assert.Equal(1, (await service.SummarizeAsync(
-            1,
-            TestContext.Current.CancellationToken)).Counts[MoodChoice.Great]);
-    }
-
-    [Fact]
-    public void Countdown_uses_calendar_days_for_all_day_dates()
-    {
-        var countdown = new Countdown(
-            "birthday",
-            "Birthday",
-            new DateOnly(2026, 9, 13));
-
-        var display = CountdownService.GetDisplay(
-            countdown,
-            DateTimeOffset.Parse("2026-09-11T23:59:00Z"));
-
-        Assert.Equal(2, display.CalendarDays);
-        Assert.Equal(TimeSpan.FromDays(2), display.Remaining);
-    }
-
-    [Fact]
-    public void Countdown_uses_configured_local_date_when_utc_date_differs()
-    {
-        var localTimeZone = TimeZoneInfo.CreateCustomTimeZone(
-            "local",
-            TimeSpan.FromHours(-8),
-            "local",
-            "local");
-        var countdown = new Countdown(
-            "birthday",
-            "Birthday",
-            new DateOnly(2026, 9, 12),
-            localTimeZone);
-
-        var display = CountdownService.GetDisplay(
-            countdown,
-            DateTimeOffset.Parse("2026-09-12T01:00:00Z"));
-
-        Assert.Equal(1, display.CalendarDays);
-        Assert.Equal(TimeSpan.FromDays(1), display.Remaining);
-    }
-
-    private static class CompanionFixtures
-    {
-        public static CountdownDisplay PastCountdown() =>
-            CountdownService.GetDisplay(
-                new Countdown("past", "Past", new DateOnly(2026, 9, 10)),
-                DateTimeOffset.Parse("2026-09-11T10:00:00Z"));
-    }
-
-    private sealed class FakeClock(string initialUtc) : IClock
-    {
-        public DateTimeOffset UtcNow { get; } = DateTimeOffset.Parse(initialUtc).ToUniversalTime();
-
-        public TimeZoneInfo LocalTimeZone { get; set; } = TimeZoneInfo.Utc;
-    }
-
-    private sealed class SpyCheckInRepository : ICheckInRepository
-    {
-        private readonly List<MoodCheckIn> _checkIns = [];
-
-        public int RemoteCallCount { get; private set; }
-
-        public Task SaveAsync(MoodCheckIn checkIn, CancellationToken cancellationToken)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            _checkIns.Add(checkIn);
-            return Task.CompletedTask;
-        }
-
-        public Task<IReadOnlyList<MoodCheckIn>> ListSinceAsync(
-            DateTimeOffset sinceUtc,
-            CancellationToken cancellationToken)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            return Task.FromResult<IReadOnlyList<MoodCheckIn>>(_checkIns
-                .Where(checkIn => checkIn.CreatedUtc >= sinceUtc)
-                .ToArray());
-        }
-    }
-
 }

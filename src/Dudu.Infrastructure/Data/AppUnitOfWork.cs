@@ -60,8 +60,6 @@ internal sealed class AppUnitOfWorkContext : IAppUnitOfWorkContext
     public AppUnitOfWorkContext(Database database, SqliteConnection connection, SqliteTransaction transaction)
     {
         var transactionContext = new SqliteTransactionContext(connection, transaction);
-        CheckIns = new CheckInRepository(database, transactionContext);
-        Countdowns = new CountdownRepository(database, transactionContext);
         LocalNotes = new LocalNoteRepository(database, transactionContext);
         PetPlacements = new PetPlacementRepository(database, transactionContext);
         Preferences = new PreferencesRepository(database, transactionContext);
@@ -69,8 +67,6 @@ internal sealed class AppUnitOfWorkContext : IAppUnitOfWorkContext
         RemoteEnvelopes = new RemoteEnvelopeRepository(database, transactionContext);
     }
 
-    public ICheckInRepository CheckIns { get; }
-    public ICountdownRepository Countdowns { get; }
     public ILocalNoteRepository LocalNotes { get; }
     public IPetPlacementRepository PetPlacements { get; }
     public IPreferencesRepository Preferences { get; }

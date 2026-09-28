@@ -1,7 +1,6 @@
 using Dudu.App.System;
 using Dudu.App.Hosting;
 using Dudu.Core.Abstractions;
-using Dudu.Core.CheckIns;
 using Dudu.Core.Models;
 using Dudu.Core.Pet;
 using Dudu.Core.Time;
@@ -21,9 +20,6 @@ public sealed class CompanionFeatureContext
         IPetPlacementRepository petPlacements,
         ILocalNoteRepository localNotes,
         IRemoteEnvelopeRepository remoteEnvelopes,
-        ICountdownRepository countdowns,
-        ICheckInRepository checkIns,
-        CheckInService checkInService,
         IPairingService pairing,
         ICompanionFeatureTransactions featureTransactions,
         PetStateMachine pet,
@@ -54,9 +50,6 @@ public sealed class CompanionFeatureContext
         PetPlacements = petPlacements ?? throw new ArgumentNullException(nameof(petPlacements));
         LocalNotes = localNotes ?? throw new ArgumentNullException(nameof(localNotes));
         RemoteEnvelopes = remoteEnvelopes ?? throw new ArgumentNullException(nameof(remoteEnvelopes));
-        Countdowns = countdowns ?? throw new ArgumentNullException(nameof(countdowns));
-        CheckIns = checkIns ?? throw new ArgumentNullException(nameof(checkIns));
-        CheckInService = checkInService ?? throw new ArgumentNullException(nameof(checkInService));
         Pairing = pairing ?? throw new ArgumentNullException(nameof(pairing));
         FeatureTransactions = featureTransactions ?? throw new ArgumentNullException(nameof(featureTransactions));
         Pet = pet ?? throw new ArgumentNullException(nameof(pet));
@@ -128,9 +121,6 @@ public sealed class CompanionFeatureContext
     public IPetPlacementRepository PetPlacements { get; }
     public ILocalNoteRepository LocalNotes { get; }
     public IRemoteEnvelopeRepository RemoteEnvelopes { get; }
-    public ICountdownRepository Countdowns { get; }
-    public ICheckInRepository CheckIns { get; }
-    public CheckInService CheckInService { get; }
     public IPairingService Pairing { get; }
     public ICompanionFeatureTransactions FeatureTransactions { get; }
     public PetStateMachine Pet { get; }

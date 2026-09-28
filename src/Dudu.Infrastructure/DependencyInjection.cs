@@ -1,6 +1,5 @@
 using System.Security.Cryptography;
 using Dudu.Core.Abstractions;
-using Dudu.Core.CheckIns;
 using Dudu.Core.Models;
 using Dudu.Core.Pet;
 using Dudu.Core.Time;
@@ -28,8 +27,6 @@ public static class DependencyInjection
         services.AddSingleton<DatabaseBackupService>();
         services.AddSingleton<LocalDataMaintenanceService>();
 
-        RegisterRepository<CheckInRepository, ICheckInRepository>(services);
-        RegisterRepository<CountdownRepository, ICountdownRepository>(services);
         RegisterRepository<HeldPresentationRepository, IHeldPresentationRepository>(services);
         RegisterRepository<LocalNoteRepository, ILocalNoteRepository>(services);
         RegisterRepository<PetPlacementRepository, IPetPlacementRepository>(services);
@@ -47,7 +44,6 @@ public static class DependencyInjection
         services.AddSingleton<IRandomSource, CryptographicRandomSource>();
         services.AddSingleton<Preferences>(static _ => Preferences.Default);
 
-        services.AddSingleton<CheckInService>();
         services.AddSingleton<AmbientScheduler>();
         services.AddSingleton(static _ => PetStateMachine.CreateIdle());
 

@@ -70,14 +70,6 @@ public sealed class SettingsNavigationTests
             WaitForText(window, "FocusCurrent", "ended early");
             Assert.NotNull(Find(window, "FocusHistoryList").FindFirstDescendant(cf => cf.ByName("ended early")));
 
-            Navigate(window, "NavHome", "HomePageTitle");
-            Find(window, "HomeCheckInNote").AsTextBox().Enter($"check-in-{marker}");
-            Find(window, "HomeSaveCheckIn").AsButton().Invoke();
-            WaitForText(window, "HomeStatusMessage", "oki noted mwamwa");
-            WaitForText(window, "HomeCheckInSummary", "1 optional check-in");
-            Assert.NotNull(Find(window, "HomeCheckInHistory").FindFirstDescendant(
-                cf => cf.ByName($"check-in-{marker}")));
-
             ExerciseAccessibleRoutes(window);
         }
         finally
@@ -154,7 +146,7 @@ public sealed class SettingsNavigationTests
                 "OverlayActionTasks", "OverlayActionLoveNote", "OverlayActionComfortMe",
                 "OverlayComfortActionBreatheWithMe", "OverlayComfortActionTinyHug",
                 "OverlayComfortActionReadALoveNote", "OverlayComfortActionTakeAFiveMinuteBreak",
-                "OverlayComfortActionClose", "HomeCheckInHistory",
+                "OverlayComfortActionClose",
             ]),
         new("NavReminders", "RemindersPageTitle", ["RemindersMonday", "RemindersFriday", "RemindersSave"]),
         new("NavTasksFocus", "TasksPageTitle", ["TasksCompletedList", "FocusHistoryList", "FocusStart", "FocusEnd"]),

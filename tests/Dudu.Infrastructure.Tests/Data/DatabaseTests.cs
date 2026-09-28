@@ -517,13 +517,6 @@ public sealed class DatabaseTests
     {
         await using var fixture = await DatabaseFixture.CreateAsync();
         var cancellationToken = TestContext.Current.CancellationToken;
-        var countdownRepository = new CountdownRepository(fixture.Database);
-        var countdown = new Countdown("countdown", "event",
-            DateTimeOffset.Parse("2026-10-01T10:00:00-07:00"), null, false, TimeZoneInfo.Utc);
-        await countdownRepository.SaveAsync(countdown, cancellationToken);
-        var loadedCountdown = await countdownRepository.GetAsync(countdown.Id, cancellationToken);
-        Assert.Equal(countdown, loadedCountdown);
-
         var preferences = new Preferences(AppTheme.Dark,
             new QuietHours(true, new TimeOnly(23, 0), new TimeOnly(6, 0)), true, 3, true, false, true,
             TimeSpan.FromMinutes(15),
@@ -544,13 +537,6 @@ public sealed class DatabaseTests
         var placementRepository = new PetPlacementRepository(fixture.Database);
         await placementRepository.SaveAsync(placement, cancellationToken);
         Assert.Equal(placement, await placementRepository.GetAsync(placement.MonitorDeviceName, cancellationToken));
-
-        var checkIn = new MoodCheckIn(Guid.NewGuid(), MoodChoice.Tired, null,
-            DateTimeOffset.Parse("2026-09-11T17:00:00Z"));
-        var checkInRepository = new CheckInRepository(fixture.Database);
-        await checkInRepository.SaveAsync(checkIn, cancellationToken);
-        Assert.Equal(checkIn, Assert.Single(await checkInRepository.ListSinceAsync(
-            DateTimeOffset.Parse("2026-09-11T16:00:00Z"), cancellationToken)));
 
         var envelope = new RemoteEnvelope("message-1", [1, 2, 3], null, [4], [5], null,
             DateTimeOffset.Parse("2026-09-11T17:00:00Z"));

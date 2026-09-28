@@ -1,7 +1,6 @@
 using Dudu.App.Hosting;
 using Dudu.App.ViewModels;
 using Dudu.Core.Abstractions;
-using Dudu.Core.CheckIns;
 using Dudu.Core.Models;
 using Dudu.Core.Pet;
 using Dudu.Core.Time;
@@ -95,7 +94,6 @@ internal sealed class SettingsDataPagesFixture
         var transactions = new RecordingFeatureTransactions(localNotes, remoteEnvelopes);
         var revealable = new Dictionary<string, RevealedRemoteNote>(StringComparer.Ordinal);
         var discardedHeldRemoteNoteIds = new List<string>();
-        var checkIns = new EmptyCheckInRepository();
         var placements = new MemoryPlacementRepository();
         var pairing = new ScriptedPairing();
         var context = new CompanionFeatureContext(
@@ -105,9 +103,6 @@ internal sealed class SettingsDataPagesFixture
             placements,
             localNotes,
             remoteEnvelopes,
-            new EmptyCountdownRepository(),
-            checkIns,
-            new CheckInService(checkIns, clock),
             pairing,
             transactions,
             PetStateMachine.CreateIdle(),
@@ -281,22 +276,6 @@ internal sealed class SettingsDataPagesFixture
     {
         public Task<Profile?> GetAsync(CancellationToken cancellationToken) => Task.FromResult<Profile?>(null);
         public Task SaveAsync(Profile profile, CancellationToken cancellationToken) => Task.CompletedTask;
-    }
-
-    private sealed class EmptyCountdownRepository : ICountdownRepository
-    {
-        public Task<Countdown?> GetAsync(string id, CancellationToken cancellationToken) => Task.FromResult<Countdown?>(null);
-        public Task<IReadOnlyList<Countdown>> ListAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<Countdown>>([]);
-        public Task SaveAsync(Countdown countdown, CancellationToken cancellationToken) => Task.CompletedTask;
-        public Task DeleteAsync(string id, CancellationToken cancellationToken) => Task.CompletedTask;
-    }
-
-    private sealed class EmptyCheckInRepository : ICheckInRepository
-    {
-        public Task SaveAsync(MoodCheckIn checkIn, CancellationToken cancellationToken) => Task.CompletedTask;
-        public Task<IReadOnlyList<MoodCheckIn>> ListSinceAsync(DateTimeOffset sinceUtc, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<MoodCheckIn>>([]);
     }
 
     /// <summary>In-memory <c>local_notes</c>: rows in insertion order, an upsert keeps a

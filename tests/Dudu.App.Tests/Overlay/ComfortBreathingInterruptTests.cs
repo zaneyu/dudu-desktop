@@ -4,7 +4,6 @@ using Dudu.App.Overlay;
 using Dudu.App.ViewModels;
 using Dudu.Core.Assets;
 using Dudu.Core.Abstractions;
-using Dudu.Core.CheckIns;
 using Dudu.Core.Models;
 using Dudu.Core.Pet;
 using Dudu.Core.Time;
@@ -134,9 +133,6 @@ public sealed class ComfortBreathingInterruptTests
             Stub<IPetPlacementRepository>(),
             Stub<ILocalNoteRepository>(),
             Stub<IRemoteEnvelopeRepository>(),
-            Stub<ICountdownRepository>(),
-            Stub<ICheckInRepository>(),
-            new CheckInService(Stub<ICheckInRepository>(), clock),
             Stub<IPairingService>(),
             Stub<ICompanionFeatureTransactions>(),
             pet,

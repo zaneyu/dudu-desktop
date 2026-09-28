@@ -3,7 +3,6 @@ using Dudu.App.Hosting;
 using Dudu.App.System;
 using Dudu.App.ViewModels;
 using Dudu.Core.Abstractions;
-using Dudu.Core.CheckIns;
 using Dudu.Core.Models;
 using Dudu.Core.Pet;
 using Dudu.Core.Time;
@@ -26,7 +25,6 @@ internal static class OverlayTestFeatureContext
         var preferences = Preferences.Default;
         var preferenceRepository = Inert<IPreferencesRepository>();
         var localNotes = Inert<ILocalNoteRepository>();
-        var checkIns = Inert<ICheckInRepository>();
         var pet = PetStateMachine.CreateIdle();
         return new CompanionFeatureContext(
             clock,
@@ -35,9 +33,6 @@ internal static class OverlayTestFeatureContext
             Inert<IPetPlacementRepository>(),
             localNotes,
             Inert<IRemoteEnvelopeRepository>(),
-            Inert<ICountdownRepository>(),
-            checkIns,
-            new CheckInService(checkIns, clock),
             Inert<IPairingService>(),
             Inert<ICompanionFeatureTransactions>(),
             pet,
