@@ -90,17 +90,6 @@ public sealed class PresentationPolicyTests
     }
 
     [Fact]
-    public void Enqueue_discards_ambient_items_instead_of_queueing_them()
-    {
-        var policy = new PresentationPolicy(TimeSpan.Zero);
-
-        var enqueued = policy.Enqueue(DurableNotification.Ambient("idle"));
-
-        Assert.False(enqueued);
-        Assert.Equal(0, policy.QueuedCount);
-    }
-
-    [Fact]
     public void RemoteNote_rejects_a_non_guid_message_id_without_echoing_it()
     {
         var exception = Assert.Throws<ArgumentException>(

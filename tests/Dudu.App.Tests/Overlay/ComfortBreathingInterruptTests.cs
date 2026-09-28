@@ -6,7 +6,6 @@ using Dudu.Core.Assets;
 using Dudu.Core.Abstractions;
 using Dudu.Core.CheckIns;
 using Dudu.Core.Models;
-using Dudu.Core.Notes;
 using Dudu.Core.Pet;
 using Dudu.Core.Time;
 using Xunit;
@@ -138,7 +137,6 @@ public sealed class ComfortBreathingInterruptTests
             Stub<ICountdownRepository>(),
             Stub<ICheckInRepository>(),
             new CheckInService(Stub<ICheckInRepository>(), clock),
-            new LocalNoteSelector(Stub<ILocalNoteRepository>(), clock, Stub<IRandomSource>(), preferences),
             Stub<IPairingService>(),
             Stub<ICompanionFeatureTransactions>(),
             pet,

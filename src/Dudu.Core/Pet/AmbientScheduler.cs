@@ -10,11 +10,11 @@ public sealed class AmbientScheduler
 {
     // Keep ambient selection aligned with the shipped private pack. A missing
     // animation silently falls back to idle, which makes Dudu feel broken even
-    // though the state machine appears to be moving.
-    private const string IdleAnimationKey = "idle";
+    // though the state machine appears to be moving. "idle" itself is not in
+    // the pool: with no note bubble an idle pick is an invisible moment.
     private const string StickerSentinel = "sticker";
     private static readonly string[] AnimationKeys =
-        [IdleAnimationKey, "blink", "greeting", "sleep", "drink", "celebrate", StickerSentinel];
+        ["blink", "greeting", "sleep", "drink", "celebrate", StickerSentinel];
     private readonly IClock _clock;
     private readonly IRandomSource _random;
     private readonly QuietHours _quietHours;
@@ -69,9 +69,9 @@ public sealed class AmbientScheduler
     /// does (<c>PresentationCoordinator</c>) passes the pack's real keys here to avoid
     /// rolling a number the pack has no art for. An empty (non-null) list means the
     /// active pack legitimately ships zero stickers (e.g. the fallback pack) — that is
-    /// authoritative, not a "no list given" signal, so a sticker slot draw falls back to
-    /// the idle animation instead of rolling the legacy 1..30 range or indexing into the
-    /// empty list.
+    /// authoritative, not a "no list given" signal, so a sticker slot draw yields no
+    /// moment at all (null) instead of rolling the legacy 1..30 range or indexing into the
+    /// empty list. That slot is still consumed: the next moment waits a full delay.
     /// </param>
     public PetEvent? TryGetNextEvent(
         bool paused,
@@ -103,10 +103,10 @@ public sealed class AmbientScheduler
         var randomDelay = TimeSpan.FromMinutes(15 + NextRandom(31));
         var delay = randomDelay < _minimumInterval ? _minimumInterval : randomDelay;
         NextEligibleUtc = now + delay;
-        return new PetEvent.AmbientRequested(animationKey);
+        return animationKey is null ? null : new PetEvent.AmbientRequested(animationKey);
     }
 
-    private string SelectStickerKey(IReadOnlyList<string>? availableStickerKeys)
+    private string? SelectStickerKey(IReadOnlyList<string>? availableStickerKeys)
     {
         if (availableStickerKeys is null)
         {
@@ -119,9 +119,9 @@ public sealed class AmbientScheduler
             // nothing to pick. Still draw once so the random-source sequence lines up
             // the same as the non-empty/null branches (the trailing next-eligible-delay
             // draw must land at the same position regardless of which branch is taken),
-            // then fall back to idle instead of indexing into the empty list.
+            // then yield no moment instead of indexing into the empty list.
             NextRandom(1);
-            return IdleAnimationKey;
+            return null;
         }
 
         return availableStickerKeys[NextRandom(availableStickerKeys.Count)];

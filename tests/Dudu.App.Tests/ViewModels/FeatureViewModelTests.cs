@@ -10,7 +10,6 @@ using Dudu.Core.Abstractions;
 using Dudu.Core.Assets;
 using Dudu.Core.CheckIns;
 using Dudu.Core.Models;
-using Dudu.Core.Notes;
 using Dudu.Core.Pet;
 using Dudu.Core.Time;
 using Xunit;
@@ -1384,7 +1383,6 @@ public sealed class FeatureViewModelTests
             var countdowns = new FakeCountdownRepository();
             var checkIns = new FakeCheckInRepository();
             var checkInService = new CheckInService(checkIns, clock);
-            var noteSelector = new LocalNoteSelector(localNotes, clock, new FixedRandom(), preferences);
             var pause = PauseState.None;
             var transactions = new FakeFeatureTransactions(localNotes, remoteNotes);
             var runtimePreferences = new FakeRuntimePreferences(preferences);
@@ -1403,7 +1401,6 @@ public sealed class FeatureViewModelTests
                 countdowns,
                 checkIns,
                 checkInService,
-                noteSelector,
                 pairing ?? new FakePairing(),
                 transactions,
                 pet,
@@ -1459,11 +1456,6 @@ public sealed class FeatureViewModelTests
         public TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
     }
 
-    private sealed class FixedRandom : IRandomSource
-    {
-        public int Next(int exclusiveMax) => 0;
-    }
-
     private sealed class FakeLocalNoteRepository : ILocalNoteRepository
     {
         public List<LocalLoveNote> Notes { get; } = [];
@@ -1471,7 +1463,6 @@ public sealed class FeatureViewModelTests
         public Task<IReadOnlyList<LocalLoveNote>> ListAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<LocalLoveNote>>(Notes);
         public Task<IReadOnlyList<LocalLoveNote>> ListRemoteAsync(CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<LocalLoveNote>>(Notes.Where(note => note.Id.StartsWith("remote-", StringComparison.Ordinal)).Reverse().ToArray());
-        public Task<IReadOnlyList<LocalLoveNote>> ListEnabledAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<LocalLoveNote>>(Enabled);
         public Task SaveToJarAsync(LocalLoveNote note, CancellationToken cancellationToken)
         {
             Notes.RemoveAll(item => item.Id == note.Id);
@@ -1479,9 +1470,6 @@ public sealed class FeatureViewModelTests
             return Task.CompletedTask;
         }
         public Task DeleteAsync(string noteId, CancellationToken cancellationToken) { Notes.RemoveAll(item => item.Id == noteId); return Task.CompletedTask; }
-        public Task<int> CountUnsolicitedShownAsync(DateOnly localDate, CancellationToken cancellationToken) => Task.FromResult(0);
-        public Task<IReadOnlyList<string>> GetMostRecentShownIdsAsync(int count, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<string>>([]);
-        public Task<bool> TryRecordShownAsync(string noteId, DateTimeOffset shownUtc, DateOnly localDate, int dailyLimit, bool unsolicited, CancellationToken cancellationToken) => Task.FromResult(true);
     }
 
     private sealed class FakeRemoteEnvelopeRepository : IRemoteEnvelopeRepository

@@ -2,7 +2,6 @@ using System.Security.Cryptography;
 using Dudu.Core.Abstractions;
 using Dudu.Core.CheckIns;
 using Dudu.Core.Models;
-using Dudu.Core.Notes;
 using Dudu.Core.Pet;
 using Dudu.Core.Time;
 using Dudu.Infrastructure.Crypto;
@@ -49,12 +48,6 @@ public static class DependencyInjection
         services.AddSingleton<Preferences>(static _ => Preferences.Default);
 
         services.AddSingleton<CheckInService>();
-        services.AddSingleton<LocalNoteSelector>(static provider => new LocalNoteSelector(
-            provider.GetRequiredService<ILocalNoteRepository>(),
-            provider.GetRequiredService<IClock>(),
-            provider.GetRequiredService<IRandomSource>(),
-            provider.GetRequiredService<IPreferencesRepository>(),
-            provider.GetRequiredService<Preferences>()));
         services.AddSingleton<AmbientScheduler>();
         services.AddSingleton(static _ => PetStateMachine.CreateIdle());
 

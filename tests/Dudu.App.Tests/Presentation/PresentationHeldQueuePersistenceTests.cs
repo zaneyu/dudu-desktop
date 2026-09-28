@@ -456,38 +456,6 @@ public sealed class PresentationHeldQueuePersistenceTests
     }
 
     [Fact]
-    public async Task A_failed_release_of_a_previously_held_local_note_does_not_persist_a_toasted_flag()
-    {
-        // Finding D: ShowNotificationAsync shows no real toast for LocalNote
-        // (it falls through to Task.CompletedTask), so persisting the
-        // toasted flag for it would be recording something that never
-        // actually happened.
-        var repository = new RecordingHeldPresentationRepository();
-        var quiet = true;
-        var coordinator = new PresentationCoordinator(
-            new PresentationPolicy(TimeSpan.Zero),
-            new CountingNotificationService(),
-            PetStateMachine.CreateIdle(),
-            (_, _, _) => Task.FromException(new InvalidOperationException("playback failed")),
-            () => AnimationOptions.Default,
-            isQuietHours: () => quiet,
-            pauseState: () => PauseState.None,
-            petGate: new SemaphoreSlim(1, 1),
-            heldPresentations: repository);
-
-        await coordinator.PublishAsync(
-            DurableNotification.LocalNote(new LocalLoveNote("note-1", "Hi"), "wave"),
-            bypassSuppression: false,
-            CancellationToken.None);
-        Assert.False(Assert.Single(repository.Rows.Values).Toasted);
-
-        quiet = false;
-        await coordinator.TickAsync(CancellationToken.None);
-
-        Assert.False(Assert.Single(repository.Rows.Values).Toasted);
-    }
-
-    [Fact]
     public async Task StartAsync_reloads_a_persisted_held_item_into_the_queue()
     {
         // Simulates a restart: the repository already has a row from a
@@ -877,13 +845,14 @@ public sealed class PresentationHeldQueuePersistenceTests
     }
 
     [Fact]
-    public async Task DiscardHeldByKindAsync_removes_every_queued_item_of_that_kind_but_leaves_others()
+    public async Task DiscardHeldByKindAsync_removes_every_queued_item_of_that_kind()
     {
         // Finding 6(b): forgetting a broken pairing deletes every unopened
         // remote note locally in one pass (RemoteSyncService.ForgetPairingLocallyAsync
         // -> IRemoteEnvelopeRepository.DeleteAllAsync), so any RemoteNote
-        // still queued or held for later ambient presentation must go with
-        // them -- but a held item of another kind must be left completely alone.
+        // still queued or held for later presentation must go with them.
+        // (RemoteNote is the only durable kind left since the local note
+        // jar was removed, so there is no other kind to leave alone.)
         var repository = new RecordingHeldPresentationRepository();
         var notifications = new CountingNotificationService();
         var policy = new PresentationPolicy(TimeSpan.Zero);
@@ -911,18 +880,13 @@ public sealed class PresentationHeldQueuePersistenceTests
             DurableNotification.RemoteNote(Guid.NewGuid().ToString("D")),
             bypassSuppression: false,
             CancellationToken.None);
-        await coordinator.PublishAsync(
-            DurableNotification.LocalNote(new LocalLoveNote("note-1", "Hi"), "wave"),
-            bypassSuppression: false,
-            CancellationToken.None);
-        Assert.Equal(3, policy.QueuedCount);
-        Assert.Equal(3, repository.Rows.Count);
+        Assert.Equal(2, policy.QueuedCount);
+        Assert.Equal(2, repository.Rows.Count);
 
         await coordinator.DiscardHeldByKindAsync(PresentationItemKind.RemoteNote, CancellationToken.None);
 
-        Assert.Equal(1, policy.QueuedCount);
-        Assert.Single(repository.Rows);
-        Assert.Equal("LocalNote:note-1", repository.Rows.Single().Key);
+        Assert.Equal(0, policy.QueuedCount);
+        Assert.Empty(repository.Rows);
 
         // Both queued-while-hidden publishes above already toasted
         // immediately (PublishAsync's toastNow, same as the sibling test):
@@ -1189,11 +1153,10 @@ public sealed class PresentationHeldQueuePersistenceTests
     [Fact]
     public void Held_presentation_key_format_matches_the_literal_strings_the_cascading_deletes_rely_on()
     {
-        // M3's cascading deletes in LocalNoteRepository/
-        // RemoteEnvelopeRepository match a held row's key by literal string
-        // ('LocalNote:' || $id, etc.) since Infrastructure cannot reference
-        // this App-layer enum. This is the tripwire: if PresentationItemKind
-        // were ever renamed, those SQL literals would silently stop matching
+        // M3's cascading delete in RemoteEnvelopeRepository matches a held
+        // row's key by literal string ('RemoteNote:' || $id) since
+        // Infrastructure cannot reference this App-layer enum. This is the
+        // tripwire: if PresentationItemKind were ever renamed, that SQL literal would silently stop matching
         // and M3's fix would quietly regress with no compile error.
         // Finding 8 (test bug): RemoteNote's factory requires a protocol-safe
         // "D"-format GUID and throws on anything else (see
@@ -1201,9 +1164,6 @@ public sealed class PresentationHeldQueuePersistenceTests
         Assert.Equal(
             $"RemoteNote:{Guid.Empty:D}",
             DurableNotification.RemoteNote(Guid.Empty.ToString("D")).Key);
-        Assert.Equal(
-            "LocalNote:note-1",
-            DurableNotification.LocalNote(new LocalLoveNote("note-1", "Hi"), "wave").Key);
     }
 
     [Fact]

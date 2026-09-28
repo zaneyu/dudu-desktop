@@ -5,7 +5,6 @@ using Dudu.App.Presentation;
 using Dudu.App.System;
 using Dudu.Core.Abstractions;
 using Dudu.Core.Models;
-using Dudu.Core.Notes;
 using Dudu.Core.Pet;
 using Xunit;
 

@@ -93,14 +93,21 @@ public sealed class DatabaseTests
     }
 
     [Fact]
-    public async Task First_database_contains_the_twelve_private_default_notes_once()
+    public async Task First_database_seeds_no_default_notes_and_leaves_the_seed_watermark_dormant()
     {
+        // The local note jar (and the ambient note selector that read it) is
+        // gone, so initialization no longer plants default notes, and the
+        // seed_state watermark table is left unwritten.
         await using var fixture = await DatabaseFixture.CreateAsync();
         await fixture.Database.InitializeAsync(TestContext.Current.CancellationToken);
+        fixture.Database.InvalidateInitialization();
+        await fixture.Database.InitializeAsync(TestContext.Current.CancellationToken);
 
-        var notes = await new LocalNoteRepository(fixture.Database).ListEnabledAsync(TestContext.Current.CancellationToken);
-        Assert.Equal(12, notes.Count);
-        Assert.Equal(12, notes.Select(note => note.Text).Distinct().Count());
+        Assert.Empty(await new LocalNoteRepository(fixture.Database).ListAsync(TestContext.Current.CancellationToken));
+        await using var connection = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken);
+        await using var seedState = connection.CreateCommand();
+        seedState.CommandText = "SELECT COUNT(*) FROM seed_state;";
+        Assert.Equal(0L, Convert.ToInt64(await seedState.ExecuteScalarAsync(TestContext.Current.CancellationToken)));
     }
 
     [Fact]
@@ -272,23 +279,6 @@ public sealed class DatabaseTests
     }
 
     [Fact]
-    public async Task Local_note_cap_is_atomic_between_two_connections()
-    {
-        await using var fixture = await DatabaseFixture.CreateAsync();
-        var repositoryA = new LocalNoteRepository(fixture.Database);
-        var repositoryB = new LocalNoteRepository(fixture.Database);
-        var date = new DateOnly(2026, 9, 11);
-        var now = DateTimeOffset.Parse("2026-09-11T10:00:00Z");
-
-        var results = await Task.WhenAll(
-            repositoryA.TryRecordShownAsync("default-note-01", now, date, 1, true, TestContext.Current.CancellationToken),
-            repositoryB.TryRecordShownAsync("default-note-02", now.AddSeconds(1), date, 1, true, TestContext.Current.CancellationToken));
-
-        Assert.Single(results, result => result);
-        Assert.Equal(1, await repositoryA.CountUnsolicitedShownAsync(date, TestContext.Current.CancellationToken));
-    }
-
-    [Fact]
     public async Task Local_note_jar_supports_explicit_save_list_and_delete()
     {
         await using var fixture = await DatabaseFixture.CreateAsync();
@@ -299,11 +289,12 @@ public sealed class DatabaseTests
         await repository.SaveToJarAsync(original, cancellationToken);
 
         Assert.Contains(original, await repository.ListAsync(cancellationToken));
-        Assert.DoesNotContain(original, await repository.ListEnabledAsync(cancellationToken));
 
         var updated = original with { Text = "You really can do it.", Enabled = true };
         await repository.SaveToJarAsync(updated, cancellationToken);
-        Assert.Contains(updated, await repository.ListEnabledAsync(cancellationToken));
+        var afterUpdate = await repository.ListAsync(cancellationToken);
+        Assert.Contains(updated, afterUpdate);
+        Assert.DoesNotContain(original, afterUpdate);
 
         await repository.DeleteAsync(updated.Id, cancellationToken);
         Assert.DoesNotContain(
@@ -1139,8 +1130,8 @@ public sealed class DatabaseTests
                 Enumerable.Range(0, 6).Select(_ => database.CreateConnectionAsync(TestContext.Current.CancellationToken))
                     .Concat(Enumerable.Range(0, 6).Select(_ => secondDatabase.CreateConnectionAsync(TestContext.Current.CancellationToken))));
             foreach (var connection in connections) await connection.DisposeAsync();
-            var notes = await new LocalNoteRepository(database).ListEnabledAsync(TestContext.Current.CancellationToken);
-            Assert.Equal(12, notes.Count);
+            // The shared initialization completed (migrations ran; nothing is seeded).
+            Assert.Empty(await new LocalNoteRepository(database).ListAsync(TestContext.Current.CancellationToken));
             Assert.Equal(1, database.InitializationRunCount);
             Assert.Equal(1, secondDatabase.InitializationRunCount);
         }
@@ -1222,16 +1213,16 @@ public sealed class DatabaseTests
         // The unreadable file is preserved for forensics -- both as the
         // durable pre-restore-attempt copy (H1) and as the moved-aside
         // original from QuarantineCorruptDatabase (no backup was available to
-        // restore instead) -- and the fresh database is usable (seeded
-        // defaults, no stale profile). Quarantine files live in their own
+        // restore instead) -- and the fresh database is usable (queryable,
+        // empty, no stale profile). Quarantine files live in their own
         // subdirectory so they never pollute the "*.db" glob RotateAsync and
         // RestoreLatestValidAsync use over BackupDirectory itself (M1).
         var quarantineDirectory = Path.Combine(fixture.Options.BackupDirectory, "quarantine");
         Assert.Empty(Directory.GetFiles(fixture.Options.BackupDirectory, "dudu-corrupt-*.db"));
         Assert.Equal(2, Directory.GetFiles(quarantineDirectory, "dudu-corrupt-*.db").Length);
         Assert.Null(await profiles.GetAsync(TestContext.Current.CancellationToken));
-        Assert.Equal(12, (await new LocalNoteRepository(fixture.Database)
-            .ListEnabledAsync(TestContext.Current.CancellationToken)).Count);
+        Assert.Empty(await new LocalNoteRepository(fixture.Database)
+            .ListAsync(TestContext.Current.CancellationToken));
         Assert.Equal(DatabaseRecoveryOutcome.StartedFresh, fixture.Database.LastRecoveryOutcome);
     }
 
@@ -1284,7 +1275,7 @@ public sealed class DatabaseTests
         // calls must keep firing unconditionally, including when the restore is driven by
         // Database.InitializeCoreAsync's own corruption-recovery path -- otherwise the very next
         // InitializeAsync call (e.g. AppHost's own post-startup touch) never re-runs
-        // InitializeCoreInnerAsync on the restored file, so SeedData.SeedAsync and
+        // InitializeCoreInnerAsync on the restored file, so MigrationRunner and
         // ReconcileInterruptedRestoreAsync (which deletes the .corrupt-recovery file set
         // RestoreAsync just kept) never run that session (H2). Instead, LastRecoveryOutcome
         // itself is sticky for this Database instance's lifetime (see
@@ -1364,8 +1355,8 @@ public sealed class DatabaseTests
             var quarantineDirectory = Path.Combine(options.BackupDirectory, "quarantine");
             Assert.Empty(Directory.GetFiles(options.BackupDirectory, "dudu-corrupt-*.db"));
             Assert.Equal(2, Directory.GetFiles(quarantineDirectory, "dudu-corrupt-*.db").Length);
-            Assert.Equal(12, (await new LocalNoteRepository(database)
-                .ListEnabledAsync(TestContext.Current.CancellationToken)).Count);
+            Assert.Empty(await new LocalNoteRepository(database)
+                .ListAsync(TestContext.Current.CancellationToken));
         }
         finally
         {

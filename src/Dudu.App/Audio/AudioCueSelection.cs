@@ -73,7 +73,7 @@ public static class AudioCueSelection
     /// action and so bypasses the background cooldowns. Ambient and Comfort
     /// presentations only reach the pet paths through an explicit request
     /// (overlay menu, Home, Love Notes reactions -- the ambient scheduler
-    /// goes through <see cref="ForNotification"/> instead), and the
+    /// goes through <see cref="ForAmbient"/> instead), and the
     /// interaction clips are user-driven whatever state carries them.
     /// </summary>
     public static AudioCuePriority PriorityFor(PetPresentation presentation, AudioCueEvent cueEvent)
@@ -112,10 +112,25 @@ public static class AudioCueSelection
         return notification.Kind switch
         {
             PresentationItemKind.RemoteNote => AudioCueEvent.RemoteNote,
-            PresentationItemKind.LocalNote when notification.AnimationKey is { } key
-                && Dudu.Core.Assets.AssetManifestContract.IsStickerAnimationKey(key) => AudioCueEvent.Sticker,
-            PresentationItemKind.LocalNote => AudioCueEvent.ManualInteraction,
             _ => null,
         };
+    }
+
+    /// <summary>
+    /// The cue for an unsolicited ambient moment the presentation coordinator
+    /// plays on its own: a sticker chirps as a sticker, every other ambient
+    /// clip gets the gentle manual-interaction cue. Both are
+    /// <see cref="AudioCuePriority.Background"/> cues (see
+    /// <see cref="PriorityFor(AudioCueEvent)"/>), so ambient never bypasses
+    /// the background cooldowns. Deliberately not
+    /// <see cref="ForPresentation"/>, which would map <c>drink</c> to an
+    /// interactive cue and <c>blink</c>/<c>sleep</c> to silence.
+    /// </summary>
+    public static AudioCueEvent ForAmbient(string animationKey)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(animationKey);
+        return Dudu.Core.Assets.AssetManifestContract.IsStickerAnimationKey(animationKey)
+            ? AudioCueEvent.Sticker
+            : AudioCueEvent.ManualInteraction;
     }
 }

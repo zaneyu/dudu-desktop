@@ -624,7 +624,6 @@ public static class WindowsCompanionProductionComposition
                         pauseState: () => pause.GetEffective(DateTimeOffset.UtcNow),
                         petGate: petGate,
                         ambientScheduler: services.GetRequiredService<AmbientScheduler>(),
-                        localNoteSelector: services.GetRequiredService<Dudu.Core.Notes.LocalNoteSelector>(),
                         errorReporter: host.ErrorReporter,
                         playAudioAsync: (cue, token) => audioCueService.TryPlayAsync(
                             cue, AudioCueSelection.PriorityFor(cue), token),
@@ -838,7 +837,6 @@ public static class WindowsCompanionProductionComposition
                 services.GetRequiredService<ICountdownRepository>(),
                 services.GetRequiredService<ICheckInRepository>(),
                 services.GetRequiredService<Dudu.Core.CheckIns.CheckInService>(),
-                services.GetRequiredService<Dudu.Core.Notes.LocalNoteSelector>(),
                 services.GetRequiredService<IPairingService>(),
                 services.GetRequiredService<ICompanionFeatureTransactions>(),
                 pet,
@@ -957,9 +955,6 @@ public static class WindowsCompanionProductionComposition
                 },
                 setGlobalShortcutAsync: runtime.SetGlobalShortcutAsync,
                 getGlobalShortcutStatus: () => runtime.GlobalShortcutStatus,
-                discardHeldLocalNoteAsync: (noteId, token) =>
-                    presentationGateway?.DiscardHeldAsync(PresentationItemKind.LocalNote, noteId, token)
-                        ?? Task.CompletedTask,
                 discardHeldRemoteNoteAsync: (messageId, token) =>
                     presentationGateway?.DiscardHeldAsync(PresentationItemKind.RemoteNote, messageId, token)
                         ?? Task.CompletedTask,
@@ -1272,7 +1267,6 @@ public static class WindowsCompanionProductionComposition
             services.GetRequiredService<ICountdownRepository>(),
             services.GetRequiredService<ICheckInRepository>(),
             services.GetRequiredService<Dudu.Core.CheckIns.CheckInService>(),
-            services.GetRequiredService<Dudu.Core.Notes.LocalNoteSelector>(),
             services.GetRequiredService<IPairingService>(),
             services.GetRequiredService<ICompanionFeatureTransactions>(),
             pet,

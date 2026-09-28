@@ -3,7 +3,6 @@ using Dudu.App.ViewModels;
 using Dudu.Core.Abstractions;
 using Dudu.Core.CheckIns;
 using Dudu.Core.Models;
-using Dudu.Core.Notes;
 using Dudu.Core.Pet;
 using Dudu.Core.Time;
 using Xunit;
@@ -190,7 +189,6 @@ public sealed class ConnectionViewModelForgetPairingTests
             new FakeCountdownRepository(),
             checkIns,
             new CheckInService(checkIns, clock),
-            new LocalNoteSelector(localNotes, clock, new FixedRandom(), preferences),
             new FakePairing(remoteEnvelopes, wipesEnvelopesOnForget, availabilityToReport, sessionCountToReport),
             new ThrowingFeatureTransactions(),
             PetStateMachine.CreateIdle(),
@@ -201,11 +199,6 @@ public sealed class ConnectionViewModelForgetPairingTests
     {
         public DateTimeOffset UtcNow => DateTimeOffset.Parse("2026-09-19T08:00:00Z");
         public TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
-    }
-
-    private sealed class FixedRandom : IRandomSource
-    {
-        public int Next(int exclusiveMax) => 0;
     }
 
     private sealed class FakeRemoteEnvelopeRepository : IRemoteEnvelopeRepository
@@ -306,15 +299,6 @@ public sealed class ConnectionViewModelForgetPairingTests
 
     private sealed class FakeLocalNoteRepository : ILocalNoteRepository
     {
-        public Task<IReadOnlyList<LocalLoveNote>> ListEnabledAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<LocalLoveNote>>([]);
-        public Task<int> CountUnsolicitedShownAsync(DateOnly localDate, CancellationToken cancellationToken) =>
-            Task.FromResult(0);
-        public Task<IReadOnlyList<string>> GetMostRecentShownIdsAsync(int count, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<string>>([]);
-        public Task<bool> TryRecordShownAsync(
-            string noteId, DateTimeOffset shownUtc, DateOnly localDate, int dailyLimit, bool unsolicited,
-            CancellationToken cancellationToken) => Task.FromResult(true);
     }
 
     private sealed class FakePairing(

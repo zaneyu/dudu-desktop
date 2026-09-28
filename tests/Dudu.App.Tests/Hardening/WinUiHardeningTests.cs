@@ -113,11 +113,11 @@ public sealed class WinUiHardeningTests
             () => PauseState.None,
             gate,
             isFullscreenNow: () => throw new InvalidOperationException("sampler down"));
-        var item = DurableNotification.LocalNote(
-            new LocalLoveNote("id1", "hello", true), "idle");
+        var item = DurableNotification.RemoteNote("11111111-1111-4111-8111-111111111111");
         // Fail-closed: no throw, item queued rather than presented.
         await coordinator.PublishAsync(item, bypassSuppression: false, TestContext.Current.CancellationToken);
         Assert.Equal(0, notifications.Shown);
+        Assert.Equal(1, policy.QueuedCount);
     }
 
     [Fact]

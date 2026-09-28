@@ -4,7 +4,6 @@ using Dudu.App.Presentation;
 using Dudu.App.System;
 using Dudu.App.Hosting;
 using Dudu.Core.Pet;
-using Dudu.Core.Notes;
 using Dudu.Core.Models;
 using Dudu.Core.Time;
 using Dudu.App.Audio;
@@ -17,31 +16,33 @@ public sealed class PresentationCoordinatorTests
     private const string NoteOne = "11111111-1111-4111-8111-111111111111";
     private const string NoteTwo = "22222222-2222-4222-8222-222222222222";
 
-    [Theory]
-    [InlineData(PresentationItemKind.RemoteNote, AudioCueEvent.RemoteNote)]
-    [InlineData(PresentationItemKind.LocalNote, AudioCueEvent.ManualInteraction)]
-    public void Notification_audio_mapping_uses_the_expected_cue(
-        PresentationItemKind kind,
-        AudioCueEvent expected)
+    [Fact]
+    public void Notification_audio_mapping_uses_the_expected_cue()
     {
-        var item = kind switch
-        {
-            PresentationItemKind.RemoteNote => DurableNotification.RemoteNote(Guid.NewGuid().ToString("D")),
-            PresentationItemKind.LocalNote => DurableNotification.LocalNote(
-                new LocalLoveNote("note-1", "hello"),
-                "greeting"),
-            _ => throw new ArgumentOutOfRangeException(nameof(kind)),
-        };
+        var item = DurableNotification.RemoteNote(Guid.NewGuid().ToString("D"));
 
-        Assert.Equal(expected, AudioCueSelection.ForNotification(item));
+        Assert.Equal(AudioCueEvent.RemoteNote, AudioCueSelection.ForNotification(item));
     }
 
-    [Fact]
-    public void Ambient_sticker_note_maps_to_the_sticker_cue()
+    [Theory]
+    [InlineData("sticker-003", AudioCueEvent.Sticker)]
+    [InlineData("sticker-030", AudioCueEvent.Sticker)]
+    [InlineData("drink", AudioCueEvent.ManualInteraction)]
+    [InlineData("blink", AudioCueEvent.ManualInteraction)]
+    [InlineData("sleep", AudioCueEvent.ManualInteraction)]
+    [InlineData("greeting", AudioCueEvent.ManualInteraction)]
+    [InlineData("celebrate", AudioCueEvent.ManualInteraction)]
+    public void Ambient_audio_maps_stickers_to_sticker_and_everything_else_to_manual_interaction_at_background_priority(
+        string animationKey,
+        AudioCueEvent expected)
     {
-        var item = DurableNotification.LocalNote(new LocalLoveNote("note-1", "hello"), "sticker-003");
+        // Reproduces the old local-note arm of ForNotification exactly;
+        // ForPresentation would map drink to an interactive cue and
+        // blink/sleep to silence.
+        var cue = AudioCueSelection.ForAmbient(animationKey);
 
-        Assert.Equal(AudioCueEvent.Sticker, AudioCueSelection.ForNotification(item));
+        Assert.Equal(expected, cue);
+        Assert.Equal(AudioCuePriority.Background, AudioCueSelection.PriorityFor(cue));
     }
 
     [Fact]
@@ -705,26 +706,23 @@ public sealed class PresentationCoordinatorTests
     }
 
     [Fact]
-    public async Task Eligible_ambient_tick_selects_and_presents_a_local_note_through_the_gateway()
+    public async Task Eligible_ambient_tick_presents_a_sticker_with_no_note_text()
     {
         var clock = new FixedClock(DateTimeOffset.Parse("2026-09-14T16:00:00Z"));
-        var notes = new RecordingLocalNoteRepository(
-            new LocalLoveNote("note-1", "You are doing great."));
-        var preferences = Preferences.Default with { LocalNoteDailyLimit = 1 };
+        // Slot 5 of the ambient pool is the sticker sentinel.
         var scheduler = new AmbientScheduler(
             clock,
-            new FixedRandomSource(),
-            preferences.AmbientMinimumInterval,
-            preferences.QuietHours);
-        var selector = new LocalNoteSelector(notes, clock, new FixedRandomSource(), preferences);
+            new ConstantRandomSource(5),
+            Preferences.Default.AmbientMinimumInterval);
         PetPresentation? presented = null;
+        var audio = new List<AudioCueEvent>();
         var coordinator = new PresentationCoordinator(
             new PresentationPolicy(TimeSpan.Zero),
             new RecordingNotificationService(),
             PetStateMachine.CreateIdle(),
             (presentation, _, _) =>
             {
-                presented = presentation;
+                presented ??= presentation;
                 return Task.CompletedTask;
             },
             () => AnimationOptions.Default,
@@ -732,17 +730,190 @@ public sealed class PresentationCoordinatorTests
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             ambientScheduler: scheduler,
-            localNoteSelector: selector);
+            utcNow: () => clock.UtcNow,
+            playAudioAsync: (cue, _) =>
+            {
+                audio.Add(cue);
+                return Task.CompletedTask;
+            },
+            availableStickerKeys: ["sticker-001"],
+            localTimeZone: TimeZoneInfo.Utc);
 
         // The scheduler holds its first ambient moment for one minimum interval
         // after construction, so advance past eligibility before ticking.
-        clock.Advance(preferences.AmbientMinimumInterval);
+        clock.Advance(Preferences.Default.AmbientMinimumInterval);
         await coordinator.TickAsync(TestContext.Current.CancellationToken);
 
         Assert.NotNull(presented);
         Assert.Equal(PetState.Ambient, presented.State);
-        Assert.Equal("You are doing great.", presented.BubbleBody);
-        Assert.Equal(1, notes.ShownCount);
+        Assert.Equal("sticker-001", presented.AnimationKey);
+        Assert.True(string.IsNullOrEmpty(presented.BubbleBody));
+        Assert.Equal(new[] { AudioCueEvent.Sticker }, audio);
+    }
+
+    [Fact]
+    public async Task Ambient_is_capped_at_three_played_moments_per_local_day_and_resets_next_day()
+    {
+        var clock = new FixedClock(DateTimeOffset.Parse("2026-09-14T08:00:00Z"));
+        var interval = Preferences.Default.AmbientMinimumInterval;
+        var scheduler = new AmbientScheduler(clock, new FixedRandomSource(), interval);
+        var played = new List<PetPresentation>();
+        var audio = new List<AudioCueEvent>();
+        var pet = PetStateMachine.CreateIdle();
+        var coordinator = new PresentationCoordinator(
+            new PresentationPolicy(TimeSpan.Zero),
+            new RecordingNotificationService(),
+            pet,
+            (presentation, _, _) =>
+            {
+                played.Add(presentation);
+                return Task.CompletedTask;
+            },
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            ambientScheduler: scheduler,
+            utcNow: () => clock.UtcNow,
+            playAudioAsync: (cue, _) =>
+            {
+                audio.Add(cue);
+                return Task.CompletedTask;
+            },
+            localTimeZone: TimeZoneInfo.Utc);
+
+        for (var tick = 0; tick < 10; tick++)
+        {
+            clock.Advance(interval * 2);
+            await coordinator.TickAsync(TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal(
+            PresentationCoordinator.MaxUnsolicitedAmbientPerDay,
+            played.Count(p => p.State == PetState.Ambient));
+        Assert.Equal(3, played.Count(p => p.State == PetState.Ambient));
+        // A non-sticker ambient clip (the fixed random source picks blink)
+        // gets the manual-interaction cue, once per played moment.
+        Assert.Equal(
+            new[] { AudioCueEvent.ManualInteraction, AudioCueEvent.ManualInteraction, AudioCueEvent.ManualInteraction },
+            audio);
+        Assert.Equal(PetState.Idle, pet.Current.State);
+
+        clock.Advance(TimeSpan.FromDays(1));
+        clock.Advance(interval * 2);
+        await coordinator.TickAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(4, played.Count(p => p.State == PetState.Ambient));
+    }
+
+    [Fact]
+    public async Task Suppressed_or_failed_ambient_does_not_count_toward_the_cap()
+    {
+        var clock = new FixedClock(DateTimeOffset.Parse("2026-09-14T08:00:00Z"));
+        var interval = Preferences.Default.AmbientMinimumInterval;
+        var scheduler = new AmbientScheduler(clock, new FixedRandomSource(), interval);
+        var played = new List<PetPresentation>();
+        var failedAmbientAttempts = 0;
+        var coordinator = new PresentationCoordinator(
+            new PresentationPolicy(TimeSpan.Zero),
+            new RecordingNotificationService(),
+            PetStateMachine.CreateIdle(),
+            (presentation, _, _) =>
+            {
+                if (presentation.State == PetState.Ambient && failedAmbientAttempts < 2)
+                {
+                    failedAmbientAttempts++;
+                    throw new InvalidOperationException("playback failed");
+                }
+
+                played.Add(presentation);
+                return Task.CompletedTask;
+            },
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            ambientScheduler: scheduler,
+            utcNow: () => clock.UtcNow,
+            errorReporter: new RecordingErrorReporter(),
+            localTimeZone: TimeZoneInfo.Utc);
+
+        // Suppressed (locked) ticks long past eligibility play nothing.
+        coordinator.SetSessionLocked(true);
+        for (var tick = 0; tick < 3; tick++)
+        {
+            clock.Advance(interval * 2);
+            await coordinator.TickAsync(TestContext.Current.CancellationToken);
+        }
+
+        Assert.Empty(played);
+        Assert.Equal(0, failedAmbientAttempts);
+
+        coordinator.SetSessionLocked(false);
+        for (var tick = 0; tick < 10; tick++)
+        {
+            clock.Advance(interval * 2);
+            await coordinator.TickAsync(TestContext.Current.CancellationToken);
+        }
+
+        // Still the same local day: two failed moments, then the full three.
+        Assert.Equal(DateTimeOffset.Parse("2026-09-14T08:00:00Z").Date, clock.UtcNow.Date);
+        Assert.Equal(2, failedAmbientAttempts);
+        Assert.Equal(3, played.Count(p => p.State == PetState.Ambient));
+    }
+
+    [Fact]
+    public async Task Held_remote_note_waits_the_silent_interval_after_an_ambient_moment()
+    {
+        var clock = new FixedClock(DateTimeOffset.Parse("2026-09-14T16:00:00Z"));
+        var silentInterval = TimeSpan.FromMinutes(10);
+        var policy = new PresentationPolicy(silentInterval);
+        var scheduler = new AmbientScheduler(
+            clock,
+            new FixedRandomSource(),
+            Preferences.Default.AmbientMinimumInterval);
+        var played = new List<PetPresentation>();
+        var coordinator = new PresentationCoordinator(
+            policy,
+            new RecordingNotificationService(),
+            PetStateMachine.CreateIdle(),
+            (presentation, _, _) =>
+            {
+                played.Add(presentation);
+                return Task.CompletedTask;
+            },
+            () => AnimationOptions.Default,
+            isQuietHours: () => false,
+            pauseState: () => PauseState.None,
+            petGate: new SemaphoreSlim(1, 1),
+            ambientScheduler: scheduler,
+            utcNow: () => clock.UtcNow,
+            localTimeZone: TimeZoneInfo.Utc);
+
+        clock.Advance(Preferences.Default.AmbientMinimumInterval);
+        await coordinator.TickAsync(TestContext.Current.CancellationToken);
+        Assert.Single(played, p => p.State == PetState.Ambient);
+
+        // A partner note arrives while fullscreen holds it, then fullscreen ends.
+        coordinator.SetFullscreen(true);
+        await coordinator.PublishAsync(
+            DurableNotification.RemoteNote(NoteOne),
+            bypassSuppression: false,
+            TestContext.Current.CancellationToken);
+        coordinator.SetFullscreen(false);
+        Assert.Equal(1, policy.QueuedCount);
+
+        // Inside the silent interval after the ambient moment: still held.
+        clock.Advance(TimeSpan.FromMinutes(1));
+        await coordinator.TickAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(1, policy.QueuedCount);
+        Assert.DoesNotContain(played, p => p.State == PetState.RemoteNote);
+
+        // Once the interval has passed it is released.
+        clock.Advance(silentInterval);
+        await coordinator.TickAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(0, policy.QueuedCount);
+        Assert.Contains(played, p => p.State == PetState.RemoteNote);
     }
 
     [Fact]
@@ -826,15 +997,12 @@ public sealed class PresentationCoordinatorTests
             pet.Handle(new PetEvent.DragStarted());
         }
 
-        var notes = new RecordingLocalNoteRepository(
-            new LocalLoveNote("note-1", "You are doing great."));
         var preferences = Preferences.Default;
         var scheduler = new AmbientScheduler(
             clock,
             new FixedRandomSource(),
             preferences.AmbientMinimumInterval,
             preferences.QuietHours);
-        var selector = new LocalNoteSelector(notes, clock, new FixedRandomSource(), preferences);
         var policy = new PresentationPolicy(TimeSpan.Zero);
         var played = new List<PetPresentation>();
         var coordinator = new PresentationCoordinator(
@@ -852,8 +1020,8 @@ public sealed class PresentationCoordinatorTests
             petGate: new SemaphoreSlim(1, 1),
             utcNow: () => clock.UtcNow,
             ambientScheduler: scheduler,
-            localNoteSelector: selector,
-            affection: affection);
+            affection: affection,
+            localTimeZone: TimeZoneInfo.Utc);
         coordinator.SetUserVisible(true);
         coordinator.SetSessionLocked(false);
 
@@ -868,7 +1036,6 @@ public sealed class PresentationCoordinatorTests
 
         Assert.DoesNotContain(played, item => item.State is PetState.Ambient);
         Assert.DoesNotContain(played, item => item.AnimationKey == "tantrum");
-        Assert.Equal(0, notes.ShownCount);
         Assert.Equal(TimeSpan.Zero, affection.NeglectedFor);
 
         await coordinator.PublishAsync(
@@ -894,30 +1061,10 @@ public sealed class PresentationCoordinatorTests
         public int Next(int exclusiveMax) => 0;
     }
 
-    private sealed class RecordingLocalNoteRepository(LocalLoveNote note) : ILocalNoteRepository
+    /// <summary>Always answers <paramref name="value"/>, clamped into range.</summary>
+    private sealed class ConstantRandomSource(int value) : IRandomSource
     {
-        public int ShownCount { get; private set; }
-
-        public Task<IReadOnlyList<LocalLoveNote>> ListEnabledAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<LocalLoveNote>>([note]);
-
-        public Task<int> CountUnsolicitedShownAsync(DateOnly localDate, CancellationToken cancellationToken) =>
-            Task.FromResult(ShownCount);
-
-        public Task<IReadOnlyList<string>> GetMostRecentShownIdsAsync(int count, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<string>>([]);
-
-        public Task<bool> TryRecordShownAsync(
-            string noteId,
-            DateTimeOffset shownUtc,
-            DateOnly localDate,
-            int dailyLimit,
-            bool unsolicited,
-            CancellationToken cancellationToken)
-        {
-            ShownCount++;
-            return Task.FromResult(true);
-        }
+        public int Next(int exclusiveMax) => Math.Min(value, exclusiveMax - 1);
     }
 
     private sealed class RecordingNotificationService : INotificationService

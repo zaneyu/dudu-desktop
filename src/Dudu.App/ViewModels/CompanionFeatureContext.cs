@@ -3,7 +3,6 @@ using Dudu.App.Hosting;
 using Dudu.Core.Abstractions;
 using Dudu.Core.CheckIns;
 using Dudu.Core.Models;
-using Dudu.Core.Notes;
 using Dudu.Core.Pet;
 using Dudu.Core.Time;
 
@@ -25,7 +24,6 @@ public sealed class CompanionFeatureContext
         ICountdownRepository countdowns,
         ICheckInRepository checkIns,
         CheckInService checkInService,
-        LocalNoteSelector noteSelector,
         IPairingService pairing,
         ICompanionFeatureTransactions featureTransactions,
         PetStateMachine pet,
@@ -42,7 +40,6 @@ public sealed class CompanionFeatureContext
         Func<CancellationToken, Task>? deleteRemoteDataAsync = null,
         Func<string?, CancellationToken, Task>? applyOutfitAsync = null,
         Func<string, CancellationToken, Task>? setGlobalShortcutAsync = null,
-        Func<string, CancellationToken, Task>? discardHeldLocalNoteAsync = null,
         Func<string, CancellationToken, Task>? discardHeldRemoteNoteAsync = null,
         Func<CancellationToken, Task>? discardHeldRemoteNotesAsync = null,
         AffectionTracker? affection = null,
@@ -60,7 +57,6 @@ public sealed class CompanionFeatureContext
         Countdowns = countdowns ?? throw new ArgumentNullException(nameof(countdowns));
         CheckIns = checkIns ?? throw new ArgumentNullException(nameof(checkIns));
         CheckInService = checkInService ?? throw new ArgumentNullException(nameof(checkInService));
-        NoteSelector = noteSelector ?? throw new ArgumentNullException(nameof(noteSelector));
         Pairing = pairing ?? throw new ArgumentNullException(nameof(pairing));
         FeatureTransactions = featureTransactions ?? throw new ArgumentNullException(nameof(featureTransactions));
         Pet = pet ?? throw new ArgumentNullException(nameof(pet));
@@ -116,7 +112,6 @@ public sealed class CompanionFeatureContext
         SetGlobalShortcutAsync = setGlobalShortcutAsync ?? ((_, _) => Task.FromException(
             new NotSupportedException("oh no shortcuts not ready yet")));
         GetGlobalShortcutStatus = getGlobalShortcutStatus ?? (() => null);
-        DiscardHeldLocalNoteAsync = discardHeldLocalNoteAsync ?? ((_, _) => Task.CompletedTask);
         DiscardHeldRemoteNoteAsync = discardHeldRemoteNoteAsync ?? ((_, _) => Task.CompletedTask);
         DiscardHeldRemoteNotesAsync = discardHeldRemoteNotesAsync ?? (_ => Task.CompletedTask);
         StopRemoteSyncAsync = stopRemoteSyncAsync ?? (_ => Task.CompletedTask);
@@ -136,7 +131,6 @@ public sealed class CompanionFeatureContext
     public ICountdownRepository Countdowns { get; }
     public ICheckInRepository CheckIns { get; }
     public CheckInService CheckInService { get; }
-    public LocalNoteSelector NoteSelector { get; }
     public IPairingService Pairing { get; }
     public ICompanionFeatureTransactions FeatureTransactions { get; }
     public PetStateMachine Pet { get; }
@@ -187,16 +181,11 @@ public sealed class CompanionFeatureContext
     /// <summary>Null while the saved global shortcut is the one registered;
     /// otherwise why a different one (or none) is in effect.</summary>
     public Func<string?> GetGlobalShortcutStatus { get; }
-    /// <summary>Best-effort removal of a local note's queued/held
+    /// <summary>Best-effort removal of a single remote note's queued/held
     /// presentation (in PresentationCoordinator's in-memory queue and its
-    /// persisted row), keyed by note id, after it was deleted from the note
-    /// jar, so a copy that was queued or held back does not surface again
-    /// later.</summary>
-    public Func<string, CancellationToken, Task> DiscardHeldLocalNoteAsync { get; }
-
-    /// <summary>Same as <see cref="DiscardHeldLocalNoteAsync"/> but for a
-    /// single remote note, keyed by message id, after it was consumed
-    /// (saved to the jar) or deleted.</summary>
+    /// persisted row), keyed by message id, after it was revealed or
+    /// deleted, so a copy that was queued or held back does not surface
+    /// again later.</summary>
     public Func<string, CancellationToken, Task> DiscardHeldRemoteNoteAsync { get; }
 
     /// <summary>Discards every queued/held remote note at once, for the

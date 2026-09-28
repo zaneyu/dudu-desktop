@@ -5,7 +5,6 @@ using Dudu.App.ViewModels;
 using Dudu.Core.Abstractions;
 using Dudu.Core.CheckIns;
 using Dudu.Core.Models;
-using Dudu.Core.Notes;
 using Dudu.Core.Pet;
 using Dudu.Core.Time;
 
@@ -39,7 +38,6 @@ internal static class OverlayTestFeatureContext
             Inert<ICountdownRepository>(),
             checkIns,
             new CheckInService(checkIns, clock),
-            new LocalNoteSelector(localNotes, clock, new FirstRandom(), preferences),
             Inert<IPairingService>(),
             Inert<ICompanionFeatureTransactions>(),
             pet,
@@ -87,10 +85,5 @@ internal static class OverlayTestFeatureContext
         public DateTimeOffset UtcNow { get; } = DateTimeOffset.Parse("2026-09-12T10:00:00Z");
 
         public TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
-    }
-
-    private sealed class FirstRandom : IRandomSource
-    {
-        public int Next(int exclusiveMax) => 0;
     }
 }

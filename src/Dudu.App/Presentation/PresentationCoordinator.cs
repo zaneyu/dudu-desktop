@@ -6,7 +6,6 @@ using Dudu.App.Notifications;
 using Dudu.App.System;
 using Dudu.Core.Abstractions;
 using Dudu.Core.Models;
-using Dudu.Core.Notes;
 using Dudu.Core.Pet;
 using Microsoft.Data.Sqlite;
 
@@ -43,11 +42,12 @@ public interface IUnsolicitedPresentationGateway
 }
 
 /// <summary>
-/// The one presentation gateway. Every unsolicited event (a remote note
-/// arriving, or an automatically selected local note) passes through
-/// <see cref="PublishAsync"/>; <see cref="TickAsync"/> drains at most one
-/// queued item per call, driven by <see cref="AppHost"/>'s 30-second
-/// presentation scheduler — there is no new timer. Explicit
+/// The one presentation gateway. Every durable unsolicited event (a remote
+/// note arriving) passes through <see cref="PublishAsync"/>;
+/// <see cref="TickAsync"/> drains at most one queued item per call, driven
+/// by <see cref="AppHost"/>'s 30-second presentation scheduler — there is no
+/// new timer — and, when nothing is queued, may play one best-effort ambient
+/// moment or tantrum directly (never durable, never queued). Explicit
 /// user actions never go through this type; they stay on
 /// <see cref="PetPresentationCoordinator"/>.
 /// </summary>
@@ -66,8 +66,17 @@ public sealed class PresentationCoordinator :
     private readonly Func<PauseState> _pauseState;
     private readonly SemaphoreSlim _petGate;
     private readonly AmbientScheduler? _ambientScheduler;
-    private readonly LocalNoteSelector? _localNoteSelector;
     private readonly IReadOnlyList<string>? _availableStickerKeys;
+    private readonly TimeZoneInfo _localTimeZone;
+
+    /// <summary>At most this many unsolicited ambient moments play per local
+    /// calendar day (the cadence the old local-note daily limit used to
+    /// impose), on top of <see cref="AmbientScheduler"/>'s own interval. Only
+    /// moments that actually played count; the tally is in memory, so it
+    /// resets on a day change or a restart.</summary>
+    internal const int MaxUnsolicitedAmbientPerDay = 3;
+    private DateOnly? _ambientDay;
+    private int _ambientShownToday;
     private readonly object _gate = new();
     private readonly HashSet<string> _presentingIds = new(StringComparer.Ordinal);
     private readonly HashSet<string> _toastedWhileHeldIds = new(StringComparer.Ordinal);
@@ -138,7 +147,6 @@ public sealed class PresentationCoordinator :
         Func<PauseState> pauseState,
         SemaphoreSlim petGate,
         AmbientScheduler? ambientScheduler = null,
-        LocalNoteSelector? localNoteSelector = null,
         Func<bool>? isFullscreenNow = null,
         Func<DateTimeOffset>? utcNow = null,
         IAppHostErrorReporter? errorReporter = null,
@@ -146,7 +154,8 @@ public sealed class PresentationCoordinator :
         IReadOnlyList<string>? availableStickerKeys = null,
         IHeldPresentationRepository? heldPresentations = null,
         bool initialUserHidden = false,
-        AffectionTracker? affection = null)
+        AffectionTracker? affection = null,
+        TimeZoneInfo? localTimeZone = null)
     {
         _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
         _policy = policy ?? throw new ArgumentNullException(nameof(policy));
@@ -159,8 +168,8 @@ public sealed class PresentationCoordinator :
         _pauseState = pauseState ?? throw new ArgumentNullException(nameof(pauseState));
         _petGate = petGate ?? throw new ArgumentNullException(nameof(petGate));
         _ambientScheduler = ambientScheduler;
-        _localNoteSelector = localNoteSelector;
         _availableStickerKeys = availableStickerKeys;
+        _localTimeZone = localTimeZone ?? TimeZoneInfo.Local;
         _isFullscreenNow = isFullscreenNow ?? (() => { lock (_gate) return _fullscreen; });
         _errorReporter = errorReporter;
         _heldPresentations = heldPresentations;
@@ -181,12 +190,6 @@ public sealed class PresentationCoordinator :
         // Tests and the Windows harness, which never push a value at all,
         // keep their prior behavior (default false) unless they opt in.
         _userHidden = initialUserHidden;
-        if ((_ambientScheduler is null) != (_localNoteSelector is null))
-        {
-            throw new ArgumentException(
-                "The ambient scheduler and local-note selector must be supplied together.",
-                nameof(ambientScheduler));
-        }
     }
 
     public void SetSessionLocked(bool locked)
@@ -461,8 +464,7 @@ public sealed class PresentationCoordinator :
 
                 // Enqueue returns false for a duplicate kind+id already sitting
                 // in the in-memory queue (e.g. two persisted rows collided on
-                // the same key) or an Ambient item that should never have been
-                // persisted. Either way this row will never be delivered from
+                // the same key). This row will never be delivered from
                 // here, so leaving it on disk would just reload and fail to
                 // enqueue it again next launch, and marking it toasted would
                 // orphan that marker forever since nothing downstream will ever
@@ -597,12 +599,8 @@ public sealed class PresentationCoordinator :
                     // the held row is ever released would reload it as
                     // untoasted and show this same toast a second time.
                     // Persist it the same way PresentAsync's own
-                    // toastShown-and-not-succeeded path does (LocalNote has
-                    // no durable row to mark, and no real toast either).
-                    if (item.Kind != PresentationItemKind.LocalNote)
-                    {
-                        await MarkToastedAsync(item.Key, cancellationToken);
-                    }
+                    // toastShown-and-not-succeeded path does.
+                    await MarkToastedAsync(item.Key, cancellationToken);
                 }
                 else
                 {
@@ -790,16 +788,24 @@ public sealed class PresentationCoordinator :
             return;
         }
 
-        if (_ambientScheduler is null
-            || _localNoteSelector is null
-            || environment.NowQuiet
-            || environment.Fullscreen
-            || environment.Paused
-            || environment.SessionLocked
-            || environment.Busy
-            || environment.UserHidden)
+        if (_ambientScheduler is null || IsSuppressed(environment))
         {
             return;
+        }
+
+        var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(now, _localTimeZone).DateTime);
+        lock (_gate)
+        {
+            if (_ambientDay != today)
+            {
+                _ambientDay = today;
+                _ambientShownToday = 0;
+            }
+
+            if (_ambientShownToday >= MaxUnsolicitedAmbientPerDay)
+            {
+                return;
+            }
         }
 
         var ambient = _ambientScheduler.TryGetNextEvent(
@@ -814,18 +820,17 @@ public sealed class PresentationCoordinator :
             return;
         }
 
-        var note = await _localNoteSelector.SelectAsync(
-            manualRequest: false,
-            cancellationToken);
-        if (note is not null)
+        if (await PresentAmbientAsync(ambientRequest.AnimationKey, cancellationToken))
         {
-            // Route the selected note through the same gateway so the
-            // existing environment checks, deduplication, playback gate,
-            // and retry queue remain authoritative.
-            await PublishAsync(
-                DurableNotification.LocalNote(note, ambientRequest.AnimationKey),
-                bypassSuppression: false,
-                cancellationToken);
+            lock (_gate)
+            {
+                _ambientShownToday++;
+            }
+
+            // Same bookkeeping the old ambient-note path did through
+            // PresentAsync: a held remote note released next still waits the
+            // minimum silent interval after this moment.
+            _policy.RecordImmediateRelease(now);
         }
     }
 
@@ -889,6 +894,64 @@ public sealed class PresentationCoordinator :
     }
 
     /// <summary>
+    /// Plays one unsolicited ambient moment directly, the same way
+    /// <see cref="PresentTantrumAsync"/> does: best-effort, never queued or
+    /// persisted, under the same pet gate, and only when the pet is idle and
+    /// nothing suppresses it. Its cue (<see cref="AudioCueSelection.ForAmbient"/>)
+    /// starts with the visual. Returns true only when the moment actually
+    /// played, so a declined or failed one does not count toward the daily cap.
+    /// </summary>
+    private async Task<bool> PresentAmbientAsync(string animationKey, CancellationToken cancellationToken)
+    {
+        await _petGate.WaitAsync(cancellationToken);
+        PetPresentation? presentation = null;
+        var played = false;
+        try
+        {
+            if (_pet.Current.State != PetState.Idle || IsSuppressed(CaptureEnvironment(_utcNow())))
+            {
+                return false;
+            }
+
+            presentation = _pet.Handle(new PetEvent.AmbientRequested(animationKey));
+            if (presentation.State != PetState.Ambient)
+            {
+                presentation = null;
+                return false;
+            }
+
+            var playback = ObserveAsync(
+                () => PlayWithTimeoutAsync(presentation, cancellationToken),
+                "presentation-playback");
+            if (_playAudioAsync is not null && !(playback.IsCompletedSuccessfully && !playback.Result))
+            {
+                var cue = AudioCueSelection.ForAmbient(animationKey);
+                _ = ObserveAudioAsync(() => _playAudioAsync(cue, cancellationToken));
+            }
+
+            played = await playback;
+        }
+        finally
+        {
+            if (presentation is not null)
+            {
+                _pet.Handle(new PetEvent.PresentationAcknowledged());
+                _pet.Handle(new PetEvent.AmbientDismissed(animationKey));
+                // A one-shot leaves its last frame on screen; hand the
+                // overlay back to whatever the state machine now says.
+                var restore = _pet.Current;
+                _ = ObserveAsync(
+                    () => _playAsync(restore, _options(), CancellationToken.None),
+                    "presentation-playback");
+            }
+
+            _petGate.Release();
+        }
+
+        return played;
+    }
+
+    /// <summary>
     /// Mutates the pet state machine and plays its animation under the same
     /// gate <see cref="PetPresentationCoordinator"/> uses for explicit
     /// one-shots, so the two never interleave on the shared state machine.
@@ -938,14 +1001,6 @@ public sealed class PresentationCoordinator :
             var petEvent = ToPetEvent(item);
             presentation = _pet.Handle(petEvent);
             latched = true;
-            if (item.Kind == PresentationItemKind.LocalNote)
-            {
-                presentation = presentation with
-                {
-                    BubbleTitle = item.Title,
-                    BubbleBody = item.Body,
-                };
-            }
             var playback = ObserveAsync(
                 () => PlayWithTimeoutAsync(presentation, cancellationToken),
                 "presentation-playback");
@@ -960,22 +1015,14 @@ public sealed class PresentationCoordinator :
         }
         finally
         {
-            if (item.Kind == PresentationItemKind.LocalNote)
-            {
-                _pet.Handle(new PetEvent.PresentationAcknowledged());
-                _pet.Handle(new PetEvent.AmbientDismissed(
-                    item.AnimationKey ?? throw new InvalidOperationException(
-                        "A local note presentation has no animation key.")));
-            }
-            else if (latched && succeeded && item.Kind is PresentationItemKind.RemoteNote)
+            if (latched && succeeded && item.Kind is PresentationItemKind.RemoteNote)
             {
                 // A note id otherwise sits in the state machine's
                 // pending set forever (cleared only by an explicit Settings
                 // dismiss/complete): Select() would keep ranking it above
                 // ambient, welcome-back, and a running meal
-                // for the rest of the session. Acknowledging it here, the
-                // same way a LocalNote is acknowledged above, lets the pet
-                // return to its normal presentation once this specific item
+                // for the rest of the session. Acknowledging it here lets
+                // the pet return to its normal presentation once this specific item
                 // has actually been shown; the coalesced card just shows one
                 // fewer pending item if others remain. Gated on latched so
                 // the two early-return paths above (item was never handed
@@ -1044,25 +1091,19 @@ public sealed class PresentationCoordinator :
                     _toastedWhileHeldIds.Add(item.Key);
                 }
 
-                if (item.Kind != PresentationItemKind.LocalNote)
-                {
-                    // Finding D: the marker above is memory-only. PersistHeldAsync
-                    // already writes toasted=true into a *new* row (via
-                    // RequeueHeldAsync, PublishAsync's own failure path), but
-                    // TickAsync's decline path deliberately does not re-persist
-                    // an already-held item's row (to preserve QueuedUtc) -- so
-                    // without this, that row's toasted column stays false even
-                    // though _toastedWhileHeldIds already remembers it in
-                    // memory. A restart before the retry finally succeeds would
-                    // then reload the row as untoasted and show the Windows
-                    // toast a second time. A no-op when the row does not exist
-                    // yet -- the fresh persist above already writes the correct
-                    // flag. Skipped for LocalNote: ShowNotificationAsync shows
-                    // no real toast for that kind (see the switch below), so
-                    // toastShown is trivially true for it regardless of
-                    // whether anything was actually shown.
-                    await MarkToastedAsync(item.Key, cancellationToken);
-                }
+                // Finding D: the marker above is memory-only. PersistHeldAsync
+                // already writes toasted=true into a *new* row (via
+                // RequeueHeldAsync, PublishAsync's own failure path), but
+                // TickAsync's decline path deliberately does not re-persist
+                // an already-held item's row (to preserve QueuedUtc) -- so
+                // without this, that row's toasted column stays false even
+                // though _toastedWhileHeldIds already remembers it in
+                // memory. A restart before the retry finally succeeds would
+                // then reload the row as untoasted and show the Windows
+                // toast a second time. A no-op when the row does not exist
+                // yet -- the fresh persist above already writes the correct
+                // flag.
+                await MarkToastedAsync(item.Key, cancellationToken);
             }
         }
         else if (succeeded)
@@ -1140,9 +1181,6 @@ public sealed class PresentationCoordinator :
     private static PetEvent ToPetEvent(DurableNotification item) => item.Kind switch
     {
             PresentationItemKind.RemoteNote => new PetEvent.RemoteNoteArrived(item.Id),
-            PresentationItemKind.LocalNote => new PetEvent.AmbientRequested(
-                item.AnimationKey ?? throw new InvalidOperationException(
-                    "A local note presentation has no animation key.")),
             _ => throw new ArgumentOutOfRangeException(nameof(item), item.Kind, "Unsupported presentation item kind."),
     };
 

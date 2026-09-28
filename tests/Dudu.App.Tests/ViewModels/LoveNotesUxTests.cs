@@ -5,7 +5,6 @@ using Dudu.App.ViewModels;
 using Dudu.Core.Abstractions;
 using Dudu.Core.CheckIns;
 using Dudu.Core.Models;
-using Dudu.Core.Notes;
 using Dudu.Core.Pet;
 using Dudu.Core.Time;
 using Xunit;
@@ -145,7 +144,6 @@ public sealed class LoveNotesUxTests
                 new FakeCountdownRepository(),
                 checkIns,
                 new CheckInService(checkIns, clock),
-                new LocalNoteSelector(localNotes, clock, new FixedRandom(), preferences),
                 new FakePairing(),
                 new FakeFeatureTransactions(localNotes, remoteNotes),
                 PetStateMachine.CreateIdle(),
@@ -160,18 +158,12 @@ public sealed class LoveNotesUxTests
         public TimeZoneInfo LocalTimeZone { get; } = zone;
     }
 
-    private sealed class FixedRandom : IRandomSource
-    {
-        public int Next(int exclusiveMax) => 0;
-    }
-
     private sealed class FakeLocalNoteRepository : ILocalNoteRepository
     {
         public List<LocalLoveNote> Notes { get; } = [];
         public Task<IReadOnlyList<LocalLoveNote>> ListAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<LocalLoveNote>>(Notes.ToArray());
         public Task<IReadOnlyList<LocalLoveNote>> ListRemoteAsync(CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<LocalLoveNote>>(Notes.Where(note => note.Id.StartsWith("remote-", StringComparison.Ordinal)).Reverse().ToArray());
-        public Task<IReadOnlyList<LocalLoveNote>> ListEnabledAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<LocalLoveNote>>(Notes.Where(note => note.Enabled).ToArray());
         public Task SaveToJarAsync(LocalLoveNote note, CancellationToken cancellationToken)
         {
             Notes.RemoveAll(item => item.Id == note.Id);
@@ -179,9 +171,6 @@ public sealed class LoveNotesUxTests
             return Task.CompletedTask;
         }
         public Task DeleteAsync(string noteId, CancellationToken cancellationToken) { Notes.RemoveAll(item => item.Id == noteId); return Task.CompletedTask; }
-        public Task<int> CountUnsolicitedShownAsync(DateOnly localDate, CancellationToken cancellationToken) => Task.FromResult(0);
-        public Task<IReadOnlyList<string>> GetMostRecentShownIdsAsync(int count, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<string>>([]);
-        public Task<bool> TryRecordShownAsync(string noteId, DateTimeOffset shownUtc, DateOnly localDate, int dailyLimit, bool unsolicited, CancellationToken cancellationToken) => Task.FromResult(true);
     }
 
     /// <summary>Returns freshly materialized rows (new byte[] instances) on every

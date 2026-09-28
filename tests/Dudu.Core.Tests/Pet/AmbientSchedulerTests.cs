@@ -46,15 +46,39 @@ public sealed class AmbientSchedulerTests
 
         Assert.Contains(result.AnimationKey, new[]
         {
-            "idle", "blink", "greeting", "sleep", "drink", "celebrate",
+            "blink", "greeting", "sleep", "drink", "celebrate",
         });
+    }
+
+    [Fact]
+    public void Scheduler_never_requests_the_invisible_idle_moment()
+    {
+        // Without the old note bubble an "idle" ambient pick plays the idle
+        // loop Dudu is already showing: an invisible moment. Every pool slot,
+        // for any pack shape, must be something she can actually see.
+        IReadOnlyList<string>?[] packs = [null, ["sticker-002", "sticker-003"]];
+        foreach (var stickers in packs)
+        {
+            for (var slot = 0; slot < 6; slot++)
+            {
+                var clock = new FakeClock(DateTimeOffset.Parse("2026-09-11T10:00:00Z"));
+                var scheduler = new AmbientScheduler(
+                    clock, new SequenceRandomSource(slot, 0, 0), TimeSpan.Zero);
+
+                var result = Assert.IsType<PetEvent.AmbientRequested>(scheduler.TryGetNextEvent(
+                    paused: false, busy: false, fullscreen: false, sessionLocked: false,
+                    availableStickerKeys: stickers));
+
+                Assert.NotEqual("idle", result.AnimationKey);
+            }
+        }
     }
 
     [Fact]
     public void Scheduler_can_request_one_random_sticker_animation()
     {
         var clock = new FakeClock(DateTimeOffset.Parse("2026-09-11T10:00:00Z"));
-        var random = new SequenceRandomSource(6, 29, 0);
+        var random = new SequenceRandomSource(5, 29, 0);
         var scheduler = new AmbientScheduler(clock, random, TimeSpan.Zero);
 
         var result = Assert.IsType<PetEvent.AmbientRequested>(scheduler.TryGetNextEvent(
@@ -77,7 +101,7 @@ public sealed class AmbientSchedulerTests
             .Select(AssetManifestContract.StickerAnimationKey)
             .Where(key => key is not ("sticker-018" or "sticker-027"))
             .ToArray();
-        // Selects the sticker sentinel (index 6), then index 17 into the
+        // Selects the sticker sentinel (index 5), then index 17 into the
         // restricted list — under the old (buggy) 1..30 roll this same random
         // value produces sticker-018 (index 17 -> number 18), which is one of
         // the two keys the pack is missing; under the fix, index 17 into the
@@ -85,7 +109,7 @@ public sealed class AmbientSchedulerTests
         // skipped). The test asserts the exact key so it fails under the old
         // behaviour instead of coincidentally passing either way, and
         // finally a value for the trailing next-eligible delay roll.
-        var random = new SequenceRandomSource(6, 17, 0);
+        var random = new SequenceRandomSource(5, 17, 0);
         var scheduler = new AmbientScheduler(clock, random, TimeSpan.Zero);
 
         var result = Assert.IsType<PetEvent.AmbientRequested>(scheduler.TryGetNextEvent(
@@ -100,29 +124,31 @@ public sealed class AmbientSchedulerTests
     }
 
     [Fact]
-    public void A_pack_shipping_zero_stickers_falls_back_to_idle_instead_of_indexing_empty()
+    public void A_pack_shipping_zero_stickers_yields_no_moment_instead_of_idle()
     {
         // Regression: SelectStickerKey treated an empty (non-null) list the same as
         // null and fell back to the legacy 1..30 roll -- but an empty list is
         // authoritative (the fallback pack legitimately ships zero stickers), not a
         // "no list given" signal. When the sticker sentinel is drawn there is nothing
-        // to pick, so it must fall back to idle instead of indexing into the empty
-        // list or rolling a number the pack has no art for at all.
+        // to pick. It used to fall back to idle, which is an invisible moment now
+        // that ambient has no note bubble, so it yields no moment at all -- and the
+        // slot is still consumed, so the next moment waits a full delay.
         var clock = new FakeClock(DateTimeOffset.Parse("2026-09-11T10:00:00Z"));
-        // Selects the sticker sentinel (index 6), then a draw consumed by the
+        // Selects the sticker sentinel (index 5), then a draw consumed by the
         // empty-list branch to keep the random-source sequence the same length as
         // the non-empty/null branches, then the trailing next-eligible delay roll.
-        var random = new SequenceRandomSource(6, 0, 0);
+        var random = new SequenceRandomSource(5, 0, 0);
         var scheduler = new AmbientScheduler(clock, random, TimeSpan.Zero);
 
-        var result = Assert.IsType<PetEvent.AmbientRequested>(scheduler.TryGetNextEvent(
+        var result = scheduler.TryGetNextEvent(
             paused: false,
             busy: false,
             fullscreen: false,
             sessionLocked: false,
-            availableStickerKeys: Array.Empty<string>()));
+            availableStickerKeys: Array.Empty<string>());
 
-        Assert.Equal("idle", result.AnimationKey);
+        Assert.Null(result);
+        Assert.Equal(clock.UtcNow + TimeSpan.FromMinutes(15), scheduler.NextEligibleUtc);
     }
 
     [Fact]

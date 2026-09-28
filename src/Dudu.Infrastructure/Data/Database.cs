@@ -86,7 +86,7 @@ public sealed class Database : IAsyncDisposable, IDisposable
 
     // H2: DatabaseBackupService.RestoreAsync's corruption-recovery restore always invalidates
     // initialization (as it must -- the canonical file it just replaced needs
-    // SeedData.SeedAsync and ReconcileInterruptedRestoreAsync to run on it), so the very next
+    // MigrationRunner and ReconcileInterruptedRestoreAsync to run on it), so the very next
     // InitializeAsync call (e.g. AppHost's own post-startup touch) re-runs InitializeCoreAsync.
     // That second run finds the now-restored file perfectly healthy and would otherwise reset
     // LastRecoveryOutcome back to None, erasing the record that a restore just happened this
@@ -405,8 +405,9 @@ public sealed class Database : IAsyncDisposable, IDisposable
         await new DatabaseBackupService(_options).ReconcileInterruptedRestoreAsync(CancellationToken.None);
 
         await using var connection = await OpenConnectionAsync(CancellationToken.None);
+        // No default notes are seeded any more (the local note jar is gone);
+        // seed_state stays as a dormant table that the migrations still touch.
         await new MigrationRunner(_options).RunAsync(connection, CancellationToken.None);
-        await SeedData.SeedAsync(connection, CancellationToken.None);
     }
 
     internal Task<IDisposable> EnterMaintenanceAsync(CancellationToken cancellationToken) =>

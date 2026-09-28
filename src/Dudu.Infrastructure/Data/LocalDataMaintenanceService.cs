@@ -97,10 +97,8 @@ public sealed class LocalDataMaintenanceService
                     DELETE FROM seed_state;
                     """;
                 await command.ExecuteNonQueryAsync(cancellationToken);
-                // Reseed inside the same transaction: a crash between the wipe
-                // and the reseed must never leave every table empty, and the
-                // seed watermark is re-created here so the defaults return.
-                await SeedData.SeedAsync(connection, transaction, cancellationToken);
+                // Nothing is reseeded: default notes are no longer planted, and
+                // the dormant seed_state watermark stays wiped with the rest.
                 await transaction.CommitAsync(cancellationToken);
             }
             catch

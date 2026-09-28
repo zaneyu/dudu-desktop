@@ -6,7 +6,7 @@ namespace Dudu.Infrastructure.Tests.Data;
 public sealed class LocalDataMaintenanceTests
 {
     [Fact]
-    public async Task Delete_all_user_data_keeps_schema_and_defaults_but_removes_recoverable_copies()
+    public async Task Delete_all_user_data_keeps_schema_reseeds_nothing_and_removes_recoverable_copies()
     {
         var root = Path.Combine(Path.GetTempPath(), "dudu-maintenance-tests", Guid.NewGuid().ToString("N"));
         var backups = Path.Combine(root, "backups");
@@ -58,8 +58,8 @@ public sealed class LocalDataMaintenanceTests
             Assert.Equal(0L, await ScalarAsync(verify, "SELECT COUNT(*) FROM processed_remote_messages;"));
             Assert.Equal(0L, await ScalarAsync(verify, "SELECT COUNT(*) FROM asset_packs;"));
             Assert.Equal(0L, await ScalarAsync(verify, "SELECT COUNT(*) FROM held_presentations;"));
-            Assert.Equal(12L, await ScalarAsync(verify, "SELECT COUNT(*) FROM local_notes WHERE is_default = 1;"));
-            Assert.Equal(0L, await ScalarAsync(verify, "SELECT COUNT(*) FROM local_notes WHERE is_default = 0;"));
+            Assert.Equal(0L, await ScalarAsync(verify, "SELECT COUNT(*) FROM local_notes;"));
+            Assert.Equal(0L, await ScalarAsync(verify, "SELECT COUNT(*) FROM seed_state;"));
             Assert.False(File.Exists(backupPath));
             Assert.False(File.Exists(secretPath));
             Assert.False(File.Exists(secretTempPath));

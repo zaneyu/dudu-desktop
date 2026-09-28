@@ -1,19 +1,15 @@
-using Dudu.Core.Models;
-
 namespace Dudu.App.Presentation;
 
 /// <summary>The category of an unsolicited event waiting to be presented.</summary>
 public enum PresentationItemKind
 {
     RemoteNote,
-    Ambient,
-    LocalNote,
 }
 
 /// <summary>
 /// A privacy-safe description of an unsolicited event. Remote items carry
-/// only identifiers; local-note text stays in-process so the pet can render
-/// the selected local note without involving notifications or the relay.
+/// only identifiers. Ambient moments are not durable items at all: the
+/// presentation coordinator plays them directly.
 /// </summary>
 public sealed record DurableNotification
 {
@@ -65,43 +61,6 @@ public sealed record DurableNotification
         }
 
         return new DurableNotification(PresentationItemKind.RemoteNote, messageId, null);
-    }
-
-    /// <summary>
-    /// Ambient items are never queued (see <see cref="PresentationPolicy.Enqueue"/>);
-    /// this factory exists so that discard behavior is real, constructible
-    /// code rather than an enum value nothing can produce.
-    /// </summary>
-    public static DurableNotification Ambient(string animationKey)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(animationKey);
-        return new DurableNotification(
-            PresentationItemKind.Ambient,
-            animationKey,
-            null,
-            animationKey: animationKey);
-    }
-
-    /// <summary>
-    /// Creates a local note selected by the ambient scheduler. It is a
-    /// queueable durable presentation item, unlike a bare ambient animation,
-    /// so failed playback can be retried without selecting or recording a
-    /// second note.
-    /// </summary>
-    public static DurableNotification LocalNote(
-        LocalLoveNote note,
-        string animationKey)
-    {
-        ArgumentNullException.ThrowIfNull(note);
-        ArgumentException.ThrowIfNullOrWhiteSpace(note.Id);
-        ArgumentException.ThrowIfNullOrWhiteSpace(note.Text);
-        ArgumentException.ThrowIfNullOrWhiteSpace(animationKey);
-        return new DurableNotification(
-            PresentationItemKind.LocalNote,
-            note.Id,
-            "A little note for you",
-            note.Text,
-            animationKey);
     }
 }
 
@@ -161,18 +120,12 @@ public sealed class PresentationPolicy
     }
 
     /// <summary>
-    /// Queues a durable item. Ambient items are always discarded rather than
-    /// queued, and an item whose kind+id is already queued is not
+    /// Queues a durable item. An item whose kind+id is already queued is not
     /// double-queued. Returns true when the item was actually enqueued.
     /// </summary>
     public bool Enqueue(DurableNotification item)
     {
         ArgumentNullException.ThrowIfNull(item);
-        if (item.Kind == PresentationItemKind.Ambient)
-        {
-            return false;
-        }
-
         lock (_sync)
         {
             if (!_queuedIds.Add(item.Key))
@@ -191,11 +144,6 @@ public sealed class PresentationPolicy
     public bool Requeue(DurableNotification item)
     {
         ArgumentNullException.ThrowIfNull(item);
-        if (item.Kind == PresentationItemKind.Ambient)
-        {
-            return false;
-        }
-
         lock (_sync)
         {
             if (!_queuedIds.Add(item.Key))

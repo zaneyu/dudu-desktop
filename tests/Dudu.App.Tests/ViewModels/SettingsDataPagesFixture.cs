@@ -3,7 +3,6 @@ using Dudu.App.ViewModels;
 using Dudu.Core.Abstractions;
 using Dudu.Core.CheckIns;
 using Dudu.Core.Models;
-using Dudu.Core.Notes;
 using Dudu.Core.Pet;
 using Dudu.Core.Time;
 
@@ -109,7 +108,6 @@ internal sealed class SettingsDataPagesFixture
             new EmptyCountdownRepository(),
             checkIns,
             new CheckInService(checkIns, clock),
-            new LocalNoteSelector(localNotes, clock, new FixedRandom(), preferences),
             pairing,
             transactions,
             PetStateMachine.CreateIdle(),
@@ -236,11 +234,6 @@ internal sealed class SettingsDataPagesFixture
         }
     }
 
-    private sealed class FixedRandom : IRandomSource
-    {
-        public int Next(int exclusiveMax) => 0;
-    }
-
     /// <summary>In-memory pending envelopes. Lists return fresh instances (new byte[]
     /// copies) like the SQLite repository, so record equality never matches across reloads.</summary>
     internal sealed class MemoryRemoteEnvelopeRepository : IRemoteEnvelopeRepository
@@ -319,8 +312,6 @@ internal sealed class SettingsDataPagesFixture
                 .Where(note => note.Id.StartsWith("remote-", StringComparison.Ordinal))
                 .Reverse()
                 .ToArray());
-        public Task<IReadOnlyList<LocalLoveNote>> ListEnabledAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<LocalLoveNote>>(Notes.Where(note => note.Enabled).ToArray());
         public Task SaveToJarAsync(LocalLoveNote note, CancellationToken cancellationToken)
         {
             var index = Notes.FindIndex(item => item.Id == note.Id);
@@ -333,13 +324,6 @@ internal sealed class SettingsDataPagesFixture
             Notes.RemoveAll(item => item.Id == noteId);
             return Task.CompletedTask;
         }
-        public Task<int> CountUnsolicitedShownAsync(DateOnly localDate, CancellationToken cancellationToken) =>
-            Task.FromResult(0);
-        public Task<IReadOnlyList<string>> GetMostRecentShownIdsAsync(int count, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<string>>([]);
-        public Task<bool> TryRecordShownAsync(
-            string noteId, DateTimeOffset shownUtc, DateOnly localDate, int dailyLimit, bool unsolicited,
-            CancellationToken cancellationToken) => Task.FromResult(true);
     }
 
     /// <summary>Records save-and-consume calls and applies them to the in-memory note and
