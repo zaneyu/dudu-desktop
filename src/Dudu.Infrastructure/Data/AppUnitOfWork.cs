@@ -62,22 +62,18 @@ internal sealed class AppUnitOfWorkContext : IAppUnitOfWorkContext
         var transactionContext = new SqliteTransactionContext(connection, transaction);
         CheckIns = new CheckInRepository(database, transactionContext);
         Countdowns = new CountdownRepository(database, transactionContext);
-        FocusSessions = new FocusSessionRepository(database, transactionContext);
         LocalNotes = new LocalNoteRepository(database, transactionContext);
         PetPlacements = new PetPlacementRepository(database, transactionContext);
         Preferences = new PreferencesRepository(database, transactionContext);
         Profiles = new ProfileRepository(database, transactionContext);
         RemoteEnvelopes = new RemoteEnvelopeRepository(database, transactionContext);
-        Tasks = new TaskRepository(database, transactionContext);
     }
 
     public ICheckInRepository CheckIns { get; }
     public ICountdownRepository Countdowns { get; }
-    public IFocusSessionRepository FocusSessions { get; }
     public ILocalNoteRepository LocalNotes { get; }
     public IPetPlacementRepository PetPlacements { get; }
     public IPreferencesRepository Preferences { get; }
     public IProfileRepository Profiles { get; }
     public IRemoteEnvelopeRepository RemoteEnvelopes { get; }
-    public ITaskRepository Tasks { get; }
 }

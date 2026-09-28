@@ -315,21 +315,22 @@ public sealed class PresentationPolicy
     /// <summary>
     /// Releases at most one queued durable item, and only when the
     /// environment is fully clear (not quiet, not fullscreen, not paused,
-    /// session not locked, focus not active, pet not hidden by the user) and
-    /// the minimum silent interval has elapsed since the last release.
+    /// session not locked, pet not busy eating or being dragged, pet not hidden
+    /// by the user) and the minimum silent interval has elapsed since the last
+    /// release.
     /// </summary>
     public PresentationDecision Decide(
         bool nowQuiet,
         bool fullscreen,
         bool paused,
         bool sessionLocked = false,
-        bool focusActive = false,
+        bool busy = false,
         DateTimeOffset? nowUtc = null,
         bool recordRelease = true,
         bool userHidden = false)
     {
         var now = nowUtc ?? DateTimeOffset.UtcNow;
-        var suppressed = nowQuiet || fullscreen || paused || sessionLocked || focusActive || userHidden;
+        var suppressed = nowQuiet || fullscreen || paused || sessionLocked || busy || userHidden;
         lock (_sync)
         {
             List<string>? purgedKeys = null;

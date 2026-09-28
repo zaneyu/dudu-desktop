@@ -5,11 +5,9 @@ using Dudu.App.ViewModels;
 using Dudu.Core.Assets;
 using Dudu.Core.Abstractions;
 using Dudu.Core.CheckIns;
-using Dudu.Core.Focus;
 using Dudu.Core.Models;
 using Dudu.Core.Notes;
 using Dudu.Core.Pet;
-using Dudu.Core.Tasks;
 using Dudu.Core.Time;
 using Xunit;
 
@@ -129,22 +127,17 @@ public sealed class ComfortBreathingInterruptTests
     {
         var clock = Stub<IClock>();
         var preferences = Preferences.Default;
-        var tasks = Stub<ITaskRepository>();
         var pet = PetStateMachine.CreateIdle();
         return new CompanionFeatureContext(
             clock,
             new PreferenceMutationCoordinator(preferences, Stub<IPreferencesRepository>()),
             Stub<IProfileRepository>(),
             Stub<IPetPlacementRepository>(),
-            tasks,
-            Stub<IFocusSessionRepository>(),
             Stub<ILocalNoteRepository>(),
             Stub<IRemoteEnvelopeRepository>(),
             Stub<ICountdownRepository>(),
             Stub<ICheckInRepository>(),
             new CheckInService(Stub<ICheckInRepository>(), clock),
-            new TaskService(tasks, clock),
-            new FocusService(Stub<IFocusSessionRepository>(), clock, tasks),
             new LocalNoteSelector(Stub<ILocalNoteRepository>(), clock, Stub<IRandomSource>(), preferences),
             Stub<IPairingService>(),
             Stub<ICompanionFeatureTransactions>(),

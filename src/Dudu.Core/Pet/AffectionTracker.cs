@@ -17,7 +17,7 @@ public enum PetReaction
 /// <para>
 /// Neglect is measured in <em>active</em> time only: the presentation tick
 /// reports each ~30 s whether Dudu is actually on screen and allowed to act
-/// (not hidden, paused, locked, fullscreen, in quiet hours, focus, or a meal).
+/// (not hidden, paused, locked, fullscreen, in quiet hours, eating, or dragged).
 /// Time while inactive — and any gap between observations longer than
 /// <see cref="MaxObservationGap"/> (sleep, a hung tick, the app closed) — does
 /// not count, so unlocking the PC in the morning never triggers an instant

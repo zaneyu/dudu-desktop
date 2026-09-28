@@ -46,7 +46,6 @@ public static class AudioCueSelection
         return presentation.State switch
         {
             PetState.WelcomeBack => AudioCueEvent.Greeting,
-            PetState.FocusTransition => AudioCueEvent.Celebration,
             PetState.RemoteNote => AudioCueEvent.RemoteNote,
             PetState.Comfort => AudioCueEvent.ManualInteraction,
             // Keyed on the animation key, not a PetState, so interaction

@@ -75,14 +75,14 @@ public sealed class AmbientScheduler
     /// </param>
     public PetEvent? TryGetNextEvent(
         bool paused,
-        bool focusActive,
+        bool busy,
         bool fullscreen,
         bool sessionLocked,
         bool? quietHoursOverride = null,
         IReadOnlyList<string>? availableStickerKeys = null)
     {
         var now = _clock.UtcNow;
-        if (paused || focusActive || fullscreen || sessionLocked)
+        if (paused || busy || fullscreen || sessionLocked)
         {
             return null;
         }
@@ -129,11 +129,11 @@ public sealed class AmbientScheduler
 
     public PetEvent? TryCreateEvent(
         bool paused,
-        bool focusActive,
+        bool busy,
         bool fullscreen,
         bool sessionLocked)
     {
-        return TryGetNextEvent(paused, focusActive, fullscreen, sessionLocked);
+        return TryGetNextEvent(paused, busy, fullscreen, sessionLocked);
     }
 
     private int NextRandom(int exclusiveMax)

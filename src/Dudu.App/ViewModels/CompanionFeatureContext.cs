@@ -2,12 +2,10 @@ using Dudu.App.System;
 using Dudu.App.Hosting;
 using Dudu.Core.Abstractions;
 using Dudu.Core.CheckIns;
-using Dudu.Core.Focus;
 using Dudu.Core.Models;
 using Dudu.Core.Notes;
 using Dudu.Core.Pet;
 using Dudu.Core.Time;
-using Dudu.Core.Tasks;
 
 namespace Dudu.App.ViewModels;
 
@@ -22,15 +20,11 @@ public sealed class CompanionFeatureContext
         PreferenceMutationCoordinator preferenceMutations,
         IProfileRepository profiles,
         IPetPlacementRepository petPlacements,
-        ITaskRepository tasks,
-        IFocusSessionRepository focusSessions,
         ILocalNoteRepository localNotes,
         IRemoteEnvelopeRepository remoteEnvelopes,
         ICountdownRepository countdowns,
         ICheckInRepository checkIns,
         CheckInService checkInService,
-        TaskService taskService,
-        FocusService focusService,
         LocalNoteSelector noteSelector,
         IPairingService pairing,
         ICompanionFeatureTransactions featureTransactions,
@@ -61,15 +55,11 @@ public sealed class CompanionFeatureContext
         PreferenceMutations = preferenceMutations ?? throw new ArgumentNullException(nameof(preferenceMutations));
         Profiles = profiles ?? throw new ArgumentNullException(nameof(profiles));
         PetPlacements = petPlacements ?? throw new ArgumentNullException(nameof(petPlacements));
-        Tasks = tasks ?? throw new ArgumentNullException(nameof(tasks));
-        FocusSessions = focusSessions ?? throw new ArgumentNullException(nameof(focusSessions));
         LocalNotes = localNotes ?? throw new ArgumentNullException(nameof(localNotes));
         RemoteEnvelopes = remoteEnvelopes ?? throw new ArgumentNullException(nameof(remoteEnvelopes));
         Countdowns = countdowns ?? throw new ArgumentNullException(nameof(countdowns));
         CheckIns = checkIns ?? throw new ArgumentNullException(nameof(checkIns));
         CheckInService = checkInService ?? throw new ArgumentNullException(nameof(checkInService));
-        TaskService = taskService ?? throw new ArgumentNullException(nameof(taskService));
-        FocusService = focusService ?? throw new ArgumentNullException(nameof(focusService));
         NoteSelector = noteSelector ?? throw new ArgumentNullException(nameof(noteSelector));
         Pairing = pairing ?? throw new ArgumentNullException(nameof(pairing));
         FeatureTransactions = featureTransactions ?? throw new ArgumentNullException(nameof(featureTransactions));
@@ -141,15 +131,11 @@ public sealed class CompanionFeatureContext
     public PreferenceMutationCoordinator PreferenceMutations { get; }
     public IProfileRepository Profiles { get; }
     public IPetPlacementRepository PetPlacements { get; }
-    public ITaskRepository Tasks { get; }
-    public IFocusSessionRepository FocusSessions { get; }
     public ILocalNoteRepository LocalNotes { get; }
     public IRemoteEnvelopeRepository RemoteEnvelopes { get; }
     public ICountdownRepository Countdowns { get; }
     public ICheckInRepository CheckIns { get; }
     public CheckInService CheckInService { get; }
-    public TaskService TaskService { get; }
-    public FocusService FocusService { get; }
     public LocalNoteSelector NoteSelector { get; }
     public IPairingService Pairing { get; }
     public ICompanionFeatureTransactions FeatureTransactions { get; }

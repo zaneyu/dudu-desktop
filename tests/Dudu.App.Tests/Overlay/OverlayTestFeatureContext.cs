@@ -4,11 +4,9 @@ using Dudu.App.System;
 using Dudu.App.ViewModels;
 using Dudu.Core.Abstractions;
 using Dudu.Core.CheckIns;
-using Dudu.Core.Focus;
 using Dudu.Core.Models;
 using Dudu.Core.Notes;
 using Dudu.Core.Pet;
-using Dudu.Core.Tasks;
 using Dudu.Core.Time;
 
 namespace Dudu.App.Tests.Overlay;
@@ -28,25 +26,19 @@ internal static class OverlayTestFeatureContext
         var clock = new FixedClock();
         var preferences = Preferences.Default;
         var preferenceRepository = Inert<IPreferencesRepository>();
-        var tasks = Inert<ITaskRepository>();
         var localNotes = Inert<ILocalNoteRepository>();
         var checkIns = Inert<ICheckInRepository>();
-        var focusSessions = Inert<IFocusSessionRepository>();
         var pet = PetStateMachine.CreateIdle();
         return new CompanionFeatureContext(
             clock,
             new PreferenceMutationCoordinator(preferences, preferenceRepository),
             Inert<IProfileRepository>(),
             Inert<IPetPlacementRepository>(),
-            tasks,
-            focusSessions,
             localNotes,
             Inert<IRemoteEnvelopeRepository>(),
             Inert<ICountdownRepository>(),
             checkIns,
             new CheckInService(checkIns, clock),
-            new TaskService(tasks, clock),
-            new FocusService(focusSessions, clock, tasks),
             new LocalNoteSelector(localNotes, clock, new FirstRandom(), preferences),
             Inert<IPairingService>(),
             Inert<ICompanionFeatureTransactions>(),

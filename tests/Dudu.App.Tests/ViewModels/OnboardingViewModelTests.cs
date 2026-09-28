@@ -482,12 +482,10 @@ public sealed class OnboardingViewModelTests
     {
         public ICheckInRepository CheckIns => throw new NotSupportedException();
         public ICountdownRepository Countdowns => throw new NotSupportedException();
-        public IFocusSessionRepository FocusSessions => throw new NotSupportedException();
         public ILocalNoteRepository LocalNotes => throw new NotSupportedException();
         public IPetPlacementRepository PetPlacements => placements;
         public IPreferencesRepository Preferences => preferences;
         public IProfileRepository Profiles => profiles;
         public IRemoteEnvelopeRepository RemoteEnvelopes => throw new NotSupportedException();
-        public ITaskRepository Tasks => throw new NotSupportedException();
     }
 }

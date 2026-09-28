@@ -312,32 +312,6 @@ public sealed class DatabaseTests
     }
 
     [Fact]
-    public async Task Feature_history_queries_exclude_active_work_and_order_newest_first()
-    {
-        await using var fixture = await DatabaseFixture.CreateAsync();
-        var cancellationToken = TestContext.Current.CancellationToken;
-        var earlier = DateTimeOffset.Parse("2026-09-11T10:00:00Z");
-        var later = earlier.AddMinutes(1);
-
-        var tasks = new TaskRepository(fixture.Database);
-        var completedTask = new TaskItem(Guid.NewGuid(), "Completed", null, null, true, earlier, later, later);
-        var activeTask = new TaskItem(Guid.NewGuid(), "Active", null, null, false, earlier, later, null);
-        await tasks.SaveAsync(completedTask, cancellationToken);
-        await tasks.SaveAsync(activeTask, cancellationToken);
-        Assert.Equal([completedTask], await tasks.ListCompletedAsync(cancellationToken));
-
-        var focus = new FocusSessionRepository(fixture.Database);
-        var completed = new FocusSession(Guid.NewGuid(), null, earlier, earlier.AddMinutes(25), TimeSpan.Zero, FocusStatus.Completed, earlier);
-        var ended = new FocusSession(Guid.NewGuid(), null, earlier, null, TimeSpan.FromMinutes(12), FocusStatus.EndedEarly, later);
-        var running = new FocusSession(Guid.NewGuid(), null, later, later.AddMinutes(25), TimeSpan.Zero, FocusStatus.Running, later);
-        await focus.SaveAsync(completed, cancellationToken);
-        await focus.SaveAsync(ended, cancellationToken);
-        await focus.SaveAsync(running, cancellationToken);
-
-        Assert.Equal([ended, completed], await focus.ListHistoryAsync(cancellationToken));
-    }
-
-    [Fact]
     public async Task Consuming_a_remote_envelope_marks_and_removes_it_so_refresh_cannot_resurrect_it()
     {
         await using var fixture = await DatabaseFixture.CreateAsync();
@@ -552,23 +526,6 @@ public sealed class DatabaseTests
     {
         await using var fixture = await DatabaseFixture.CreateAsync();
         var cancellationToken = TestContext.Current.CancellationToken;
-        var taskRepository = new TaskRepository(fixture.Database);
-        var task = new TaskItem(
-            Guid.NewGuid(), "task", null,
-            DateTimeOffset.Parse("2026-09-12T09:30:00-07:00"), false,
-            DateTimeOffset.Parse("2026-09-11T10:00:00-07:00"),
-            DateTimeOffset.Parse("2026-09-11T10:01:00-07:00"), null);
-        await taskRepository.SaveAsync(task, cancellationToken);
-        Assert.Equal(task, await taskRepository.GetAsync(task.Id, cancellationToken));
-
-        var focusRepository = new FocusSessionRepository(fixture.Database);
-        var focus = new FocusSession(Guid.NewGuid(), task.Id,
-            DateTimeOffset.Parse("2026-09-11T17:00:00Z"),
-            DateTimeOffset.Parse("2026-09-11T17:25:00Z"), TimeSpan.FromMinutes(3),
-            FocusStatus.Paused, DateTimeOffset.Parse("2026-09-11T17:04:00Z"));
-        await focusRepository.SaveAsync(focus, cancellationToken);
-        Assert.Equal(focus, await focusRepository.GetAsync(focus.Id, cancellationToken));
-
         var countdownRepository = new CountdownRepository(fixture.Database);
         var countdown = new Countdown("countdown", "event",
             DateTimeOffset.Parse("2026-10-01T10:00:00-07:00"), null, false, TimeZoneInfo.Utc);
@@ -1488,38 +1445,6 @@ public sealed class DatabaseTests
         Assert.Equal(
             "2026-09-19T20:00:00-05:00",
             (await repository.GetAsync("upcoming", cancellationToken))?.DeliverAfterUtc);
-    }
-
-    [Fact]
-    public async Task Concurrent_active_starts_yield_exactly_one_session()
-    {
-        await using var fixture = await DatabaseFixture.CreateAsync();
-        var repository = new FocusSessionRepository(fixture.Database);
-        for (var round = 0; round < 20; round++)
-        {
-            using var barrier = new Barrier(8);
-            var attempts = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ =>
-                Task.Run(async () =>
-                {
-                    barrier.SignalAndWait(TimeSpan.FromSeconds(30));
-                    return await repository.TryCreateActiveAsync(
-                        NewRunningSession(), TestContext.Current.CancellationToken);
-                })));
-            Assert.Single(attempts, won => won);
-
-            await using (var connection = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken))
-            await using (var command = connection.CreateCommand())
-            {
-                command.CommandText = "DELETE FROM focus_sessions;";
-                await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
-            }
-        }
-
-        static FocusSession NewRunningSession()
-        {
-            var now = DateTimeOffset.UtcNow;
-            return new FocusSession(Guid.NewGuid(), null, now, now.AddMinutes(25), TimeSpan.Zero, FocusStatus.Running, now);
-        }
     }
 
     [Fact]

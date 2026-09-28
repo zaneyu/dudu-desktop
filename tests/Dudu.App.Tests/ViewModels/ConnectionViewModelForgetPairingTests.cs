@@ -2,11 +2,9 @@ using Dudu.App.Hosting;
 using Dudu.App.ViewModels;
 using Dudu.Core.Abstractions;
 using Dudu.Core.CheckIns;
-using Dudu.Core.Focus;
 using Dudu.Core.Models;
 using Dudu.Core.Notes;
 using Dudu.Core.Pet;
-using Dudu.Core.Tasks;
 using Dudu.Core.Time;
 using Xunit;
 
@@ -180,8 +178,6 @@ public sealed class ConnectionViewModelForgetPairingTests
         var preferenceRepository = new FakePreferencesRepository();
         var preferenceMutations = new PreferenceMutationCoordinator(preferences, preferenceRepository);
         var localNotes = new FakeLocalNoteRepository();
-        var tasks = new FakeTaskRepository();
-        var focusSessions = new FakeFocusRepository();
         var checkIns = new FakeCheckInRepository();
 
         return new CompanionFeatureContext(
@@ -189,15 +185,11 @@ public sealed class ConnectionViewModelForgetPairingTests
             preferenceMutations,
             new FakeProfileRepository(),
             new FakePlacementRepository(),
-            tasks,
-            focusSessions,
             localNotes,
             remoteEnvelopes,
             new FakeCountdownRepository(),
             checkIns,
             new CheckInService(checkIns, clock),
-            new TaskService(tasks, clock),
-            new FocusService(focusSessions, clock, tasks),
             new LocalNoteSelector(localNotes, clock, new FixedRandom(), preferences),
             new FakePairing(remoteEnvelopes, wipesEnvelopesOnForget, availabilityToReport, sessionCountToReport),
             new ThrowingFeatureTransactions(),
@@ -294,23 +286,6 @@ public sealed class ConnectionViewModelForgetPairingTests
             Task.FromResult<IReadOnlyList<PetPlacement>>([]);
         public Task SaveAsync(PetPlacement placement, CancellationToken cancellationToken) => Task.CompletedTask;
         public Task DeleteAsync(string monitorDeviceName, CancellationToken cancellationToken) => Task.CompletedTask;
-    }
-
-    private sealed class FakeTaskRepository : ITaskRepository
-    {
-        public Task<TaskItem?> GetAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult<TaskItem?>(null);
-        public Task<IReadOnlyList<TaskItem>> ListActiveAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<TaskItem>>([]);
-        public Task SaveAsync(TaskItem task, CancellationToken cancellationToken) => Task.CompletedTask;
-    }
-
-    private sealed class FakeFocusRepository : IFocusSessionRepository
-    {
-        public Task<FocusSession?> GetAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult<FocusSession?>(null);
-        public Task<FocusSession?> GetActiveAsync(CancellationToken cancellationToken) => Task.FromResult<FocusSession?>(null);
-        public Task<bool> TryCreateActiveAsync(FocusSession session, CancellationToken cancellationToken) => Task.FromResult(true);
-        public Task<bool> TryCompareAndSetAsync(FocusSession expected, FocusSession replacement, CancellationToken cancellationToken) => Task.FromResult(true);
-        public Task SaveAsync(FocusSession session, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private sealed class FakeCountdownRepository : ICountdownRepository

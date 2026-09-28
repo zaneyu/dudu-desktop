@@ -1,11 +1,9 @@
 using System.Security.Cryptography;
 using Dudu.Core.Abstractions;
 using Dudu.Core.CheckIns;
-using Dudu.Core.Focus;
 using Dudu.Core.Models;
 using Dudu.Core.Notes;
 using Dudu.Core.Pet;
-using Dudu.Core.Tasks;
 using Dudu.Core.Time;
 using Dudu.Infrastructure.Crypto;
 using Dudu.Infrastructure.Data;
@@ -33,14 +31,12 @@ public static class DependencyInjection
 
         RegisterRepository<CheckInRepository, ICheckInRepository>(services);
         RegisterRepository<CountdownRepository, ICountdownRepository>(services);
-        RegisterRepository<FocusSessionRepository, IFocusSessionRepository>(services);
         RegisterRepository<HeldPresentationRepository, IHeldPresentationRepository>(services);
         RegisterRepository<LocalNoteRepository, ILocalNoteRepository>(services);
         RegisterRepository<PetPlacementRepository, IPetPlacementRepository>(services);
         RegisterRepository<PreferencesRepository, IPreferencesRepository>(services);
         RegisterRepository<ProfileRepository, IProfileRepository>(services);
         RegisterRepository<RemoteEnvelopeRepository, IRemoteEnvelopeRepository>(services);
-        RegisterRepository<TaskRepository, ITaskRepository>(services);
 
         services.AddSingleton<AppUnitOfWork>();
         services.AddSingleton<IAppUnitOfWork>(static provider =>
@@ -53,8 +49,6 @@ public static class DependencyInjection
         services.AddSingleton<Preferences>(static _ => Preferences.Default);
 
         services.AddSingleton<CheckInService>();
-        services.AddSingleton<FocusService>();
-        services.AddSingleton<TaskService>();
         services.AddSingleton<LocalNoteSelector>(static provider => new LocalNoteSelector(
             provider.GetRequiredService<ILocalNoteRepository>(),
             provider.GetRequiredService<IClock>(),

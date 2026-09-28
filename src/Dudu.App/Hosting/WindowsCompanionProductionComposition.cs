@@ -378,71 +378,6 @@ public static class WindowsCompanionProductionComposition
                     databaseUnavailable);
             }
 
-            // L2 / merge note: subscribed only past the safe-mode return
-            // above, so a safe-mode run (overlay and remote sync disabled)
-            // never wires it — there is no presentationCoordinator for it to
-            // ever resolve to in that mode, and the raw pet.Handle fallback
-            // below would be the only thing running for the rest of the
-            // process's life. FocusService itself lives for the process
-            // lifetime, so this subscription is never explicitly removed;
-            // it is fine to leak for that duration, same as every other
-            // handler this composition method wires up.
-            //
-            // FocusService.CompleteExpiredAsync completes an expired focus
-            // session on the user's behalf (the retired reminder engine's
-            // tick used to call it; focus itself is being removed), but
-            // nothing else ever raises FocusEnded for that path
-            // (only TasksFocusViewModel.EndFocusAsync does, for a manual
-            // end) — without this, the pet stays latched in Focus, which
-            // suppresses every reminder and note presentation until restart.
-            // Route it through the same one-shot path a manual end uses.
-            services.GetRequiredService<Dudu.Core.Focus.FocusService>().SessionExpired += focusId =>
-            {
-                var focusEnded = new PetEvent.FocusEnded(focusId.ToString("D"));
-                // M3: apply synchronously and first, so a reminder or note
-                // becoming due on the very same 30-second tick sees the
-                // post-FocusEnded state deterministically. Previously this
-                // ordering only held via PetPresentationCoordinator's
-                // internal petGate SemaphoreSlim happening to still be
-                // uncontended — fragile, not a real guarantee. FocusEnded is
-                // idempotent (confirmed in PetStateMachine.Handle: a second
-                // call with the same FocusId is a no-op once _focusId is
-                // already null), so PresentOneShotAsync's own internal
-                // pet.Handle(focusEnded) below is a safe replay, not a
-                // double transition.
-                pet.Handle(focusEnded);
-
-                Task callback;
-                if (presentationCoordinator is null)
-                {
-                    // Composed inside initializeOverlay below; a session
-                    // expiring before that (implausible this early in
-                    // startup, but not worth crashing over) still needs to
-                    // self-clear the FocusTransition latch the same way the
-                    // real one-shot path would (M2) — nothing else will
-                    // ever raise Dismissed("focus-end") for it otherwise.
-                    pet.Handle(PetEvent.CompletionForOneShot(focusEnded, "focus-end"));
-                    callback = Task.CompletedTask;
-                }
-                else
-                {
-                    callback = presentationCoordinator.PresentOneShotAsync(focusEnded, "focus-end", CancellationToken.None);
-                }
-
-                _ = ObserveNativeCallbackAsync(callback, "focus-expiry", host.ErrorReporter);
-            };
-
-            // A focus session still running from before a restart must
-            // re-latch the pet, or Dudu idles (and notes/reminders are not
-            // held back) for the rest of that session.
-            await ObserveNativeCallbackAsync(
-                RestoreActiveFocusAsync(
-                    services.GetRequiredService<Dudu.Core.Focus.FocusService>(),
-                    pet,
-                    cancellationToken),
-                "focus-restore",
-                host.ErrorReporter);
-
             var placementRepository = services.GetRequiredService<IPetPlacementRepository>();
             var savedPlacements = await placementRepository.ListAsync(cancellationToken);
             var assetsRoot = Path.Combine(AppContext.BaseDirectory, "Assets");
@@ -898,15 +833,11 @@ public static class WindowsCompanionProductionComposition
                 preferenceMutations,
                 profileRepository,
                 services.GetRequiredService<IPetPlacementRepository>(),
-                services.GetRequiredService<ITaskRepository>(),
-                services.GetRequiredService<IFocusSessionRepository>(),
                 services.GetRequiredService<ILocalNoteRepository>(),
                 services.GetRequiredService<IRemoteEnvelopeRepository>(),
                 services.GetRequiredService<ICountdownRepository>(),
                 services.GetRequiredService<ICheckInRepository>(),
                 services.GetRequiredService<Dudu.Core.CheckIns.CheckInService>(),
-                services.GetRequiredService<Dudu.Core.Tasks.TaskService>(),
-                services.GetRequiredService<Dudu.Core.Focus.FocusService>(),
                 services.GetRequiredService<Dudu.Core.Notes.LocalNoteSelector>(),
                 services.GetRequiredService<IPairingService>(),
                 services.GetRequiredService<ICompanionFeatureTransactions>(),
@@ -925,8 +856,8 @@ public static class WindowsCompanionProductionComposition
                 },
                 presentPetAsync: async (petEvent, token) =>
                 {
-                    // Under the shared pet gate: a state change (focus start,
-                    // a meal, a dismiss) waits for a running one-shot such as
+                    // Under the shared pet gate: a state change (a meal start,
+                    // a meal end, a dismiss) waits for a running one-shot such as
                     // a drink to finish instead of replacing its playback.
                     // The gate is held only to mutate and start playback,
                     // never across a loop.
@@ -1223,18 +1154,6 @@ public static class WindowsCompanionProductionComposition
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
-    private static async Task RestoreActiveFocusAsync(
-        Dudu.Core.Focus.FocusService focus,
-        PetStateMachine pet,
-        CancellationToken cancellationToken)
-    {
-        var active = await focus.GetCurrentAsync(cancellationToken);
-        if (active is { Status: FocusStatus.Running or FocusStatus.Paused })
-        {
-            pet.Handle(new PetEvent.FocusStarted(active.Id.ToString("D")));
-        }
-    }
-
     /// <summary>Observes a fire-and-forget playback. A fault (for example a
     /// frame the composer cannot decode) leaves the pet unpainted, so it is
     /// reported as <c>animation-playback</c> to diagnostics.log instead of a
@@ -1348,15 +1267,11 @@ public static class WindowsCompanionProductionComposition
             preferenceMutations,
             profileRepository,
             placements,
-            services.GetRequiredService<ITaskRepository>(),
-            services.GetRequiredService<IFocusSessionRepository>(),
             services.GetRequiredService<ILocalNoteRepository>(),
             services.GetRequiredService<IRemoteEnvelopeRepository>(),
             services.GetRequiredService<ICountdownRepository>(),
             services.GetRequiredService<ICheckInRepository>(),
             services.GetRequiredService<Dudu.Core.CheckIns.CheckInService>(),
-            services.GetRequiredService<Dudu.Core.Tasks.TaskService>(),
-            services.GetRequiredService<Dudu.Core.Focus.FocusService>(),
             services.GetRequiredService<Dudu.Core.Notes.LocalNoteSelector>(),
             services.GetRequiredService<IPairingService>(),
             services.GetRequiredService<ICompanionFeatureTransactions>(),

@@ -10,11 +10,9 @@ public sealed class HomeViewModelDisplayTests
 {
     [Theory]
     [InlineData(PetState.RemoteNote)]
-    [InlineData(PetState.FocusTransition)]
     [InlineData(PetState.WelcomeBack)]
     [InlineData(PetState.Comfort)]
     [InlineData(PetState.Ambient)]
-    [InlineData(PetState.Focus)]
     [InlineData(PetState.Idle)]
     public void Pet_state_reads_as_plain_words_not_a_squashed_enum_name(PetState state)
     {
@@ -27,7 +25,6 @@ public sealed class HomeViewModelDisplayTests
         }
 
         Assert.DoesNotContain("remotenote", text);
-        Assert.DoesNotContain("focustransition", text);
         Assert.DoesNotContain("welcomeback", text);
     }
 

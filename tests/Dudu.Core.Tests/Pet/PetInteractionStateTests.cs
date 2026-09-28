@@ -12,7 +12,7 @@ public sealed class PetInteractionStateTests
     public void Drag_plays_the_drag_loop_over_everything_and_releases_back_to_the_latched_state()
     {
         var machine = PetStateMachine.CreateIdle();
-        machine.Handle(new PetEvent.FocusStarted("f-1"));
+        machine.Handle(new PetEvent.EatingStarted("meal-1"));
         machine.Handle(new PetEvent.ComfortRequested());
 
         var dragging = machine.Handle(new PetEvent.DragStarted());
@@ -20,10 +20,10 @@ public sealed class PetInteractionStateTests
         Assert.Equal(PetState.Dragging, dragging.State);
         Assert.Equal("drag", dragging.AnimationKey);
         Assert.True(machine.IsDragging);
-        Assert.True(machine.IsFocusActive);
+        Assert.True(machine.IsEatingActive);
         Assert.Equal(PetState.Comfort, machine.Handle(new PetEvent.DragEnded()).State);
         Assert.False(machine.IsDragging);
-        Assert.Equal(PetState.Focus, machine.Handle(new PetEvent.ComfortDismissed()).State);
+        Assert.Equal(PetState.Eating, machine.Handle(new PetEvent.ComfortDismissed()).State);
     }
 
     [Fact]
@@ -35,10 +35,10 @@ public sealed class PetInteractionStateTests
     }
 
     [Fact]
-    public void Petting_plays_the_petted_one_shot_even_during_focus_and_returns_to_focus()
+    public void Petting_plays_the_petted_one_shot_even_during_a_meal_and_returns_to_eating()
     {
         var machine = PetStateMachine.CreateIdle();
-        machine.Handle(new PetEvent.FocusStarted("f-1"));
+        machine.Handle(new PetEvent.EatingStarted("meal-1"));
 
         var petted = machine.Handle(new PetEvent.InteractionRequested("petted"));
 
@@ -47,8 +47,8 @@ public sealed class PetInteractionStateTests
         var completion = PetEvent.CompletionForOneShot(new PetEvent.InteractionRequested("petted"), "petted");
         Assert.Equal(new PetEvent.InteractionDismissed("petted"), completion);
         var after = machine.Handle(completion);
-        Assert.Equal(PetState.Focus, after.State);
-        Assert.Equal("focus", after.AnimationKey);
+        Assert.Equal(PetState.Eating, after.State);
+        Assert.Equal("eat", after.AnimationKey);
     }
 
     [Fact]
@@ -89,17 +89,6 @@ public sealed class PetInteractionStateTests
     }
 
     [Fact]
-    public void Focus_shows_the_studying_bubble()
-    {
-        var machine = PetStateMachine.CreateIdle();
-
-        var focus = machine.Handle(new PetEvent.FocusStarted("f-1"));
-
-        Assert.Equal("focus", focus.AnimationKey);
-        Assert.Equal(PetStateMachine.FocusBubble, focus.BubbleTitle);
-    }
-
-    [Fact]
     public void Eating_loops_the_eat_pose_with_its_bubble_and_ends_by_session_id()
     {
         var machine = PetStateMachine.CreateIdle();
@@ -116,7 +105,7 @@ public sealed class PetInteractionStateTests
     }
 
     [Fact]
-    public void Eating_holds_notes_and_ambient_back_like_focus()
+    public void Eating_holds_notes_and_ambient_back()
     {
         var machine = PetStateMachine.CreateIdle();
         machine.Handle(new PetEvent.EatingStarted("meal-1"));
@@ -128,16 +117,6 @@ public sealed class PetInteractionStateTests
         var afterMeal = machine.Handle(new PetEvent.EatingEnded("meal-1"));
         Assert.Equal(PetState.RemoteNote, afterMeal.State);
         Assert.Equal(PetState.Idle, machine.Handle(new PetEvent.Dismissed("m-1")).State);
-    }
-
-    [Fact]
-    public void Eating_shows_over_a_running_focus_session_and_hands_back_to_it()
-    {
-        var machine = PetStateMachine.CreateIdle();
-        machine.Handle(new PetEvent.FocusStarted("f-1"));
-
-        Assert.Equal(PetState.Eating, machine.Handle(new PetEvent.EatingStarted("meal-1")).State);
-        Assert.Equal(PetState.Focus, machine.Handle(new PetEvent.EatingEnded("meal-1")).State);
     }
 
     [Fact]

@@ -32,11 +32,9 @@ public interface IAppUnitOfWorkContext
 {
     ICheckInRepository CheckIns { get; }
     ICountdownRepository Countdowns { get; }
-    IFocusSessionRepository FocusSessions { get; }
     ILocalNoteRepository LocalNotes { get; }
     IPetPlacementRepository PetPlacements { get; }
     IPreferencesRepository Preferences { get; }
     IProfileRepository Profiles { get; }
     IRemoteEnvelopeRepository RemoteEnvelopes { get; }
-    ITaskRepository Tasks { get; }
 }

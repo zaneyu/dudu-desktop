@@ -16,26 +16,6 @@ public abstract record PetEvent
         }
     }
 
-    public sealed record FocusStarted : PetEvent
-    {
-        public string FocusId { get; }
-
-        public FocusStarted(string focusId)
-        {
-            FocusId = RequireId(focusId, nameof(focusId));
-        }
-    }
-
-    public sealed record FocusEnded : PetEvent
-    {
-        public string FocusId { get; }
-
-        public FocusEnded(string focusId)
-        {
-            FocusId = RequireId(focusId, nameof(focusId));
-        }
-    }
-
     public sealed record WelcomeBackRequested : PetEvent;
 
     public sealed record WelcomeBackDismissed : PetEvent;
@@ -63,7 +43,7 @@ public abstract record PetEvent
     /// <summary>
     /// A user-initiated one-shot (overlay "pet", "drink water", a delighted
     /// pet streak). Unlike <see cref="AmbientRequested"/> it is not discarded
-    /// while focus or eating is active: the user asked for it explicitly.
+    /// while eating is active: the user asked for it explicitly.
     /// </summary>
     public sealed record InteractionRequested : PetEvent
     {

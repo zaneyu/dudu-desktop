@@ -75,7 +75,7 @@ public sealed class AffectionTrackerTests
         RunActive(tracker, clock, TimeSpan.FromMinutes(60));
         var afterHour = tracker.NeglectedFor;
 
-        // Locked / quiet hours / focus: observed but inactive.
+        // Locked / quiet hours / busy: observed but inactive.
         for (var elapsed = TimeSpan.Zero; elapsed < TimeSpan.FromHours(3); elapsed += Tick)
         {
             clock.Advance(Tick);

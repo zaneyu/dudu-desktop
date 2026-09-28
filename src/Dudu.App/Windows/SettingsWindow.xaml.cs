@@ -290,8 +290,6 @@ public sealed partial class SettingsWindow : UserControl
     {
         PetState.Comfort => "dudu has u",
         PetState.RemoteNote => "dudu brought a note",
-        PetState.Focus => "dudu is staying close",
-        PetState.FocusTransition => "dudu says well done",
         PetState.WelcomeBack => "dudu missed u",
         PetState.Ambient => "dudu is having a moment",
         _ => "dudu is here",
@@ -302,8 +300,6 @@ public sealed partial class SettingsWindow : UserControl
         { BubbleBody: { Length: > 0 } body } => body,
         { BubbleTitle: { Length: > 0 } title } => title,
         { State: PetState.Comfort } => "tiny hug or slow breathing, ur choice",
-        { State: PetState.Focus } => "quiet company while u do ur thing",
-        { State: PetState.FocusTransition } => "nice work lihai, take a breath",
         { State: PetState.WelcomeBack } => "welcome back le",
         { State: PetState.Ambient } => "just checking in, no need to reply",
         _ => "ready to keep u company",

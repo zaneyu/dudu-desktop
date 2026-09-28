@@ -19,7 +19,7 @@ public sealed class AmbientSchedulerTests
 
         Assert.Equal(clock.UtcNow + interval, scheduler.NextEligibleUtc);
         Assert.Null(scheduler.TryGetNextEvent(
-            paused: false, focusActive: false, fullscreen: false, sessionLocked: false));
+            paused: false, busy: false, fullscreen: false, sessionLocked: false));
     }
 
     [Fact]
@@ -31,7 +31,7 @@ public sealed class AmbientSchedulerTests
         clock.Advance(TimeSpan.FromMinutes(15));
 
         Assert.IsType<PetEvent.AmbientRequested>(scheduler.TryGetNextEvent(
-            paused: false, focusActive: false, fullscreen: false, sessionLocked: false));
+            paused: false, busy: false, fullscreen: false, sessionLocked: false));
     }
 
     [Fact]
@@ -42,7 +42,7 @@ public sealed class AmbientSchedulerTests
         var scheduler = new AmbientScheduler(clock, random, TimeSpan.Zero);
 
         var result = Assert.IsType<PetEvent.AmbientRequested>(scheduler.TryGetNextEvent(
-            paused: false, focusActive: false, fullscreen: false, sessionLocked: false));
+            paused: false, busy: false, fullscreen: false, sessionLocked: false));
 
         Assert.Contains(result.AnimationKey, new[]
         {
@@ -58,7 +58,7 @@ public sealed class AmbientSchedulerTests
         var scheduler = new AmbientScheduler(clock, random, TimeSpan.Zero);
 
         var result = Assert.IsType<PetEvent.AmbientRequested>(scheduler.TryGetNextEvent(
-            paused: false, focusActive: false, fullscreen: false, sessionLocked: false));
+            paused: false, busy: false, fullscreen: false, sessionLocked: false));
 
         Assert.Equal("sticker-030", result.AnimationKey);
     }
@@ -90,7 +90,7 @@ public sealed class AmbientSchedulerTests
 
         var result = Assert.IsType<PetEvent.AmbientRequested>(scheduler.TryGetNextEvent(
             paused: false,
-            focusActive: false,
+            busy: false,
             fullscreen: false,
             sessionLocked: false,
             availableStickerKeys: availableStickerKeys));
@@ -117,7 +117,7 @@ public sealed class AmbientSchedulerTests
 
         var result = Assert.IsType<PetEvent.AmbientRequested>(scheduler.TryGetNextEvent(
             paused: false,
-            focusActive: false,
+            busy: false,
             fullscreen: false,
             sessionLocked: false,
             availableStickerKeys: Array.Empty<string>()));
@@ -133,16 +133,16 @@ public sealed class AmbientSchedulerTests
 
         var policyDriven = new AmbientScheduler(clock, new FixedRandomSource(), TimeSpan.Zero, quiet);
         Assert.Null(policyDriven.TryGetNextEvent(
-            paused: false, focusActive: false, fullscreen: false, sessionLocked: false));
+            paused: false, busy: false, fullscreen: false, sessionLocked: false));
 
         var overridden = new AmbientScheduler(clock, new FixedRandomSource(), TimeSpan.Zero, quiet);
         Assert.IsType<PetEvent.AmbientRequested>(overridden.TryGetNextEvent(
-            paused: false, focusActive: false, fullscreen: false, sessionLocked: false,
+            paused: false, busy: false, fullscreen: false, sessionLocked: false,
             quietHoursOverride: false));
 
         var forcedQuiet = new AmbientScheduler(clock, new FixedRandomSource(), TimeSpan.Zero, quiet with { Enabled = false });
         Assert.Null(forcedQuiet.TryGetNextEvent(
-            paused: false, focusActive: false, fullscreen: false, sessionLocked: false,
+            paused: false, busy: false, fullscreen: false, sessionLocked: false,
             quietHoursOverride: true));
     }
 

@@ -9,11 +9,9 @@ using Dudu.App.ViewModels;
 using Dudu.Core.Abstractions;
 using Dudu.Core.Assets;
 using Dudu.Core.CheckIns;
-using Dudu.Core.Focus;
 using Dudu.Core.Models;
 using Dudu.Core.Notes;
 using Dudu.Core.Pet;
-using Dudu.Core.Tasks;
 using Dudu.Core.Time;
 using Xunit;
 
@@ -741,17 +739,17 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
-    public async Task Router_drink_plays_during_focus_and_hands_back_to_focus()
+    public async Task Router_drink_plays_during_a_meal_and_hands_back_to_eating()
     {
         var fixture = FeatureFixture.Create();
-        fixture.Context.Pet.Handle(new PetEvent.FocusStarted("focus-1"));
+        fixture.Context.Pet.Handle(new PetEvent.EatingStarted("meal-1"));
         var router = new OverlayCommandRouter(fixture.Context);
 
         await router.ExecuteAsync(OverlayAction.DrinkWater, TestContext.Current.CancellationToken);
 
         var drink = Assert.Single(fixture.OneShotPresentations);
         Assert.Equal("drink", Assert.IsType<PetEvent.InteractionRequested>(drink.Event).AnimationKey);
-        Assert.Equal(PetState.Focus, fixture.Context.Pet.Current.State);
+        Assert.Equal(PetState.Eating, fixture.Context.Pet.Current.State);
     }
 
     [Fact]
@@ -1324,8 +1322,6 @@ public sealed class FeatureViewModelTests
             FakePreferencesRepository preferences,
             FakePlacementRepository placements,
             FakeProfileRepository profiles,
-            FakeTaskRepository tasks,
-            FakeFocusRepository focusSessions,
             FakeCountdownRepository countdowns,
             FakeFeatureTransactions transactions,
             FakeRuntimePreferences runtimePreferences,
@@ -1339,8 +1335,6 @@ public sealed class FeatureViewModelTests
             Preferences = preferences;
             Placements = placements;
             Profiles = profiles;
-            Tasks = tasks;
-            FocusSessions = focusSessions;
             Countdowns = countdowns;
             Transactions = transactions;
             RuntimePreferences = runtimePreferences;
@@ -1355,8 +1349,6 @@ public sealed class FeatureViewModelTests
         public FakePreferencesRepository Preferences { get; }
         public FakePlacementRepository Placements { get; }
         public FakeProfileRepository Profiles { get; }
-        public FakeTaskRepository Tasks { get; }
-        public FakeFocusRepository FocusSessions { get; }
         public FakeCountdownRepository Countdowns { get; }
         public FakeFeatureTransactions Transactions { get; }
         public FakeRuntimePreferences RuntimePreferences { get; }
@@ -1387,14 +1379,10 @@ public sealed class FeatureViewModelTests
             var preferenceRepository = new FakePreferencesRepository();
             var profileRepository = new FakeProfileRepository();
             var placementRepository = new FakePlacementRepository();
-            var tasks = new FakeTaskRepository();
-            var focusSessions = new FakeFocusRepository();
             var localNotes = new FakeLocalNoteRepository();
             var remoteNotes = new FakeRemoteEnvelopeRepository();
             var countdowns = new FakeCountdownRepository();
             var checkIns = new FakeCheckInRepository();
-            var taskService = new TaskService(tasks, clock);
-            var focusService = new FocusService(focusSessions, clock, tasks);
             var checkInService = new CheckInService(checkIns, clock);
             var noteSelector = new LocalNoteSelector(localNotes, clock, new FixedRandom(), preferences);
             var pause = PauseState.None;
@@ -1410,15 +1398,11 @@ public sealed class FeatureViewModelTests
                 preferenceMutations,
                 profileRepository,
                 placementRepository,
-                tasks,
-                focusSessions,
                 localNotes,
                 remoteNotes,
                 countdowns,
                 checkIns,
                 checkInService,
-                taskService,
-                focusService,
                 noteSelector,
                 pairing ?? new FakePairing(),
                 transactions,
@@ -1437,7 +1421,6 @@ public sealed class FeatureViewModelTests
                     events.Add(petEvent switch
                     {
                         PetEvent.Dismissed => "pet.dismiss",
-                        PetEvent.FocusEnded => "pet.focus-end",
                         _ => "pet.present",
                     });
                 },
@@ -1461,8 +1444,6 @@ public sealed class FeatureViewModelTests
                 preferenceRepository,
                 placementRepository,
                 profileRepository,
-                tasks,
-                focusSessions,
                 countdowns,
                 transactions,
                 runtimePreferences,
@@ -1565,56 +1546,6 @@ public sealed class FeatureViewModelTests
             return Task.CompletedTask;
         }
         public Task DeleteAsync(string monitorDeviceName, CancellationToken cancellationToken) { _items.Remove(monitorDeviceName); return Task.CompletedTask; }
-    }
-
-    private sealed class FakeTaskRepository : ITaskRepository
-    {
-        private readonly Dictionary<Guid, TaskItem> _tasks = [];
-        public IReadOnlyCollection<TaskItem> Items => _tasks.Values;
-        public Task<TaskItem?> GetAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult(_tasks.GetValueOrDefault(id));
-        public Task<IReadOnlyList<TaskItem>> ListActiveAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<TaskItem>>(_tasks.Values.Where(item => !item.IsCompleted).ToArray());
-        public Task<IReadOnlyList<TaskItem>> ListCompletedAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<TaskItem>>(_tasks.Values.Where(item => item.IsCompleted).ToArray());
-        public Task SaveAsync(TaskItem task, CancellationToken cancellationToken) { _tasks[task.Id] = task; return Task.CompletedTask; }
-        public Task<bool> TryCompareAndSetAsync(TaskItem expected, TaskItem replacement, CancellationToken cancellationToken)
-        {
-            if (!_tasks.TryGetValue(expected.Id, out var current) || current != expected) return Task.FromResult(false);
-            _tasks[replacement.Id] = replacement;
-            return Task.FromResult(true);
-        }
-        public Task DeleteAsync(Guid id, CancellationToken cancellationToken) { _tasks.Remove(id); return Task.CompletedTask; }
-    }
-
-    private sealed class FakeFocusRepository : IFocusSessionRepository
-    {
-        private readonly Dictionary<Guid, FocusSession> _sessions = [];
-        public FocusSession? Active => _sessions.Values.FirstOrDefault(
-            item => item.Status is FocusStatus.Running or FocusStatus.Paused);
-        public bool RejectCreate { get; set; }
-        public bool ThrowOnCreate { get; set; }
-        public bool ThrowOnListHistory { get; set; }
-        // Round 4 Opus follow-up 4: lets a test suspend an in-flight expiry
-        // reload right after it has already captured its (possibly stale)
-        // GetCurrentAsync snapshot, so a new session can be started before
-        // the reload's mutation finally runs.
-        public TaskCompletionSource<bool>? PauseListHistory { get; set; }
-        public Task<FocusSession?> GetAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult(_sessions.GetValueOrDefault(id));
-        public Task<FocusSession?> GetActiveAsync(CancellationToken cancellationToken) => Task.FromResult(Active);
-        public async Task<IReadOnlyList<FocusSession>> ListHistoryAsync(CancellationToken cancellationToken)
-        {
-            if (ThrowOnListHistory) throw new IOException("injected focus history repository failure");
-            if (PauseListHistory is { } pause) await pause.Task;
-            var result = _sessions.Values.Where(item => item.Status is not (FocusStatus.Running or FocusStatus.Paused)).ToArray();
-            return result;
-        }
-        public Task<bool> TryCreateActiveAsync(FocusSession session, CancellationToken cancellationToken)
-        {
-            if (ThrowOnCreate) throw new IOException("injected focus repository failure");
-            if (RejectCreate) return Task.FromResult(false);
-            _sessions[session.Id] = session;
-            return Task.FromResult(true);
-        }
-        public Task<bool> TryCompareAndSetAsync(FocusSession expected, FocusSession replacement, CancellationToken cancellationToken) { _sessions[expected.Id] = replacement; return Task.FromResult(true); }
-        public Task SaveAsync(FocusSession session, CancellationToken cancellationToken) { _sessions[session.Id] = session; return Task.CompletedTask; }
     }
 
     private sealed class FakeCountdownRepository : ICountdownRepository

@@ -2,11 +2,9 @@ using Dudu.App.Hosting;
 using Dudu.App.ViewModels;
 using Dudu.Core.Abstractions;
 using Dudu.Core.CheckIns;
-using Dudu.Core.Focus;
 using Dudu.Core.Models;
 using Dudu.Core.Notes;
 using Dudu.Core.Pet;
-using Dudu.Core.Tasks;
 using Dudu.Core.Time;
 
 namespace Dudu.App.Tests.ViewModels;
@@ -80,7 +78,6 @@ internal sealed class SettingsDataPagesFixture
         Func<CancellationToken, Task>? deleteLocalDataAsync = null,
         Func<CancellationToken, Task>? deleteRemoteDataAsync = null,
         Func<string, CancellationToken, Task>? setGlobalShortcutAsync = null,
-        IFocusSessionRepository? focusSessions = null,
         Func<PetEvent, CancellationToken, Task>? presentPetAsync = null,
         Func<string?>? getGlobalShortcutStatus = null,
         Func<CancellationToken, Task>? stopRemoteSyncAsync = null,
@@ -99,8 +96,6 @@ internal sealed class SettingsDataPagesFixture
         var transactions = new RecordingFeatureTransactions(localNotes, remoteEnvelopes);
         var revealable = new Dictionary<string, RevealedRemoteNote>(StringComparer.Ordinal);
         var discardedHeldRemoteNoteIds = new List<string>();
-        var tasks = new EmptyTaskRepository();
-        var focusSessionRepository = focusSessions ?? new EmptyFocusRepository();
         var checkIns = new EmptyCheckInRepository();
         var placements = new MemoryPlacementRepository();
         var pairing = new ScriptedPairing();
@@ -109,15 +104,11 @@ internal sealed class SettingsDataPagesFixture
             preferenceMutations,
             new EmptyProfileRepository(),
             placements,
-            tasks,
-            focusSessionRepository,
             localNotes,
             remoteEnvelopes,
             new EmptyCountdownRepository(),
             checkIns,
             new CheckInService(checkIns, clock),
-            new TaskService(tasks, clock),
-            new FocusService(focusSessionRepository, clock, tasks),
             new LocalNoteSelector(localNotes, clock, new FixedRandom(), preferences),
             pairing,
             transactions,
@@ -297,23 +288,6 @@ internal sealed class SettingsDataPagesFixture
     {
         public Task<Profile?> GetAsync(CancellationToken cancellationToken) => Task.FromResult<Profile?>(null);
         public Task SaveAsync(Profile profile, CancellationToken cancellationToken) => Task.CompletedTask;
-    }
-
-    private sealed class EmptyTaskRepository : ITaskRepository
-    {
-        public Task<TaskItem?> GetAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult<TaskItem?>(null);
-        public Task<IReadOnlyList<TaskItem>> ListActiveAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<TaskItem>>([]);
-        public Task SaveAsync(TaskItem task, CancellationToken cancellationToken) => Task.CompletedTask;
-    }
-
-    private sealed class EmptyFocusRepository : IFocusSessionRepository
-    {
-        public Task<FocusSession?> GetAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult<FocusSession?>(null);
-        public Task<FocusSession?> GetActiveAsync(CancellationToken cancellationToken) => Task.FromResult<FocusSession?>(null);
-        public Task<bool> TryCreateActiveAsync(FocusSession session, CancellationToken cancellationToken) => Task.FromResult(true);
-        public Task<bool> TryCompareAndSetAsync(FocusSession expected, FocusSession replacement, CancellationToken cancellationToken) => Task.FromResult(true);
-        public Task SaveAsync(FocusSession session, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
     private sealed class EmptyCountdownRepository : ICountdownRepository

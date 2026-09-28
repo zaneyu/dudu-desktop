@@ -488,7 +488,7 @@ public sealed class PresentationCoordinator :
     /// Publishes a newly-arrived durable item. Bypass items are presented
     /// immediately regardless of the environment (except a hidden pet);
     /// everything else is queued
-    /// while quiet hours, focus, fullscreen, a locked session, or a pause is
+    /// while quiet hours, a busy pet (eating or dragged), fullscreen, a locked session, or a pause is
     /// active, and presented immediately otherwise. An item whose kind+id is
     /// already queued or is currently being presented is a duplicate and is
     /// dropped rather than queued or presented a second time — this is what
@@ -685,7 +685,7 @@ public sealed class PresentationCoordinator :
                 environment.Fullscreen,
                 environment.Paused,
                 environment.SessionLocked,
-                environment.FocusActive,
+                environment.Busy,
                 now,
                 recordRelease: false,
                 userHidden: environment.UserHidden);
@@ -796,7 +796,7 @@ public sealed class PresentationCoordinator :
             || environment.Fullscreen
             || environment.Paused
             || environment.SessionLocked
-            || environment.FocusActive
+            || environment.Busy
             || environment.UserHidden)
         {
             return;
@@ -804,7 +804,7 @@ public sealed class PresentationCoordinator :
 
         var ambient = _ambientScheduler.TryGetNextEvent(
             environment.Paused,
-            environment.FocusActive,
+            environment.Busy,
             environment.Fullscreen,
             environment.SessionLocked,
             environment.NowQuiet,
@@ -972,7 +972,7 @@ public sealed class PresentationCoordinator :
                 // A note id otherwise sits in the state machine's
                 // pending set forever (cleared only by an explicit Settings
                 // dismiss/complete): Select() would keep ranking it above
-                // ambient, welcome-back, and even a completed focus session
+                // ambient, welcome-back, and a running meal
                 // for the rest of the session. Acknowledging it here, the
                 // same way a LocalNote is acknowledged above, lets the pet
                 // return to its normal presentation once this specific item
@@ -1172,18 +1172,18 @@ public sealed class PresentationCoordinator :
             }
 
             var paused = PausePolicy.IsSuppressed(_pauseState(), now, liveFullscreen);
-            // Latched focus or an eat-together meal hold unsolicited items
-            // back even while a drag, pet or welcome-back is what is on
-            // screen right now; a drag holds them too, so a note is
-            // never "presented" as the drag loop and then acknowledged.
-            var focusActive = _pet.IsFocusActive || _pet.IsEatingActive || _pet.IsDragging;
-            return new SuppressionSnapshot(_isQuietHours(), liveFullscreen, paused, sessionLocked, focusActive, userHidden);
+            // An eat-together meal holds unsolicited items back even while a
+            // pet or welcome-back is what is on screen right now; a drag
+            // holds them too, so a note is never "presented" as the drag
+            // loop and then acknowledged.
+            var busy = _pet.IsEatingActive || _pet.IsDragging;
+            return new SuppressionSnapshot(_isQuietHours(), liveFullscreen, paused, sessionLocked, busy, userHidden);
         }
         catch (Exception exception)
         {
             // Single fail-closed policy: any environment fault suppresses.
             ReportFailure("presentation-tick", exception);
-            return new SuppressionSnapshot(NowQuiet: true, Fullscreen: true, Paused: true, SessionLocked: true, FocusActive: true, UserHidden: true);
+            return new SuppressionSnapshot(NowQuiet: true, Fullscreen: true, Paused: true, SessionLocked: true, Busy: true, UserHidden: true);
         }
     }
 
@@ -1202,7 +1202,7 @@ public sealed class PresentationCoordinator :
 
     private static bool IsSuppressed(SuppressionSnapshot snapshot) =>
         snapshot.NowQuiet || snapshot.Fullscreen || snapshot.Paused
-        || snapshot.SessionLocked || snapshot.FocusActive || snapshot.UserHidden;
+        || snapshot.SessionLocked || snapshot.Busy || snapshot.UserHidden;
 
     /// <summary>
     /// Same suppression check as <see cref="IsSuppressed"/> but leaving out
@@ -1213,11 +1213,11 @@ public sealed class PresentationCoordinator :
     /// </summary>
     private static bool IsSuppressedExcludingUserHidden(SuppressionSnapshot snapshot) =>
         snapshot.NowQuiet || snapshot.Fullscreen || snapshot.Paused
-        || snapshot.SessionLocked || snapshot.FocusActive;
+        || snapshot.SessionLocked || snapshot.Busy;
 
     private async Task PlayWithTimeoutAsync(PetPresentation presentation, CancellationToken cancellationToken)
     {
-        // Loop animations (idle/focus) never complete on their own; without a
+        // Loop animations (idle/eat) never complete on their own; without a
         // bound the petGate is held forever and later notes never present.
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
@@ -1527,6 +1527,6 @@ public sealed class PresentationCoordinator :
         bool Fullscreen,
         bool Paused,
         bool SessionLocked,
-        bool FocusActive,
+        bool Busy,
         bool UserHidden = false);
 }

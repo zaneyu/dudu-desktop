@@ -809,16 +809,36 @@ public sealed class PresentationCoordinatorTests
         Assert.Single(played, item => item.AnimationKey == "tantrum");
     }
 
-    [Fact]
-    public async Task Tantrum_waits_while_focus_is_running()
+    [Theory]
+    [InlineData("eating")]
+    [InlineData("dragging")]
+    public async Task Busy_pet_suppresses_ambient_and_tantrum_and_holds_a_remote_note(string busyKind)
     {
         var clock = new FixedClock(DateTimeOffset.Parse("2026-09-14T16:00:00Z"));
         var affection = new AffectionTracker(clock);
         var pet = PetStateMachine.CreateIdle();
-        pet.Handle(new PetEvent.FocusStarted("focus-1"));
+        if (busyKind == "eating")
+        {
+            pet.Handle(new PetEvent.EatingStarted("meal-1"));
+        }
+        else
+        {
+            pet.Handle(new PetEvent.DragStarted());
+        }
+
+        var notes = new RecordingLocalNoteRepository(
+            new LocalLoveNote("note-1", "You are doing great."));
+        var preferences = Preferences.Default;
+        var scheduler = new AmbientScheduler(
+            clock,
+            new FixedRandomSource(),
+            preferences.AmbientMinimumInterval,
+            preferences.QuietHours);
+        var selector = new LocalNoteSelector(notes, clock, new FixedRandomSource(), preferences);
+        var policy = new PresentationPolicy(TimeSpan.Zero);
         var played = new List<PetPresentation>();
         var coordinator = new PresentationCoordinator(
-            new PresentationPolicy(TimeSpan.Zero),
+            policy,
             new RecordingNotificationService(),
             pet,
             (presentation, _, _) =>
@@ -831,17 +851,34 @@ public sealed class PresentationCoordinatorTests
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             utcNow: () => clock.UtcNow,
+            ambientScheduler: scheduler,
+            localNoteSelector: selector,
             affection: affection);
         coordinator.SetUserVisible(true);
+        coordinator.SetSessionLocked(false);
 
+        // Two hours of ticks: long past the ambient scheduler's first eligible
+        // moment and past the tantrum's neglect threshold, so only the busy
+        // pet can be what holds them back.
         for (var tick = 0; tick < 240; tick++)
         {
             clock.Advance(TimeSpan.FromSeconds(30));
             await coordinator.TickAsync(TestContext.Current.CancellationToken);
         }
 
+        Assert.DoesNotContain(played, item => item.State is PetState.Ambient);
         Assert.DoesNotContain(played, item => item.AnimationKey == "tantrum");
+        Assert.Equal(0, notes.ShownCount);
         Assert.Equal(TimeSpan.Zero, affection.NeglectedFor);
+
+        await coordinator.PublishAsync(
+            DurableNotification.RemoteNote(Guid.NewGuid().ToString("D")),
+            bypassSuppression: false,
+            TestContext.Current.CancellationToken);
+        await coordinator.TickAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, policy.QueuedCount);
+        Assert.DoesNotContain(played, item => item.State is PetState.RemoteNote);
     }
 
     private sealed class FixedClock(DateTimeOffset utcNow) : IClock

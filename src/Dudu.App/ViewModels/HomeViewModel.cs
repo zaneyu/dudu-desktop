@@ -68,16 +68,14 @@ public sealed class HomeViewModel : FeatureViewModelBase
     }
 
     /// <summary>Plain-language pet state. The raw enum name lower-cased read as
-    /// "dudu is remotenote" / "focustransition" / "welcomeback"; the settings shell's
+    /// "dudu is remotenote" / "welcomeback"; the settings shell's
     /// companion panel uses this wording.</summary>
     public static string DescribePetState(PetState state) => state switch
     {
         PetState.Comfort => "comforting u",
         PetState.RemoteNote => "holding a note for u",
-        PetState.FocusTransition => "wrapping up a focus session",
         PetState.WelcomeBack => "saying welcome back",
         PetState.Ambient => "having a little moment",
-        PetState.Focus => "keeping u company while u focus",
         PetState.Interaction => "enjoying the attention",
         PetState.Dragging => "being carried around",
         PetState.Eating => "eating with u",
