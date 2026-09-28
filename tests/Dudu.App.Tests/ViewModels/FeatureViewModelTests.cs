@@ -23,228 +23,56 @@ namespace Dudu.App.Tests.ViewModels;
 public sealed class FeatureViewModelTests
 {
     [Fact]
-    public async Task Home_remembers_only_yesterdays_latest_explicit_check_in()
+    public void Home_exposes_no_practical_members()
     {
-        var fixture = FeatureFixture.Create();
-        var ct = TestContext.Current.CancellationToken;
-        var viewModel = new HomeViewModel(fixture.Context);
-        await viewModel.RefreshAsync(ct);
-        Assert.Contains("fresh check-in", viewModel.YesterdayReflectionText);
+        var names = typeof(HomeViewModel).GetProperties().Select(p => p.Name)
+            .Concat(typeof(HomeViewModel).GetMethods().Select(m => m.Name))
+            .ToArray();
 
-        fixture.Clock.UtcNow = DateTimeOffset.Parse("2026-09-11T20:00:00Z");
-        await fixture.Context.CheckInService.RecordAsync(MoodChoice.Rough, "earlier", ct);
-        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddHours(1);
-        await fixture.Context.CheckInService.RecordAsync(MoodChoice.Okay, "finished my work", ct);
-        fixture.Clock.UtcNow = DateTimeOffset.Parse("2026-09-12T10:00:00Z");
-        await fixture.Context.CheckInService.RecordAsync(MoodChoice.Great, "today's note", ct);
-        await viewModel.RefreshAsync(ct);
-
-        Assert.Contains("yesterday you chose okay", viewModel.YesterdayReflectionText);
-        Assert.Contains("finished my work", viewModel.YesterdayReflectionText);
-        Assert.DoesNotContain("earlier", viewModel.YesterdayReflectionText);
-        Assert.DoesNotContain("today's note", viewModel.YesterdayReflectionText);
-        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddDays(3);
-        await viewModel.RefreshAsync(ct);
-        Assert.Contains("fresh check-in", viewModel.YesterdayReflectionText);
+        foreach (var banned in new[] { "Reminder", "Focus", "Countdown", "CheckIn", "Mood", "Pause", "Task" })
+        {
+            Assert.DoesNotContain(names, n => n.Contains(banned, StringComparison.Ordinal));
+        }
     }
 
     [Fact]
-    public async Task Home_text_takes_the_saved_recipient_name_instead_of_a_hardcoded_one()
+    public async Task Home_greeting_takes_the_saved_recipient_name_instead_of_a_hardcoded_one()
     {
         var fixture = FeatureFixture.Create();
-        var ct = TestContext.Current.CancellationToken;
         fixture.Profiles.Current = new Profile("mei", OnboardingComplete: true);
-        fixture.Reminders.Items.Add(new Reminder(
-            LocalReminderDefaults.EveningCheckInId,
-            LocalReminderDefaults.EveningCheckInDefaultTitle,
-            "a little space to reflect. your check-in stays on this device.",
-            true,
-            new RecurrenceRule.Daily(new TimeOnly(20, 0)),
-            "UTC",
-            QuietHoursBehavior.WaitUntilQuietHoursEnd,
-            MissedOccurrencePolicy.Skip,
-            DateTimeOffset.Parse("2026-09-13T20:00:00Z")));
-        await fixture.Context.CheckInService.RecordAsync(MoodChoice.Okay, "finished my work", ct);
-        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddDays(1);
         var viewModel = new HomeViewModel(fixture.Context);
+        var announced = new List<string?>();
+        viewModel.PropertyChanged += (_, args) => announced.Add(args.PropertyName);
 
-        await viewModel.RefreshAsync(ct);
+        await viewModel.RefreshAsync(TestContext.Current.CancellationToken);
 
-        Assert.Contains("how was your day, mei?", viewModel.NextReminderText);
-        Assert.Equal("how was your day, mei?", viewModel.CheckInSectionHeading);
-        Assert.Contains("how does today feel, mei?", viewModel.YesterdayReflectionText);
+        Assert.Equal("hi hi, mei! dudu missed u", viewModel.GreetingText);
+        Assert.Contains(nameof(HomeViewModel.GreetingText), announced);
     }
 
     [Fact]
-    public async Task Home_text_trims_a_saved_recipient_name_with_stray_whitespace()
+    public async Task Home_greeting_trims_a_saved_recipient_name_with_stray_whitespace()
     {
         // A name saved with stray surrounding whitespace must not leak into Home's
         // copy as an extra space before the name or before the punctuation.
         var fixture = FeatureFixture.Create();
-        var ct = TestContext.Current.CancellationToken;
         fixture.Profiles.Current = new Profile("  mei  ", OnboardingComplete: true);
         var viewModel = new HomeViewModel(fixture.Context);
 
-        await viewModel.RefreshAsync(ct);
+        await viewModel.RefreshAsync(TestContext.Current.CancellationToken);
 
-        Assert.Equal("how was your day, mei?", viewModel.CheckInSectionHeading);
+        Assert.Equal("hi hi, mei! dudu missed u", viewModel.GreetingText);
     }
 
     [Fact]
-    public async Task Home_text_drops_the_name_clause_naturally_when_no_recipient_name_is_saved()
-    {
-        var fixture = FeatureFixture.Create();
-        var ct = TestContext.Current.CancellationToken;
-        await fixture.Context.CheckInService.RecordAsync(MoodChoice.Okay, "finished my work", ct);
-        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddDays(1);
-        var viewModel = new HomeViewModel(fixture.Context);
-
-        await viewModel.RefreshAsync(ct);
-
-        Assert.Equal("how was your day?", viewModel.CheckInSectionHeading);
-        Assert.Contains("how does today feel?", viewModel.YesterdayReflectionText);
-    }
-
-    [Fact]
-    public async Task Next_countdown_text_names_the_soonest_countdown_and_its_days_remaining()
-    {
-        var fixture = FeatureFixture.Create();
-        var ct = TestContext.Current.CancellationToken;
-        var viewModel = new HomeViewModel(fixture.Context)
-        {
-            CountdownTitle = "Anniversary",
-            CountdownTargetUtc = fixture.Clock.UtcNow.AddDays(10),
-        };
-        await viewModel.SaveCountdownAsync(ct);
-        viewModel.CountdownTitle = "Trip";
-        viewModel.CountdownTargetUtc = fixture.Clock.UtcNow.AddDays(2);
-        await viewModel.SaveCountdownAsync(ct);
-
-        Assert.Equal("Trip in 2 days", viewModel.NextCountdownText);
-    }
-
-    [Fact]
-    public async Task Next_countdown_text_reports_no_countdowns_when_none_are_saved()
+    public async Task Home_greeting_drops_the_name_clause_naturally_when_no_recipient_name_is_saved()
     {
         var fixture = FeatureFixture.Create();
         var viewModel = new HomeViewModel(fixture.Context);
 
         await viewModel.RefreshAsync(TestContext.Current.CancellationToken);
 
-        Assert.Equal("no countdowns yet ah", viewModel.NextCountdownText);
-    }
-
-    [Fact]
-    public async Task Next_countdown_text_uses_local_calendar_days_not_a_floored_time_span()
-    {
-        // 14:00 today to midnight six calendar days later is 5 days 10 hours of raw
-        // remaining time -- floor(TotalDays) would read "in 5 days" -- but it is six
-        // local calendar dates away and must read "in 6 days".
-        var fixture = FeatureFixture.Create();
-        var ct = TestContext.Current.CancellationToken;
-        fixture.Clock.UtcNow = DateTimeOffset.Parse("2026-09-19T14:00:00Z");
-        await fixture.Countdowns.SaveAsync(
-            new Countdown(
-                "trip",
-                "Trip",
-                DateTimeOffset.Parse("2026-09-25T00:00:00Z"),
-                isAllDay: false,
-                TimeZoneInfo.Utc),
-            ct);
-        var viewModel = new HomeViewModel(fixture.Context);
-
-        await viewModel.RefreshAsync(ct);
-
-        Assert.Equal("Trip in 6 days", viewModel.NextCountdownText);
-    }
-
-    [Fact]
-    public async Task Next_countdown_text_excludes_a_past_countdown_but_keeps_one_due_later_today()
-    {
-        // An already-past countdown must not keep sorting first and reading "is
-        // today" forever; a countdown whose calendar date genuinely is today must
-        // still read "is today" even though its exact time has not arrived yet.
-        var fixture = FeatureFixture.Create();
-        var ct = TestContext.Current.CancellationToken;
-        fixture.Clock.UtcNow = DateTimeOffset.Parse("2026-09-19T08:00:00Z");
-        await fixture.Countdowns.SaveAsync(
-            new Countdown(
-                "old",
-                "Old visit",
-                DateTimeOffset.Parse("2026-09-10T12:00:00Z"),
-                isAllDay: false,
-                TimeZoneInfo.Utc),
-            ct);
-        await fixture.Countdowns.SaveAsync(
-            new Countdown(
-                "later",
-                "Later visit",
-                DateTimeOffset.Parse("2026-09-19T20:00:00Z"),
-                isAllDay: false,
-                TimeZoneInfo.Utc),
-            ct);
-        var viewModel = new HomeViewModel(fixture.Context);
-
-        await viewModel.RefreshAsync(ct);
-
-        Assert.Equal("Later visit is today", viewModel.NextCountdownText);
-    }
-
-    [Fact]
-    public async Task Next_countdown_text_reads_nothing_coming_up_when_every_saved_countdown_is_past()
-    {
-        // Regression: a non-empty Countdowns list where every entry has already
-        // gone by used to read "no countdowns yet ah" -- indistinguishable from
-        // an actually empty list.
-        var fixture = FeatureFixture.Create();
-        var ct = TestContext.Current.CancellationToken;
-        fixture.Clock.UtcNow = DateTimeOffset.Parse("2026-09-19T08:00:00Z");
-        await fixture.Countdowns.SaveAsync(
-            new Countdown(
-                "old",
-                "Old visit",
-                DateTimeOffset.Parse("2026-09-10T12:00:00Z"),
-                isAllDay: false,
-                TimeZoneInfo.Utc),
-            ct);
-        var viewModel = new HomeViewModel(fixture.Context);
-
-        await viewModel.RefreshAsync(ct);
-
-        Assert.NotEmpty(viewModel.Countdowns);
-        Assert.Equal("nothing coming up", viewModel.NextCountdownText);
-    }
-
-    [Fact]
-    public async Task Next_countdown_text_tie_breaks_same_day_countdowns_by_target_time()
-    {
-        // Two countdowns landing on the same calendar day both sort as "days: 0",
-        // so the choice between them must be deterministic (earliest TargetUtc)
-        // rather than depending on Countdowns' incidental storage order.
-        var fixture = FeatureFixture.Create();
-        var ct = TestContext.Current.CancellationToken;
-        fixture.Clock.UtcNow = DateTimeOffset.Parse("2026-09-19T08:00:00Z");
-        await fixture.Countdowns.SaveAsync(
-            new Countdown(
-                "later-today",
-                "Later today",
-                DateTimeOffset.Parse("2026-09-19T20:00:00Z"),
-                isAllDay: false,
-                TimeZoneInfo.Utc),
-            ct);
-        await fixture.Countdowns.SaveAsync(
-            new Countdown(
-                "earlier-today",
-                "Earlier today",
-                DateTimeOffset.Parse("2026-09-19T12:00:00Z"),
-                isAllDay: false,
-                TimeZoneInfo.Utc),
-            ct);
-        var viewModel = new HomeViewModel(fixture.Context);
-
-        await viewModel.RefreshAsync(ct);
-
-        Assert.Equal("Earlier today is today", viewModel.NextCountdownText);
+        Assert.Equal("hi hi! dudu missed u", viewModel.GreetingText);
     }
 
     [Fact]
@@ -288,15 +116,6 @@ public sealed class FeatureViewModelTests
         // "oki saved" and "select one first" could show side by side.
         var fixture = FeatureFixture.Create();
         var ct = TestContext.Current.CancellationToken;
-        var home = new HomeViewModel(fixture.Context) { CountdownTitle = "Visit" };
-        await home.SaveCountdownAsync(ct);
-        Assert.True(home.HasStatus);
-
-        home.RequestDeleteCountdownCommand.Execute(null);
-
-        Assert.Equal("select one first", home.ErrorMessage);
-        Assert.False(home.HasStatus);
-
         var notes = new LoveNotesViewModel(fixture.Context) { DraftText = "hi" };
         await notes.SaveLocalNoteAsync(ct);
         Assert.True(notes.HasStatus);
@@ -318,10 +137,6 @@ public sealed class FeatureViewModelTests
         Assert.Equal("select one first", notes.ErrorMessage);
         await notes.RevealRemoteNoteCommand.ExecuteAsync(null);
         Assert.Equal("select one first", notes.ErrorMessage);
-
-        var home = new HomeViewModel(fixture.Context);
-        await home.DeleteCountdownCommand.ExecuteAsync(null);
-        Assert.Equal("select one first", home.ErrorMessage);
     }
 
     [Fact]
@@ -384,88 +199,10 @@ public sealed class FeatureViewModelTests
         // selection (the button that runs them stays enabled with nothing selected).
         var fixture = FeatureFixture.Create();
 
-        var home = new HomeViewModel(fixture.Context);
-        home.RequestDeleteCountdownCommand.Execute(null);
-        Assert.Equal("select one first", home.ErrorMessage);
-        Assert.False(home.IsConfirmingDeleteCountdown);
-
         var notes = new LoveNotesViewModel(fixture.Context);
         notes.RequestDeleteLocalNoteCommand.Execute(null);
         Assert.Equal("select one first", notes.ErrorMessage);
         Assert.False(notes.IsConfirmingDeleteNote);
-    }
-
-    [Fact]
-    public async Task Request_delete_commands_clear_a_previous_error_message_on_a_valid_selection()
-    {
-        var fixture = FeatureFixture.Create();
-
-        var home = new HomeViewModel(fixture.Context)
-        {
-            CountdownTitle = "Anniversary",
-            CountdownTargetUtc = DateTimeOffset.Parse("2026-12-01T12:00:00Z"),
-        };
-        await home.SaveCountdownAsync(TestContext.Current.CancellationToken);
-        var countdown = Assert.Single(fixture.Countdowns.Items);
-        home.RequestDeleteCountdownCommand.Execute(null);
-        Assert.NotNull(home.ErrorMessage);
-
-        home.RequestDeleteCountdownCommand.Execute(countdown);
-        Assert.Null(home.ErrorMessage);
-        Assert.True(home.IsConfirmingDeleteCountdown);
-    }
-
-    [Fact]
-    public async Task New_countdown_starts_fresh_instead_of_overwriting_the_selection()
-    {
-        // Once a countdown was selected there was no way to start a fresh
-        // one: typing a new title and saving overwrote the selection.
-        var fixture = FeatureFixture.Create();
-        var ct = TestContext.Current.CancellationToken;
-        var home = new HomeViewModel(fixture.Context)
-        {
-            CountdownTitle = "Anniversary",
-            CountdownTargetUtc = DateTimeOffset.Parse("2026-12-01T12:00:00Z"),
-        };
-        await home.SaveCountdownAsync(ct);
-        home.SelectCountdown(Assert.Single(fixture.Countdowns.Items));
-
-        home.NewCountdownCommand.Execute(null);
-        Assert.Null(home.SelectedCountdown);
-        Assert.Equal(string.Empty, home.CountdownTitle);
-        Assert.Null(home.CountdownTargetUtc);
-        home.CountdownTitle = "Visit";
-        home.CountdownTargetUtc = DateTimeOffset.Parse("2026-12-20T12:00:00Z");
-        await home.SaveCountdownAsync(ct);
-        Assert.Equal(2, fixture.Countdowns.Items.Count);
-    }
-
-    [Fact]
-    public async Task Countdown_deletion_requires_a_separate_confirmation()
-    {
-        var fixture = FeatureFixture.Create();
-        var viewModel = new HomeViewModel(fixture.Context)
-        {
-            CountdownTitle = "Anniversary",
-            CountdownTargetUtc = DateTimeOffset.Parse("2026-12-01T12:00:00Z"),
-        };
-        await viewModel.SaveCountdownAsync(TestContext.Current.CancellationToken);
-        var countdown = Assert.Single(fixture.Countdowns.Items);
-
-        viewModel.RequestDeleteCountdownCommand.Execute(countdown);
-        Assert.True(viewModel.IsConfirmingDeleteCountdown);
-        Assert.Equal(countdown, viewModel.PendingDeleteCountdown);
-        Assert.Single(fixture.Countdowns.Items);
-
-        viewModel.CancelDeleteCountdownCommand.Execute(null);
-        Assert.False(viewModel.IsConfirmingDeleteCountdown);
-        Assert.Single(fixture.Countdowns.Items);
-
-        viewModel.RequestDeleteCountdownCommand.Execute(countdown);
-        await viewModel.DeleteCountdownCommand.ExecuteAsync(viewModel.PendingDeleteCountdown);
-
-        Assert.Empty(fixture.Countdowns.Items);
-        Assert.False(viewModel.IsConfirmingDeleteCountdown);
     }
 
     [Fact]
@@ -510,37 +247,6 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
-    public async Task Selecting_a_different_countdown_clears_the_pending_delete_and_the_prompt_names_the_target()
-    {
-        // H-1: PendingDeleteCountdown used to float free of SelectedCountdown, so
-        // select A, request delete A, select B, confirm -> deleted A instead of B.
-        var fixture = FeatureFixture.Create();
-        var ct = TestContext.Current.CancellationToken;
-        var viewModel = new HomeViewModel(fixture.Context)
-        {
-            CountdownTitle = "Anniversary",
-            CountdownTargetUtc = DateTimeOffset.Parse("2026-12-01T12:00:00Z"),
-        };
-        await viewModel.SaveCountdownAsync(ct);
-        viewModel.CountdownTitle = "Birthday";
-        viewModel.CountdownTargetUtc = DateTimeOffset.Parse("2026-08-01T12:00:00Z");
-        await viewModel.SaveCountdownAsync(ct);
-        Assert.Equal(2, fixture.Countdowns.Items.Count);
-        var first = fixture.Countdowns.Items.First(item => item.Title == "Anniversary");
-        var second = fixture.Countdowns.Items.First(item => item.Title == "Birthday");
-
-        viewModel.RequestDeleteCountdownCommand.Execute(first);
-        Assert.Equal($"delete \"{first.Title}\" for good? cannot undo", viewModel.DeleteCountdownPrompt);
-
-        viewModel.SelectCountdown(second);
-
-        Assert.False(viewModel.IsConfirmingDeleteCountdown);
-        Assert.Null(viewModel.PendingDeleteCountdown);
-        Assert.Null(viewModel.DeleteCountdownPrompt);
-        Assert.Equal(2, fixture.Countdowns.Items.Count);
-    }
-
-    [Fact]
     public async Task Selecting_a_different_note_clears_the_pending_delete_and_the_prompt_names_the_target()
     {
         var fixture = FeatureFixture.Create();
@@ -580,28 +286,6 @@ public sealed class FeatureViewModelTests
         Assert.Equal(
             $"delete \"{new string('a', 39)}…\" for good? cannot undo",
             viewModel.DeleteNotePrompt);
-    }
-
-    [Fact]
-    public async Task Refreshing_the_home_view_model_clears_a_stale_pending_delete_confirmation()
-    {
-        // M-4: pages/view models are cached by the shell, so a revisit must not show a
-        // stale red confirm panel left over from a previous visit.
-        var fixture = FeatureFixture.Create();
-        var viewModel = new HomeViewModel(fixture.Context)
-        {
-            CountdownTitle = "Trip",
-            CountdownTargetUtc = DateTimeOffset.Parse("2026-12-01T12:00:00Z"),
-        };
-        await viewModel.SaveCountdownAsync(TestContext.Current.CancellationToken);
-        var countdown = Assert.Single(fixture.Countdowns.Items);
-        viewModel.RequestDeleteCountdownCommand.Execute(countdown);
-        Assert.True(viewModel.IsConfirmingDeleteCountdown);
-
-        await viewModel.RefreshAsync(TestContext.Current.CancellationToken);
-
-        Assert.False(viewModel.IsConfirmingDeleteCountdown);
-        Assert.Null(viewModel.PendingDeleteCountdown);
     }
 
     [Fact]
@@ -1610,33 +1294,6 @@ public sealed class FeatureViewModelTests
         await AssertRevealDismissesUnreadIndicatorAsync("celebrate");
         await AssertRevealDismissesUnreadIndicatorAsync("none");
         await AssertRevealDismissesUnreadIndicatorAsync("heart");
-    }
-
-    [Fact]
-    public async Task Countdown_supports_create_select_edit_and_delete()
-    {
-        var fixture = FeatureFixture.Create();
-        var viewModel = new HomeViewModel(fixture.Context)
-        {
-            CountdownTitle = "Anniversary",
-            CountdownTargetUtc = DateTimeOffset.Parse("2026-12-01T12:00:00Z"),
-        };
-        await viewModel.SaveCountdownAsync(TestContext.Current.CancellationToken);
-        var countdown = Assert.Single(fixture.Countdowns.Items);
-
-        viewModel.SelectCountdown(countdown);
-        viewModel.CountdownTitle = "Our anniversary";
-        viewModel.CountdownTargetUtc = DateTimeOffset.Parse("2026-12-02T12:00:00Z");
-        await viewModel.SaveCountdownAsync(TestContext.Current.CancellationToken);
-
-        var updated = Assert.Single(fixture.Countdowns.Items);
-        Assert.Equal(countdown.Id, updated.Id);
-        Assert.Equal("Our anniversary", updated.Title);
-        Assert.Equal(DateTimeOffset.Parse("2026-12-02T12:00:00Z"), updated.TargetUtc);
-
-        await viewModel.DeleteCountdownAsync(updated, TestContext.Current.CancellationToken);
-        Assert.Empty(fixture.Countdowns.Items);
-        Assert.Null(viewModel.SelectedCountdown);
     }
 
     [Fact]

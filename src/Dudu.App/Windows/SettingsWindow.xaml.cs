@@ -179,9 +179,9 @@ public sealed partial class SettingsWindow : UserControl
     /// WinUI 3 raises reliably (Unloaded is not guaranteed for a closed window's content).</summary>
     public void OnHostWindowClosed()
     {
-        // The page countdown timer runs on the app's UI thread, which outlives this
+        // Home's partner clock timer runs on the app's UI thread, which outlives this
         // window; left running it would tick (and keep the page alive) forever.
-        _homePage?.StopFocusCountdown();
+        _homePage?.StopPartnerClock();
     }
 
     private async Task EnsureDuduPackAsync()
@@ -278,10 +278,11 @@ public sealed partial class SettingsWindow : UserControl
         DuduFrameImage.Source = image;
         DuduCompanionTitle.Text = DuduTitle(presentation);
         DuduCompanionMessage.Text = DuduMessage(presentation);
-        // Plain language shared with Home's pet status; the raw enum and asset key
+        // Plain language pet state; the raw enum and asset key
         // ("remotenote · note-hold") meant nothing to the person using the app.
         DuduCompanionState.Text = HomeViewModel.DescribePetState(presentation.State);
         AutomationProperties.SetName(DuduFrameImage, $"dudu {presentation.AnimationKey} pose");
+        _homePage?.ShowDuduFrame(image, $"dudu {presentation.AnimationKey} pose");
         _duduTimer.Interval = TimeSpan.FromMilliseconds(Math.Clamp(frame.DurationMs, 80, 1000));
     }
 

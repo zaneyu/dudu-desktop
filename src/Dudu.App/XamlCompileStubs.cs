@@ -63,31 +63,13 @@ namespace Dudu.App.Pages
 {
     public sealed partial class HomePage
     {
-        private TextBlock HomeNextReminder = null!;
-        private TextBlock HomeActiveFocus = null!;
-        private TextBlock HomePetState = null!;
-        private TextBlock HomePetAnimation = null!;
+        private Image HomeDuduImage = null!;
         private TextBlock HomeActionStatus = null!;
-        private TextBlock HomeNextCountdown = null!;
-        private TextBox CountdownTargetBox = null!;
-        private TextBlock CountdownTargetValidation = null!;
-        private Button HomeSaveCountdownButton = null!;
-        private TextBlock HomeCheckInSummary = null!;
-        private ItemsControl HomeCheckInHistory = null!;
 
         private void InitializeComponent()
         {
-            HomeNextReminder = new TextBlock();
-            HomeActiveFocus = new TextBlock();
-            HomePetState = new TextBlock();
-            HomePetAnimation = new TextBlock();
+            HomeDuduImage = new Image();
             HomeActionStatus = new TextBlock();
-            HomeNextCountdown = new TextBlock();
-            CountdownTargetBox = new TextBox();
-            CountdownTargetValidation = new TextBlock();
-            HomeSaveCountdownButton = new Button();
-            HomeCheckInSummary = new TextBlock();
-            HomeCheckInHistory = new ItemsControl();
         }
     }
 

@@ -38,19 +38,4 @@ public sealed class FocusDisplayTests
     [InlineData(125, "2 hr 5 min")]
     public void FormatRemaining_rounds_up_and_switches_to_hours(double minutes, string expected) =>
         Assert.Equal(expected, FocusDisplay.FormatRemaining(TimeSpan.FromMinutes(minutes)));
-
-    [Theory]
-    [InlineData(FocusStatus.Running, 24.2)]
-    [InlineData(FocusStatus.Paused, 90)]
-    [InlineData(FocusStatus.Completed, 0)]
-    [InlineData(FocusStatus.EndedEarly, 0)]
-    public void Home_uses_the_shared_focus_line(FocusStatus status, double remainingMinutes)
-    {
-        var snapshot = new FocusSnapshot(Guid.NewGuid(), null, status, TimeSpan.FromMinutes(remainingMinutes));
-
-        Assert.Equal(
-            FocusDisplay.Describe(snapshot, snapshot.Remaining),
-            HomeViewModel.DescribeFocus(snapshot));
-        Assert.Equal(FocusDisplay.Describe(null, TimeSpan.Zero), HomeViewModel.DescribeFocus(null));
-    }
 }

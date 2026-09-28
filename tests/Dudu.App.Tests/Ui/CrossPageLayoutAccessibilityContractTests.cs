@@ -128,26 +128,39 @@ public sealed class CrossPageLayoutAccessibilityContractTests
     }
 
     [Fact]
-    public void Home_focus_line_ticks_while_home_is_shown_and_stops_when_it_is_not()
+    public void Home_partner_clock_ticks_while_home_is_shown_and_stops_when_it_is_not()
     {
         var code = Read("src", "Dudu.App", "Pages", "HomePage.xaml.cs");
         var loaded = Slice(code, "private async void Page_Loaded(", "\n    }\n");
         var unloaded = Slice(code, "private void Page_Unloaded(", "\n    }\n");
-        var tick = Slice(code, "private void FocusCountdownTimer_Tick(", "\n    }\n");
+        var refresh = Slice(code, "private void RefreshPartnerClock()", "\n    }\n");
 
         Assert.Contains("Unloaded += Page_Unloaded;", code);
-        Assert.Contains("_focusCountdownTimer.Tick += FocusCountdownTimer_Tick;", loaded);
-        Assert.Contains("_focusCountdownTimer.Start();", loaded);
+        Assert.Contains("_partnerClockTimer.Tick += PartnerClockTimer_Tick;", loaded);
+        Assert.Contains("_partnerClockTimer.Start();", loaded);
         Assert.Contains("if (IsLoaded) return;", unloaded);
-        Assert.Contains("_focusCountdownTimer?.Stop();", unloaded);
-        Assert.Contains("ViewModel.RefreshFocusCountdown();", tick);
-        Assert.Contains("catch (Exception exception)", tick);
+        Assert.Contains("_partnerClockTimer?.Stop();", unloaded);
+        Assert.Contains("ViewModel.RefreshPartnerClock();", refresh);
+        Assert.Contains("catch (Exception exception)", refresh);
 
         // Unloaded is not guaranteed for a closed window's content, and the UI thread
         // outlives the settings window, so closing it stops the page timer.
         var shell = Read("src", "Dudu.App", "Windows", "SettingsWindow.xaml.cs");
         var closed = Slice(shell, "public void OnHostWindowClosed()", "\n    }\n");
-        Assert.Contains("_homePage?.StopFocusCountdown();", closed);
+        Assert.Contains("_homePage?.StopPartnerClock();", closed);
+    }
+
+    [Fact]
+    public void Home_big_dudu_mirrors_the_settings_window_frame()
+    {
+        var shell = Read("src", "Dudu.App", "Windows", "SettingsWindow.xaml.cs");
+        var visual = Slice(shell, "private void RefreshDuduVisual()", "\n    }\n");
+        Assert.Contains("_homePage?.ShowDuduFrame(image, ", visual);
+
+        var code = Read("src", "Dudu.App", "Pages", "HomePage.xaml.cs");
+        var show = Slice(code, "public void ShowDuduFrame(", "\n    }\n");
+        Assert.Contains("HomeDuduImage.Source = frame;", show);
+        Assert.Contains("AutomationProperties.SetName(HomeDuduImage, accessibleName);", show);
     }
 
     [Fact]

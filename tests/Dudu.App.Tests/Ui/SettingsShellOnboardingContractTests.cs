@@ -78,29 +78,24 @@ public sealed class SettingsShellOnboardingContractTests
     }
 
     [Fact]
-    public void Home_wraps_text_instead_of_scrolling_sideways_and_shows_local_check_in_times()
+    public void Home_wraps_text_instead_of_scrolling_sideways()
     {
         var home = Read("src", "Dudu.App", "Pages", "HomePage.xaml");
 
         Assert.Contains("<ScrollViewer HorizontalScrollBarVisibility=\"Disabled\"", home);
-        Assert.DoesNotContain("{x:Bind CreatedUtc}", home);
-        Assert.DoesNotContain("{x:Bind Choice}", home);
-        Assert.Contains("viewmodels:HomeViewModel.FormatCheckInTime(CreatedUtc)", home);
-        Assert.Contains("viewmodels:HomeViewModel.FormatCheckInChoice(Choice)", home);
-        Assert.Contains("xmlns:viewmodels=\"using:Dudu.App.ViewModels\"", home);
     }
 
     [Fact]
     public void Home_dynamic_text_exposes_its_value_as_the_accessible_name()
     {
         // A static AutomationProperties.Name overrides a TextBlock's text for UIA, so
-        // Narrator read "check-in summary" instead of "1 optional check-in ...".
+        // Narrator would read a fixed label instead of the greeting or status itself.
         var home = Read("src", "Dudu.App", "Pages", "HomePage.xaml");
         var bound = Regex.Matches(
             home,
             "<TextBlock\\s[^>]*Text=\"\\{x:Bind ViewModel\\.(\\w+), Mode=OneWay\\}\"[^>]*AutomationProperties\\.AutomationId=\"[^\"]+\"[^>]*>");
 
-        Assert.True(bound.Count >= 9, $"expected the Home status texts, found {bound.Count}");
+        Assert.True(bound.Count >= 3, $"expected the Home greeting and status texts, found {bound.Count}");
         foreach (Match tag in bound)
         {
             Assert.Contains(
@@ -110,20 +105,6 @@ public sealed class SettingsShellOnboardingContractTests
 
         var code = Read("src", "Dudu.App", "Pages", "HomePage.xaml.cs");
         Assert.DoesNotContain("HomeActionStatus.Text =", code);
-        Assert.DoesNotContain("CountdownTargetValidation.Text =", code);
-        Assert.DoesNotContain("StartupRecoveryMessage.Text =", code);
-    }
-
-    [Fact]
-    public void Home_countdown_target_box_follows_the_view_model_after_a_save()
-    {
-        var code = Read("src", "Dudu.App", "Pages", "HomePage.xaml.cs");
-
-        Assert.Contains("ViewModel.PropertyChanged += ViewModel_PropertyChanged;", code);
-        var handler = Slice(code, "private void ViewModel_PropertyChanged(", "\n    }");
-        Assert.Contains("nameof(HomeViewModel.CountdownTargetUtc)", handler);
-        Assert.Contains("HomeViewModel.CountdownTargetTextMatches(CountdownTargetBox.Text, ViewModel.CountdownTargetUtc)", handler);
-        Assert.Contains("CountdownTargetBox.Text =", handler);
     }
 
     [Fact]
