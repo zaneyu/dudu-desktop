@@ -95,7 +95,7 @@ public static class AudioCueSelection
 
     /// <summary>
     /// Events that only settle or clear state (dismissals, acknowledgements,
-    /// pause/resume, the end of an interaction, drag or meal) must not
+    /// pause/resume, the end of an interaction, drag, meal or study) must not
     /// sound: the presentation they return is
     /// whatever was already pending underneath, e.g. dismissing one of two
     /// notes would otherwise replay the note-arrival cue.
@@ -104,7 +104,8 @@ public static class AudioCueSelection
         PetEvent.Dismissed or PetEvent.AmbientDismissed or PetEvent.WelcomeBackDismissed
         or PetEvent.ComfortDismissed or PetEvent.PresentationAcknowledged
         or PetEvent.PauseRequested or PetEvent.ResumeRequested
-        or PetEvent.InteractionDismissed or PetEvent.DragEnded or PetEvent.EatingEnded;
+        or PetEvent.InteractionDismissed or PetEvent.DragEnded or PetEvent.EatingEnded
+        or PetEvent.StudyEnded;
 
     public static AudioCueEvent? ForNotification(DurableNotification notification)
     {

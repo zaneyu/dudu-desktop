@@ -645,6 +645,106 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Router_study_together_toggles_a_focus_session_that_holds_notes_back()
+    {
+        var fixture = FeatureFixture.Create();
+        var router = new OverlayCommandRouter(
+            fixture.Context,
+            (_, _) => Task.CompletedTask,
+            (delay, token) => Task.Delay(Timeout.InfiniteTimeSpan, token));
+
+        await router.ExecuteAsync(OverlayAction.StudyTogether, TestContext.Current.CancellationToken);
+
+        Assert.True(router.IsStudying);
+        Assert.Equal("done studying", router.LabelFor(OverlayAction.StudyTogether));
+        Assert.Equal("focus", fixture.Context.Pet.Current.AnimationKey);
+        Assert.Equal(PetStateMachine.StudyingBubble, fixture.Context.Pet.Current.BubbleTitle);
+        Assert.Equal(PetState.Studying, fixture.Context.Pet.Handle(new PetEvent.RemoteNoteArrived("m-1")).State);
+
+        await router.ExecuteAsync(OverlayAction.StudyTogether, TestContext.Current.CancellationToken);
+
+        Assert.False(router.IsStudying);
+        Assert.Equal("study together", router.LabelFor(OverlayAction.StudyTogether));
+        Assert.False(fixture.Context.Pet.IsStudyingActive);
+        Assert.Equal(PetState.RemoteNote, fixture.Context.Pet.Current.State);
+    }
+
+    [Fact]
+    public async Task Router_starting_study_ends_a_running_meal_and_vice_versa()
+    {
+        var fixture = FeatureFixture.Create();
+        var pet = fixture.Context.Pet;
+        var router = new OverlayCommandRouter(
+            fixture.Context,
+            (_, _) => Task.CompletedTask,
+            (delay, token) => Task.Delay(Timeout.InfiniteTimeSpan, token));
+
+        await router.ExecuteAsync(OverlayAction.EatTogether, TestContext.Current.CancellationToken);
+        await router.ExecuteAsync(OverlayAction.StudyTogether, TestContext.Current.CancellationToken);
+
+        Assert.False(router.IsEating);
+        Assert.True(router.IsStudying);
+        Assert.False(pet.IsEatingActive);
+        Assert.Equal(PetState.Studying, pet.Current.State);
+
+        await router.ExecuteAsync(OverlayAction.EatTogether, TestContext.Current.CancellationToken);
+
+        Assert.True(router.IsEating);
+        Assert.False(router.IsStudying);
+        Assert.False(pet.IsStudyingActive);
+        Assert.Equal(PetState.Eating, pet.Current.State);
+    }
+
+    [Fact]
+    public async Task Router_study_start_that_fails_to_present_never_latches_the_pet()
+    {
+        var fixture = FeatureFixture.Create(beforePresent: (petEvent, _) => petEvent is PetEvent.StudyStarted
+            ? Task.FromException(new InvalidOperationException("presentation failed"))
+            : Task.CompletedTask);
+        var router = new OverlayCommandRouter(
+            fixture.Context,
+            (_, _) => Task.CompletedTask,
+            (delay, token) => Task.Delay(Timeout.InfiniteTimeSpan, token));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            router.ExecuteAsync(OverlayAction.StudyTogether, TestContext.Current.CancellationToken));
+
+        Assert.False(router.IsStudying);
+        Assert.False(fixture.Context.Pet.IsStudyingActive);
+    }
+
+    [Fact]
+    public async Task Router_study_together_ends_by_itself_after_twenty_five_minutes()
+    {
+        var fixture = FeatureFixture.Create();
+        var requested = new List<TimeSpan>();
+        var studyOver = new TaskCompletionSource();
+        var router = new OverlayCommandRouter(
+            fixture.Context,
+            (_, _) => Task.CompletedTask,
+            (delay, token) =>
+            {
+                requested.Add(delay);
+                return studyOver.Task.WaitAsync(token);
+            });
+
+        await router.ExecuteAsync(OverlayAction.StudyTogether, TestContext.Current.CancellationToken);
+        Assert.Equal(PetState.Studying, fixture.Context.Pet.Current.State);
+
+        studyOver.SetResult();
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (fixture.Context.Pet.IsStudyingActive && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal([OverlayCommandRouter.StudyDuration], requested);
+        Assert.Equal(TimeSpan.FromMinutes(25), OverlayCommandRouter.StudyDuration);
+        Assert.False(router.IsStudying);
+        Assert.Equal(PetState.Idle, fixture.Context.Pet.Current.State);
+    }
+
+    [Fact]
     public async Task Breathing_publishes_a_finite_cycle()
     {
         var fixture = FeatureFixture.Create();

@@ -18,6 +18,10 @@ public enum PetState
     /// <summary>An eat-together meal is running (eat loop). Suppresses
     /// unsolicited presentations until it ends.</summary>
     Eating,
+
+    /// <summary>A study-together session is running (focus loop). Suppresses
+    /// unsolicited presentations until it ends, like a meal.</summary>
+    Studying,
 }
 
 public sealed record PetPresentation(

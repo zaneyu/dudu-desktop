@@ -15,6 +15,7 @@ public sealed class PresentationCoordinatorTests
 {
     private const string NoteOne = "11111111-1111-4111-8111-111111111111";
     private const string NoteTwo = "22222222-2222-4222-8222-222222222222";
+    private const string NoteThree = "33333333-3333-4333-8333-333333333333";
 
     [Fact]
     public void Notification_audio_mapping_uses_the_expected_cue()
@@ -497,9 +498,16 @@ public sealed class PresentationCoordinatorTests
             bypassSuppression: true,
             CancellationToken.None);
 
+        pet.Handle(new PetEvent.EatingEnded("meal-1"));
+        pet.Handle(new PetEvent.StudyStarted("study-1"));
+        await coordinator.PublishAsync(
+            DurableNotification.RemoteNote(NoteThree),
+            bypassSuppression: true,
+            CancellationToken.None);
+
         Assert.Equal(0, playCount);
-        Assert.Equal(2, policy.QueuedCount);
-        Assert.Equal(PetState.Eating, pet.Current.State);
+        Assert.Equal(3, policy.QueuedCount);
+        Assert.Equal(PetState.Studying, pet.Current.State);
     }
 
     [Fact]

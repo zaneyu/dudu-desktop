@@ -79,6 +79,7 @@ public sealed class HomeViewModel : FeatureViewModelBase
         PetState.Interaction => "enjoying the attention",
         PetState.Dragging => "being carried around",
         PetState.Eating => "eating with u",
+        PetState.Studying => "studying with u",
         _ => "idle",
     };
 

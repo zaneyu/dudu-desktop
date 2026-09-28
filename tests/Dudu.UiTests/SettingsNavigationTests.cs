@@ -111,6 +111,9 @@ public sealed class SettingsNavigationTests
         // Eat together toggles: start the meal, then end it again.
         ExerciseRoute(window, "OverlayActionEatTogether", "HomeActionStatus", "eat together ready le");
         ExerciseRoute(window, "OverlayActionEatTogether", "HomeActionStatus", "eat together ready le");
+        // Study together toggles the same way.
+        ExerciseRoute(window, "OverlayActionStudyTogether", "HomeActionStatus", "study together ready le");
+        ExerciseRoute(window, "OverlayActionStudyTogether", "HomeActionStatus", "study together ready le");
         ExerciseRoute(window, "OverlayComfortActionTinyHug", "HomeActionStatus", "tiny hug ready le");
 
         // Breathe with me shows its phase on Home; Stop ends it without an error.
@@ -147,6 +150,7 @@ public sealed class SettingsNavigationTests
             [
                 "HomeGreeting", "HomePartnerClock", "HomeDuduImage",
                 "OverlayActionPet", "OverlayActionDrinkWater", "OverlayActionEatTogether",
+                "OverlayActionStudyTogether",
                 "OverlayComfortActionTinyHug", "OverlayComfortActionBreatheWithMe",
             ]),
         new("NavLoveNotes", "LoveNotesPageTitle", ["LoveNotesPendingCount", "LoveNotesRemoteList", "LoveNotesRevealSelected", "LoveNotesOpenedList", "LoveNotesDelete"]),

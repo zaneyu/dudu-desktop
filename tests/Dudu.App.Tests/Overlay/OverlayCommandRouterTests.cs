@@ -14,13 +14,14 @@ public sealed class OverlayCommandRouterTests
     }
 
     [Fact]
-    public void Primary_actions_are_exactly_the_five_cute_buttons()
+    public void Primary_actions_are_exactly_the_six_cute_buttons()
     {
         Assert.Equal(
             [
                 OverlayAction.Pet,
                 OverlayAction.DrinkWater,
                 OverlayAction.EatTogether,
+                OverlayAction.StudyTogether,
                 OverlayAction.TinyHug,
                 OverlayAction.BreatheWithMe,
             ],
@@ -130,18 +131,21 @@ public sealed class OverlayCommandRouterTests
     [InlineData(OverlayAction.Pet)]
     [InlineData(OverlayAction.DrinkWater)]
     [InlineData(OverlayAction.EatTogether)]
+    [InlineData(OverlayAction.StudyTogether)]
     [InlineData(OverlayAction.TinyHug)]
     [InlineData(OverlayAction.BreatheWithMe)]
     public async Task Every_action_has_a_real_arm_in_both_execution_paths(OverlayAction action)
     {
         // Each switch ends in "_ => throw": a missing arm would compile and
         // only throw at runtime on Windows.
-        // Breathing phases complete at once; a started meal waits for the
-        // second toggle instead of ending itself in the background.
+        // Breathing phases complete at once; a started meal or study session
+        // waits for the second toggle instead of ending itself in the
+        // background.
         var router = new OverlayCommandRouter(
             OverlayTestFeatureContext.Create(),
             (_, _) => Task.CompletedTask,
             (delay, token) => delay == OverlayCommandRouter.EatingDuration
+                || delay == OverlayCommandRouter.StudyDuration
                 ? Task.Delay(Timeout.InfiniteTimeSpan, token)
                 : Task.CompletedTask);
 

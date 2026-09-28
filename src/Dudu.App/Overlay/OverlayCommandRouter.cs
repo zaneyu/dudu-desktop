@@ -14,11 +14,13 @@ public sealed class OverlayCommandRouter
     private bool _isBreathing;
     private string _breathingInstruction = "breathe in for 4, out for 6";
     private ComfortPanelState _comfortPanel = ComfortPanelState.Closed;
-    private string? _mealId;
-    /// <summary>Serializes eat-together toggles end to end, so a quick
+    /// <summary>The running eat- or study-together session, if any. Only one
+    /// runs at a time: starting one ends the other.</summary>
+    private TogetherSession? _session;
+    /// <summary>Serializes together toggles end to end, so a quick
     /// start-then-end reaches the pet in that order.</summary>
-    private readonly SemaphoreSlim _mealToggle = new(1, 1);
-    private CancellationTokenSource? _mealTimer;
+    private readonly SemaphoreSlim _sessionToggle = new(1, 1);
+    private CancellationTokenSource? _sessionTimer;
 
     public OverlayCommandRouter(
         CompanionFeatureContext context,
@@ -36,12 +38,16 @@ public sealed class OverlayCommandRouter
         OverlayAction.Pet,
         OverlayAction.DrinkWater,
         OverlayAction.EatTogether,
+        OverlayAction.StudyTogether,
         OverlayAction.TinyHug,
         OverlayAction.BreatheWithMe,
     ];
 
     /// <summary>How long an eat-together meal lasts unless ended early.</summary>
     public static readonly TimeSpan EatingDuration = TimeSpan.FromMinutes(20);
+
+    /// <summary>How long a study-together session lasts unless ended early.</summary>
+    public static readonly TimeSpan StudyDuration = TimeSpan.FromMinutes(25);
 
     /// <summary>Label + UI Automation id + settings destination of every
     /// Home button; each id must appear in HomePage.xaml.</summary>
@@ -60,6 +66,7 @@ public sealed class OverlayCommandRouter
         OverlayAction.Pet => "pet",
         OverlayAction.DrinkWater => "drink water",
         OverlayAction.EatTogether => "eat together",
+        OverlayAction.StudyTogether => "study together",
         OverlayAction.TinyHug => "tiny hug",
         OverlayAction.BreatheWithMe => "breathe with me",
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "oh no unknown overlay action"),
@@ -73,6 +80,7 @@ public sealed class OverlayCommandRouter
         OverlayAction.Pet => "OverlayActionPet",
         OverlayAction.DrinkWater => "OverlayActionDrinkWater",
         OverlayAction.EatTogether => "OverlayActionEatTogether",
+        OverlayAction.StudyTogether => "OverlayActionStudyTogether",
         OverlayAction.TinyHug => "OverlayComfortActionTinyHug",
         OverlayAction.BreatheWithMe => "OverlayComfortActionBreatheWithMe",
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "alala unknown overlay action"),
@@ -90,14 +98,18 @@ public sealed class OverlayCommandRouter
     public bool IsBreathing { get { lock (_gate) return _isBreathing; } }
     public string BreathingInstruction { get { lock (_gate) return _breathingInstruction; } }
     public ComfortPanelState ComfortPanel { get { lock (_gate) return _comfortPanel; } }
-    public bool IsEating { get { lock (_gate) return _mealId is not null; } }
+    public bool IsEating { get { lock (_gate) return _session?.Kind == TogetherKind.Eat; } }
+    public bool IsStudying { get { lock (_gate) return _session?.Kind == TogetherKind.Study; } }
 
     /// <summary>Painted label, reflecting live toggle state (eat together
-    /// becomes "done eating" while a meal runs).</summary>
-    public string LabelFor(OverlayAction action) =>
-        action == OverlayAction.EatTogether && IsEating
-            ? "done eating"
-            : Label(action);
+    /// becomes "done eating" while a meal runs, study together "done
+    /// studying" while a study session runs).</summary>
+    public string LabelFor(OverlayAction action) => action switch
+    {
+        OverlayAction.EatTogether when IsEating => "done eating",
+        OverlayAction.StudyTogether when IsStudying => "done studying",
+        _ => Label(action),
+    };
 
     public event EventHandler? ComfortPanelChanged;
 
@@ -107,7 +119,8 @@ public sealed class OverlayCommandRouter
         {
             OverlayAction.Pet => ExecutePetAsync(cancellationToken),
             OverlayAction.DrinkWater => ExecuteDrinkWaterAsync(cancellationToken),
-            OverlayAction.EatTogether => ToggleEatTogetherAsync(cancellationToken),
+            OverlayAction.EatTogether => ToggleTogetherAsync(TogetherKind.Eat, cancellationToken),
+            OverlayAction.StudyTogether => ToggleTogetherAsync(TogetherKind.Study, cancellationToken),
             OverlayAction.TinyHug => PresentTinyHugAsync(cancellationToken),
             OverlayAction.BreatheWithMe => BreatheWithMeAsync(cancellationToken),
             _ => throw new ArgumentOutOfRangeException(nameof(action), action, "alala unknown overlay action"),
@@ -139,7 +152,10 @@ public sealed class OverlayCommandRouter
                 await ExecuteDrinkWaterAsync(cancellationToken);
                 break;
             case OverlayAction.EatTogether:
-                await ToggleEatTogetherAsync(cancellationToken);
+                await ToggleTogetherAsync(TogetherKind.Eat, cancellationToken);
+                break;
+            case OverlayAction.StudyTogether:
+                await ToggleTogetherAsync(TogetherKind.Study, cancellationToken);
                 break;
             case OverlayAction.TinyHug:
                 await PresentTinyHugAsync(cancellationToken);
@@ -159,6 +175,7 @@ public sealed class OverlayCommandRouter
         OverlayAction.Pet => "home",
         OverlayAction.DrinkWater => "home",
         OverlayAction.EatTogether => "home",
+        OverlayAction.StudyTogether => "home",
         OverlayAction.TinyHug or OverlayAction.BreatheWithMe => "home",
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "oh no unknown overlay action"),
     };
@@ -175,87 +192,95 @@ public sealed class OverlayCommandRouter
     private Task ExecuteDrinkWaterAsync(CancellationToken cancellationToken) =>
         _context.DrinkAsync(cancellationToken);
 
-    /// <summary>Starts an in-memory eat-together meal (eat loop, notes and
-    /// reminders held back like focus) or, when one is running, ends it.
-    /// A running meal ends by itself after <see cref="EatingDuration"/>.</summary>
-    private async Task ToggleEatTogetherAsync(CancellationToken cancellationToken)
+    /// <summary>Starts an in-memory eat- or study-together session (eat or
+    /// focus loop, notes and ambient moments held back) or, when one of that
+    /// kind is running, ends it. Starting one kind ends the other first. A
+    /// running session ends by itself after its duration.</summary>
+    private async Task ToggleTogetherAsync(TogetherKind kind, CancellationToken cancellationToken)
     {
-        await _mealToggle.WaitAsync(cancellationToken);
+        await _sessionToggle.WaitAsync(cancellationToken);
         try
         {
-            await ToggleEatTogetherCoreAsync(cancellationToken);
+            await ToggleTogetherCoreAsync(kind, cancellationToken);
         }
         finally
         {
-            _mealToggle.Release();
+            _sessionToggle.Release();
         }
     }
 
-    private async Task ToggleEatTogetherCoreAsync(CancellationToken cancellationToken)
+    private async Task ToggleTogetherCoreAsync(TogetherKind kind, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        string? endingMeal;
-        string? startingMeal = null;
+        TogetherSession? ending;
+        TogetherSession? starting = null;
         CancellationTokenSource? timer = null;
         lock (_gate)
         {
-            endingMeal = _mealId;
-            _mealTimer?.Cancel();
-            _mealTimer = null;
-            _mealId = null;
-            if (endingMeal is null)
+            ending = _session;
+            _sessionTimer?.Cancel();
+            _sessionTimer = null;
+            _session = null;
+            if (ending?.Kind != kind)
             {
-                startingMeal = Guid.NewGuid().ToString("N");
+                starting = new TogetherSession(kind, Guid.NewGuid().ToString("N"));
                 timer = new CancellationTokenSource();
-                _mealId = startingMeal;
-                _mealTimer = timer;
+                _session = starting;
+                _sessionTimer = timer;
             }
         }
 
-        if (endingMeal is not null)
+        if (ending is not null)
         {
             try
             {
-                await PresentAsync(new PetEvent.EatingEnded(endingMeal), cancellationToken);
+                await PresentAsync(EndedEvent(ending), cancellationToken);
             }
             catch
             {
-                // The router already reads "no meal"; never leave the pet
+                // The router already reads "no session"; never leave the pet
                 // latched in one nothing will end.
-                _context.Pet.Handle(new PetEvent.EatingEnded(endingMeal));
+                _context.Pet.Handle(EndedEvent(ending));
+                if (starting is not null) AbandonStart(starting, timer!);
                 throw;
             }
-            return;
         }
+
+        if (starting is null) return;
 
         try
         {
-            await PresentAsync(new PetEvent.EatingStarted(startingMeal!), cancellationToken);
+            await PresentAsync(StartedEvent(starting), cancellationToken);
         }
         catch
         {
-            // Never leave the pet latched in a meal nothing can end.
-            lock (_gate)
-            {
-                if (_mealId == startingMeal)
-                {
-                    _mealId = null;
-                    _mealTimer = null;
-                }
-            }
-            timer!.Cancel();
-            _context.Pet.Handle(new PetEvent.EatingEnded(startingMeal!));
+            AbandonStart(starting, timer!);
             throw;
         }
 
-        _ = EndMealWhenDueAsync(startingMeal!, timer!.Token);
+        _ = EndSessionWhenDueAsync(starting, timer!.Token);
     }
 
-    private async Task EndMealWhenDueAsync(string mealId, CancellationToken timerToken)
+    /// <summary>Never leave the pet latched in a session nothing can end.</summary>
+    private void AbandonStart(TogetherSession starting, CancellationTokenSource timer)
+    {
+        lock (_gate)
+        {
+            if (_session == starting)
+            {
+                _session = null;
+                _sessionTimer = null;
+            }
+        }
+        timer.Cancel();
+        _context.Pet.Handle(EndedEvent(starting));
+    }
+
+    private async Task EndSessionWhenDueAsync(TogetherSession session, CancellationToken timerToken)
     {
         try
         {
-            await _delayAsync(EatingDuration, timerToken);
+            await _delayAsync(DurationOf(session.Kind), timerToken);
         }
         catch (OperationCanceledException)
         {
@@ -264,24 +289,40 @@ public sealed class OverlayCommandRouter
 
         lock (_gate)
         {
-            if (_mealId != mealId) return;
-            _mealId = null;
-            _mealTimer = null;
+            if (_session != session) return;
+            _session = null;
+            _sessionTimer = null;
         }
 
         try
         {
-            await PresentAsync(new PetEvent.EatingEnded(mealId), CancellationToken.None);
+            await PresentAsync(EndedEvent(session), CancellationToken.None);
         }
         catch (Exception exception)
         {
-            _context.Pet.Handle(new PetEvent.EatingEnded(mealId));
+            _context.Pet.Handle(EndedEvent(session));
             global::System.Diagnostics.Trace.TraceError(
-                "Dudu eat-together end failed: {0} (0x{1:X8})",
+                "Dudu {0}-together end failed: {1} (0x{2:X8})",
+                session.Kind == TogetherKind.Eat ? "eat" : "study",
                 exception.GetType().FullName,
                 exception.HResult);
         }
     }
+
+    private static TimeSpan DurationOf(TogetherKind kind) =>
+        kind == TogetherKind.Eat ? EatingDuration : StudyDuration;
+
+    private static PetEvent StartedEvent(TogetherSession session) => session.Kind == TogetherKind.Eat
+        ? new PetEvent.EatingStarted(session.Id)
+        : new PetEvent.StudyStarted(session.Id);
+
+    private static PetEvent EndedEvent(TogetherSession session) => session.Kind == TogetherKind.Eat
+        ? new PetEvent.EatingEnded(session.Id)
+        : new PetEvent.StudyEnded(session.Id);
+
+    private enum TogetherKind { Eat, Study }
+
+    private sealed record TogetherSession(TogetherKind Kind, string Id);
 
     private Task NavigateAsync(string destination, CancellationToken cancellationToken)
     {

@@ -984,10 +984,11 @@ public sealed class PresentationCoordinator :
                 return true;
             }
 
-            // A drag or meal may have started while this item waited for the
-            // gate: presenting now would show it as the drag/eat loop and
-            // then count it delivered. Decline so the caller requeues it.
-            if (_pet.IsDragging || _pet.IsEatingActive)
+            // A drag, meal or study session may have started while this item
+            // waited for the gate: presenting now would show it as the
+            // drag/eat/study loop and then count it delivered. Decline so the
+            // caller requeues it.
+            if (_pet.IsDragging || _pet.IsEatingActive || _pet.IsStudyingActive)
             {
                 return false;
             }
@@ -1205,11 +1206,11 @@ public sealed class PresentationCoordinator :
             }
 
             var paused = PausePolicy.IsSuppressed(_pauseState(), now, liveFullscreen);
-            // An eat-together meal holds unsolicited items back even while a
+            // An eat-together meal or study session holds unsolicited items back even while a
             // pet or welcome-back is what is on screen right now; a drag
             // holds them too, so a note is never "presented" as the drag
             // loop and then acknowledged.
-            var busy = _pet.IsEatingActive || _pet.IsDragging;
+            var busy = _pet.IsEatingActive || _pet.IsStudyingActive || _pet.IsDragging;
             return new SuppressionSnapshot(liveFullscreen, paused, sessionLocked, busy, userHidden);
         }
         catch (Exception exception)

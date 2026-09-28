@@ -297,11 +297,11 @@ public sealed class XamlContractTests
     public void Every_cute_overlay_action_has_a_keyboard_accessible_home_counterpart()
     {
         // Home is the keyboard/UIA surface for every cute action: pet, drink,
-        // eat together, tiny hug and breathe with me.
+        // eat together, study together, tiny hug and breathe with me.
         var root = FindRepositoryRoot();
         var home = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml"));
 
-        Assert.Equal(5, Dudu.App.Overlay.OverlayCommandRouter.AccessiblePrimaryActions.Count);
+        Assert.Equal(6, Dudu.App.Overlay.OverlayCommandRouter.AccessiblePrimaryActions.Count);
         foreach (var action in Dudu.App.Overlay.OverlayCommandRouter.AccessiblePrimaryActions)
         {
             Assert.Contains($"AutomationProperties.AutomationId=\"{action.AutomationId}\"", home);

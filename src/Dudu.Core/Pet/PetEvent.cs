@@ -91,6 +91,26 @@ public abstract record PetEvent
         }
     }
 
+    public sealed record StudyStarted : PetEvent
+    {
+        public string SessionId { get; }
+
+        public StudyStarted(string sessionId)
+        {
+            SessionId = RequireId(sessionId, nameof(sessionId));
+        }
+    }
+
+    public sealed record StudyEnded : PetEvent
+    {
+        public string SessionId { get; }
+
+        public StudyEnded(string sessionId)
+        {
+            SessionId = RequireId(sessionId, nameof(sessionId));
+        }
+    }
+
     public sealed record Dismissed : PetEvent
     {
         public string ItemId { get; }

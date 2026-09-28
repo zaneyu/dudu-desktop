@@ -1,4 +1,5 @@
 using Dudu.App.Audio;
+using Dudu.Core.Models;
 using Dudu.Core.Pet;
 using Xunit;
 
@@ -35,5 +36,13 @@ public sealed class AudioCueSelectionTests
         Assert.False(AudioCueSelection.IsSettlingEvent(new PetEvent.InteractionRequested("petted")));
         Assert.False(AudioCueSelection.IsSettlingEvent(new PetEvent.DragStarted()));
         Assert.False(AudioCueSelection.IsSettlingEvent(new PetEvent.EatingStarted("meal-1")));
+    }
+
+    [Fact]
+    public void Ending_a_study_session_is_silent()
+    {
+        Assert.True(AudioCueSelection.IsSettlingEvent(new PetEvent.StudyEnded("study-1")));
+        Assert.Null(AudioCueSelection.ForPresentation(
+            new PetPresentation(PetState.Studying, "focus", PetStateMachine.StudyingBubble, null, false)));
     }
 }

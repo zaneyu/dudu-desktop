@@ -15,6 +15,9 @@ public sealed class PetStateMachine
     /// <summary>Bubble shown while an eat-together meal is running.</summary>
     public const string EatingBubble = "eating together 🍜";
 
+    /// <summary>Bubble shown while a study-together session is running.</summary>
+    public const string StudyingBubble = "studying with you 📚";
+
     /// <summary>Bubble shown with the drink pose (overlay action or ambient).</summary>
     public const string DrinkBubble = "drink water ah 💧";
 
@@ -34,6 +37,7 @@ public sealed class PetStateMachine
     private string? _ambientAnimation;
     private string? _interactionAnimation;
     private string? _eatingId;
+    private string? _studyId;
     private bool _dragging;
     private bool _paused;
 
@@ -76,6 +80,18 @@ public sealed class PetStateMachine
             lock (_sync)
             {
                 return IsEatingLatched();
+            }
+        }
+    }
+
+    /// <summary>True while a study-together session is latched.</summary>
+    public bool IsStudyingActive
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _studyId is not null;
             }
         }
     }
@@ -185,6 +201,20 @@ public sealed class PetStateMachine
 
                 break;
 
+            case PetEvent.StudyStarted study:
+                _studyId = study.SessionId;
+                _ambientAnimation = null;
+                break;
+
+            case PetEvent.StudyEnded study:
+                if (string.Equals(_studyId, study.SessionId, StringComparison.Ordinal))
+                {
+                    _studyId = null;
+                    _ambientAnimation = null;
+                }
+
+                break;
+
             case PetEvent.Dismissed dismissed:
                 Dismiss(dismissed.ItemId);
                 break;
@@ -262,6 +292,11 @@ public sealed class PetStateMachine
             return Present(PetState.Eating, "eat", EatingBubble);
         }
 
+        if (_studyId is not null)
+        {
+            return Present(PetState.Studying, "focus", StudyingBubble);
+        }
+
         return Present(PetState.Idle, "idle");
     }
 
@@ -316,6 +351,12 @@ public sealed class PetStateMachine
             return;
         }
 
+        if (_studyId is not null && string.Equals(itemId, _studyId, StringComparison.Ordinal))
+        {
+            _studyId = null;
+            return;
+        }
+
         if (string.Equals(itemId, _ambientAnimation, StringComparison.Ordinal))
         {
             _ambientAnimation = null;
@@ -324,9 +365,10 @@ public sealed class PetStateMachine
 
     private bool IsEatingLatched() => _eatingId is not null;
 
-    /// <summary>An eat-together meal keeps Dudu as quiet company: unsolicited
-    /// notes and ambient moments wait until it ends.</summary>
-    private bool IsQuietCompanyActive() => IsEatingLatched();
+    /// <summary>An eat-together meal or a study-together session keeps Dudu
+    /// as quiet company: unsolicited notes and ambient moments wait until it
+    /// ends.</summary>
+    private bool IsQuietCompanyActive() => IsEatingLatched() || _studyId is not null;
 
     private static bool IsAllowedAmbientAnimation(string animationKey)
     {

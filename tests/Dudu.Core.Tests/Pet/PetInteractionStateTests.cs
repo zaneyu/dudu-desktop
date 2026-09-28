@@ -105,6 +105,35 @@ public sealed class PetInteractionStateTests
     }
 
     [Fact]
+    public void Studying_loops_the_focus_pose_with_its_bubble_and_ends_by_session_id()
+    {
+        var machine = PetStateMachine.CreateIdle();
+
+        var studying = machine.Handle(new PetEvent.StudyStarted("study-1"));
+
+        Assert.Equal(PetState.Studying, studying.State);
+        Assert.Equal("focus", studying.AnimationKey);
+        Assert.Equal(PetStateMachine.StudyingBubble, studying.BubbleTitle);
+        Assert.True(machine.IsStudyingActive);
+        Assert.Equal(PetState.Studying, machine.Handle(new PetEvent.StudyEnded("other-study")).State);
+        Assert.Equal(PetState.Idle, machine.Handle(new PetEvent.StudyEnded("study-1")).State);
+        Assert.False(machine.IsStudyingActive);
+    }
+
+    [Fact]
+    public void Studying_holds_notes_and_ambient_back_and_petting_plays_over_it()
+    {
+        var machine = PetStateMachine.CreateIdle();
+        machine.Handle(new PetEvent.StudyStarted("study-1"));
+
+        Assert.Equal(PetState.Studying, machine.Handle(new PetEvent.RemoteNoteArrived("note-1")).State);
+        Assert.Equal(PetState.Studying, machine.Handle(new PetEvent.AmbientRequested("blink")).State);
+        Assert.Equal(PetState.Interaction, machine.Handle(new PetEvent.InteractionRequested("petted")).State);
+        Assert.Equal(PetState.Studying, machine.Handle(new PetEvent.InteractionDismissed("petted")).State);
+        Assert.Equal(PetState.RemoteNote, machine.Handle(new PetEvent.StudyEnded("study-1")).State);
+    }
+
+    [Fact]
     public void Eating_holds_notes_and_ambient_back()
     {
         var machine = PetStateMachine.CreateIdle();
