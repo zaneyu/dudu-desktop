@@ -51,6 +51,33 @@ public sealed class PetInteractionStateTests
         Assert.Equal("eat", after.AnimationKey);
     }
 
+    [Theory]
+    [InlineData("grumpy", PetStateMachine.GrumpyBubble)]
+    [InlineData("tantrum", PetStateMachine.PokedTantrumBubble)]
+    [InlineData("flail", PetStateMachine.FlailBubble)]
+    [InlineData("wail", PetStateMachine.WailBubble)]
+    public void Poke_reactions_play_as_interactions_with_their_own_bubble(string key, string bubble)
+    {
+        var machine = PetStateMachine.CreateIdle();
+
+        var reaction = machine.Handle(new PetEvent.InteractionRequested(key));
+
+        Assert.Equal(PetState.Interaction, reaction.State);
+        Assert.Equal(key, reaction.AnimationKey);
+        Assert.Equal(bubble, reaction.BubbleTitle);
+        Assert.Equal(PetState.Idle, machine.Handle(new PetEvent.InteractionDismissed(key)).State);
+    }
+
+    [Fact]
+    public void The_neglect_tantrum_still_asks_to_be_petted()
+    {
+        var machine = PetStateMachine.CreateIdle();
+
+        var tantrum = machine.Handle(new PetEvent.AmbientRequested("tantrum"));
+
+        Assert.Equal(PetStateMachine.TantrumBubble, tantrum.BubbleTitle);
+    }
+
     [Fact]
     public void Drink_interaction_carries_the_drink_bubble_and_plays_during_a_meal()
     {

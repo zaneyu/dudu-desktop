@@ -47,6 +47,9 @@ public static class AssetManifestContract
         "tantrum",
         "petted",
         "eat",
+        "grumpy",
+        "flail",
+        "wail",
     ];
 
     public static IReadOnlySet<string> OneShotAnimationKeys { get; } =
@@ -60,6 +63,9 @@ public static class AssetManifestContract
             "note-arrival",
             "tantrum",
             "petted",
+            "grumpy",
+            "flail",
+            "wail",
         };
 
     /// <summary>The motion clip played while Dudu wanders across the desktop.</summary>

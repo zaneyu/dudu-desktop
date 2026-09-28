@@ -111,12 +111,21 @@ public sealed class CompanionFeatureContext
 
     /// <summary>Pets Dudu from any surface: resets the shared tantrum clock
     /// and plays <c>petted</c>, or <c>celebrate</c> on a third pet within a
-    /// minute. An interaction (not an ambient) so it also plays during a
-    /// meal.</summary>
+    /// minute; pokes that keep coming turn him <c>grumpy</c>, then into a
+    /// <c>tantrum</c>, a <c>flail</c> and finally a <c>wail</c>. An
+    /// interaction (not an ambient) so it also plays during a meal.</summary>
     public Task PetAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var key = Affection.RecordPet() == PetReaction.Delighted ? "celebrate" : "petted";
+        var key = Affection.RecordPet() switch
+        {
+            PetReaction.Delighted => "celebrate",
+            PetReaction.Grumpy => "grumpy",
+            PetReaction.Angry => "tantrum",
+            PetReaction.Flailing => "flail",
+            PetReaction.Wailing => "wail",
+            _ => "petted",
+        };
         return PresentOneShotPetAsync(new PetEvent.InteractionRequested(key), key, cancellationToken);
     }
 

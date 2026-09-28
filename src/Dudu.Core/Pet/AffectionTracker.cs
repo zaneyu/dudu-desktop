@@ -10,6 +10,19 @@ public enum PetReaction
 
     /// <summary>A quick streak of pets: the one-shot <c>celebrate</c> clip.</summary>
     Delighted,
+
+    /// <summary>Poked a bit too much: the one-shot <c>grumpy</c> clip.</summary>
+    Grumpy,
+
+    /// <summary>Still being poked: the angry stomping <c>tantrum</c> clip.</summary>
+    Angry,
+
+    /// <summary>Poked on and on: the rolling-on-the-floor <c>flail</c> clip.</summary>
+    Flailing,
+
+    /// <summary>The end of a poke streak: the one-shot <c>wail</c> clip. He
+    /// cries it out, and the next poke starts over.</summary>
+    Wailing,
 }
 
 /// <summary>
@@ -31,6 +44,12 @@ public enum PetReaction
 /// <see cref="DelightWindow"/> (1 min) make him delighted; the streak then
 /// starts over so every third quick pet celebrates, not every pet after it.
 /// </para>
+/// <para>
+/// Pokes that keep coming, each within <see cref="PokeStreakGap"/> (6 s) of
+/// the one before, wear him down: from the <see cref="GrumpyPokeCount"/>th
+/// (4th) he is grumpy, from the 6th angry, from the 8th flailing, and the
+/// 10th makes him wail, which ends the streak. A calmer gap starts it over.
+/// </para>
 /// </summary>
 public sealed class AffectionTracker
 {
@@ -39,6 +58,11 @@ public sealed class AffectionTracker
     public static readonly TimeSpan MaxObservationGap = TimeSpan.FromMinutes(2);
     public static readonly TimeSpan DelightWindow = TimeSpan.FromMinutes(1);
     public const int DelightPetCount = 3;
+    public static readonly TimeSpan PokeStreakGap = TimeSpan.FromSeconds(6);
+    public const int GrumpyPokeCount = 4;
+    public const int AngryPokeCount = 6;
+    public const int FlailPokeCount = 8;
+    public const int WailPokeCount = 10;
 
     private readonly object _sync = new();
     private readonly IClock _clock;
@@ -47,6 +71,8 @@ public sealed class AffectionTracker
     private DateTimeOffset? _lastObservedUtc;
     private bool _lastObservedActive;
     private DateTimeOffset? _lastTantrumUtc;
+    private DateTimeOffset? _lastPetUtc;
+    private int _pokeStreak;
 
     public AffectionTracker(IClock clock)
     {
@@ -66,8 +92,8 @@ public sealed class AffectionTracker
     }
 
     /// <summary>
-    /// Records a pet: resets the neglect clock and reports whether this pet
-    /// completed a delight streak.
+    /// Records a pet: resets the neglect clock and reports how he takes it —
+    /// a delight streak, or a poke too many.
     /// </summary>
     public PetReaction RecordPet()
     {
@@ -76,6 +102,26 @@ public sealed class AffectionTracker
         {
             _neglected = TimeSpan.Zero;
             _lastTantrumUtc = null;
+            _pokeStreak = _lastPetUtc is { } lastPet && now >= lastPet && now - lastPet < PokeStreakGap
+                ? _pokeStreak + 1
+                : 1;
+            _lastPetUtc = now;
+            if (_pokeStreak >= GrumpyPokeCount)
+            {
+                // Annoyed pokes never count towards a later delight streak.
+                _recentPets.Clear();
+                if (_pokeStreak >= WailPokeCount)
+                {
+                    _pokeStreak = 0;
+                    _lastPetUtc = null;
+                    return PetReaction.Wailing;
+                }
+
+                return _pokeStreak >= FlailPokeCount ? PetReaction.Flailing
+                    : _pokeStreak >= AngryPokeCount ? PetReaction.Angry
+                    : PetReaction.Grumpy;
+            }
+
             _recentPets.RemoveAll(pet => now - pet >= DelightWindow || pet > now);
             _recentPets.Add(now);
             if (_recentPets.Count < DelightPetCount)

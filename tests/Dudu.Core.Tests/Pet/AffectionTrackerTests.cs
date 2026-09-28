@@ -129,6 +129,62 @@ public sealed class AffectionTrackerTests
         }
     }
 
+    [Fact]
+    public void Rapid_pokes_go_from_delight_to_grumpy_angry_flailing_and_a_wail_that_forgives()
+    {
+        var clock = new FakeClock(DateTimeOffset.Parse("2026-09-27T09:00:00Z"));
+        var tracker = new AffectionTracker(clock);
+        var reactions = new List<PetReaction>();
+
+        for (var poke = 0; poke < 11; poke++)
+        {
+            reactions.Add(tracker.RecordPet());
+            clock.Advance(TimeSpan.FromSeconds(2));
+        }
+
+        Assert.Equal(
+            [
+                PetReaction.Petted, PetReaction.Petted, PetReaction.Delighted,
+                PetReaction.Grumpy, PetReaction.Grumpy,
+                PetReaction.Angry, PetReaction.Angry,
+                PetReaction.Flailing, PetReaction.Flailing,
+                PetReaction.Wailing,
+                PetReaction.Petted,
+            ],
+            reactions);
+    }
+
+    [Fact]
+    public void A_calm_pause_breaks_the_poke_streak()
+    {
+        var clock = new FakeClock(DateTimeOffset.Parse("2026-09-27T09:00:00Z"));
+        var tracker = new AffectionTracker(clock);
+        for (var poke = 0; poke < 5; poke++)
+        {
+            tracker.RecordPet();
+            clock.Advance(TimeSpan.FromSeconds(1));
+        }
+
+        clock.Advance(AffectionTracker.PokeStreakGap);
+
+        Assert.Equal(PetReaction.Petted, tracker.RecordPet());
+        clock.Advance(TimeSpan.FromSeconds(1));
+        Assert.Equal(PetReaction.Petted, tracker.RecordPet());
+    }
+
+    [Fact]
+    public void Pets_just_outside_the_poke_gap_never_get_him_grumpy()
+    {
+        var clock = new FakeClock(DateTimeOffset.Parse("2026-09-27T09:00:00Z"));
+        var tracker = new AffectionTracker(clock);
+
+        for (var pet = 0; pet < 12; pet++)
+        {
+            Assert.True(tracker.RecordPet() is PetReaction.Petted or PetReaction.Delighted);
+            clock.Advance(AffectionTracker.PokeStreakGap);
+        }
+    }
+
     private static bool RunActive(AffectionTracker tracker, FakeClock clock, TimeSpan duration)
     {
         var anyDue = tracker.Observe(active: true);

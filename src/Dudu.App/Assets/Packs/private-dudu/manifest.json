@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "packId": "private-dudu",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "privateUseOnly": true,
   "attribution": {
     "creator": "Huang Xiao B",
@@ -17,7 +17,8 @@
       "https://tenor.com/view/dudu-flying-cute-gif-13058940524815653974",
       "https://tenor.com/view/dudu-mad-gif-10902775803845855468",
       "https://tenor.com/view/bubu-dudu-bubu-dudu-shy-dudu-shy-bubu-dudu-cute-gif-17902226312132427788",
-      "https://tenor.com/view/dudu-gif-3511018756153302901"
+      "https://tenor.com/view/dudu-gif-3511018756153302901",
+      "https://t.me/addstickers/DuduandBubu_2"
     ],
     "rightsNote": "Private local use only. Discovery pages may not establish redistribution rights; do not publish or distribute this pack. The sticker subset is sourced from the user-provided Telegram BUBU & DUDU pack and includes only unique stickers where brown Dudu is visible."
   },
@@ -2669,6 +2670,211 @@
           },
           "reducedMotion": "frames/base/eat/0000-1c17b48a0700.png",
           "reducedMotionSha256": "1c17b48a070071029854dde18438a0e4aecccac507d46ef3b9da7f298dc3123e"
+        },
+        "grumpy": {
+          "frames": [
+            {
+              "file": "frames/base/grumpy/0000-cb9e65d38f92.png",
+              "durationMs": 200,
+              "sha256": "cb9e65d38f925225c5d89257e9ea7bc247bb098ec260041d90bfbcc6d6beae59"
+            },
+            {
+              "file": "frames/base/grumpy/0001-3af4f0bbec1e.png",
+              "durationMs": 200,
+              "sha256": "3af4f0bbec1e5c343ad8c4c9ec7f1101b06342ea89037c9e12a14d149b4f4d8a"
+            },
+            {
+              "file": "frames/base/grumpy/0002-b73ba3645cf6.png",
+              "durationMs": 200,
+              "sha256": "b73ba3645cf6ce006479539a295ab87d535891c15aaf4e7e73ce48a2521fdf95"
+            },
+            {
+              "file": "frames/base/grumpy/0003-4ca3ae696f03.png",
+              "durationMs": 200,
+              "sha256": "4ca3ae696f0371f8863b254c2c5e9591171a24da155084e413baf996c28fe7c0"
+            },
+            {
+              "file": "frames/base/grumpy/0004-82ea5755561a.png",
+              "durationMs": 200,
+              "sha256": "82ea5755561ade6ddd0217ae6c84bd7383e2b9e64d3c6643a140137551947981"
+            },
+            {
+              "file": "frames/base/grumpy/0005-0454aaff6009.png",
+              "durationMs": 200,
+              "sha256": "0454aaff6009b83051e9f301ba15672adf22de3384dd42b401825c9d96e8b608"
+            },
+            {
+              "file": "frames/base/grumpy/0006-2aeeddde22e2.png",
+              "durationMs": 200,
+              "sha256": "2aeeddde22e2709ca85b9992b821aab39e52f033e3ca9eb1a22987efe5c178ee"
+            },
+            {
+              "file": "frames/base/grumpy/0007-d4f9c78f0ae1.png",
+              "durationMs": 200,
+              "sha256": "d4f9c78f0ae15d9a611148ae1e245c502db09fda47622d576e22d983f76d605a"
+            },
+            {
+              "file": "frames/base/grumpy/0008-810f5f319f05.png",
+              "durationMs": 200,
+              "sha256": "810f5f319f0568057ecdaf03e72807b30db96757a61aedc4c1ea3a8e112a0b5f"
+            },
+            {
+              "file": "frames/base/grumpy/0009-d226ac16e09d.png",
+              "durationMs": 100,
+              "sha256": "d226ac16e09df804228a6e742c9b5d6c46c5c3684681c84a3eec39a5f6d96893"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/grumpy/0000-cb9e65d38f92.png",
+          "reducedMotionSha256": "cb9e65d38f925225c5d89257e9ea7bc247bb098ec260041d90bfbcc6d6beae59"
+        },
+        "flail": {
+          "frames": [
+            {
+              "file": "frames/base/flail/0000-0600e99acda3.png",
+              "durationMs": 204,
+              "sha256": "0600e99acda32480fc61f2a56df4527ac25a470954df8899a18425985382ae0e"
+            },
+            {
+              "file": "frames/base/flail/0001-4fc48f1ca8bc.png",
+              "durationMs": 204,
+              "sha256": "4fc48f1ca8bc7e902d491226e7504ce8c8c9f5fa66f69264571abe8086bec82e"
+            },
+            {
+              "file": "frames/base/flail/0002-9a7078a82604.png",
+              "durationMs": 204,
+              "sha256": "9a7078a826047b92dc4a53d2bc9ce848afd97ede1529ccb6b838e7a5263a13e9"
+            },
+            {
+              "file": "frames/base/flail/0003-d3dd3620348b.png",
+              "durationMs": 204,
+              "sha256": "d3dd3620348b834600815210680a6d4b470dab9cf2f48b43af2c93d723e90772"
+            },
+            {
+              "file": "frames/base/flail/0004-1adea4a974d8.png",
+              "durationMs": 204,
+              "sha256": "1adea4a974d868d5ed2e47a24f0d7bcfeaed4cadd3c66a5ea173a39fa311ca6c"
+            },
+            {
+              "file": "frames/base/flail/0005-17028961f8ad.png",
+              "durationMs": 204,
+              "sha256": "17028961f8ad8fc071d2f81a4ecea7bbf7fdc0b26579c14d1b57d0a8cd7d1216"
+            },
+            {
+              "file": "frames/base/flail/0006-fe76e1ef1539.png",
+              "durationMs": 204,
+              "sha256": "fe76e1ef1539ebbbb831abf84cd76744d910185abf36ae6383c5d56309f14a45"
+            },
+            {
+              "file": "frames/base/flail/0007-faab77e97ea7.png",
+              "durationMs": 204,
+              "sha256": "faab77e97ea729cd42040fe7f89ee09f6a9701c249b84a9ffb26430668e03809"
+            },
+            {
+              "file": "frames/base/flail/0008-80d979d82c41.png",
+              "durationMs": 204,
+              "sha256": "80d979d82c41f28dbbb666a75276833f2dfa04aabb0dd6342cf8fbddd97f9863"
+            },
+            {
+              "file": "frames/base/flail/0009-ad9521593cb1.png",
+              "durationMs": 204,
+              "sha256": "ad9521593cb17bdbbe5e09266adc66ac1bc3999aa960f8c249c791addabc5f06"
+            },
+            {
+              "file": "frames/base/flail/0010-cb885733362d.png",
+              "durationMs": 204,
+              "sha256": "cb885733362d251ddf3af63555346562e729d2f0632ca2ba73a0966b994a68ed"
+            },
+            {
+              "file": "frames/base/flail/0011-ec61be586d3b.png",
+              "durationMs": 204,
+              "sha256": "ec61be586d3b5d2f54cdce643f589a90e174199c17f126494aa5caadf56e6368"
+            },
+            {
+              "file": "frames/base/flail/0012-f7a4582a8c92.png",
+              "durationMs": 136,
+              "sha256": "f7a4582a8c92cc92ba52652c9ab35fb6fb73132015377cdc8f1fb1295ec7be53"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/flail/0000-0600e99acda3.png",
+          "reducedMotionSha256": "0600e99acda32480fc61f2a56df4527ac25a470954df8899a18425985382ae0e"
+        },
+        "wail": {
+          "frames": [
+            {
+              "file": "frames/base/wail/0000-863c0edb9251.png",
+              "durationMs": 200,
+              "sha256": "863c0edb92514c43d6e0085ae9dbec7c13d591e5c4b48605f09faf5b3c059ff1"
+            },
+            {
+              "file": "frames/base/wail/0001-dc0c68353f77.png",
+              "durationMs": 200,
+              "sha256": "dc0c68353f77c31b4152d90b9177c2a74352b05124fb0a689e50dc281f79f28b"
+            },
+            {
+              "file": "frames/base/wail/0002-4998c049233a.png",
+              "durationMs": 200,
+              "sha256": "4998c049233aa86ad36d37d769705be3920dbe67a8a0fe85a8cdd55fa6a15965"
+            },
+            {
+              "file": "frames/base/wail/0003-876b9dfc9095.png",
+              "durationMs": 200,
+              "sha256": "876b9dfc9095168728d95874cc41f66d27cd320ae9cdf2c0b0e29b6800076035"
+            },
+            {
+              "file": "frames/base/wail/0004-69a16b3f2d04.png",
+              "durationMs": 200,
+              "sha256": "69a16b3f2d043ae9217750011ba8ae0be2cf55ced42351f2cb5569ba4c6b88d2"
+            },
+            {
+              "file": "frames/base/wail/0005-b63557026f8b.png",
+              "durationMs": 200,
+              "sha256": "b63557026f8b11a6a57c33a0bba8adb8ffa84fd969aff170836b34da8b77b5b7"
+            },
+            {
+              "file": "frames/base/wail/0006-99f6b9f187fd.png",
+              "durationMs": 200,
+              "sha256": "99f6b9f187fd5c58ca129d21dbc91abb725a908e4bb078541415c6700d34a9fd"
+            },
+            {
+              "file": "frames/base/wail/0007-748b65b4a669.png",
+              "durationMs": 200,
+              "sha256": "748b65b4a669708bb8ce52bad0b07f2fa912729a61332d2cbb3d074163ca1eb7"
+            },
+            {
+              "file": "frames/base/wail/0008-31545b7bef7f.png",
+              "durationMs": 200,
+              "sha256": "31545b7bef7f5fdcdb5acaa5efbbb5fbfb1247efa1da65308aa425eb6994b799"
+            }
+          ],
+          "loop": "once",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/wail/0000-863c0edb9251.png",
+          "reducedMotionSha256": "863c0edb92514c43d6e0085ae9dbec7c13d591e5c4b48605f09faf5b3c059ff1"
         }
       }
     }

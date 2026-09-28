@@ -509,6 +509,25 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Router_pokes_that_keep_coming_make_him_grumpy_then_angry_then_cry()
+    {
+        var fixture = FeatureFixture.Create();
+        var router = new OverlayCommandRouter(fixture.Context);
+
+        for (var poke = 0; poke < 10; poke++)
+        {
+            await router.ExecuteAsync(OverlayAction.Pet, TestContext.Current.CancellationToken);
+            fixture.Clock.UtcNow += TimeSpan.FromSeconds(2);
+        }
+
+        Assert.Equal(
+            ["petted", "petted", "celebrate", "grumpy", "grumpy", "tantrum", "tantrum", "flail", "flail", "wail"],
+            fixture.OneShotPresentations.Select(item =>
+                Assert.IsType<PetEvent.InteractionRequested>(item.Event).AnimationKey));
+        Assert.Equal(PetState.Idle, fixture.Context.Pet.Current.State);
+    }
+
+    [Fact]
     public async Task Context_pet_shares_the_affection_clock_with_the_overlay_router()
     {
         var fixture = FeatureFixture.Create();

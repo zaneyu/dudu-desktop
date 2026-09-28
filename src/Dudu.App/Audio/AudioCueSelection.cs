@@ -60,7 +60,7 @@ public static class AudioCueSelection
                 "petted" => AudioCueEvent.Petted,
                 "drink" => AudioCueEvent.Drink,
                 "eat" => AudioCueEvent.Eat,
-                "tantrum" => AudioCueEvent.Tantrum,
+                "tantrum" or "grumpy" or "flail" or "wail" => AudioCueEvent.Tantrum,
                 "drag" => AudioCueEvent.Drag,
                 var key when Dudu.Core.Assets.AssetManifestContract.IsStickerAnimationKey(key) => AudioCueEvent.Sticker,
                 _ => null,

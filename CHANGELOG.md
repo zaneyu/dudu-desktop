@@ -29,6 +29,14 @@ release cadences.
 
 ### Added
 
+- Poke Dudu too much and he gets cross. Clicks that keep coming (each
+  within 6 seconds of the last) go from petted to celebrate on the third,
+  then `grumpy` (a scribble cloud, "hmph 😒") from the 4th, the angry
+  stomping tantrum ("stop poking me!! 😤") from the 6th, rolling on the
+  floor ("i dont care i dont care!!") from the 8th, and a waterfall
+  `wail` ("waaah 😭") on the 10th, after which he forgives you and the
+  streak starts over. The three new clips come from the private Telegram
+  "Dudu & Bubu 2" sticker set (pack 1.4.0).
 - More Dudu motion: twelve new clips built from the private sticker and GIF
   art already in the pack (`walk`, `hop`, `dance`, `wiggle`, `shy`, `sip`,
   `snack`, `nap`, `stomp`, `shiver`, `lounge`, `salute`) and a calmer idle

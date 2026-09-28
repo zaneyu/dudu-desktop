@@ -24,6 +24,12 @@ public sealed class PetStateMachine
     /// <summary>Bubble shown with the neglect tantrum (see <see cref="AffectionTracker"/>).</summary>
     public const string TantrumBubble = "pet me!! 😤";
 
+    /// <summary>Bubbles for the poke-too-much reactions (see <see cref="AffectionTracker"/>).</summary>
+    public const string GrumpyBubble = "hmph 😒";
+    public const string PokedTantrumBubble = "stop poking me!! 😤";
+    public const string FlailBubble = "i dont care i dont care!!";
+    public const string WailBubble = "waaah 😭";
+
     private readonly object _sync = new();
     private readonly HashSet<string> _remoteMessageIds = new(StringComparer.Ordinal);
     private readonly List<string> _remoteMessageOrder = [];
@@ -264,7 +270,7 @@ public sealed class PetStateMachine
         // (a waiting note card, a meal) and then hands back to it.
         if (!_paused && _interactionAnimation is not null)
         {
-            return Present(PetState.Interaction, _interactionAnimation, BubbleFor(_interactionAnimation));
+            return Present(PetState.Interaction, _interactionAnimation, InteractionBubbleFor(_interactionAnimation));
         }
 
         // Pending notes coalesce into a single display card no matter how
@@ -379,7 +385,19 @@ public sealed class PetStateMachine
     }
 
     private static bool IsAllowedInteractionAnimation(string animationKey) =>
-        animationKey is "petted" or "drink" or "celebrate" or "greeting";
+        animationKey is "petted" or "drink" or "celebrate" or "greeting"
+            or "grumpy" or "tantrum" or "flail" or "wail";
+
+    /// <summary>A tantrum the user asked for by poking is about the poking,
+    /// not the neglect <see cref="TantrumBubble"/>.</summary>
+    private static string? InteractionBubbleFor(string animationKey) => animationKey switch
+    {
+        "grumpy" => GrumpyBubble,
+        "tantrum" => PokedTantrumBubble,
+        "flail" => FlailBubble,
+        "wail" => WailBubble,
+        _ => BubbleFor(animationKey),
+    };
 
     private static string? BubbleFor(string animationKey) => animationKey switch
     {

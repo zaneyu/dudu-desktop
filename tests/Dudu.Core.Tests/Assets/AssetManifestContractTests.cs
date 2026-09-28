@@ -24,6 +24,9 @@ public sealed class AssetManifestContractTests
     [InlineData("eat", "loop")]
     [InlineData("tantrum", "once")]
     [InlineData("petted", "once")]
+    [InlineData("grumpy", "once")]
+    [InlineData("flail", "once")]
+    [InlineData("wail", "once")]
     public void Optional_interaction_poses_are_supported_but_not_required(string key, string loop)
     {
         var withoutPose = ValidManifest();
