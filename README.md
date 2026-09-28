@@ -30,6 +30,11 @@ published, or included in a public asset marketplace.
   the approved product and technical design.
 - [Implementation plan](docs/superpowers/plans/2026-09-11-dudu-desktop-companion-implementation.md) —
   the task-by-task build plan this codebase follows.
+- [Cute-focus cleanup](docs/superpowers/specs/2026-09-27-cute-focus-cleanup-design.md) — the later
+  decision that narrowed Dudu to a cute companion (home, love notes, settings) and removed the
+  practical features (reminders, tasks, focus, countdowns, check-ins, note jar, quiet hours,
+  outfits, global hotkey, manual backup/restore). Where it disagrees with the original design, it
+  wins.
 - [Privacy](docs/privacy.md) — what data stays local, what the relay ever sees, and the privacy
   guarantees the encrypted remote-note flow relies on.
 - [Windows acceptance evidence](docs/testing/windows-acceptance.md) — the manual and automated
@@ -39,5 +44,5 @@ published, or included in a public asset marketplace.
   the private-audience Partner Center submission/update procedure and the Inno recovery path
   during migration.
 - [Release runbook](docs/release.md) — prerequisites, Cloudflare relay setup, desktop build and
-  install/upgrade/uninstall, pairing, backup/restore, and the private-use statements that govern
-  this release.
+  install/upgrade/uninstall, pairing, automatic backups and corruption recovery, and the
+  private-use statements that govern this release.

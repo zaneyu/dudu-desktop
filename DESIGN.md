@@ -22,7 +22,7 @@ each one to a system color brush.
 - `WindowSurfaceBrush`: warm cream; `NavigationSurfaceBrush`: a slightly deeper cream
 - `CardSurfaceBrush`: near-white cream for ordinary cards
 - `BlushSurfaceBrush`: soft blush for the Dudu status card, incoming notes, pairing status and onboarding
-- `HoneySurfaceBrush`: pale honey for the UK clock, focus, helpful defaults and section-heading chips
+- `HoneySurfaceBrush`: pale honey for the UK clock, the Home Dudu frame, the breathing panel and section-heading chips
 - `SoftBorderBrush`: low-chroma cocoa-tinted border for every card and pill
 - `CocoaAccentBrush`: Dudu's brown, used only for small labels such as "time in the UK"
 - `CoralActionBrush`: rose-coral primary action and selection, with `PrimaryButtonForegroundBrush` text
@@ -53,15 +53,16 @@ each one to a system color brush.
 
 ## Components
 
-- Shell: custom title bar plus left compact NavigationView with exactly seven destinations
+- Shell: custom title bar plus left compact NavigationView with exactly three destinations: home, love notes, settings
 - Section headers: a Grid with an `Auto` column holding a round 36 px honey chip (`IconChipStyle`) with a decorative emoji (`ChipEmojiStyle`, `AccessibilityView="Raw"`) and a `*` column holding the `SectionHeadingStyle` text. Use a Grid, never a horizontal StackPanel, so the heading wraps instead of clipping.
 - Button groups: two equal `*` columns with stretched buttons; an odd primary button or the last button spans both columns. Groups whose labels are longer than about 20 characters, and destructive groups, stay stacked vertically.
 - Status feedback: each page is a two-row Grid; the scrolling content is row 0 and a sticky polite live-region footer in row 1 holds the status and error rows, each wrapped in a `StatusPillStyle` border, so feedback stays visible without scrolling
-- Home order: UK clock, Dudu status and pet/pause, Dudu actions, comfort, countdowns (the add form is in an Expander), check-in, startup
+- Home order: greeting, big Dudu, UK clock, then "time with dudu" (pet, drink water, eat together, tiny hug, breathe with me; while breathing runs, its phase text and a stop button appear under the buttons). Nothing practical lives on Home.
+- Settings order: look and motion (theme, reduced motion, sounds and volume, pet size, monitor, keep on top, hide during fullscreen), when windows starts, partner connection, what is stored, and one "delete my data" (with "wipe this pc only" offered when the partner server cannot be reached)
 - Primary buttons: coral accent, concise verb labels, one per decision area
 - Secondary actions: standard WinUI buttons or text links
 - Forms: native controls, labels above fields, validation adjacent to the field
-- Progress: text such as “Step 2 of 6” plus accessible progress semantics
+- Progress: text such as “step 2 of 3” plus accessible progress semantics
 - Empty states: a short explanation and one useful action, optionally accompanied by a small Dudu pose
 - Status: icon, title, and concise explanation; never hue alone
 
@@ -75,10 +76,10 @@ each one to a system color brush.
 
 ## Onboarding
 
-- Six short steps with one main decision per view
+- Three short steps (name, look, pairing) with one main decision per view
 - Back is always available after the first step
 - Pairing is optional and has an explicit “Skip for now” action
-- Recommended defaults emphasize quiet hours, reduced interruption, and fullscreen suppression
+- Recommended defaults emphasize reduced interruption: launch at sign-in and hiding during fullscreen are on, and both can be changed later in Settings
 - Final completion is atomic and enters Home without opening duplicate windows
 - Target fewer than 20 actions with keyboard focus retained in the settings window
 

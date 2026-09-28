@@ -8,10 +8,9 @@ using Xunit;
 namespace Dudu.UiTests;
 
 /// <summary>
-/// Windows-only end-to-end coverage of the whole companion journey: onboarding, a reminder and a
-/// task created and completed, a one-minute focus session run to completion, revealing
-/// a fixture remote note, an appearance change, a backup, a restart, and persistence across that
-/// restart. The executable is supplied by the Windows publish job so this project remains
+/// Windows-only end-to-end coverage of the whole cute journey: onboarding, the Home actions,
+/// revealing a fixture remote note (which keeps it in the opened notes), a settings change, a
+/// restart, and persistence across that restart. The executable is supplied by the Windows publish job so this project remains
 /// buildable on non-Windows hosts without weakening the WinUI product target.
 /// </summary>
 [Collection(WindowsUiCollection.Name)]
@@ -55,50 +54,24 @@ public sealed class FullJourneyTests
 
             CompleteOnboardingWhenNeeded(window);
 
-            var marker = Guid.NewGuid().ToString("N")[..8];
+            // Home: petting and a tiny hug respond from the keyboard-reachable buttons.
+            Navigate(window, "NavHome", "HomePageTitle");
+            Find(window, "OverlayActionPet").AsButton().Invoke();
+            Find(window, "OverlayComfortActionTinyHug").AsButton().Invoke();
+            WaitForText(window, "HomeActionStatus", "tiny hug ready le");
 
-            var reminderTitle = $"Journey reminder {marker}";
-            Navigate(window, "NavReminders", "RemindersPageTitle");
-            Find(window, "RemindersTitle").AsTextBox().Enter(reminderTitle);
-            Find(window, "RemindersSave").AsButton().Invoke();
-            WaitForText(window, "RemindersStatusMessage", "reminder saved");
-            SelectByName(window, "RemindersList", reminderTitle);
-            Find(window, "RemindersComplete").AsButton().Invoke();
-            WaitForText(window, "RemindersStatusMessage", "done le good job");
-
-            var taskTitle = $"Journey task {marker}";
-            Navigate(window, "NavTasksFocus", "TasksPageTitle");
-            Find(window, "TasksTitle").AsTextBox().Enter(taskTitle);
-            Find(window, "TasksSave").AsButton().Invoke();
-            WaitForText(window, "TasksStatusMessage", "task saved");
-            SelectByName(window, "TasksActiveList", taskTitle);
-            Find(window, "TasksComplete").AsButton().Invoke();
-            WaitForText(window, "TasksStatusMessage", "task done");
-
-            // Run one real minute-long focus session to full completion (distinct from the
-            // ended-early path SettingsNavigationTests already covers). "custom" is the only
-            // preset whose minutes the NumberBox controls; the NumberBox's own Minimum is 1.
-            Find(window, "FocusPreset").AsComboBox().Select("custom");
-            Find(window, "FocusCustomDuration").AsTextBox().Enter("1");
-            Find(window, "FocusStart").AsButton().Invoke();
-            WaitForText(window, "FocusCurrent", "Focus is running");
-            WaitUntil(
-                () => Find(window, "FocusHistoryList").FindFirstDescendant(cf => cf.ByName("completed")) is not null,
-                TimeSpan.FromSeconds(90));
-
+            // Revealing the fixture note shows it and keeps it in the opened notes.
             Navigate(window, "NavLoveNotes", "LoveNotesPageTitle");
             RevealFirstPendingRemoteNote(window);
             Assert.Equal(FixtureNoteText, Find(window, "LoveNotesOpened").AsTextBox().Text);
+            Assert.NotNull(Find(window, "LoveNotesOpenedList")
+                .FindFirstDescendant(cf => cf.ByControlType(ControlType.ListItem)));
 
-            Navigate(window, "NavAppearance", "AppearancePageTitle");
+            Navigate(window, "NavSettings", "SettingsPageTitle");
             Find(window, "AppearanceTheme").AsComboBox().Select(1);
             Find(window, "AppearanceReducedMotion").AsCheckBox().IsChecked = true;
             Find(window, "AppearanceSave").AsButton().Invoke();
             WaitForText(window, "AppearanceStatusMessage", "appearance saved");
-
-            Navigate(window, "NavPrivacy", "PrivacyPageTitle");
-            Find(window, "PrivacyBackup").AsButton().Invoke();
-            WaitForText(window, "PrivacyStatusMessage", "backup created");
 
             automation.Dispose();
             try { application.Close(); }
@@ -110,17 +83,26 @@ public sealed class FullJourneyTests
                 ?? throw new InvalidOperationException("The Dudu settings window did not reappear after restart.");
             WaitUntil(() => TryFind(windowAfterRestart, "NavHome") is not null, TimeSpan.FromSeconds(15));
 
-            Navigate(windowAfterRestart, "NavTasksFocus", "TasksPageTitle");
-            Assert.NotNull(Find(windowAfterRestart, "TasksCompletedList").FindFirstDescendant(cf => cf.ByName(taskTitle)));
-            Assert.NotNull(Find(windowAfterRestart, "FocusHistoryList").FindFirstDescendant(cf => cf.ByName("completed")));
+            // The recipient name from onboarding still greets her.
+            Navigate(windowAfterRestart, "NavHome", "HomePageTitle");
+            WaitForText(windowAfterRestart, "HomeGreeting", "Mia");
 
-            Navigate(windowAfterRestart, "NavAppearance", "AppearancePageTitle");
+            Navigate(windowAfterRestart, "NavSettings", "SettingsPageTitle");
             Assert.True(Find(windowAfterRestart, "AppearanceReducedMotion").AsCheckBox().IsChecked);
 
             // Revealing keeps the note: it is still in the opened notes after a restart.
+            // (The pending list is not checked here: DUDU_FIXTURE_NOTE reinstalls the
+            // fixture envelope on every launch, and consuming it deleted the row.)
             Navigate(windowAfterRestart, "NavLoveNotes", "LoveNotesPageTitle");
-            Assert.NotNull(Find(windowAfterRestart, "LoveNotesOpenedList")
-                .FindFirstDescendant(cf => cf.ByControlType(ControlType.ListItem)));
+            AutomationElement? openedItem = null;
+            WaitUntil(() =>
+            {
+                openedItem = Find(windowAfterRestart, "LoveNotesOpenedList")
+                    .FindFirstDescendant(cf => cf.ByControlType(ControlType.ListItem));
+                return openedItem is not null;
+            });
+            openedItem!.Click();
+            WaitUntil(() => Find(windowAfterRestart, "LoveNotesOpened").AsTextBox().Text == FixtureNoteText);
         }
         finally
         {
@@ -188,17 +170,6 @@ public sealed class FullJourneyTests
     {
         var element = TryFind(window, automationId);
         return element is not null && !element.Properties.IsOffscreen.ValueOrDefault;
-    }
-
-    private static void SelectByName(Window window, string listId, string name)
-    {
-        AutomationElement? item = null;
-        WaitUntil(() =>
-        {
-            item = Find(window, listId).FindFirstDescendant(cf => cf.ByName(name));
-            return item is not null;
-        });
-        item!.Click();
     }
 
     private static void WaitForText(Window window, string automationId, string expected) =>

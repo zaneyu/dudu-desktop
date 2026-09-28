@@ -19,7 +19,7 @@ password is needed.
 
 ## 2. Connect it (once)
 
-1. In Dudu, open **Connection**.
+1. In Dudu, open **Settings** and scroll to **partner connection**.
 2. Click the button to make a pairing code. An 8-character code appears.
    It only works for 10 minutes.
 3. Read the code out (or send it) to the person who gave you the app. They
@@ -28,7 +28,7 @@ password is needed.
 
 ## If something looks off
 
-- **"pairing offline dudu still works here"** on the Connection page means
+- **"pairing offline dudu still works here"** in the partner connection section means
   the internet link is not reachable right now. Dudu itself keeps working.
   Try again later.
 - **"dudu key changed pair again pls"** on the sender's phone means Dudu was

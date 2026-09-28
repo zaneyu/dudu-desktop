@@ -26,12 +26,8 @@ internal sealed class DuduUiFixture : IDisposable
     private static readonly Destination[] SettingsPages =
     [
         new("NavHome", "HomePageTitle"),
-        new("NavReminders", "RemindersPageTitle"),
-        new("NavTasksFocus", "TasksPageTitle"),
         new("NavLoveNotes", "LoveNotesPageTitle"),
-        new("NavAppearance", "AppearancePageTitle"),
-        new("NavConnection", "ConnectionPageTitle"),
-        new("NavPrivacy", "PrivacyPageTitle"),
+        new("NavSettings", "SettingsPageTitle"),
     ];
 
     private readonly Application _application;

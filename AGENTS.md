@@ -606,13 +606,16 @@ authoritative for future changes.
   counts, status codes, fixed tags, exception-type names, or envelope GUIDs.
 - Chrome/data path: failures route through `IAppHostErrorReporter`
   (`AppHost.ErrorReporter`, shared with `AppLifecycleCoordinator`,
-  overlay, tray, hotkey, event source, presentation and notification sinks)
+  overlay, tray, event source, presentation and notification sinks)
   where one is composed, else legacy diagnostic, else a `Trace` line with
   operation + exception type/HResult only. Operation names in use:
-  `hotkey-attach`, `hotkey-set-gesture`, `hotkey-restore` (a saved shortcut
-  that could not be re-registered at startup; falls back to the default),
-  `pause-persist` (a pause she chose could not be saved for the next start;
-  the pause itself still applies), `tray-attach`, `tray-recreate`,
+  `presentation-scheduler` (the 30-second presentation loop in `AppHost`
+  failed; it keeps running), `presentation-gateway-tick` (a single gateway
+  tick -- ambient, tantrum, held-note release -- failed inside that loop),
+  `presentation-gateway-start`, `presentation-gateway-shutdown`,
+  `presentation-scheduler-shutdown`, `pause-persist` (a tray pause or resume
+  could not be saved for the next start; the change itself still applies),
+  `tray-attach`, `tray-recreate`,
   `tray-menu-state` (the tray menu falls back to neutral labels),
   `settings-load` (the settings window could not load and shows "aiyo
   couldnt load settings", or could not finish opening after onboarding;
@@ -620,16 +623,10 @@ authoritative for future changes.
   `taskbar-tray-recreate`, `overlay-create`, `overlay-dispose`,
   `overlay-message-loop`, `fullscreen-poll` (fail-closed to hidden, unchanged),
   native callbacks (`session-lock/unlock`, `suspend`, `resume`,
-  `display-change`, `taskbar-created`, `hotkey`), `remote-note-notify`,
-  `reminder-notify`, `reminder-notify-profile` (a transient failure reading
-  the profile for name personalization; the notify itself still goes out
-  with the neutral copy), `presentation-tick`, `toast-notify`,
-  `notification-invoked` (a toast click could not open its page),
-  `reminder-toast-action` (a reminder toast's Done/Snooze could not be
-  carried out -- Snooze then opens the Reminders page instead; exception
-  only, never the reminder text), `reminder-page-action` (a best-effort
-  cleanup step -- pet/toast/held copy -- after a Reminders page Done/Snooze
-  that itself succeeded; exception only),
+  `display-change`, `taskbar-created`), `remote-note-notify`,
+  `presentation-tick`, `toast-notify`,
+  `notification-invoked` (a toast click could not open its page; a click on
+  an old reminder toast parses to nothing and is ignored, not reported),
   `pet-activity` (an idle fidget/wander could not be scheduled or played;
   Dudu just stays idle), `pet-wander` (the overlay glide for a wander
   failed part-way; the walk stops where it is and the placement is still
@@ -640,10 +637,12 @@ authoritative for future changes.
   `presentation-held-load`, `presentation-held-persist`,
   `presentation-held-remove`, `presentation-held-mark-toasted` (throttled
   once per kind/exception-type/Sqlite error code, see
-  `PresentationCoordinator.ReportHeldFailureOnce`),
+  `PresentationCoordinator.ReportHeldFailureOnce`; held rows of retired
+  kinds `Reminder`/`LocalNote` are deleted silently on load, with no
+  `presentation-held-load` report, while a genuinely unknown kind is still
+  deleted and reported),
   `audio-cue-playback`, `overlay-drag` (drag-loop start/stop),
-  `focus-restore` (re-latching a focus session still running at startup),
-  `startup-chrome-attach`, `partial-startup-*` /
+  `partial-startup-*` /
   `partial-runtime-*` / `runtime-*-shutdown` cleanup ops, `shutdown-host`,
   `shutdown-overlay`, `shutdown-tray`. All best-effort/fail-closed behavior
   is unchanged — logging only, report-and-(re)throw where the original
@@ -674,33 +673,38 @@ Symptom-first lookup (data root overridable via `DUDU_DATA_ROOT`):
 - App never opens / exits immediately: read `logs\startup-failure.log`
   (newest entry first — check `phase=`); cross-check `startup-crash-count`
   and `diagnostics.log` safe-mode lines for 3+ consecutive failed runs.
-- Pet disappears, tray icon or hotkey stops working: search `diagnostics.log`
-  for `tray-attach`, `tray-recreate`, `hotkey-attach`, `overlay-create`,
+- Pet disappears or the tray icon stops working: search `diagnostics.log`
+  for `tray-attach`, `tray-recreate`, `overlay-create`,
   `fullscreen-poll`, `session-lock`, `suspend`, `display-change`.
-- Notes stop arriving / Connection page stale: search for `1005`/`1006`/`1007`
-  (probe failures, terminal loop state, retries) and `remote-sync-protocol`
+- Dudu stops doing ambient moments or releasing held notes: search for
+  `presentation-scheduler`, `presentation-gateway-tick`, `presentation-tick`.
+- Notes stop arriving / partner connection section on Settings stale:
+  search for `1005`/`1006`/`1007` (probe failures, terminal loop state, retries) and `remote-sync-protocol`
   reports; `1009` confirms a staged-token promotion after an interrupted
   key rotation; repeated `1003` with reason `oversize` means poison envelopes
   are being acked-and-skipped by design.
 - "aiyo couldnt load settings" in the settings window: search
   `diagnostics.log` for `settings-load` (the exception names the failing
   step). The settings load no longer waits on a relay probe once setup is
-  complete; the Connection page does its own probe.
+  complete; the partner connection section does its own probe.
 - Unopened-note or settings data loss after crash: check for `db-init`,
   `secret-read`, `secret-write`, `backup-prune` phases; secret-write ordering
   (token before device ID) is a recovery invariant — do not "fix" it.
-- A reminder that was held during quiet hours/fullscreen never reappeared:
-  search `diagnostics.log` for `presentation-held-load`,
+- A partner note held while Dudu was busy, paused or fullscreen-hidden never
+  reappeared: search `diagnostics.log` for `presentation-held-load`,
   `presentation-held-persist`, `presentation-held-remove` (throttled once per
-  kind/exception-type/Sqlite error code); also check `reminder-notify` and
-  `reminder-notify-profile`.
+  kind/exception-type/Sqlite error code); also check `remote-note-notify`.
+  Missing `Reminder`/`LocalNote` held rows after an upgrade are expected:
+  those retired kinds are deleted silently on load.
 - Relay-side 5xx spike: `wrangler tail`, correlate `route` + status code +
   error class; never ask for or paste request bodies.
 - Tests for any of the above: `FieldDiagnosticsContractTests`,
   `FileDiagnosticLoggerTests`, `GlobalCrashReportingTests`,
   `StartupCrashGuardDiagnosticsTests`, `ChromeDiagnosticsTests`,
   `SinkDiagnosticsTests`, `DataFailureDiagnosticsTests`,
-  `DpapiSecretStoreDiagnosticsTests`, plus the extended `RemoteSyncServiceTests`
+  `DpapiSecretStoreDiagnosticsTests`, `ChromeWiringUxTests`,
+  `PresentationHeldQueuePersistenceTests` (retired held kinds), `AppHostTests`
+  (presentation scheduler), plus the extended `RemoteSyncServiceTests`
   / `RelayClientTests` leak assertions (follow the `Logs_never_include`
   marker pattern). `Dudu.App.Tests` cannot execute on macOS (WinUI) — it
   compiles there and runs on Windows CI.

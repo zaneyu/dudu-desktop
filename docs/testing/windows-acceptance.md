@@ -22,6 +22,14 @@ under `artifacts/performance/` or `artifacts/stability/` exists in this reposito
 | `AccessibilityTests.Every_actionable_settings_control_has_name_and_keyboard_focus` | pending | — | — | — | `artifacts/ui-tests/accessibility.trx` |
 | `AccessibilityTests.Text_scaling_at_two_hundred_percent_has_no_clipped_primary_actions` | pending | — | — | — | `artifacts/ui-tests/accessibility.trx` |
 | `FullJourneyTests.Full_companion_journey_persists_every_change_across_a_restart` | pending | — | — | — | `artifacts/ui-tests/full-journey.trx` |
+| `SettingsNavigationTests.Settings_journey_persists_settings_and_executes_accessible_home_actions` | pending | — | — | — | `artifacts/ui-tests/settings-navigation.trx` |
+| Three-page navigation: the settings window shows exactly home, love notes and settings (no reminders, tasks, appearance, connection or privacy pages), and onboarding is three steps (name, look, pairing) | pending | — | — | — | — |
+| Reveal keeps the note: revealing a partner note on Love Notes shows it, lists it under opened notes, and it is still there (and deletable) after a restart | pending | — | — | — | — |
+| Delete my data while offline (relay configured, network off): nothing is wiped, "couldn't reach the partner server…" appears with **wipe this pc only**; that button wipes only this PC and shows "all cleaned up -- restart dudu to start fresh" | pending | — | — | — | — |
+| Legacy reminder toast: clicking a reminder toast (or its Done/Snooze) left in Action Center by an older build does nothing — no page opens, no error, no crash, including from a cold start | pending | — | — | — | — |
+| Click Dudu still pets: a single click on the pet plays the petted reaction and never opens a bubble or menu | pending | — | — | — | — |
+| Tray pause: the tray menu always has four items (show/hide, pause 1 hour, open dudu, exit); "pause 1 hour" silences Dudu and the item then reads "resume"; resume (or the hour ending, including across a restart) brings Dudu back | pending | — | — | — | — |
+| Breathe with me on Home: the breathing phase text and a stop button appear while it runs; stop ends it with "breathing stopped, well done" and no error; leaving Home stops it too | pending | — | — | — | — |
 | Performance gate (`scripts/run-performance-gates.ps1 -Executable artifacts/publish/win-x64/Dudu.App.exe`) | pending | — | — | — | `artifacts/performance/release.json` |
 | Eight-hour stability run (`dotnet run --project tests/Dudu.WindowsHarness -c Release -- --scenario long-run --hours 8 --output artifacts/stability/eight-hour.json`) | pending | — | — | — | `artifacts/stability/eight-hour.json` |
 | Full solution test pass (`dotnet test DuduDesktop.slnx -c Release`) | passed | Windows Server 2025 (`windows-latest`, x64) | 2026-09-14 06:59 UTC | CI (unattended) | GitHub Actions run 34815474329, job "Windows test suite (first-ever run)": Core 58/58, Infrastructure 112 passed + 2 skipped, App.Tests 247/247 (per-project `dotnet test`, not the `.slnx` form) |
@@ -37,12 +45,12 @@ under `artifacts/performance/` or `artifacts/stability/` exists in this reposito
 | Explorer restart | pending | — | — | — | — |
 | Fullscreen game/video suppression | pending | — | — | — | — |
 | Idle fidgets and wander (new motion clips play every 25–75 s; Dudu waddles sideways, turns at the screen edge, stays in the work area, keeps the new spot after restart) | pending | — | — | — | — |
-| Idle motion stays still with reduced motion, pause, quiet hours, fullscreen, lock, an open action bubble, or the pointer on the pet; a drag mid-walk wins | pending | — | — | — | — |
+| Idle motion stays still with reduced motion, the tray pause, fullscreen, lock, a meal in progress, or the pointer on the pet; a drag mid-walk wins | pending | — | — | — | — |
 | Notification enabled | pending | — | — | — | — |
-| Notification unavailable (fallback to bubble) | pending | — | — | — | — |
+| Notification unavailable (a partner note falls back to Dudu's note card and Love Notes) | pending | — | — | — | — |
 | Offline launch | pending | — | — | — | — |
 | Sign-in launch (launch-at-sign-in) | pending | — | — | — | — |
-| Backup/restore | pending | — | — | — | — |
+| Automatic backup and corruption recovery (a corrupt `dudu.db` is quarantined, the newest valid backup is restored, and a one-time notice appears; there is no manual backup/restore) | pending | — | — | — | — |
 | Install | pending | — | — | — | `tests/installer/installer-smoke.ps1` (isolated per-run root; requires a new green Windows run) |
 | Upgrade | pending | — | — | — | `tests/installer/installer-smoke.ps1` (add `-ExerciseRunningApp` on an interactive Windows desktop) |
 | Uninstall | pending | — | — | — | `tests/installer/installer-smoke.ps1` (isolated data deletion and outside-sentinel check; requires a new green Windows run) |
@@ -168,17 +176,18 @@ that until a tester replaces it with a real result.
 
 ## Final acceptance checklist
 
-Copied verbatim from the implementation plan's Task 24 "Final acceptance checklist." None of
-these are checked yet — each is evidence to gather on a real Windows 11 24H2 x64 host, not a
+Copied from the implementation plan's Task 24 "Final acceptance checklist", with the offline and
+gating items narrowed to the cute-focus scope
+(`docs/superpowers/specs/2026-09-27-cute-focus-cleanup-design.md`). None of these are checked yet — each is evidence to gather on a real Windows 11 24H2 x64 host, not a
 claim already verified.
 
 - [ ] Onboarding completes in under two minutes on a clean Windows 11 24H2 x64 account.
 - [ ] The overlay has transparent edges, no taskbar/Alt+Tab entry, alpha-aware input, DPI-safe
       placement, and no focus theft.
-- [ ] Reminders, tasks, focus, countdowns, comfort, outfits, manual check-ins, and local notes
-      work with the network disabled.
-- [ ] Quiet hours, all pause modes, reduced motion, and fullscreen suppression gate unsolicited
-      behavior.
+- [ ] Petting, drink water, eat together, tiny hug, breathe with me, the UK clock, and opened
+      partner notes work with the network disabled.
+- [ ] The tray pause (including pause modes persisted by older builds), reduced motion, and
+      fullscreen suppression gate unsolicited behavior.
 - [ ] A mobile browser pairs once with a ten-minute one-time code and retains a secure HttpOnly
       session.
 - [ ] Browser-to-desktop encrypted notes interoperate across P-256 ECDH, HKDF-SHA-256, and

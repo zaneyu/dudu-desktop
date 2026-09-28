@@ -384,11 +384,12 @@ recipient release.
 2. Open the private Store link supplied through the private release channel.
 3. Install Dudu Desktop and leave Store app updates enabled.
 4. If removing an old Inno installation, do not delete local data unless you
-   intentionally want to wipe it from Dudu's Privacy & Data page.
+   intentionally want to wipe it with Dudu's Settings → "delete my data".
 
 ## 6. First pairing and sender revocation
 
-1. On the desktop, open Settings → Connection and request a pairing code.
+1. On the desktop, open Settings, scroll to the partner connection section,
+   and request a pairing code.
    This calls the relay's `POST /v1/devices/pairing-code` endpoint,
    which returns a short one-time code that expires after ten minutes.
 2. On the recipient's phone, open the private sender page URL (kept private
@@ -396,8 +397,8 @@ recipient release.
    `POST /v1/pairings/redeem`; on success it receives a secure, HttpOnly
    session cookie and the sender composer appears.
 3. To revoke a paired sender (lost phone, ended pairing, etc.), use the
-   desktop's Connection page "disconnect" action, which calls
-   `POST /v1/sender/disconnect`. The recipient can re-pair at any time by
+   "revoke sender sessions" action in the partner connection section of the
+   desktop's Settings page. The recipient can re-pair at any time by
    generating a new code.
 
 ## 7. Database backup, restore, and damaged-database preservation
@@ -417,10 +418,13 @@ up using SQLite's `VACUUM INTO`, validates every backup with
   pre-migration backup before applying any pending schema migration, so a
   failed or interrupted migration never leaves the recipient without a
   recoverable prior state.
-- **Manual backup/restore**: the app's Privacy & Data page
-  (`src/Dudu.App/Pages/PrivacyDataPage.xaml`,
-  `src/Dudu.App/ViewModels/PrivacyDataViewModel.cs`) exposes "Backup now" and
-  "Restore latest backup" actions that call the same backup service.
+- **Automatic corruption recovery**: when the database cannot be opened
+  because it is corrupt, `Database` quarantines it and restores the newest
+  valid backup (`DatabaseBackupService.RestoreLatestValidAsync`), reconciling
+  an interrupted earlier restore first, and the app shows a one-time
+  recovery notice. There is no user-facing "Backup now" or "Restore" action
+  any more: backups are automatic only, and Settings → "Delete my data"
+  (the only data action) removes them along with everything else.
 - **Revealed partner notes are kept on this PC**: revealing a partner note
   on the Love Notes page decrypts it, saves its plaintext in the local
   database (`local_notes`, id `remote-<messageId>`) and consumes the

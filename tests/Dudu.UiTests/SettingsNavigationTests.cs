@@ -7,15 +7,16 @@ using Xunit;
 namespace Dudu.UiTests;
 
 /// <summary>
-/// Windows-only UI Automation coverage for all live settings destinations.
-/// It asserts the normal-control equivalents of the no-activate overlay,
-/// which keeps every companion action reachable without a mouse.
+/// Windows-only UI Automation coverage for the three settings destinations
+/// (home, love notes, settings). It asserts the normal-control equivalents of
+/// the no-activate overlay, which keeps every cute action reachable without a
+/// mouse.
 /// </summary>
 [Collection(WindowsUiCollection.Name)]
 public sealed class SettingsNavigationTests
 {
     [Fact]
-    public void Settings_journey_persists_features_and_executes_accessible_overlay_routes()
+    public void Settings_journey_persists_settings_and_executes_accessible_home_actions()
     {
         if (!OperatingSystem.IsWindows())
         {
@@ -43,32 +44,23 @@ public sealed class SettingsNavigationTests
             CompleteOnboardingWhenNeeded(window);
             VerifyNavigationContract(window);
 
-            var marker = Guid.NewGuid().ToString("N")[..8];
-            var reminderTitle = $"UI reminder {marker}";
-            Navigate(window, "NavReminders", "RemindersPageTitle");
-            Find(window, "RemindersTitle").AsTextBox().Enter(reminderTitle);
-            Find(window, "RemindersSave").AsButton().Invoke();
-            WaitForText(window, "RemindersStatusMessage", "reminder saved");
-            SelectByName(window, "RemindersList", reminderTitle);
-            Find(window, "RemindersComplete").AsButton().Invoke();
-            WaitForText(window, "RemindersStatusMessage", "done le good job");
+            // Settings: a saved look survives navigating away and back. Onboarding
+            // turned reduced motion on, so turning it off is a real change.
+            Navigate(window, "NavSettings", "SettingsPageTitle");
+            Assert.True(Find(window, "AppearanceReducedMotion").AsCheckBox().IsChecked);
+            Find(window, "AppearanceReducedMotion").AsCheckBox().IsChecked = false;
+            Find(window, "AppearanceSave").AsButton().Invoke();
+            WaitForText(window, "AppearanceStatusMessage", "appearance saved");
+            Navigate(window, "NavHome", "HomePageTitle");
+            Navigate(window, "NavSettings", "SettingsPageTitle");
+            Assert.False(Find(window, "AppearanceReducedMotion").AsCheckBox().IsChecked);
 
-            var taskTitle = $"UI task {marker}";
-            Navigate(window, "NavTasksFocus", "TasksPageTitle");
-            Find(window, "TasksTitle").AsTextBox().Enter(taskTitle);
-            Find(window, "TasksSave").AsButton().Invoke();
-            WaitForText(window, "TasksStatusMessage", "task saved");
-            SelectByName(window, "TasksActiveList", taskTitle);
-            Find(window, "TasksComplete").AsButton().Invoke();
-            WaitForText(window, "TasksStatusMessage", "task done");
-            Assert.NotNull(Find(window, "TasksCompletedList").FindFirstDescendant(cf => cf.ByName(taskTitle)));
-
-            Find(window, "FocusStart").AsButton().Invoke();
-            WaitForText(window, "FocusCurrent", "Focus is running");
-            Find(window, "FocusEnd").AsButton().Invoke();
-            WaitForText(window, "TasksStatusMessage", "good job rest rest abit");
-            WaitForText(window, "FocusCurrent", "ended early");
-            Assert.NotNull(Find(window, "FocusHistoryList").FindFirstDescendant(cf => cf.ByName("ended early")));
+            // Delete my data asks first; cancel leaves everything in place.
+            Find(window, "SettingsDeleteMyData").AsButton().Invoke();
+            WaitUntil(() => IsVisible(window, "SettingsDeleteConfirm"));
+            Assert.NotNull(TryFind(window, "SettingsDeleteCancel"));
+            Find(window, "SettingsDeleteCancel").AsButton().Invoke();
+            WaitUntil(() => !IsVisible(window, "SettingsDeleteConfirm"));
 
             ExerciseAccessibleRoutes(window);
         }
@@ -94,47 +86,57 @@ public sealed class SettingsNavigationTests
                 Assert.NotNull(TryFind(window, actionId));
             }
         }
-        // Outfits and seasonal dates are gone from Settings.
-        Assert.Null(TryFind(window, "AppearanceOutfit"));
-        Assert.Null(TryFind(window, "AppearanceSeasonalMode"));
+
+        // Only home, love notes and settings remain in the shell.
+        foreach (var removedNavigationId in RemovedNavigationIds)
+        {
+            Assert.Null(TryFind(window, removedNavigationId));
+        }
+
+        // Still on Settings: outfits, seasonal dates and user backup/restore are gone.
+        foreach (var removedControlId in RemovedSettingsControlIds)
+        {
+            Assert.Null(TryFind(window, removedControlId));
+        }
     }
 
     private static void ExerciseAccessibleRoutes(Window window)
     {
-        ExerciseRoute(window, "OverlayActionPet", "HomePageTitle", "HomeActionStatus", "pet ready le");
-        ExerciseRoute(window, "OverlayActionDrinkWater", "RemindersPageTitle");
-        ExerciseRoute(window, "OverlayActionTasks", "TasksPageTitle");
-        ExerciseRoute(window, "OverlayActionLoveNote", "LoveNotesPageTitle");
-        ExerciseRoute(window, "OverlayActionComfortMe", "HomePageTitle", "HomeActionStatus", "comfort me ready le");
-        ExerciseRoute(window, "OverlayComfortActionBreatheWithMe", "HomePageTitle", "HomeActionStatus", "breathe with me ready le");
-        ExerciseRoute(window, "OverlayComfortActionTinyHug", "HomePageTitle", "HomeActionStatus", "tiny hug ready le");
-        ExerciseRoute(window, "OverlayComfortActionReadALoveNote", "LoveNotesPageTitle");
-        ExerciseRoute(window, "OverlayComfortActionTakeAFiveMinuteBreak", "HomePageTitle", "HomeActionStatus", "take a five-minute break ready le");
-        WaitForText(window, "HomePauseDescription", "five minutes");
-        ExerciseRoute(window, "OverlayComfortActionClose", "HomePageTitle", "HomeActionStatus", "close ready le");
-
+        // Pet runs through the Home view model; it must not surface an error.
         Navigate(window, "NavHome", "HomePageTitle");
-        Find(window, "OverlayActionStartFocus").AsButton().Invoke();
-        WaitUntil(() => IsVisible(window, "TasksPageTitle"));
-        WaitForText(window, "FocusCurrent", "Focus is running");
-        Find(window, "FocusEnd").AsButton().Invoke();
-        WaitForText(window, "TasksStatusMessage", "good job rest rest abit");
+        Find(window, "OverlayActionPet").AsButton().Invoke();
+        Assert.Null(TryFind(window, "HomeErrorMessage"));
+
+        ExerciseRoute(window, "OverlayActionDrinkWater", "HomeActionStatus", "drink water ready le");
+        // Eat together toggles: start the meal, then end it again.
+        ExerciseRoute(window, "OverlayActionEatTogether", "HomeActionStatus", "eat together ready le");
+        ExerciseRoute(window, "OverlayActionEatTogether", "HomeActionStatus", "eat together ready le");
+        ExerciseRoute(window, "OverlayComfortActionTinyHug", "HomeActionStatus", "tiny hug ready le");
+
+        // Breathe with me shows its phase on Home; Stop ends it without an error.
+        // Reduced motion was turned off above, so this is the running exercise,
+        // not the reduced-motion static instruction.
+        Navigate(window, "NavHome", "HomePageTitle");
+        Find(window, "OverlayComfortActionBreatheWithMe").AsButton().Invoke();
+        WaitUntil(() => IsVisible(window, "HomeBreathingPanel"));
+        WaitUntil(() => !string.IsNullOrWhiteSpace(
+            TryFind(window, "HomeBreathingPhase")?.Properties.Name.ValueOrDefault));
+        Find(window, "HomeBreathingStop").AsButton().Invoke();
+        WaitUntil(() => !IsVisible(window, "HomeBreathingPanel"));
+        WaitForText(window, "HomeActionStatus", "breathing stopped");
+        Assert.Null(TryFind(window, "HomeErrorMessage"));
     }
 
     private static void ExerciseRoute(
         Window window,
         string actionId,
-        string destinationTitleId,
-        string? statusId = null,
-        string? statusText = null)
+        string statusId,
+        string statusText)
     {
         Navigate(window, "NavHome", "HomePageTitle");
         Find(window, actionId).AsButton().Invoke();
-        WaitUntil(() => IsVisible(window, destinationTitleId));
-        if (statusId is not null && statusText is not null)
-        {
-            WaitForText(window, statusId, statusText);
-        }
+        WaitUntil(() => IsVisible(window, "HomePageTitle"));
+        WaitForText(window, statusId, statusText);
     }
 
     private static readonly Destination[] Destinations =
@@ -143,19 +145,29 @@ public sealed class SettingsNavigationTests
             "NavHome",
             "HomePageTitle",
             [
-                "OverlayActionPet", "OverlayActionDrinkWater", "OverlayActionStartFocus",
-                "OverlayActionTasks", "OverlayActionLoveNote", "OverlayActionComfortMe",
-                "OverlayComfortActionBreatheWithMe", "OverlayComfortActionTinyHug",
-                "OverlayComfortActionReadALoveNote", "OverlayComfortActionTakeAFiveMinuteBreak",
-                "OverlayComfortActionClose",
+                "HomeGreeting", "HomePartnerClock", "HomeDuduImage",
+                "OverlayActionPet", "OverlayActionDrinkWater", "OverlayActionEatTogether",
+                "OverlayComfortActionTinyHug", "OverlayComfortActionBreatheWithMe",
             ]),
-        new("NavReminders", "RemindersPageTitle", ["RemindersMonday", "RemindersFriday", "RemindersSave"]),
-        new("NavTasksFocus", "TasksPageTitle", ["TasksCompletedList", "FocusHistoryList", "FocusStart", "FocusEnd"]),
-        new("NavLoveNotes", "LoveNotesPageTitle", ["LoveNotesRemoteList", "LoveNotesRevealSelected", "LoveNotesOpenedList"]),
-        new("NavAppearance", "AppearancePageTitle", ["AppearanceSave", "AppearanceSavePlacement"]),
-        new("NavConnection", "ConnectionPageTitle", ["ConnectionCreateCode", "ConnectionSessionsList", "ConnectionForgetPairing", "ConnectionConfirm", "ConnectionCancel"]),
-        new("NavPrivacy", "PrivacyPageTitle", ["PrivacyStoredFields", "PrivacyBackup", "PrivacyRestore", "PrivacyDeleteLocal", "PrivacyDeleteRemote", "PrivacyConfirm"]),
+        new("NavLoveNotes", "LoveNotesPageTitle", ["LoveNotesPendingCount", "LoveNotesRemoteList", "LoveNotesRevealSelected", "LoveNotesOpenedList", "LoveNotesDelete"]),
+        new(
+            "NavSettings",
+            "SettingsPageTitle",
+            [
+                "AppearanceTheme", "AppearanceReducedMotion", "AppearanceSoundsEnabled", "AppearanceSoundVolume",
+                "AppearancePetScale", "AppearanceMonitor", "AppearanceAlwaysOnTop", "AppearanceHideFullscreen",
+                "AppearanceSave", "AppearanceSavePlacement", "SettingsLaunchAtSignIn",
+                "SettingsConnectionHeading", "ConnectionCreateCode", "ConnectionRefresh", "ConnectionSessionsList",
+                "ConnectionRevokeSessions", "ConnectionDeleteRemote", "ConnectionForgetPairing",
+                "SettingsStoredData", "SettingsDeleteMyData",
+            ]),
     ];
+
+    private static readonly string[] RemovedNavigationIds =
+        ["NavReminders", "NavTasksFocus", "NavAppearance", "NavConnection", "NavPrivacy"];
+
+    private static readonly string[] RemovedSettingsControlIds =
+        ["AppearanceOutfit", "AppearanceSeasonalMode", "PrivacyBackup", "PrivacyRestore"];
 
     private static void CompleteOnboardingWhenNeeded(Window window)
     {
@@ -184,17 +196,6 @@ public sealed class SettingsNavigationTests
     {
         Find(window, navigationId).Click();
         WaitUntil(() => IsVisible(window, pageTitleId));
-    }
-
-    private static void SelectByName(Window window, string listId, string name)
-    {
-        AutomationElement? item = null;
-        WaitUntil(() =>
-        {
-            item = Find(window, listId).FindFirstDescendant(cf => cf.ByName(name));
-            return item is not null;
-        });
-        item!.Click();
     }
 
     private static void WaitForText(Window window, string automationId, string expected) =>
