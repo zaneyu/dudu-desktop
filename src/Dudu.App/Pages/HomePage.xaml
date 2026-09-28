@@ -47,7 +47,7 @@
                             </StackPanel>
                             <TextBlock Text="{x:Bind ViewModel.PartnerDateLine, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.AccessibilityView="Raw" />
                             <TextBlock Text="{x:Bind ViewModel.PartnerOffsetLine, Mode=OneWay}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AccessibilityView="Raw" />
-                            <TextBlock Text="{x:Bind ViewModel.PartnerMoodText, Mode=OneWay}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AccessibilityView="Raw" />
+                            <TextBlock Text="{x:Bind ViewModel.PartnerTimeOfDayText, Mode=OneWay}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AccessibilityView="Raw" />
                         </StackPanel>
                     </Grid>
                 </Border>

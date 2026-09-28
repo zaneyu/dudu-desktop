@@ -40,7 +40,7 @@ public sealed class HomeViewModel : FeatureViewModelBase
     public string PartnerDayPeriodEmoji => _partnerReading.DayPeriodEmoji;
     public string PartnerDateLine => $"{_partnerReading.DateText} · {_partnerReading.DayText}";
     public string PartnerOffsetLine => $"{_partnerReading.OffsetLabel} · {_partnerReading.DifferenceText}";
-    public string PartnerMoodText => _partnerReading.MoodText;
+    public string PartnerTimeOfDayText => _partnerReading.MoodText;
     public string PartnerClockSpokenText => _partnerReading.SpokenText;
 
     /// <summary>Re-reads the partner clock and raises change notifications only
@@ -63,7 +63,7 @@ public sealed class HomeViewModel : FeatureViewModelBase
         OnPropertyChanged(nameof(PartnerDayPeriodEmoji));
         OnPropertyChanged(nameof(PartnerDateLine));
         OnPropertyChanged(nameof(PartnerOffsetLine));
-        OnPropertyChanged(nameof(PartnerMoodText));
+        OnPropertyChanged(nameof(PartnerTimeOfDayText));
         OnPropertyChanged(nameof(PartnerClockSpokenText));
     }
 
