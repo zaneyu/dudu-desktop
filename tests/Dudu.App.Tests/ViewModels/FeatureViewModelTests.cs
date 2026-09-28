@@ -689,6 +689,68 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
+    public async Task Router_sing_for_me_sings_for_the_song_length_and_stop_silences_it()
+    {
+        var stops = 0;
+        var requested = new List<TimeSpan>();
+        var fixture = FeatureFixture.Create(
+            songDuration: TimeSpan.FromSeconds(30),
+            stopSongAsync: _ =>
+            {
+                stops++;
+                return Task.CompletedTask;
+            });
+        var router = new OverlayCommandRouter(
+            fixture.Context,
+            (_, _) => Task.CompletedTask,
+            (delay, token) =>
+            {
+                requested.Add(delay);
+                return Task.Delay(Timeout.InfiniteTimeSpan, token);
+            });
+
+        await router.ExecuteAsync(OverlayAction.SingForMe, TestContext.Current.CancellationToken);
+
+        Assert.True(router.IsSinging);
+        Assert.Equal("stop singing", router.LabelFor(OverlayAction.SingForMe));
+        Assert.Equal(PetState.Singing, fixture.Context.Pet.Current.State);
+        Assert.Equal("sing", fixture.Context.Pet.Current.AnimationKey);
+        Assert.Equal(PetStateMachine.SingingBubble, fixture.Context.Pet.Current.BubbleTitle);
+        Assert.Equal([TimeSpan.FromSeconds(30)], requested);
+        Assert.Equal(0, stops);
+
+        await router.ExecuteAsync(OverlayAction.SingForMe, TestContext.Current.CancellationToken);
+
+        Assert.False(router.IsSinging);
+        Assert.Equal("sing for me", router.LabelFor(OverlayAction.SingForMe));
+        Assert.False(fixture.Context.Pet.IsSingingActive);
+        Assert.Equal(1, stops);
+    }
+
+    [Fact]
+    public async Task Router_starting_a_meal_mid_song_silences_the_song()
+    {
+        var stops = 0;
+        var fixture = FeatureFixture.Create(stopSongAsync: _ =>
+        {
+            stops++;
+            return Task.CompletedTask;
+        });
+        var router = new OverlayCommandRouter(
+            fixture.Context,
+            (_, _) => Task.CompletedTask,
+            (delay, token) => Task.Delay(Timeout.InfiniteTimeSpan, token));
+
+        await router.ExecuteAsync(OverlayAction.SingForMe, TestContext.Current.CancellationToken);
+        await router.ExecuteAsync(OverlayAction.EatTogether, TestContext.Current.CancellationToken);
+
+        Assert.False(router.IsSinging);
+        Assert.True(router.IsEating);
+        Assert.Equal(1, stops);
+        Assert.Equal(PetState.Eating, fixture.Context.Pet.Current.State);
+    }
+
+    [Fact]
     public async Task Router_starting_study_ends_a_running_meal_and_vice_versa()
     {
         var fixture = FeatureFixture.Create();
@@ -1193,7 +1255,9 @@ public sealed class FeatureViewModelTests
             Func<CancellationToken, Task>? deleteRemoteDataAsync = null,
             Func<RemoteEnvelope, CancellationToken, Task<RevealedRemoteNote>>? revealRemoteNoteAsync = null,
             IPairingService? pairing = null,
-            Func<PetEvent, CancellationToken, Task>? beforePresent = null)
+            Func<PetEvent, CancellationToken, Task>? beforePresent = null,
+            TimeSpan? songDuration = null,
+            Func<CancellationToken, Task>? stopSongAsync = null)
         {
             var clock = new FakeClock("2026-09-12T10:00:00Z");
             var events = new List<string>();
@@ -1256,7 +1320,9 @@ public sealed class FeatureViewModelTests
                 revealRemoteNoteAsync: revealRemoteNoteAsync
                     ?? ((_, _) => Task.FromResult(new RevealedRemoteNote("You can do it", "none"))),
                 deleteLocalDataAsync: deleteLocalDataAsync,
-                deleteRemoteDataAsync: deleteRemoteDataAsync);
+                deleteRemoteDataAsync: deleteRemoteDataAsync,
+                songDuration: songDuration,
+                stopSongAsync: stopSongAsync);
             return new FeatureFixture(
                 clock,
                 localNotes,

@@ -47,6 +47,7 @@ public sealed class AudioCueService : IAsyncDisposable
     private readonly CancellationTokenSource _shutdown = new();
     private DateTimeOffset? _lastPlayback;
     private DateTimeOffset _activeUntil = DateTimeOffset.MinValue;
+    private AudioCueEvent? _activeEvent;
     private bool _playbackReserved;
     private int _disposed;
 
@@ -127,6 +128,7 @@ public sealed class AudioCueService : IAsyncDisposable
                     // own duration is what marks it finished.
                     _lastPlayback = startedAt;
                     _activeUntil = startedAt + TimeSpan.FromMilliseconds(Math.Max(0, cue.DurationMs));
+                    _activeEvent = cueEvent;
                     _lastPackPlayback[packId!] = startedAt;
                     _lastEventPlayback[cueEvent] = startedAt;
                     _variantIndexes[packId!] = cueIndex + 1;
@@ -172,6 +174,33 @@ public sealed class AudioCueService : IAsyncDisposable
             {
                 lock (_gate) _playbackReserved = false;
             }
+        }
+    }
+
+    /// <summary>Stops the cue for <paramref name="cueEvent"/> if it is still
+    /// the one playing (the song, when "stop singing" ends it early). A cue
+    /// that already finished or was superseded is left alone, so a pet
+    /// sound that cut the song is never cut in turn.</summary>
+    public async Task StopAsync(AudioCueEvent cueEvent, CancellationToken cancellationToken = default)
+    {
+        if (Volatile.Read(ref _disposed) != 0) return;
+        lock (_gate)
+        {
+            if (_activeEvent != cueEvent || _utcNow() >= _activeUntil) return;
+            _activeEvent = null;
+            _activeUntil = DateTimeOffset.MinValue;
+        }
+
+        try
+        {
+            await _player.StopAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            _errorReporter?.Report("audio-cue-playback", exception);
         }
     }
 

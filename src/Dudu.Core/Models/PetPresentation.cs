@@ -22,6 +22,10 @@ public enum PetState
     /// <summary>A study-together session is running (focus loop). Suppresses
     /// unsolicited presentations until it ends, like a meal.</summary>
     Studying,
+
+    /// <summary>Dudu is singing his song (sing loop) for its length or until
+    /// stopped. Suppresses unsolicited presentations like a meal.</summary>
+    Singing,
 }
 
 public sealed record PetPresentation(

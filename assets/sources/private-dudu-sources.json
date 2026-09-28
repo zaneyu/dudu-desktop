@@ -1219,7 +1219,8 @@
       "privateUseOnly": true,
       "accessedUtc": "2026-09-26T00:00:00Z",
       "animationKeys": [
-        "wiggle"
+        "wiggle",
+        "sing"
       ],
       "status": "derived",
       "mediaUrl": null,

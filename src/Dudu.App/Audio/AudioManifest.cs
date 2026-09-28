@@ -46,6 +46,13 @@ public sealed class AudioCatalog
         _packs.TryGetValue(packId, out var pack)
             ? pack
             : throw new KeyNotFoundException($"Audio pack '{packId}' was not found.");
+
+    /// <summary>Length of the song Dudu sings, or null when no song loaded
+    /// (audio failed to load, so "sing for me" wiggles silently).</summary>
+    public TimeSpan? SongDuration =>
+        _packs.TryGetValue(AudioManifestContract.SongPackId, out var pack) && pack.Cues.Count > 0
+            ? TimeSpan.FromMilliseconds(pack.Cues[0].DurationMs)
+            : null;
 }
 
 public sealed record AudioSoundPack(string PackId, IReadOnlyList<AudioCue> Cues);
@@ -80,8 +87,20 @@ public static class AudioManifestContract
     public const long MaxCueFileBytes = 1_048_576;
     public const long MaxPackBytes = 8_388_608;
 
+    /// <summary>The pack Dudu sings from on "sing for me". Its one cue is a
+    /// whole song, so it gets song-sized limits instead of the short-cue ones.</summary>
+    public const string SongPackId = "dudu-song";
+    public const int MaxSongDurationMs = 60_000;
+    public const long MaxSongFileBytes = 6_291_456;
+
     private static readonly string[] RequiredPackIds =
-        ["bubu-dudu-atata", "tata-lala", "dudu-lalala", "dudu-atatata", "dudu-yapapa"];
+        ["bubu-dudu-atata", "tata-lala", "dudu-lalala", "dudu-atatata", "dudu-yapapa", SongPackId];
+
+    public static int MaxDurationMsFor(string packId) =>
+        packId == SongPackId ? MaxSongDurationMs : MaxCueDurationMs;
+
+    public static long MaxFileBytesFor(string packId) =>
+        packId == SongPackId ? MaxSongFileBytes : MaxCueFileBytes;
 
     public static IReadOnlyList<string> Validate(AudioManifest? manifest)
     {
@@ -109,13 +128,13 @@ public static class AudioManifestContract
                 else if (cue.FilePath.Split(['/', '\\']).Any(segment => segment is "..")) errors.Add($"cue '{cue.CueId}' traversal path is invalid.");
                 else if (!cue.FilePath.EndsWith(".wav", StringComparison.Ordinal)) errors.Add($"cue '{cue.CueId}' extension is invalid.");
                 else if (!IsSafeRelativeWavePath(cue.FilePath)) errors.Add($"cue '{cue.CueId}' path is invalid.");
-                if (cue.DurationMs is < 80 or > MaxCueDurationMs) errors.Add($"cue '{cue.CueId}' duration is invalid.");
+                if (cue.DurationMs < 80 || cue.DurationMs > MaxDurationMsFor(pack.PackId)) errors.Add($"cue '{cue.CueId}' duration is invalid.");
                 if (!IsLowercaseSha256(cue.Sha256)) errors.Add($"cue '{cue.CueId}' hash is invalid.");
             }
         }
 
         if (packIds.Count != RequiredPackIds.Length || !RequiredPackIds.All(packIds.Contains))
-            errors.Add("pack set must contain exactly the five required packs.");
+            errors.Add("pack set must contain exactly the six required packs.");
         foreach (var required in RequiredPackIds)
             if (!packIds.Contains(required)) errors.Add($"missing required pack '{required}'.");
         return errors;

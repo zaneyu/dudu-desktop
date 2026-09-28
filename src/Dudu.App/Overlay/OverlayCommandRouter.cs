@@ -14,8 +14,8 @@ public sealed class OverlayCommandRouter
     private bool _isBreathing;
     private string _breathingInstruction = "breathe in for 4, out for 6";
     private ComfortPanelState _comfortPanel = ComfortPanelState.Closed;
-    /// <summary>The running eat- or study-together session, if any. Only one
-    /// runs at a time: starting one ends the other.</summary>
+    /// <summary>The running eat- or study-together session or song, if any.
+    /// Only one runs at a time: starting one ends the other.</summary>
     private TogetherSession? _session;
     /// <summary>Serializes together toggles end to end, so a quick
     /// start-then-end reaches the pet in that order.</summary>
@@ -39,6 +39,7 @@ public sealed class OverlayCommandRouter
         OverlayAction.DrinkWater,
         OverlayAction.EatTogether,
         OverlayAction.StudyTogether,
+        OverlayAction.SingForMe,
         OverlayAction.TinyHug,
         OverlayAction.BreatheWithMe,
     ];
@@ -67,6 +68,7 @@ public sealed class OverlayCommandRouter
         OverlayAction.DrinkWater => "drink water",
         OverlayAction.EatTogether => "eat together",
         OverlayAction.StudyTogether => "study together",
+        OverlayAction.SingForMe => "sing for me",
         OverlayAction.TinyHug => "tiny hug",
         OverlayAction.BreatheWithMe => "breathe with me",
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "oh no unknown overlay action"),
@@ -81,6 +83,7 @@ public sealed class OverlayCommandRouter
         OverlayAction.DrinkWater => "OverlayActionDrinkWater",
         OverlayAction.EatTogether => "OverlayActionEatTogether",
         OverlayAction.StudyTogether => "OverlayActionStudyTogether",
+        OverlayAction.SingForMe => "OverlayActionSingForMe",
         OverlayAction.TinyHug => "OverlayComfortActionTinyHug",
         OverlayAction.BreatheWithMe => "OverlayComfortActionBreatheWithMe",
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "alala unknown overlay action"),
@@ -100,14 +103,17 @@ public sealed class OverlayCommandRouter
     public ComfortPanelState ComfortPanel { get { lock (_gate) return _comfortPanel; } }
     public bool IsEating { get { lock (_gate) return _session?.Kind == TogetherKind.Eat; } }
     public bool IsStudying { get { lock (_gate) return _session?.Kind == TogetherKind.Study; } }
+    public bool IsSinging { get { lock (_gate) return _session?.Kind == TogetherKind.Sing; } }
 
     /// <summary>Painted label, reflecting live toggle state (eat together
     /// becomes "done eating" while a meal runs, study together "done
-    /// studying" while a study session runs).</summary>
+    /// studying" while a study session runs, sing for me "stop singing"
+    /// while the song plays).</summary>
     public string LabelFor(OverlayAction action) => action switch
     {
         OverlayAction.EatTogether when IsEating => "done eating",
         OverlayAction.StudyTogether when IsStudying => "done studying",
+        OverlayAction.SingForMe when IsSinging => "stop singing",
         _ => Label(action),
     };
 
@@ -121,6 +127,7 @@ public sealed class OverlayCommandRouter
             OverlayAction.DrinkWater => ExecuteDrinkWaterAsync(cancellationToken),
             OverlayAction.EatTogether => ToggleTogetherAsync(TogetherKind.Eat, cancellationToken),
             OverlayAction.StudyTogether => ToggleTogetherAsync(TogetherKind.Study, cancellationToken),
+            OverlayAction.SingForMe => ToggleTogetherAsync(TogetherKind.Sing, cancellationToken),
             OverlayAction.TinyHug => PresentTinyHugAsync(cancellationToken),
             OverlayAction.BreatheWithMe => BreatheWithMeAsync(cancellationToken),
             _ => throw new ArgumentOutOfRangeException(nameof(action), action, "alala unknown overlay action"),
@@ -157,6 +164,9 @@ public sealed class OverlayCommandRouter
             case OverlayAction.StudyTogether:
                 await ToggleTogetherAsync(TogetherKind.Study, cancellationToken);
                 break;
+            case OverlayAction.SingForMe:
+                await ToggleTogetherAsync(TogetherKind.Sing, cancellationToken);
+                break;
             case OverlayAction.TinyHug:
                 await PresentTinyHugAsync(cancellationToken);
                 break;
@@ -176,6 +186,7 @@ public sealed class OverlayCommandRouter
         OverlayAction.DrinkWater => "home",
         OverlayAction.EatTogether => "home",
         OverlayAction.StudyTogether => "home",
+        OverlayAction.SingForMe => "home",
         OverlayAction.TinyHug or OverlayAction.BreatheWithMe => "home",
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "oh no unknown overlay action"),
     };
@@ -192,10 +203,11 @@ public sealed class OverlayCommandRouter
     private Task ExecuteDrinkWaterAsync(CancellationToken cancellationToken) =>
         _context.DrinkAsync(cancellationToken);
 
-    /// <summary>Starts an in-memory eat- or study-together session (eat or
-    /// focus loop, notes and ambient moments held back) or, when one of that
-    /// kind is running, ends it. Starting one kind ends the other first. A
-    /// running session ends by itself after its duration.</summary>
+    /// <summary>Starts an in-memory eat- or study-together session or song
+    /// (eat, focus or sing loop, notes and ambient moments held back) or, when
+    /// one of that kind is running, ends it. Starting one kind ends the other
+    /// first. A running session ends by itself after its duration; a song
+    /// ended early is also silenced.</summary>
     private async Task ToggleTogetherAsync(TogetherKind kind, CancellationToken cancellationToken)
     {
         await _sessionToggle.WaitAsync(cancellationToken);
@@ -232,6 +244,11 @@ public sealed class OverlayCommandRouter
 
         if (ending is not null)
         {
+            if (ending.Kind == TogetherKind.Sing)
+            {
+                await _context.StopSongAsync(cancellationToken);
+            }
+
             try
             {
                 await PresentAsync(EndedEvent(ending), cancellationToken);
@@ -303,24 +320,34 @@ public sealed class OverlayCommandRouter
             _context.Pet.Handle(EndedEvent(session));
             global::System.Diagnostics.Trace.TraceError(
                 "Dudu {0}-together end failed: {1} (0x{2:X8})",
-                session.Kind == TogetherKind.Eat ? "eat" : "study",
+                session.Kind.ToString().ToLowerInvariant(),
                 exception.GetType().FullName,
                 exception.HResult);
         }
     }
 
-    private static TimeSpan DurationOf(TogetherKind kind) =>
-        kind == TogetherKind.Eat ? EatingDuration : StudyDuration;
+    private TimeSpan DurationOf(TogetherKind kind) => kind switch
+    {
+        TogetherKind.Eat => EatingDuration,
+        TogetherKind.Study => StudyDuration,
+        _ => _context.SongDuration,
+    };
 
-    private static PetEvent StartedEvent(TogetherSession session) => session.Kind == TogetherKind.Eat
-        ? new PetEvent.EatingStarted(session.Id)
-        : new PetEvent.StudyStarted(session.Id);
+    private static PetEvent StartedEvent(TogetherSession session) => session.Kind switch
+    {
+        TogetherKind.Eat => new PetEvent.EatingStarted(session.Id),
+        TogetherKind.Study => new PetEvent.StudyStarted(session.Id),
+        _ => new PetEvent.SingStarted(session.Id),
+    };
 
-    private static PetEvent EndedEvent(TogetherSession session) => session.Kind == TogetherKind.Eat
-        ? new PetEvent.EatingEnded(session.Id)
-        : new PetEvent.StudyEnded(session.Id);
+    private static PetEvent EndedEvent(TogetherSession session) => session.Kind switch
+    {
+        TogetherKind.Eat => new PetEvent.EatingEnded(session.Id),
+        TogetherKind.Study => new PetEvent.StudyEnded(session.Id),
+        _ => new PetEvent.SingEnded(session.Id),
+    };
 
-    private enum TogetherKind { Eat, Study }
+    private enum TogetherKind { Eat, Study, Sing }
 
     private sealed record TogetherSession(TogetherKind Kind, string Id);
 

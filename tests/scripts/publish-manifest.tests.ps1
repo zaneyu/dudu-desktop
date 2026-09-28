@@ -88,7 +88,7 @@ try {
     # Private audio pack allowlist and manifest contract. Keep these fixtures synthetic:
     # Task 1's real WAVs remain blocked pending waveform review.
     $audioRoot = Join-Path $tempRoot "audio"
-    $audioPackIds = @('bubu-dudu-atata', 'tata-lala', 'dudu-lalala', 'dudu-atatata', 'dudu-yapapa')
+    $audioPackIds = @('bubu-dudu-atata', 'tata-lala', 'dudu-lalala', 'dudu-atatata', 'dudu-yapapa', 'dudu-song')
     New-Item -ItemType Directory -Path $audioRoot -Force | Out-Null
     $audioPacks = @($audioPackIds | ForEach-Object {
         New-Item -ItemType Directory -Path (Join-Path $audioRoot $_) -Force | Out-Null
@@ -102,7 +102,7 @@ try {
         ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $audioRoot 'manifest.json')
     $ok = $true
     try { Assert-PrivateAudioReleaseAssetPack -PackRoot $audioRoot } catch { $ok = $false }
-    Assert-True "audio pack with all five private packs and referenced WAVs passes" $ok
+    Assert-True "audio pack with all six private packs and referenced WAVs passes" $ok
 
     $audioAdversarialCases = @(
         @{ Name = 'MP3'; Path = 'tata-lala/bad.mp3'; Content = 'mp3'; Mutate = $null },

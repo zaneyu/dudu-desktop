@@ -14,7 +14,7 @@ public sealed class OverlayCommandRouterTests
     }
 
     [Fact]
-    public void Primary_actions_are_exactly_the_six_cute_buttons()
+    public void Primary_actions_are_exactly_the_seven_cute_buttons()
     {
         Assert.Equal(
             [
@@ -22,6 +22,7 @@ public sealed class OverlayCommandRouterTests
                 OverlayAction.DrinkWater,
                 OverlayAction.EatTogether,
                 OverlayAction.StudyTogether,
+                OverlayAction.SingForMe,
                 OverlayAction.TinyHug,
                 OverlayAction.BreatheWithMe,
             ],
@@ -132,6 +133,7 @@ public sealed class OverlayCommandRouterTests
     [InlineData(OverlayAction.DrinkWater)]
     [InlineData(OverlayAction.EatTogether)]
     [InlineData(OverlayAction.StudyTogether)]
+    [InlineData(OverlayAction.SingForMe)]
     [InlineData(OverlayAction.TinyHug)]
     [InlineData(OverlayAction.BreatheWithMe)]
     public async Task Every_action_has_a_real_arm_in_both_execution_paths(OverlayAction action)

@@ -6,7 +6,7 @@ namespace Dudu.App.ViewModels;
 
 /// <summary>Home is the cute page: a greeting that uses the recipient name, the UK
 /// partner clock, and a pet button. The other cute buttons (drink, eat together,
-/// tiny hug, breathe with me) are routed by HomePage through the overlay command
+/// study together, sing for me, tiny hug, breathe with me) are routed by HomePage through the overlay command
 /// router, so this view model carries no practical state at all.</summary>
 public sealed class HomeViewModel : FeatureViewModelBase
 {
@@ -80,6 +80,7 @@ public sealed class HomeViewModel : FeatureViewModelBase
         PetState.Dragging => "being carried around",
         PetState.Eating => "eating with u",
         PetState.Studying => "studying with u",
+        PetState.Singing => "singing for u",
         _ => "idle",
     };
 

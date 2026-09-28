@@ -87,9 +87,10 @@ public static class AudioManifestLoader
                 long fileBytes;
                 try { fileBytes = new FileInfo(fullPath).Length; }
                 catch (IOException) { errors.Add($"cue '{cue.CueId}' file size could not be read."); continue; }
-                if (fileBytes > AudioManifestContract.MaxCueFileBytes)
+                var maxFileBytes = AudioManifestContract.MaxFileBytesFor(pack.PackId);
+                if (fileBytes > maxFileBytes)
                 {
-                    errors.Add($"cue '{cue.CueId}' large file exceeds {AudioManifestContract.MaxCueFileBytes} bytes.");
+                    errors.Add($"cue '{cue.CueId}' large file exceeds {maxFileBytes} bytes.");
                     continue;
                 }
 

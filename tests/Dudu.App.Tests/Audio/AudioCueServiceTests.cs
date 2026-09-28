@@ -45,15 +45,54 @@ public sealed class AudioCueServiceTests
     }
 
     [Fact]
-    public void Every_cue_event_uses_only_the_five_reviewed_packs()
+    public void Every_short_cue_event_uses_only_the_five_reviewed_packs()
     {
         var reviewed = new[] { "bubu-dudu-atata", "tata-lala", "dudu-lalala", "dudu-atatata", "dudu-yapapa" };
-        foreach (var cueEvent in Enum.GetValues<AudioCueEvent>())
+        foreach (var cueEvent in Enum.GetValues<AudioCueEvent>().Where(cueEvent => cueEvent != AudioCueEvent.Song))
         {
             var packs = AudioCueSelection.PacksFor(cueEvent);
             Assert.True(packs.Count >= 2, $"{cueEvent} should rotate between packs");
             Assert.All(packs, pack => Assert.Contains(pack, reviewed));
         }
+    }
+
+    [Fact]
+    public void Song_plays_the_song_pack_as_a_direct_user_action()
+    {
+        Assert.Equal([AudioManifestContract.SongPackId], AudioCueSelection.PacksFor(AudioCueEvent.Song));
+        Assert.Equal(AudioCuePriority.Interactive, AudioCueSelection.PriorityFor(AudioCueEvent.Song));
+    }
+
+    [Fact]
+    public async Task Stopping_the_song_stops_the_player_only_while_the_song_is_still_playing()
+    {
+        var player = new StoppablePlayer();
+        var now = new MutableClock();
+        await using var service = new AudioCueService(
+            new AudioCatalog([.. CreateCatalog().Packs, Pack(AudioManifestContract.SongPackId, 30_000)]),
+            player,
+            () => Preferences.Default,
+            utcNow: () => now.Value);
+
+        Assert.Equal(
+            AudioPlaybackStatus.Started,
+            (await service.TryPlayAsync(AudioCueEvent.Song, AudioCuePriority.Interactive, TestContext.Current.CancellationToken)).Status);
+        await service.StopAsync(AudioCueEvent.Petted, TestContext.Current.CancellationToken);
+        Assert.Equal(0, player.Stops);
+
+        await service.StopAsync(AudioCueEvent.Song, TestContext.Current.CancellationToken);
+        Assert.Equal(1, player.Stops);
+
+        // Already stopped: nothing left to stop.
+        await service.StopAsync(AudioCueEvent.Song, TestContext.Current.CancellationToken);
+        Assert.Equal(1, player.Stops);
+
+        // A pet sound that superseded the song is not cut by "stop singing".
+        now.Advance(TimeSpan.FromSeconds(2));
+        await service.TryPlayAsync(AudioCueEvent.Song, AudioCuePriority.Interactive, TestContext.Current.CancellationToken);
+        await service.TryPlayAsync(AudioCueEvent.Petted, AudioCuePriority.Interactive, TestContext.Current.CancellationToken);
+        await service.StopAsync(AudioCueEvent.Song, TestContext.Current.CancellationToken);
+        Assert.Equal(1, player.Stops);
     }
 
     [Fact]
@@ -385,6 +424,20 @@ public sealed class AudioCueServiceTests
         public bool Fullscreen { get; init; }
         public bool Locked { get; init; }
         public bool SafeMode { get; init; }
+    }
+
+    private sealed class StoppablePlayer : IAudioCuePlayer
+    {
+        public int Stops { get; private set; }
+
+        public Task<AudioPlaybackState> PlayAsync(AudioCue cue, double volume, CancellationToken cancellationToken) =>
+            Task.FromResult(AudioPlaybackState.Started);
+
+        public Task StopAsync(CancellationToken cancellationToken)
+        {
+            Stops++;
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class MutableClock

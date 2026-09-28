@@ -73,14 +73,14 @@ function Assert-PrivateAudioReleaseAssetPack {
         throw "Private audio release pack manifest must declare privateUseOnly: true: '$manifestPath'."
     }
 
-    $requiredPackIds = @('bubu-dudu-atata', 'tata-lala', 'dudu-lalala', 'dudu-atatata', 'dudu-yapapa')
+    $requiredPackIds = @('bubu-dudu-atata', 'tata-lala', 'dudu-lalala', 'dudu-atatata', 'dudu-yapapa', 'dudu-song')
     $packs = @($manifest.packs)
     $packIds = @($packs | ForEach-Object { [string]$_.packId })
     if ($packIds.Count -ne $requiredPackIds.Count -or
         (@($packIds | Where-Object { $_ -notin $requiredPackIds }).Count -gt 0) -or
         (@($requiredPackIds | Where-Object { $_ -notin $packIds }).Count -gt 0) -or
         (@($packIds | Group-Object | Where-Object { $_.Count -ne 1 }).Count -gt 0)) {
-        throw "Private audio release pack manifest must contain exactly the five required pack ids: $($requiredPackIds -join ', ')."
+        throw "Private audio release pack manifest must contain exactly the six required pack ids: $($requiredPackIds -join ', ')."
     }
 
     # The installer bundles this directory recursively. Keep it to the manifest and WAV files

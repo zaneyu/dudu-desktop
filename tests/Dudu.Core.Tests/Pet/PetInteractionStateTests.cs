@@ -161,6 +161,24 @@ public sealed class PetInteractionStateTests
     }
 
     [Fact]
+    public void Singing_loops_the_sing_pose_holds_notes_back_and_ends_by_session_id()
+    {
+        var machine = PetStateMachine.CreateIdle();
+
+        var singing = machine.Handle(new PetEvent.SingStarted("song-1"));
+
+        Assert.Equal(PetState.Singing, singing.State);
+        Assert.Equal("sing", singing.AnimationKey);
+        Assert.Equal(PetStateMachine.SingingBubble, singing.BubbleTitle);
+        Assert.True(machine.IsSingingActive);
+        Assert.Equal(PetState.Singing, machine.Handle(new PetEvent.RemoteNoteArrived("note-1")).State);
+        Assert.Equal(PetState.Singing, machine.Handle(new PetEvent.AmbientRequested("blink")).State);
+        Assert.Equal(PetState.Singing, machine.Handle(new PetEvent.SingEnded("other-song")).State);
+        Assert.Equal(PetState.RemoteNote, machine.Handle(new PetEvent.SingEnded("song-1")).State);
+        Assert.False(machine.IsSingingActive);
+    }
+
+    [Fact]
     public void Eating_holds_notes_and_ambient_back()
     {
         var machine = PetStateMachine.CreateIdle();

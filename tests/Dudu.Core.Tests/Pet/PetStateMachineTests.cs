@@ -287,6 +287,15 @@ public sealed class PetStateMachineTests
                 machine.Handle(new PetEvent.StudyStarted("study-1"));
                 Assert.Equal(PetState.Idle, machine.Handle(new PetEvent.StudyEnded("study-1")).State);
             },
+
+            // Singing: cleared by SingEnded(id), raised by "stop singing" or
+            // automatically once the song has played through.
+            [PetState.Singing] = () =>
+            {
+                var machine = PetStateMachine.CreateIdle();
+                machine.Handle(new PetEvent.SingStarted("song-1"));
+                Assert.Equal(PetState.Idle, machine.Handle(new PetEvent.SingEnded("song-1")).State);
+            },
         };
 
         foreach (var state in Enum.GetValues<PetState>().Where(state => state != PetState.Idle))

@@ -50,6 +50,7 @@ public static class AssetManifestContract
         "grumpy",
         "flail",
         "wail",
+        "sing",
     ];
 
     public static IReadOnlySet<string> OneShotAnimationKeys { get; } =

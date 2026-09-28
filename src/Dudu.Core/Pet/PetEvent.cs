@@ -111,6 +111,26 @@ public abstract record PetEvent
         }
     }
 
+    public sealed record SingStarted : PetEvent
+    {
+        public string SessionId { get; }
+
+        public SingStarted(string sessionId)
+        {
+            SessionId = RequireId(sessionId, nameof(sessionId));
+        }
+    }
+
+    public sealed record SingEnded : PetEvent
+    {
+        public string SessionId { get; }
+
+        public SingEnded(string sessionId)
+        {
+            SessionId = RequireId(sessionId, nameof(sessionId));
+        }
+    }
+
     public sealed record Dismissed : PetEvent
     {
         public string ItemId { get; }

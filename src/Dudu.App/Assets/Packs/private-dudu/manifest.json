@@ -2875,6 +2875,101 @@
           },
           "reducedMotion": "frames/base/wail/0000-863c0edb9251.png",
           "reducedMotionSha256": "863c0edb92514c43d6e0085ae9dbec7c13d591e5c4b48605f09faf5b3c059ff1"
+        },
+        "sing": {
+          "frames": [
+            {
+              "file": "frames/base/wiggle/0000-daaad2ecccc4.png",
+              "durationMs": 150,
+              "sha256": "daaad2ecccc4ef9ef97c3d1bab94e11b5d625a687a3fd06b054e86a38e0bb1ef"
+            },
+            {
+              "file": "frames/base/wiggle/0001-d5f009c047e8.png",
+              "durationMs": 150,
+              "sha256": "d5f009c047e82782f792dfd718384823bb750e530a38bd3ff716299905ad9f4a"
+            },
+            {
+              "file": "frames/base/wiggle/0000-daaad2ecccc4.png",
+              "durationMs": 150,
+              "sha256": "daaad2ecccc4ef9ef97c3d1bab94e11b5d625a687a3fd06b054e86a38e0bb1ef"
+            },
+            {
+              "file": "frames/base/wiggle/0002-bc9377a8536d.png",
+              "durationMs": 150,
+              "sha256": "bc9377a8536d827ac09f6edc9ccb2a90ca8af3b2ccc3280b1a1e2cb931cd7817"
+            },
+            {
+              "file": "frames/base/wiggle/0000-daaad2ecccc4.png",
+              "durationMs": 150,
+              "sha256": "daaad2ecccc4ef9ef97c3d1bab94e11b5d625a687a3fd06b054e86a38e0bb1ef"
+            },
+            {
+              "file": "frames/base/wiggle/0001-d5f009c047e8.png",
+              "durationMs": 150,
+              "sha256": "d5f009c047e82782f792dfd718384823bb750e530a38bd3ff716299905ad9f4a"
+            },
+            {
+              "file": "frames/base/wiggle/0000-daaad2ecccc4.png",
+              "durationMs": 150,
+              "sha256": "daaad2ecccc4ef9ef97c3d1bab94e11b5d625a687a3fd06b054e86a38e0bb1ef"
+            },
+            {
+              "file": "frames/base/wiggle/0002-bc9377a8536d.png",
+              "durationMs": 150,
+              "sha256": "bc9377a8536d827ac09f6edc9ccb2a90ca8af3b2ccc3280b1a1e2cb931cd7817"
+            },
+            {
+              "file": "frames/base/wiggle/0000-daaad2ecccc4.png",
+              "durationMs": 150,
+              "sha256": "daaad2ecccc4ef9ef97c3d1bab94e11b5d625a687a3fd06b054e86a38e0bb1ef"
+            },
+            {
+              "file": "frames/base/wiggle/0001-d5f009c047e8.png",
+              "durationMs": 150,
+              "sha256": "d5f009c047e82782f792dfd718384823bb750e530a38bd3ff716299905ad9f4a"
+            },
+            {
+              "file": "frames/base/wiggle/0000-daaad2ecccc4.png",
+              "durationMs": 150,
+              "sha256": "daaad2ecccc4ef9ef97c3d1bab94e11b5d625a687a3fd06b054e86a38e0bb1ef"
+            },
+            {
+              "file": "frames/base/wiggle/0002-bc9377a8536d.png",
+              "durationMs": 150,
+              "sha256": "bc9377a8536d827ac09f6edc9ccb2a90ca8af3b2ccc3280b1a1e2cb931cd7817"
+            },
+            {
+              "file": "frames/base/wiggle/0000-daaad2ecccc4.png",
+              "durationMs": 150,
+              "sha256": "daaad2ecccc4ef9ef97c3d1bab94e11b5d625a687a3fd06b054e86a38e0bb1ef"
+            },
+            {
+              "file": "frames/base/wiggle/0001-d5f009c047e8.png",
+              "durationMs": 150,
+              "sha256": "d5f009c047e82782f792dfd718384823bb750e530a38bd3ff716299905ad9f4a"
+            },
+            {
+              "file": "frames/base/wiggle/0000-daaad2ecccc4.png",
+              "durationMs": 150,
+              "sha256": "daaad2ecccc4ef9ef97c3d1bab94e11b5d625a687a3fd06b054e86a38e0bb1ef"
+            },
+            {
+              "file": "frames/base/wiggle/0002-bc9377a8536d.png",
+              "durationMs": 150,
+              "sha256": "bc9377a8536d827ac09f6edc9ccb2a90ca8af3b2ccc3280b1a1e2cb931cd7817"
+            }
+          ],
+          "loop": "loop",
+          "anchor": {
+            "x": 256,
+            "y": 400
+          },
+          "nominalSize": {
+            "width": 512,
+            "height": 512
+          },
+          "reducedMotion": "frames/base/stickers/sticker-016-43f103b44094.png",
+          "reducedMotionSha256": "43f103b44094918bfb7f43ab9250df1a4cd4a8e28b57a7582edda95f480b4893"
         }
       }
     }

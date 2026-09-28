@@ -16,12 +16,14 @@ public enum AudioCueEvent
     Tantrum,
     Drag,
     Sticker,
+    Song,
 }
 
 public static class AudioCueSelection
 {
-    // Every event reuses the five reviewed packs (AudioManifestContract
-    // requires exactly those); each maps to two or three so repeats rotate.
+    // Every short-cue event reuses the five reviewed packs; each maps to two
+    // or three so repeats rotate. The song is the one exception: it is the
+    // whole dudu-song pack, played for "sing for me".
     private static readonly IReadOnlyDictionary<AudioCueEvent, IReadOnlyList<string>> PackMap =
         new Dictionary<AudioCueEvent, IReadOnlyList<string>>
         {
@@ -35,6 +37,7 @@ public static class AudioCueSelection
             [AudioCueEvent.Tantrum] = ["dudu-atatata", "bubu-dudu-atata"],
             [AudioCueEvent.Drag] = ["tata-lala", "dudu-yapapa"],
             [AudioCueEvent.Sticker] = ["dudu-lalala", "dudu-yapapa", "tata-lala"],
+            [AudioCueEvent.Song] = [AudioManifestContract.SongPackId],
         };
 
     public static IReadOnlyList<string> PacksFor(AudioCueEvent cueEvent) =>
@@ -48,6 +51,7 @@ public static class AudioCueSelection
             PetState.WelcomeBack => AudioCueEvent.Greeting,
             PetState.RemoteNote => AudioCueEvent.RemoteNote,
             PetState.Comfort => AudioCueEvent.ManualInteraction,
+            PetState.Singing => AudioCueEvent.Song,
             // Keyed on the animation key, not a PetState, so interaction
             // states added later (drag, pet, tantrum, eat-together) are
             // covered by whatever state carries these clips.
@@ -89,13 +93,13 @@ public static class AudioCueSelection
     /// at hand (the presentation coordinator's tantrum and notifications).</summary>
     public static AudioCuePriority PriorityFor(AudioCueEvent cueEvent) =>
         cueEvent is AudioCueEvent.Petted or AudioCueEvent.Drink or AudioCueEvent.Eat
-            or AudioCueEvent.Tantrum or AudioCueEvent.Drag
+            or AudioCueEvent.Tantrum or AudioCueEvent.Drag or AudioCueEvent.Song
             ? AudioCuePriority.Interactive
             : AudioCuePriority.Background;
 
     /// <summary>
     /// Events that only settle or clear state (dismissals, acknowledgements,
-    /// pause/resume, the end of an interaction, drag, meal or study) must not
+    /// pause/resume, the end of an interaction, drag, meal, study or song) must not
     /// sound: the presentation they return is
     /// whatever was already pending underneath, e.g. dismissing one of two
     /// notes would otherwise replay the note-arrival cue.
@@ -105,7 +109,7 @@ public static class AudioCueSelection
         or PetEvent.ComfortDismissed or PetEvent.PresentationAcknowledged
         or PetEvent.PauseRequested or PetEvent.ResumeRequested
         or PetEvent.InteractionDismissed or PetEvent.DragEnded or PetEvent.EatingEnded
-        or PetEvent.StudyEnded;
+        or PetEvent.StudyEnded or PetEvent.SingEnded;
 
     public static AudioCueEvent? ForNotification(DurableNotification notification)
     {

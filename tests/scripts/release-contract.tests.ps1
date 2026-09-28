@@ -360,8 +360,8 @@ Assert-Contains "publish preflights the private audio pack" $publish 'Assert-Pri
 Assert-Contains "publish allowlist permits only the private audio manifest" $publish 'Assets/Audio/private-dudu/manifest\\\.json'
 Assert-Contains "publish allowlist permits only private WAV files" $publish 'Assets/Audio/private-dudu/.*\.wav'
 Assert-Contains "audio manifest requires private use" $publish 'private audio release pack manifest must declare privateUseOnly: true'
-Assert-Contains "audio manifest requires exact five-pack contract" $publish 'exactly the five required pack ids'
-foreach ($audioPackId in @('bubu-dudu-atata', 'tata-lala', 'dudu-lalala', 'dudu-atatata', 'dudu-yapapa')) {
+Assert-Contains "audio manifest requires exact six-pack contract" $publish 'exactly the six required pack ids'
+foreach ($audioPackId in @('bubu-dudu-atata', 'tata-lala', 'dudu-lalala', 'dudu-atatata', 'dudu-yapapa', 'dudu-song')) {
     Assert-Contains "publish names required audio pack $audioPackId" $publish $audioPackId
 }
 Assert-Contains "audio validator rejects unreferenced WAVs" $publish 'unreferenced WAV'

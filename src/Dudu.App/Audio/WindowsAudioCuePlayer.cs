@@ -114,11 +114,23 @@ public sealed partial class WindowsAudioCuePlayer : IAudioCuePlayer, IAudioCuePl
         }
     }
 
+    public Task StopAsync(CancellationToken cancellationToken)
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+            return Task.CompletedTask;
+        return StopPlayingAsync(cancellationToken);
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
 
+        await StopPlayingAsync(CancellationToken.None).ConfigureAwait(false);
+    }
+
+    private async Task StopPlayingAsync(CancellationToken cancellationToken)
+    {
         lock (_gate)
         {
             if (_playing is null)
@@ -147,11 +159,11 @@ public sealed partial class WindowsAudioCuePlayer : IAudioCuePlayer, IAudioCuePl
 
         try
         {
-            await stop.WaitAsync(NativeCallTimeout).ConfigureAwait(false);
+            await stop.WaitAsync(NativeCallTimeout, cancellationToken).ConfigureAwait(false);
         }
         catch
         {
-            // Shutdown is best-effort: a stop that fails or times out keeps
+            // Stopping is best-effort: a stop that fails or times out keeps
             // the buffer referenced by the task above until it returns.
         }
     }

@@ -64,6 +64,17 @@
           "Sha256": "845cea234af413b7f0f077a9c1fd49f31214c59c6d66643d865d5088406cdeb6"
         }
       ]
+    },
+    {
+      "PackId": "dudu-song",
+      "Cues": [
+        {
+          "CueId": "song-01",
+          "FilePath": "dudu-song/song-01.wav",
+          "DurationMs": 8800,
+          "Sha256": "2567b9254ea844f955e5ab65914d8e7ed75464c70d640a7049f1d5567b3e1331"
+        }
+      ]
     }
   ]
 }

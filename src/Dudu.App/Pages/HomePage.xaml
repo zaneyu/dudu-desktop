@@ -78,7 +78,8 @@
                             <Button Grid.Row="1" Grid.Column="1" Content="🍚 eat together" Tag="EatTogether" Click="OverlayAction_Click" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayActionEatTogether" AutomationProperties.Name="eat together or done eating" />
                             <Button Grid.Row="2" Content="📚 study together" Tag="StudyTogether" Click="OverlayAction_Click" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayActionStudyTogether" AutomationProperties.Name="study together or done studying" />
                             <Button Grid.Row="2" Grid.Column="1" Content="🤗 tiny hug" Tag="TinyHug" Click="OverlayAction_Click" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayComfortActionTinyHug" AutomationProperties.Name="tiny hug" />
-                            <Button Grid.Row="3" Grid.ColumnSpan="2" Content="🌬 breathe with me" Tag="BreatheWithMe" Click="OverlayAction_Click" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayComfortActionBreatheWithMe" AutomationProperties.Name="breathe with me" />
+                            <Button Grid.Row="3" Content="🎤 sing for me" Tag="SingForMe" Click="OverlayAction_Click" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayActionSingForMe" AutomationProperties.Name="sing for me or stop singing" />
+                            <Button Grid.Row="3" Grid.Column="1" Content="🌬 breathe with me" Tag="BreatheWithMe" Click="OverlayAction_Click" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayComfortActionBreatheWithMe" AutomationProperties.Name="breathe with me" />
                         </Grid>
                         <!-- Breathe with me: shown while the exercise runs (and after it ends, until
                              closed). Stop ends it; leaving Home stops a running one too. -->

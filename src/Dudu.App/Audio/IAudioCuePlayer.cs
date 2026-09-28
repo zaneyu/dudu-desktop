@@ -22,6 +22,10 @@ public interface IAudioCuePlayer
         AudioCue cue,
         double volume,
         CancellationToken cancellationToken);
+
+    /// <summary>Stops whatever this player is playing (a song cut short).
+    /// Players with nothing long-running to stop keep the no-op.</summary>
+    Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }
 
 /// <summary>

@@ -114,6 +114,9 @@ public sealed class SettingsNavigationTests
         // Study together toggles the same way.
         ExerciseRoute(window, "OverlayActionStudyTogether", "HomeActionStatus", "study together ready le");
         ExerciseRoute(window, "OverlayActionStudyTogether", "HomeActionStatus", "study together ready le");
+        // Sing for me starts the song, then stops it again.
+        ExerciseRoute(window, "OverlayActionSingForMe", "HomeActionStatus", "sing for me ready le");
+        ExerciseRoute(window, "OverlayActionSingForMe", "HomeActionStatus", "sing for me ready le");
         ExerciseRoute(window, "OverlayComfortActionTinyHug", "HomeActionStatus", "tiny hug ready le");
 
         // Breathe with me shows its phase on Home; Stop ends it without an error.
@@ -150,7 +153,7 @@ public sealed class SettingsNavigationTests
             [
                 "HomeGreeting", "HomePartnerClock", "HomeDuduImage",
                 "OverlayActionPet", "OverlayActionDrinkWater", "OverlayActionEatTogether",
-                "OverlayActionStudyTogether",
+                "OverlayActionStudyTogether", "OverlayActionSingForMe",
                 "OverlayComfortActionTinyHug", "OverlayComfortActionBreatheWithMe",
             ]),
         new("NavLoveNotes", "LoveNotesPageTitle", ["LoveNotesPendingCount", "LoveNotesRemoteList", "LoveNotesRevealSelected", "LoveNotesOpenedList", "LoveNotesDelete"]),

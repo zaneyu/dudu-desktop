@@ -37,7 +37,9 @@ public sealed class CompanionFeatureContext
         AffectionTracker? affection = null,
         Func<CancellationToken, Task>? stopRemoteSyncAsync = null,
         Func<CancellationToken, Task>? startRemoteSyncAsync = null,
-        bool remoteDeleteAvailable = false)
+        bool remoteDeleteAvailable = false,
+        TimeSpan? songDuration = null,
+        Func<CancellationToken, Task>? stopSongAsync = null)
     {
         Clock = clock ?? throw new ArgumentNullException(nameof(clock));
         PreferenceMutations = preferenceMutations ?? throw new ArgumentNullException(nameof(preferenceMutations));
@@ -86,7 +88,20 @@ public sealed class CompanionFeatureContext
         StopRemoteSyncAsync = stopRemoteSyncAsync ?? (_ => Task.CompletedTask);
         StartRemoteSyncAsync = startRemoteSyncAsync ?? (_ => Task.CompletedTask);
         RemoteDeleteAvailable = remoteDeleteAvailable;
+        SongDuration = songDuration is { } length && length > TimeSpan.Zero ? length : DefaultSongDuration;
+        StopSongAsync = stopSongAsync ?? (_ => Task.CompletedTask);
     }
+
+    /// <summary>How long Dudu sings when no song loaded (audio off or broken):
+    /// he still does his sing loop, just silently.</summary>
+    public static readonly TimeSpan DefaultSongDuration = TimeSpan.FromSeconds(15);
+
+    /// <summary>Length of the "sing for me" song; the sing loop lasts exactly
+    /// this long unless stopped.</summary>
+    public TimeSpan SongDuration { get; }
+
+    /// <summary>Silences the song when "stop singing" ends it early.</summary>
+    public Func<CancellationToken, Task> StopSongAsync { get; }
 
     public IClock Clock { get; }
     public Preferences CurrentPreferences => PreferenceMutations.Current;

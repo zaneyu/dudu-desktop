@@ -18,6 +18,9 @@ public sealed class PetStateMachine
     /// <summary>Bubble shown while a study-together session is running.</summary>
     public const string StudyingBubble = "studying with you 📚";
 
+    /// <summary>Bubble shown while Dudu sings his song.</summary>
+    public const string SingingBubble = "singing for u 🎵";
+
     /// <summary>Bubble shown with the drink pose (overlay action or ambient).</summary>
     public const string DrinkBubble = "drink water ah 💧";
 
@@ -44,6 +47,7 @@ public sealed class PetStateMachine
     private string? _interactionAnimation;
     private string? _eatingId;
     private string? _studyId;
+    private string? _singId;
     private bool _dragging;
     private bool _paused;
 
@@ -98,6 +102,18 @@ public sealed class PetStateMachine
             lock (_sync)
             {
                 return _studyId is not null;
+            }
+        }
+    }
+
+    /// <summary>True while a sing-for-me session is latched.</summary>
+    public bool IsSingingActive
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _singId is not null;
             }
         }
     }
@@ -221,6 +237,20 @@ public sealed class PetStateMachine
 
                 break;
 
+            case PetEvent.SingStarted sing:
+                _singId = sing.SessionId;
+                _ambientAnimation = null;
+                break;
+
+            case PetEvent.SingEnded sing:
+                if (string.Equals(_singId, sing.SessionId, StringComparison.Ordinal))
+                {
+                    _singId = null;
+                    _ambientAnimation = null;
+                }
+
+                break;
+
             case PetEvent.Dismissed dismissed:
                 Dismiss(dismissed.ItemId);
                 break;
@@ -303,6 +333,11 @@ public sealed class PetStateMachine
             return Present(PetState.Studying, "focus", StudyingBubble);
         }
 
+        if (_singId is not null)
+        {
+            return Present(PetState.Singing, "sing", SingingBubble);
+        }
+
         return Present(PetState.Idle, "idle");
     }
 
@@ -363,6 +398,12 @@ public sealed class PetStateMachine
             return;
         }
 
+        if (_singId is not null && string.Equals(itemId, _singId, StringComparison.Ordinal))
+        {
+            _singId = null;
+            return;
+        }
+
         if (string.Equals(itemId, _ambientAnimation, StringComparison.Ordinal))
         {
             _ambientAnimation = null;
@@ -371,10 +412,10 @@ public sealed class PetStateMachine
 
     private bool IsEatingLatched() => _eatingId is not null;
 
-    /// <summary>An eat-together meal or a study-together session keeps Dudu
-    /// as quiet company: unsolicited notes and ambient moments wait until it
-    /// ends.</summary>
-    private bool IsQuietCompanyActive() => IsEatingLatched() || _studyId is not null;
+    /// <summary>An eat-together meal, a study-together session or a song keeps
+    /// Dudu as quiet company: unsolicited notes and ambient moments wait until
+    /// it ends.</summary>
+    private bool IsQuietCompanyActive() => IsEatingLatched() || _studyId is not null || _singId is not null;
 
     private static bool IsAllowedAmbientAnimation(string animationKey)
     {

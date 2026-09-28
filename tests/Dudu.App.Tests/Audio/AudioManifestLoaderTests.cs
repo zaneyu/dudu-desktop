@@ -8,11 +8,14 @@ namespace Dudu.App.Tests.Audio;
 
 public sealed class AudioManifestLoaderTests
 {
+    private static readonly string[] RequiredPacks =
+        ["bubu-dudu-atata", "tata-lala", "dudu-lalala", "dudu-atatata", "dudu-yapapa", AudioManifestContract.SongPackId];
+
     [Fact]
-    public async Task Loads_all_five_private_pack_ids()
+    public async Task Loads_all_six_private_pack_ids()
     {
         await using var fixture = await AudioManifestFixture.CreateAsync(
-            ["bubu-dudu-atata", "tata-lala", "dudu-lalala", "dudu-atatata", "dudu-yapapa"]);
+            RequiredPacks);
 
         var catalog = await AudioManifestLoader.LoadAsync(
             fixture.ManifestPath,
@@ -28,7 +31,7 @@ public sealed class AudioManifestLoaderTests
     public async Task Loaded_cues_carry_the_validated_wave_bytes_and_their_peak_level()
     {
         await using var fixture = await AudioManifestFixture.CreateAsync(
-            ["bubu-dudu-atata", "tata-lala", "dudu-lalala", "dudu-atatata", "dudu-yapapa"]);
+            RequiredPacks);
 
         var catalog = await AudioManifestLoader.LoadAsync(
             fixture.ManifestPath,
@@ -86,7 +89,7 @@ public sealed class AudioManifestLoaderTests
         foreach (var testCase in cases)
         {
             await using var fixture = await AudioManifestFixture.CreateAsync(
-                ["bubu-dudu-atata", "tata-lala", "dudu-lalala", "dudu-atatata", "dudu-yapapa"]);
+                RequiredPacks);
             await fixture.SetSourceUrlAsync("https://private.example/source?media=SECRET_MEDIA_BYTES");
             await testCase.Mutate(fixture);
 
@@ -103,7 +106,7 @@ public sealed class AudioManifestLoaderTests
     public async Task Rejects_null_pack_and_cue_entries()
     {
         await using var fixture = await AudioManifestFixture.CreateAsync(
-            ["bubu-dudu-atata", "tata-lala", "dudu-lalala", "dudu-atatata", "dudu-yapapa"]);
+            RequiredPacks);
 
         var nullPackJson = fixture.ManifestJson.Replace(
             "\"Packs\":[",
@@ -128,7 +131,7 @@ public sealed class AudioManifestLoaderTests
     public async Task Rejects_unknown_json_members_case_mismatches_and_duration_disagreement()
     {
         await using var fixture = await AudioManifestFixture.CreateAsync(
-            ["bubu-dudu-atata", "tata-lala", "dudu-lalala", "dudu-atatata", "dudu-yapapa"]);
+            RequiredPacks);
         await fixture.SetRawManifestAsync(fixture.ManifestJson.Replace(
             "\"SchemaVersion\":1",
             "\"SchemaVersion\":1,\"unexpected\":true",
@@ -159,6 +162,37 @@ public sealed class AudioManifestLoaderTests
 
         Assert.Contains(errors, error => error.Contains("packId", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(errors, error => error.Contains("duration", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Song_pack_takes_a_whole_song_while_short_cue_packs_stay_capped()
+    {
+        static AudioManifest Manifest(int songMs, int shortMs) => new()
+        {
+            SchemaVersion = AudioManifestContract.CurrentSchemaVersion,
+            PrivateUseOnly = true,
+            Packs = RequiredPacks.Select(packId => new AudioSoundPackManifest
+            {
+                PackId = packId,
+                Cues = [new AudioCueManifest
+                {
+                    CueId = "cue-01",
+                    FilePath = $"{packId}/cue-01.wav",
+                    DurationMs = packId == AudioManifestContract.SongPackId ? songMs : shortMs,
+                    Sha256 = new string('0', 64),
+                }],
+            }).ToList(),
+        };
+
+        Assert.Empty(AudioManifestContract.Validate(Manifest(30_000, 2_000)));
+        Assert.Contains(
+            AudioManifestContract.Validate(Manifest(AudioManifestContract.MaxSongDurationMs + 1, 2_000)),
+            error => error.Contains("duration", StringComparison.Ordinal));
+        Assert.Contains(
+            AudioManifestContract.Validate(Manifest(30_000, AudioManifestContract.MaxCueDurationMs + 1)),
+            error => error.Contains("duration", StringComparison.Ordinal));
+        Assert.Equal(AudioManifestContract.MaxSongFileBytes, AudioManifestContract.MaxFileBytesFor(AudioManifestContract.SongPackId));
+        Assert.Equal(AudioManifestContract.MaxCueFileBytes, AudioManifestContract.MaxFileBytesFor("tata-lala"));
     }
 
     private sealed class AudioManifestFixture : IAsyncDisposable

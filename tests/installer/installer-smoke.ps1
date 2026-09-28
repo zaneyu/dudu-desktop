@@ -221,12 +221,12 @@ try {
     if (-not (Test-Path $privateAudioManifestPath)) { throw "Private audio manifest was not packaged." }
     $privateAudioManifest = Get-Content -Raw $privateAudioManifestPath | ConvertFrom-Json
     if ($privateAudioManifest.privateUseOnly -ne $true) { throw "Installed private audio manifest is not privateUseOnly: true." }
-    $requiredAudioPackIds = @('bubu-dudu-atata', 'tata-lala', 'dudu-lalala', 'dudu-atatata', 'dudu-yapapa')
+    $requiredAudioPackIds = @('bubu-dudu-atata', 'tata-lala', 'dudu-lalala', 'dudu-atatata', 'dudu-yapapa', 'dudu-song')
     $installedAudioPackIds = @(@($privateAudioManifest.packs) | ForEach-Object { [string]$_.packId })
     if ($installedAudioPackIds.Count -ne $requiredAudioPackIds.Count -or
         (@($installedAudioPackIds | Where-Object { $_ -notin $requiredAudioPackIds }).Count -gt 0) -or
         (@($requiredAudioPackIds | Where-Object { $_ -notin $installedAudioPackIds }).Count -gt 0)) {
-        throw "Installed private audio manifest does not contain exactly the five required packs."
+        throw "Installed private audio manifest does not contain exactly the six required packs."
     }
     foreach ($audioPack in @($privateAudioManifest.packs)) {
         foreach ($audioCue in @($audioPack.cues)) {

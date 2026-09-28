@@ -913,7 +913,11 @@ public static class WindowsCompanionProductionComposition
                 // did not complete (nothing is wiped then).
                 stopRemoteSyncAsync: token => remoteSync?.StopAsync(token) ?? Task.CompletedTask,
                 startRemoteSyncAsync: token => remoteSync?.StartAsync(token) ?? Task.CompletedTask,
-                remoteDeleteAvailable: remoteSync is not null);
+                remoteDeleteAvailable: remoteSync is not null,
+                // "Sing for me" lasts exactly as long as the loaded song; "stop
+                // singing" silences it (a no-op once it finished on its own).
+                songDuration: audioCatalog.SongDuration,
+                stopSongAsync: token => audioCueService?.StopAsync(AudioCueEvent.Song, token) ?? Task.CompletedTask);
             overlayRouter = new OverlayCommandRouter(
                 featureContext,
                 (destination, token) => DispatchSettingsDestinationAsync(actions, destination, token));
@@ -981,6 +985,7 @@ public static class WindowsCompanionProductionComposition
             new AudioSoundPack("dudu-lalala", []),
             new AudioSoundPack("dudu-atatata", []),
             new AudioSoundPack("dudu-yapapa", []),
+            new AudioSoundPack(AudioManifestContract.SongPackId, []),
         ]);
 
     /// <summary>
