@@ -20,6 +20,8 @@ public sealed partial class HomePage : Page
     {
         ViewModel = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         _overlayCommands = overlayCommands;
+        // Before InitializeComponent: x:Bind reads Breathing.* from the start.
+        Breathing = new BreathingPanelPresenter(overlayCommands, RunOnUiThread);
         InitializeComponent();
         DataContext = ViewModel;
         Loaded += Page_Loaded;
@@ -27,6 +29,9 @@ public sealed partial class HomePage : Page
     }
 
     public HomeViewModel ViewModel { get; }
+
+    /// <summary>The "breathe with me" panel shown while the exercise runs.</summary>
+    public BreathingPanelPresenter Breathing { get; }
 
     private async void Page_Loaded(object sender, RoutedEventArgs args)
     {
@@ -39,6 +44,7 @@ public sealed partial class HomePage : Page
         }
         RefreshPartnerClock();
         _partnerClockTimer.Start();
+        Breathing.Attach();
 
         try
         {
@@ -56,6 +62,7 @@ public sealed partial class HomePage : Page
     {
         if (IsLoaded) return; // a re-load already won the out-of-order race
         _partnerClockTimer?.Stop();
+        StopBreathingOnLeave();
     }
 
     /// <summary>Called when the hosting window closes: Unloaded is not guaranteed for a
@@ -63,6 +70,47 @@ public sealed partial class HomePage : Page
     public void StopPartnerClock()
     {
         _partnerClockTimer?.Stop();
+        StopBreathingOnLeave();
+    }
+
+    /// <summary>Leaving Home ends a running breathing exercise (only a running
+    /// one, so a tiny hug in progress is not cut short) and stops listening
+    /// until Home is shown again.</summary>
+    private void StopBreathingOnLeave()
+    {
+        _ = ObserveBreathingStopAsync(Breathing.StopIfBreathingAsync());
+        Breathing.Detach();
+    }
+
+    private static async Task ObserveBreathingStopAsync(Task stop)
+    {
+        try
+        {
+            await stop;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            global::System.Diagnostics.Trace.TraceWarning(
+                "Dudu breathing stop failed: {0} 0x{1:X8}",
+                exception.GetType().Name,
+                exception.HResult);
+        }
+    }
+
+    private void RunOnUiThread(Action action)
+    {
+        var queue = DispatcherQueue;
+        if (queue is null || queue.HasThreadAccess)
+        {
+            action();
+        }
+        else
+        {
+            _ = queue.TryEnqueue(() => action());
+        }
     }
 
     /// <summary>Mirrors the settings window's current Dudu frame into Home's big
@@ -101,7 +149,13 @@ public sealed partial class HomePage : Page
             var commands = _overlayCommands ?? throw new InvalidOperationException(
                 "aiyo dudus action controls not ready yet");
             await commands.ExecuteAccessibleAsync(action);
-            SetAccessibleText(HomeActionStatus, $"{ActionBubbleLayout.Label(action)} ready le");
+            SetAccessibleText(HomeActionStatus, $"{OverlayCommandRouter.Label(action)} ready le");
+        }
+        catch (OperationCanceledException) when (action == OverlayAction.BreatheWithMe)
+        {
+            // Stop (or leaving Home, or starting it again) cancels the running
+            // exercise: that is the normal way it ends early, not an error.
+            SetAccessibleText(HomeActionStatus, "breathing stopped, well done");
         }
         catch (Exception exception)
         {
@@ -110,22 +164,16 @@ public sealed partial class HomePage : Page
         }
     }
 
-    private async void ComfortAction_Click(object sender, RoutedEventArgs args)
+    private async void BreathingStop_Click(object sender, RoutedEventArgs args)
     {
-        if (sender is not Button button
-            || !Enum.TryParse<ComfortAction>(button.Tag as string, out var action)) return;
-
         try
         {
-            var commands = _overlayCommands ?? throw new InvalidOperationException(
-                "oh no dudus comfort controls not ready");
-            await commands.ExecuteComfortAccessibleAsync(action);
-            SetAccessibleText(HomeActionStatus, $"{ActionBubbleLayout.ComfortLabel(action)} ready le");
+            await Breathing.StopAsync();
         }
         catch (Exception exception)
         {
             SetAccessibleText(HomeActionStatus, HomeViewModel.DescribeError(exception));
-            global::System.Diagnostics.Trace.TraceError("Dudu comfort action failed: {0}", exception);
+            global::System.Diagnostics.Trace.TraceError("Dudu breathing stop failed: {0}", exception);
         }
     }
 

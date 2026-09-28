@@ -122,8 +122,12 @@ public sealed class ProductionStartupContractTests
             "WindowsCompanionBootstrap.cs"));
 
         Assert.DoesNotContain("overlay.Show();", composition);
-        Assert.DoesNotContain("actionSurface.Open(", composition);
-        Assert.Contains("await overlay.SetActionSurfaceAsync(actionSurface", composition);
+        // The action bubble is gone: a click on Dudu's body pets through the
+        // router, wired once the router exists.
+        Assert.DoesNotContain("actionSurface", composition);
+        Assert.DoesNotContain("OverlayActionSurfaceController", composition);
+        Assert.Contains("await overlay.SetPetHandlerAsync(", composition);
+        Assert.Contains("overlayRouter?.ExecuteAsync(OverlayAction.Pet, token)", composition);
         Assert.Contains("PresentOneShotAsync(petEvent, dismissalId, token)", composition);
         Assert.Contains("var fullscreen = new FullscreenDetector();", runtime);
         Assert.Contains("isFullscreen ??= fullscreen.IsForegroundFullscreen;", runtime);
@@ -142,7 +146,6 @@ public sealed class ProductionStartupContractTests
             root, "src", "Dudu.App", "System", "AwaitableUiDispatcher.cs"));
 
         Assert.Contains("_actionDispatchQueue.EnqueuePet(", host);
-        Assert.Contains("_actionDispatchQueue.Enqueue", host);
         Assert.DoesNotContain("OverlayActionSurfaceObserver.ObserveAsync", host);
         Assert.Contains("DispatcherQueue.GetForCurrentThread()", app);
         Assert.Contains("_dispatcherQueue.TryEnqueue", app);

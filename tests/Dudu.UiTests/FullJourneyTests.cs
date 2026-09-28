@@ -164,10 +164,7 @@ public sealed class FullJourneyTests
         }
 
         Find(window, "OnboardingRecipientName").AsTextBox().Enter("Mia");
-        Find(window, "OnboardingRecommendedDefaults").AsButton().Invoke();
         Advance(window, "OnboardingTheme");
-        Advance(window, "OnboardingHydrationReminders");
-        Advance(window, "OnboardingPlacementStep");
         Advance(window, "OnboardingSkipPairing");
         Find(window, "OnboardingSkipPairing").AsButton().Invoke();
         Find(window, "OnboardingComplete").AsButton().Invoke();

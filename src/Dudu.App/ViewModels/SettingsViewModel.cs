@@ -33,8 +33,6 @@ public sealed class SettingsViewModel : FeatureViewModelBase
     private bool _hideDuringFullscreen;
     private bool _soundsEnabled;
     private double _soundVolume;
-    private string _globalShortcut = "Ctrl+Alt+D";
-    private string _shortcutStatus = string.Empty;
     private bool _isDeleteConfirmVisible;
     private bool _isWipeThisPcOnlyVisible;
     private bool _deleteInProgress;
@@ -55,8 +53,6 @@ public sealed class SettingsViewModel : FeatureViewModelBase
         _hideDuringFullscreen = preferences.HidePetDuringFullscreen;
         _soundsEnabled = preferences.SoundsEnabled;
         _soundVolume = Preferences.ClampSoundVolume(preferences.SoundVolume);
-        _globalShortcut = DisplayShortcut(preferences.GlobalShortcut);
-        _shortcutStatus = context.GetGlobalShortcutStatus() ?? string.Empty;
         _petScale = 1;
         _loadedPetScale = _petScale;
         _monitorDeviceName = "current monitor";
@@ -67,7 +63,6 @@ public sealed class SettingsViewModel : FeatureViewModelBase
         SaveCommand = new AsyncRelayCommand((CancellationToken ct) => SaveAsync(ct));
         SavePlacementCommand = new AsyncRelayCommand((CancellationToken ct) => SavePlacementAsync(ct));
         ApplyOutfitCommand = new AsyncRelayCommand((CancellationToken ct) => ApplyOutfitAsync(ct));
-        SaveShortcutCommand = new AsyncRelayCommand((CancellationToken ct) => SaveShortcutAsync(ct));
         RequestDeleteMyDataCommand = new RelayCommand(RequestDeleteMyData, CanStartDelete);
         CancelDeleteMyDataCommand = new RelayCommand(CancelDeleteMyData, CanStartDelete);
         ConfirmDeleteMyDataCommand = new AsyncRelayCommand(
@@ -90,7 +85,6 @@ public sealed class SettingsViewModel : FeatureViewModelBase
     public IAsyncRelayCommand SaveCommand { get; }
     public IAsyncRelayCommand SavePlacementCommand { get; }
     public IAsyncRelayCommand ApplyOutfitCommand { get; }
-    public IAsyncRelayCommand SaveShortcutCommand { get; }
     public IRelayCommand RequestDeleteMyDataCommand { get; }
     public IRelayCommand CancelDeleteMyDataCommand { get; }
     public IAsyncRelayCommand ConfirmDeleteMyDataCommand { get; }
@@ -243,22 +237,6 @@ public sealed class SettingsViewModel : FeatureViewModelBase
         }
     }
     public string SoundVolumeLabel => $"{SoundVolume:P0}";
-    public string GlobalShortcut { get => _globalShortcut; set => SetProperty(ref _globalShortcut, value); }
-
-    /// <summary>Why the saved shortcut is not the one in effect (startup fell
-    /// back to the default because another app owns it), or empty. Without
-    /// this the page showed the saved shortcut while a different one worked.</summary>
-    public string ShortcutStatus
-    {
-        get => _shortcutStatus;
-        private set
-        {
-            if (SetProperty(ref _shortcutStatus, value)) OnPropertyChanged(nameof(HasShortcutStatus));
-        }
-    }
-
-    public bool HasShortcutStatus => _shortcutStatus.Length > 0;
-
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
     {
         await RunRefreshAsync(async ct =>
@@ -277,10 +255,6 @@ public sealed class SettingsViewModel : FeatureViewModelBase
                 HideDuringFullscreen = preferences.HidePetDuringFullscreen;
                 SoundsEnabled = preferences.SoundsEnabled;
                 SoundVolume = preferences.SoundVolume;
-                // The shortcut box always showed Ctrl+Alt+D on open, whatever
-                // was actually saved; show the stored one.
-                GlobalShortcut = DisplayShortcut(preferences.GlobalShortcut);
-                ShortcutStatus = _context.GetGlobalShortcutStatus() ?? string.Empty;
                 _automaticSeasonalMode = preferences.AutomaticSeasonalMode;
                 OnPropertyChanged(nameof(AutomaticSeasonalMode));
                 _selectedOutfit = preferences.AutomaticSeasonalMode
@@ -377,72 +351,6 @@ public sealed class SettingsViewModel : FeatureViewModelBase
                 Birthday = ToMonthDay(BirthdayDate),
             }, cancellationToken);
         }, "oki seasonal look saved");
-
-    public Task SaveShortcutAsync(CancellationToken cancellationToken = default) =>
-        RunAsync(async () =>
-        {
-            if (string.IsNullOrWhiteSpace(GlobalShortcut)) throw new ArgumentException("wait type a shortcut first", nameof(GlobalShortcut));
-            // A malformed shortcut ("D", "Ctrl+Ctrl+D") used to surface only as the generic
-            // "cannot finish that try again" (FormatException is not user copy), with no hint of
-            // what shape is wanted. Check it here and say so.
-            HotkeyGesture gesture;
-            try
-            {
-                gesture = HotkeyGesture.Parse(GlobalShortcut.Trim());
-            }
-            catch (Exception exception) when (exception is FormatException or ArgumentException)
-            {
-                throw new ArgumentException("use ctrl alt shift or win plus one key like Ctrl+Alt+D", nameof(GlobalShortcut));
-            }
-
-            var canonical = gesture.ToString();
-            // The default is stored as "no custom shortcut" so typing Ctrl+Alt+D is the way
-            // back to the default.
-            var stored = gesture == HotkeyGesture.Default ? null : canonical;
-            // Register first and persist only once Windows accepted the chord: this used to
-            // re-register at runtime only, so the next start silently went back to Ctrl+Alt+D
-            // even though the page had said "shortcut set". A refused chord (already taken)
-            // throws before anything is saved, leaving the previous shortcut both registered
-            // and stored; a failed save re-registers the previous one.
-            await _context.PreferenceMutations.ApplyThenPersistAsync(
-                current => current with { GlobalShortcut = stored },
-                async (previous, _, token) =>
-                {
-                    try
-                    {
-                        await _context.SetGlobalShortcutAsync(canonical, token);
-                    }
-                    catch (HotkeyConflictException conflict)
-                    {
-                        // Say which shortcut still works, not just that this one failed.
-                        throw new HotkeyConflictException(
-                            $"{conflict.Message}, still using {DisplayShortcut(previous.GlobalShortcut)}");
-                    }
-                },
-                (previous, _, token) => _context.SetGlobalShortcutAsync(
-                    DisplayShortcut(previous.GlobalShortcut), token),
-                cancellationToken);
-            // Show the shortcut the way it is registered ("ctrl + alt + k" becomes Ctrl+Alt+K).
-            GlobalShortcut = canonical;
-            ShortcutStatus = _context.GetGlobalShortcutStatus() ?? string.Empty;
-        }, "otayyy shortcut set");
-
-    /// <summary>The stored shortcut in the canonical form it is registered with; the default
-    /// when none is stored or the stored text no longer parses (startup registers the default
-    /// in that case too).</summary>
-    private static string DisplayShortcut(string? stored)
-    {
-        var normalized = Preferences.NormalizeGlobalShortcut(stored);
-        if (normalized is null) return HotkeyGesture.Default.ToString();
-        try
-        {
-            return HotkeyGesture.Parse(normalized).ToString();
-        }
-        catch (Exception exception) when (exception is FormatException or ArgumentException or InvalidOperationException)
-        {
-            return HotkeyGesture.Default.ToString();
-        }
-    }
 
     private string BuildOutfitAvailabilityMessage()
     {

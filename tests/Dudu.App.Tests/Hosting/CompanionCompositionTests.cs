@@ -114,19 +114,14 @@ public sealed class CompanionCompositionTests
             _ => { exit++; return Task.CompletedTask; },
             () => now);
 
-        await router.HandleAsync(TrayCommand.PauseOneHour, TestContext.Current.CancellationToken);
-        Assert.Equal(PauseMode.OneHour, pause.Current.Mode);
-        await router.HandleAsync(TrayCommand.PauseUntilTomorrowAtSeven, TestContext.Current.CancellationToken);
-        Assert.Equal(PauseMode.UntilTomorrowAtSeven, pause.Current.Mode);
-        await router.HandleAsync(TrayCommand.PauseUntilFullscreenEnds, TestContext.Current.CancellationToken);
-        Assert.Equal(PauseMode.UntilFullscreenEnds, pause.Current.Mode);
-        // "pause indefinitely or resume" resumes whatever pause is active
-        // (here: until fullscreen ends), and pauses indefinitely otherwise.
-        await router.HandleAsync(TrayCommand.PauseIndefinitelyOrResume, TestContext.Current.CancellationToken);
+        // "pause 1 hour or resume" pauses for one hour when not paused and
+        // resumes whatever pause is active otherwise.
+        await router.HandleAsync(TrayCommand.PauseOneHourOrResume, TestContext.Current.CancellationToken);
+        Assert.Equal(new PauseState(PauseMode.OneHour, now.AddHours(1)), pause.Current);
+        await router.HandleAsync(TrayCommand.PauseOneHourOrResume, TestContext.Current.CancellationToken);
         Assert.Equal(PauseMode.None, pause.Current.Mode);
-        await router.HandleAsync(TrayCommand.PauseIndefinitelyOrResume, TestContext.Current.CancellationToken);
-        Assert.Equal(PauseMode.Indefinite, pause.Current.Mode);
-        await router.HandleAsync(TrayCommand.PauseIndefinitelyOrResume, TestContext.Current.CancellationToken);
+        pause.Set(new PauseState(PauseMode.UntilFullscreenEnds, null));
+        await router.HandleAsync(TrayCommand.PauseOneHourOrResume, TestContext.Current.CancellationToken);
         Assert.Equal(PauseMode.None, pause.Current.Mode);
         await router.HandleAsync(TrayCommand.OpenSettings, TestContext.Current.CancellationToken);
         await router.HandleAsync(TrayCommand.Exit, TestContext.Current.CancellationToken);

@@ -9,41 +9,26 @@ using Xunit;
 namespace Dudu.App.Tests.ViewModels;
 
 /// <summary>Regressions for first-run (onboarding) input handling: entries the page
-/// used to drop or coerce silently, confusing validation copy, and out-of-order
-/// placement previews while the pet-size slider is dragged.</summary>
+/// used to drop, and confusing validation copy.</summary>
 public sealed class OnboardingFlowRegressionTests
 {
     [Fact]
-    public async Task A_cleared_note_limit_box_is_rejected_instead_of_becoming_zero()
-    {
-        await using var fixture = Fixture.Create();
-        var vm = fixture.ViewModel;
-        await AdvanceToAsync(vm, OnboardingStep.Reminders, fixture.CancellationToken);
-
-        vm.SetLocalNoteDailyLimitInput(double.NaN);
-
-        Assert.Equal(3, vm.LocalNoteDailyLimit);
-        Assert.False(await vm.NextAsync(fixture.CancellationToken));
-        Assert.Equal(OnboardingStep.Reminders, vm.CurrentStep);
-        Assert.Equal(OnboardingViewModel.LocalNoteLimitMessage, vm.ValidationMessage);
-
-        vm.SetLocalNoteDailyLimitInput(5);
-        Assert.Equal(5, vm.LocalNoteDailyLimit);
-        Assert.True(await vm.NextAsync(fixture.CancellationToken));
-    }
-
-    [Fact]
-    public async Task Recommended_defaults_clear_a_stale_invalid_entry_and_keep_the_name()
+    public async Task Going_back_from_pairing_keeps_the_typed_name_and_look()
     {
         await using var fixture = Fixture.Create();
         var vm = fixture.ViewModel;
         vm.RecipientName = "Mia";
-        vm.SetLocalNoteDailyLimitInput(double.NaN);
+        vm.ReducedMotion = true;
+        await AdvanceToAsync(vm, OnboardingStep.Pairing, fixture.CancellationToken);
 
-        await vm.AcceptRecommendedDefaultsAsync(fixture.CancellationToken);
+        vm.Back();
+        Assert.Equal(OnboardingStep.Appearance, vm.CurrentStep);
+        vm.Back();
+        Assert.Equal(OnboardingStep.Recipient, vm.CurrentStep);
+        Assert.False(vm.CanGoBack);
 
         Assert.Equal("Mia", vm.RecipientName);
-        await AdvanceToAsync(vm, OnboardingStep.Placement, fixture.CancellationToken);
+        Assert.True(vm.ReducedMotion);
         Assert.Null(vm.ValidationMessage);
     }
 
@@ -57,37 +42,6 @@ public sealed class OnboardingFlowRegressionTests
 
         Assert.Equal(OnboardingViewModel.RecipientNameMessage, vm.ValidationMessage);
         Assert.DoesNotContain("cannot name", vm.ValidationMessage);
-    }
-
-    [Fact]
-    public async Task A_superseded_scale_preview_is_not_applied_after_the_newer_one()
-    {
-        var firstCapture = new TaskCompletionSource<MonitorPlacementSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var captureCount = 0;
-        var applied = new List<double>();
-        var snapshot = new MonitorPlacementSnapshot(
-            new PetPlacement("MONITOR-2", 0.8, 0.8, 1),
-            new PixelRect(0, 0, 100, 100),
-            new MonitorInfo("MONITOR-2", new PixelRect(0, 0, 1920, 1040), 96, true));
-        await using var fixture = Fixture.Create(
-            placementCapture: _ => Interlocked.Increment(ref captureCount) == 1
-                ? firstCapture.Task
-                : Task.FromResult(snapshot),
-            placementPreviewer: (placement, _) =>
-            {
-                applied.Add(placement.Scale);
-                return Task.CompletedTask;
-            });
-        var vm = fixture.ViewModel;
-
-        vm.PlacementScale = 1.2;
-        var older = vm.PreviewPlacementAsync(fixture.CancellationToken);
-        vm.PlacementScale = 1.6;
-        await vm.PreviewPlacementAsync(fixture.CancellationToken);
-        firstCapture.SetResult(snapshot);
-        await older;
-
-        Assert.Equal(new[] { 1.6 }, applied);
     }
 
     private static async Task AdvanceToAsync(
@@ -104,9 +58,7 @@ public sealed class OnboardingFlowRegressionTests
 
     private sealed class Fixture : IAsyncDisposable
     {
-        private Fixture(
-            Func<CancellationToken, Task<MonitorPlacementSnapshot>>? placementCapture,
-            Func<PetPlacement, CancellationToken, Task>? placementPreviewer)
+        private Fixture(Func<CancellationToken, Task<MonitorPlacementSnapshot>>? placementCapture)
         {
             Startup = new StartupRegistrationService(
                 "/opt/dudu/Dudu.exe",
@@ -132,8 +84,7 @@ public sealed class OnboardingFlowRegressionTests
                 startupSettings,
                 new OfflinePairing(),
                 initialPlacement: new PetPlacement("MONITOR-2", 0.8, 0.8, 1),
-                placementCapture: placementCapture,
-                placementPreviewer: placementPreviewer);
+                placementCapture: placementCapture);
         }
 
         public StartupRegistrationService Startup { get; }
@@ -141,9 +92,8 @@ public sealed class OnboardingFlowRegressionTests
         public CancellationToken CancellationToken => TestContext.Current.CancellationToken;
 
         public static Fixture Create(
-            Func<CancellationToken, Task<MonitorPlacementSnapshot>>? placementCapture = null,
-            Func<PetPlacement, CancellationToken, Task>? placementPreviewer = null) =>
-            new(placementCapture, placementPreviewer);
+            Func<CancellationToken, Task<MonitorPlacementSnapshot>>? placementCapture = null) =>
+            new(placementCapture);
 
         public async ValueTask DisposeAsync()
         {

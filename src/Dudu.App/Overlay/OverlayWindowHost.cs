@@ -84,7 +84,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private readonly Action<Exception> _diagnostic;
     private readonly IAppHostErrorReporter? _errorReporter;
     private readonly IReadOnlyList<PixelRect> _bubbleHitRegions;
-    private OverlayActionSurfaceController? _actionSurface;
+    private Func<CancellationToken, Task>? _petHandler;
     private bool _alwaysOnTop = true;
     private readonly OwnerActionQueue _ownerActions;
     private readonly TaskCompletionSource<OverlayWindowHost> _created =
@@ -102,8 +102,6 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     private HWND _window;
     private bool _dragging;
     private bool _dragAnimating;
-    private bool _actionSurfacePointerArmed;
-    private OverlaySurfaceAction? _armedOverlayAction;
     private bool _petBodyPointerArmed;
     private bool _placementDirty;
     private readonly OverlayPointerGesture _gesture = new();
@@ -273,15 +271,15 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         }, cancellationToken);
     }
 
-    /// <summary>Installs the shared action contract used by native no-activate
-    /// hit testing and layered-frame rendering. The separate Settings controls
-    /// remain the keyboard and UIA route for the same actions.</summary>
-    public Task SetActionSurfaceAsync(
-        OverlayActionSurfaceController actionSurface,
+    /// <summary>Installs what a click on Dudu's body does (the router's pet
+    /// action). Until it is set a click only moves/drags Dudu. The Home page
+    /// buttons remain the keyboard and UIA route for the same action.</summary>
+    public Task SetPetHandlerAsync(
+        Func<CancellationToken, Task> petHandler,
         CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(actionSurface);
-        return InvokeOnOwnerAsync(() => _actionSurface = actionSurface, cancellationToken);
+        ArgumentNullException.ThrowIfNull(petHandler);
+        return InvokeOnOwnerAsync(() => _petHandler = petHandler, cancellationToken);
     }
 
     public Task SetAlwaysOnTopAsync(bool alwaysOnTop, CancellationToken cancellationToken = default) =>
@@ -312,7 +310,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     /// Plans a short idle walk of <paramref name="nominalDistance"/> art pixels
     /// (scaled to the pet's current size) inside the pet's monitor work area.
     /// Returns null -- Dudu stays put -- while the pet is hidden, being dragged,
-    /// has its action bubble open, sits under the pointer, or has no room.
+    /// sits under the pointer, or has no room.
     /// </summary>
     public Task<OverlayWanderPlan?> PlanWanderAsync(
         int preferredDirection,
@@ -324,7 +322,6 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         {
             if (!_desiredVisible
                 || _dragging
-                || _actionSurface?.IsOpen == true
                 || !_windowBounds.IsValid)
             {
                 return null;
@@ -767,7 +764,6 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         }
 
         _windowBounds = bounds;
-        _actionSurface?.UpdateViewport(new PixelRect(0, 0, bounds.Width, bounds.Height));
     }
 
     private void SetNativeWindowState(PixelRect bounds)
@@ -986,7 +982,6 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
             switch (message)
             {
             case WmLButtonDown:
-                if (TryArmActionSurfacePointer(lParam)) break;
                 _petBodyPointerArmed = BeginDrag(lParam);
                 break;
             case WmMouseMove:
@@ -1004,12 +999,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                 SettleDraggedWindow();
                 CommitPlacementIfDirty();
                 ReleasePointerCapture();
-                if (_actionSurfacePointerArmed)
-                {
-                    _actionSurfacePointerArmed = false;
-                    _ = TryHandleActionSurfacePointer(lParam);
-                }
-                else if (wasPetBodyClick)
+                if (wasPetBodyClick)
                 {
                     PetFromClick();
                 }
@@ -1054,8 +1044,6 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
                 CommitPlacementIfDirty();
                 ReleasePointerCapture();
                 _gesture.Cancel();
-                _actionSurfacePointerArmed = false;
-                _armedOverlayAction = null;
                 _petBodyPointerArmed = false;
                 break;
             case WmDestroy:
@@ -1172,9 +1160,9 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
     /// window. Queued in click order; a failure goes to diagnostics only.</summary>
     private void PetFromClick()
     {
-        if (_actionSurface is { } surface)
+        if (_petHandler is { } petAsync)
         {
-            _actionDispatchQueue.EnqueuePet(surface);
+            _actionDispatchQueue.EnqueuePet(petAsync);
         }
     }
 
@@ -1386,36 +1374,7 @@ public sealed unsafe class OverlayWindowHost : IFramePresenter, IDisposable, IAs
         _presenter is LayeredFramePresenter layered
         && layered.IsInteractiveAt(x, y, CurrentBubbleHitRegions());
 
-    private IReadOnlyList<PixelRect>? CurrentBubbleHitRegions() =>
-        _actionSurface is null ? _bubbleHitRegions : null;
-
-    private bool TryArmActionSurfacePointer(LPARAM lParam)
-    {
-        _armedOverlayAction = null;
-        _actionSurfacePointerArmed = false;
-        if (_actionSurface is null || _presenter is not LayeredFramePresenter layered) return false;
-        var point = GetClientPoint(lParam);
-        var action = layered.FindPresentedOverlayActionAt(point.X, point.Y);
-        if (action is null) return false;
-        _armedOverlayAction = action;
-        _actionSurfacePointerArmed = true;
-        return true;
-    }
-
-    private bool TryHandleActionSurfacePointer(LPARAM lParam)
-    {
-        var armed = _armedOverlayAction;
-        _armedOverlayAction = null;
-        if (_actionSurface is null
-            || _presenter is not LayeredFramePresenter layered
-            || armed is null) return false;
-        var point = GetClientPoint(lParam);
-        var released = layered.FindPresentedOverlayActionAt(point.X, point.Y);
-        if (released is null
-            || !string.Equals(released.AutomationId, armed.AutomationId, StringComparison.Ordinal)) return false;
-        _actionDispatchQueue.Enqueue(_actionSurface, released);
-        return true;
-    }
+    private IReadOnlyList<PixelRect>? CurrentBubbleHitRegions() => _bubbleHitRegions;
 
     private void WaitForActionDispatchCompletion()
     {

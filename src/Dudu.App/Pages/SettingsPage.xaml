@@ -102,22 +102,6 @@
                     </StackPanel>
                 </Border>
 
-                <Border Style="{StaticResource CardStyle}">
-                    <StackPanel Spacing="12">
-                        <Grid ColumnSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="⌨️" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
-                            <TextBlock Grid.Column="1" Text="shortcut" Style="{StaticResource SectionHeadingStyle}" />
-                        </Grid>
-                        <TextBox Header="shortcut to open dudu" Text="{x:Bind ViewModel.GlobalShortcut, Mode=TwoWay}" PlaceholderText="Ctrl+Alt+D" AutomationProperties.AutomationId="AppearanceShortcut" AutomationProperties.Name="shortcut to open dudu" />
-                        <TextBlock Text="{x:Bind ViewModel.ShortcutStatus, Mode=OneWay}" Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" Visibility="{x:Bind ViewModel.HasShortcutStatus, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceShortcutStatus" AutomationProperties.Name="{x:Bind ViewModel.ShortcutStatus, Mode=OneWay}" />
-                        <Button Content="save shortcut" Command="{x:Bind ViewModel.SaveShortcutCommand}" AutomationProperties.AutomationId="AppearanceSaveShortcut" AutomationProperties.Name="save shortcut" HorizontalAlignment="Left" />
-                    </StackPanel>
-                </Border>
-
                 <StackPanel Spacing="4">
                     <TextBlock Text="partner connection" Style="{StaticResource SectionHeadingStyle}" AutomationProperties.AutomationId="SettingsConnectionHeading" AutomationProperties.Name="partner connection" />
                     <TextBlock Text="pairing is optional. dudu stays useful offline" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />

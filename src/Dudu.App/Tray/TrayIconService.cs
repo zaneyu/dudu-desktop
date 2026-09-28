@@ -8,25 +8,29 @@ using Windows.Win32.UI.WindowsAndMessaging;
 
 namespace Dudu.App.Tray;
 
+/// <summary>
+/// The four fixed tray menu items. The native menu maps a click back through
+/// <see cref="TrayIconService.Commands"/> by index (item id = index + 1), so
+/// the menu never changes length with state: the second item toggles between
+/// "pause 1 hour" and "resume dudu" instead of adding or removing rows.
+/// </summary>
 public enum TrayCommand
 {
     ShowOrHide,
-    PauseOneHour,
-    PauseUntilTomorrowAtSeven,
-    PauseUntilFullscreenEnds,
-    PauseIndefinitelyOrResume,
+    PauseOneHourOrResume,
     OpenSettings,
     Exit,
 }
 
 /// <summary>
 /// What the tray menu needs to know to describe the current state instead of
-/// offering ambiguous "show or hide" / "pause indefinitely or resume" items.
+/// offering ambiguous "show or hide" / "pause or resume" items.
 /// </summary>
 public sealed record TrayMenuState(bool PetVisible, PauseMode PauseMode);
 
 /// <summary>One tray menu row: its command, the label shown for it right
-/// now, and whether it carries a check mark (the active pause).</summary>
+/// now, and whether it carries a check mark (no fixed row is checked today;
+/// the pause row says "resume dudu" while paused instead).</summary>
 public sealed record TrayMenuItem(TrayCommand Command, string Label, bool Checked = false);
 
 public interface ITrayNativeApi
@@ -78,11 +82,11 @@ public sealed class TrayIconService : IDisposable, IAsyncDisposable
     }
 
     /// <summary>
-    /// The rows the popup menu shows right now. With a state provider the
-    /// two toggles say what they will actually do ("hide dudu" vs "show
-    /// dudu", "resume dudu" while any pause is active) and the active pause
-    /// is checked; without one (or if reading it fails) the neutral
-    /// either-way labels are kept.
+    /// The rows the popup menu shows right now: always the same four, in
+    /// <see cref="Commands"/> order. With a state provider the two toggles say
+    /// what they will actually do ("hide dudu" vs "show dudu", "resume dudu"
+    /// while any pause is active); without one (or if reading it fails) the
+    /// neutral either-way labels are kept.
     /// </summary>
     public IReadOnlyList<TrayMenuItem> BuildMenu()
     {
@@ -100,20 +104,14 @@ public sealed class TrayIconService : IDisposable, IAsyncDisposable
         }
 
         return Commands
-            .Select(command => new TrayMenuItem(
-                command,
-                TrayMenuLabels.For(command, state),
-                state is not null && TrayMenuLabels.IsChecked(command, state)))
+            .Select(command => new TrayMenuItem(command, TrayMenuLabels.For(command, state)))
             .ToArray();
     }
 
     public IReadOnlyList<TrayCommand> Commands { get; } =
     [
         TrayCommand.ShowOrHide,
-        TrayCommand.PauseOneHour,
-        TrayCommand.PauseUntilTomorrowAtSeven,
-        TrayCommand.PauseUntilFullscreenEnds,
-        TrayCommand.PauseIndefinitelyOrResume,
+        TrayCommand.PauseOneHourOrResume,
         TrayCommand.OpenSettings,
         TrayCommand.Exit,
     ];
@@ -407,25 +405,14 @@ public static class TrayMenuLabels
         TrayCommand.ShowOrHide => state is null
             ? "show or hide dudu"
             : state.PetVisible ? "hide dudu" : "show dudu",
-        TrayCommand.PauseOneHour => "pause for one hour",
-        TrayCommand.PauseUntilTomorrowAtSeven => "pause until tomorrow at 07:00",
-        TrayCommand.PauseUntilFullscreenEnds => "pause until fullscreen ends",
-        TrayCommand.PauseIndefinitelyOrResume => state is null
-            ? "pause indefinitely or resume"
-            : state.PauseMode == PauseMode.None ? "pause until i resume" : "resume dudu",
-        TrayCommand.OpenSettings => "open settings",
+        // Any active pause -- including a legacy persisted mode such as
+        // "until tomorrow at 07:00" or "until i resume" -- reads "resume dudu".
+        TrayCommand.PauseOneHourOrResume => state is null
+            ? "pause 1 hour or resume"
+            : state.PauseMode == PauseMode.None ? "pause 1 hour" : "resume dudu",
+        TrayCommand.OpenSettings => "open dudu",
         TrayCommand.Exit => "exit",
         _ => command.ToString(),
-    };
-
-    /// <summary>Checks the pause row matching the active pause, so the menu
-    /// shows that (and how) Dudu is paused.</summary>
-    public static bool IsChecked(TrayCommand command, TrayMenuState state) => command switch
-    {
-        TrayCommand.PauseOneHour => state.PauseMode == PauseMode.OneHour,
-        TrayCommand.PauseUntilTomorrowAtSeven => state.PauseMode == PauseMode.UntilTomorrowAtSeven,
-        TrayCommand.PauseUntilFullscreenEnds => state.PauseMode == PauseMode.UntilFullscreenEnds,
-        _ => false,
     };
 }
 

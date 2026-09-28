@@ -274,13 +274,11 @@ internal sealed class DuduUiFixture : IDisposable
         }
 
         window.FindFirstDescendant(cf => cf.ByAutomationId("OnboardingRecipientName"))!.AsTextBox().Enter("Mia");
-        window.FindFirstDescendant(cf => cf.ByAutomationId("OnboardingRecommendedDefaults"))!.AsButton().Invoke();
 
+        // Name -> Look -> Pairing.
         foreach (var visibleControlId in new[]
         {
             "OnboardingTheme",
-            "OnboardingHydrationReminders",
-            "OnboardingPlacementStep",
             "OnboardingSkipPairing",
         })
         {

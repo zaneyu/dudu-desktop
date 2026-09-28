@@ -22,7 +22,6 @@ public sealed class RenderedFrame : IDisposable
         TimeSpan frameDuration,
         IReadOnlyList<Dudu.App.Overlay.PixelRect>? overlayHitRegions,
         long overlayGeometryVersion,
-        Dudu.App.Animation.OverlaySurfaceSnapshot? overlaySurface,
         IFrameBufferReleaser? releaser)
     {
         ArgumentNullException.ThrowIfNull(buffer);
@@ -78,7 +77,6 @@ public sealed class RenderedFrame : IDisposable
         FrameDuration = frameDuration;
         OverlayHitRegions = overlayHitRegions?.ToArray() ?? [];
         OverlayGeometryVersion = overlayGeometryVersion;
-        OverlaySurface = overlaySurface;
         _releaser = releaser;
     }
 
@@ -117,7 +115,6 @@ public sealed class RenderedFrame : IDisposable
     /// <summary>Painted but not part of Dudu (the UK clock pill): clicks
     /// there pass through to the desktop, in this frame's source pixels.</summary>
     public Dudu.App.Overlay.PixelRect? ClickThroughRegion { get; init; }
-    public Dudu.App.Animation.OverlaySurfaceSnapshot? OverlaySurface { get; }
 
     public bool IsDisposed => Volatile.Read(ref _buffer) is null;
 

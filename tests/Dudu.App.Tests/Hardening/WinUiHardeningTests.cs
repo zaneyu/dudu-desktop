@@ -50,10 +50,10 @@ public sealed class WinUiHardeningTests
         var seen = new List<TrayCommand>();
         using var service = new TrayIconService(native, seen.Add);
         service.Attach(42);
-        // Index 7 == Exit (Commands.Count == 7); index 8 is out of range.
-        Assert.True(service.HandleWindowMessage(0x0111, 7, 0));
+        // Index 4 == Exit (Commands.Count == 4); index 5 is out of range.
+        Assert.True(service.HandleWindowMessage(0x0111, 4, 0));
         Assert.Equal([TrayCommand.Exit], seen);
-        Assert.False(service.HandleWindowMessage(0x0111, 8, 0));
+        Assert.False(service.HandleWindowMessage(0x0111, 5, 0));
     }
 
     [Fact]

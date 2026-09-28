@@ -35,11 +35,9 @@ public sealed class CompanionFeatureContext
         Func<CancellationToken, Task>? deleteLocalDataAsync = null,
         Func<CancellationToken, Task>? deleteRemoteDataAsync = null,
         Func<string?, CancellationToken, Task>? applyOutfitAsync = null,
-        Func<string, CancellationToken, Task>? setGlobalShortcutAsync = null,
         Func<string, CancellationToken, Task>? discardHeldRemoteNoteAsync = null,
         Func<CancellationToken, Task>? discardHeldRemoteNotesAsync = null,
         AffectionTracker? affection = null,
-        Func<string?>? getGlobalShortcutStatus = null,
         Func<CancellationToken, Task>? stopRemoteSyncAsync = null,
         Func<CancellationToken, Task>? startRemoteSyncAsync = null,
         bool remoteDeleteAvailable = false)
@@ -102,9 +100,6 @@ public sealed class CompanionFeatureContext
             new NotSupportedException("wait cant delete remote data yet")));
         ApplyOutfitAsync = applyOutfitAsync ?? ((_, _) => Task.FromException(
             new NotSupportedException("aiyo outfits not ready yet")));
-        SetGlobalShortcutAsync = setGlobalShortcutAsync ?? ((_, _) => Task.FromException(
-            new NotSupportedException("oh no shortcuts not ready yet")));
-        GetGlobalShortcutStatus = getGlobalShortcutStatus ?? (() => null);
         DiscardHeldRemoteNoteAsync = discardHeldRemoteNoteAsync ?? ((_, _) => Task.CompletedTask);
         DiscardHeldRemoteNotesAsync = discardHeldRemoteNotesAsync ?? (_ => Task.CompletedTask);
         StopRemoteSyncAsync = stopRemoteSyncAsync ?? (_ => Task.CompletedTask);
@@ -167,10 +162,6 @@ public sealed class CompanionFeatureContext
     /// complete, so nothing was wiped and notes keep arriving. No-op without a relay.</summary>
     public Func<CancellationToken, Task> StartRemoteSyncAsync { get; }
     public Func<string?, CancellationToken, Task> ApplyOutfitAsync { get; }
-    public Func<string, CancellationToken, Task> SetGlobalShortcutAsync { get; }
-    /// <summary>Null while the saved global shortcut is the one registered;
-    /// otherwise why a different one (or none) is in effect.</summary>
-    public Func<string?> GetGlobalShortcutStatus { get; }
     /// <summary>Best-effort removal of a single remote note's queued/held
     /// presentation (in PresentationCoordinator's in-memory queue and its
     /// persisted row), keyed by message id, after it was revealed or

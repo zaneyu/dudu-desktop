@@ -165,12 +165,8 @@ public sealed class SettingsNavigationTests
         }
 
         Find(window, "OnboardingRecipientName").AsTextBox().Enter("Mia");
-        Find(window, "OnboardingRecommendedDefaults").AsButton().Invoke();
         Advance(window, "OnboardingTheme");
         Find(window, "OnboardingReducedMotion").AsCheckBox().IsChecked = true;
-        Advance(window, "OnboardingHydrationReminders");
-        Find(window, "OnboardingLaunchAtSignIn").AsCheckBox().IsChecked = false;
-        Advance(window, "OnboardingPlacementStep");
         Advance(window, "OnboardingSkipPairing");
         Find(window, "OnboardingSkipPairing").AsButton().Invoke();
         Find(window, "OnboardingComplete").AsButton().Invoke();

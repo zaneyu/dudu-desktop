@@ -25,15 +25,16 @@ public sealed class TrayMenuUxTests
 
         Assert.True(service.HandleWindowMessage(TrayIconService.CallbackMessage, WmRButtonUp));
         Assert.Equal("hide dudu", Label(native, TrayCommand.ShowOrHide));
-        Assert.Equal("pause until i resume", Label(native, TrayCommand.PauseIndefinitelyOrResume));
+        Assert.Equal("pause 1 hour", Label(native, TrayCommand.PauseOneHourOrResume));
         Assert.DoesNotContain(native.LastItems!, item => item.Checked);
 
         state = new TrayMenuState(PetVisible: false, PauseMode.OneHour);
         Assert.True(service.HandleWindowMessage(TrayIconService.CallbackMessage, WmRButtonUp));
         Assert.Equal("show dudu", Label(native, TrayCommand.ShowOrHide));
-        Assert.Equal("resume dudu", Label(native, TrayCommand.PauseIndefinitelyOrResume));
-        var checkedItem = Assert.Single(native.LastItems!, item => item.Checked);
-        Assert.Equal(TrayCommand.PauseOneHour, checkedItem.Command);
+        Assert.Equal("resume dudu", Label(native, TrayCommand.PauseOneHourOrResume));
+        // The menu is a fixed list of four: the pause row swaps its label
+        // instead of checking one of several pause rows.
+        Assert.DoesNotContain(native.LastItems!, item => item.Checked);
     }
 
     [Fact]
@@ -49,7 +50,7 @@ public sealed class TrayMenuUxTests
         Assert.True(service.HandleWindowMessage(TrayIconService.CallbackMessage, WmRButtonUp));
 
         Assert.Equal("show or hide dudu", Label(native, TrayCommand.ShowOrHide));
-        Assert.Equal("pause indefinitely or resume", Label(native, TrayCommand.PauseIndefinitelyOrResume));
+        Assert.Equal("pause 1 hour or resume", Label(native, TrayCommand.PauseOneHourOrResume));
         Assert.Equal(service.Commands, native.LastItems!.Select(item => item.Command));
     }
 
@@ -68,10 +69,12 @@ public sealed class TrayMenuUxTests
     }
 
     [Theory]
-    [InlineData(TrayCommand.PauseOneHour)]
-    [InlineData(TrayCommand.PauseUntilTomorrowAtSeven)]
-    [InlineData(TrayCommand.PauseUntilFullscreenEnds)]
-    public async Task Pause_or_resume_resumes_any_active_pause_in_one_click(TrayCommand pauseCommand)
+    [InlineData(PauseMode.OneHour)]
+    [InlineData(PauseMode.FiveMinutes)]
+    [InlineData(PauseMode.UntilTomorrowAtSeven)]
+    [InlineData(PauseMode.UntilFullscreenEnds)]
+    [InlineData(PauseMode.Indefinite)]
+    public async Task Pause_or_resume_resumes_any_active_pause_in_one_click(PauseMode mode)
     {
         var pause = new PauseStateStore();
         await using var lifecycle = CreateLifecycle(pause);
@@ -82,10 +85,12 @@ public sealed class TrayMenuUxTests
             _ => Task.CompletedTask,
             () => Now);
 
-        await router.HandleAsync(pauseCommand, TestContext.Current.CancellationToken);
-        Assert.NotEqual(PauseMode.None, pause.Current.Mode);
+        pause.Restore(new PauseState(
+            mode,
+            mode is PauseMode.UntilFullscreenEnds or PauseMode.Indefinite ? null : Now.AddMinutes(30)));
+        Assert.NotEqual(PauseMode.None, pause.GetEffective(Now).Mode);
 
-        await router.HandleAsync(TrayCommand.PauseIndefinitelyOrResume, TestContext.Current.CancellationToken);
+        await router.HandleAsync(TrayCommand.PauseOneHourOrResume, TestContext.Current.CancellationToken);
 
         Assert.Equal(PauseMode.None, pause.Current.Mode);
     }

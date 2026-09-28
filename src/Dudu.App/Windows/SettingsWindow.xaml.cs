@@ -45,8 +45,7 @@ public sealed partial class SettingsWindow : UserControl
             initialPlacement: context.PlacementSnapshot.Placement,
             runtimeApplier: (preferences, placement, cancellationToken) =>
                 context.ApplyRuntimeAsync(preferences, placement, cancellationToken),
-            placementCapture: context.CapturePlacementAsync,
-            placementPreviewer: context.ApplyPlacementAsync);
+            placementCapture: context.CapturePlacementAsync);
         InitializeComponent();
         // No initial SelectedItem here: ShowDestination selects the real
         // destination once the pages exist. Selecting Home up front raised a

@@ -14,7 +14,7 @@ public sealed class TrayIconServiceTests
 
         service.Attach(42);
         service.Recreate();
-        service.ExecuteCommand(TrayCommand.PauseUntilTomorrowAtSeven);
+        service.ExecuteCommand(TrayCommand.PauseOneHourOrResume);
         service.HandleWindowMessage(TrayIconService.TaskbarCreatedFallbackMessage, 0);
         service.Dispose();
         service.Dispose();
@@ -22,8 +22,8 @@ public sealed class TrayIconServiceTests
         Assert.Equal(1, native.AddCount);
         Assert.Equal(2, native.RecreateCount);
         Assert.Equal(1, native.RemoveCount);
-        Assert.Equal([TrayCommand.PauseUntilTomorrowAtSeven], commands);
-        Assert.Equal(7, service.Commands.Count);
+        Assert.Equal([TrayCommand.PauseOneHourOrResume], commands);
+        Assert.Equal(4, service.Commands.Count);
     }
 
     [Fact]

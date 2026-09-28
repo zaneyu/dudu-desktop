@@ -111,17 +111,16 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
-    public async Task ArgumentException_error_text_strips_the_framework_parameter_suffix()
+    public void ArgumentException_error_text_strips_the_framework_parameter_suffix()
     {
-        // Regression: ArgumentException.Message appends " (Parameter 'GlobalShortcut')" from
+        // Regression: ArgumentException.Message appends " (Parameter 'name')" from
         // ParamName. That framework wording leaked straight into the user-visible error text.
-        var fixture = FeatureFixture.Create();
-        var viewModel = new SettingsViewModel(fixture.Context) { GlobalShortcut = "   " };
+        var exception = new ArgumentException("wait type a name first", "RecipientName");
 
-        await viewModel.SaveShortcutAsync(TestContext.Current.CancellationToken);
+        var message = InvokeToUserMessage(exception);
 
-        Assert.Equal("wait type a shortcut first", viewModel.ErrorMessage);
-        Assert.DoesNotContain("Parameter", viewModel.ErrorMessage);
+        Assert.Equal("wait type a name first", message);
+        Assert.DoesNotContain("Parameter", message);
     }
 
     [Fact]
@@ -506,173 +505,12 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
-    public async Task Native_overlay_dispatch_queue_owns_faults_and_preserves_click_order()
+    public void Comfort_actions_are_only_breathe_and_stop()
     {
-        var fixture = FeatureFixture.Create();
-        var firstEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var calls = new List<string>();
-        var firstRouter = new OverlayCommandRouter(fixture.Context, async (_, _) =>
-        {
-            calls.Add("first");
-            firstEntered.TrySetResult();
-            await releaseFirst.Task;
-        });
-        var secondRouter = new OverlayCommandRouter(fixture.Context, (_, _) =>
-        {
-            calls.Add("second");
-            return Task.CompletedTask;
-        });
-        using var first = new OverlayActionSurfaceController();
-        using var second = new OverlayActionSurfaceController();
-        first.Bind(firstRouter);
-        second.Bind(secondRouter);
-        first.Open(new PixelRect(0, 0, 640, 480), new PixelPoint(320, 400));
-        second.Open(new PixelRect(0, 0, 640, 480), new PixelPoint(320, 400));
-        var firstPoint = Center(first.Arrangement!.PrimaryActions.Single(item => item.Action == OverlayAction.LoveNote).HitRegion);
-        var secondPoint = Center(second.Arrangement!.PrimaryActions.Single(item => item.Action == OverlayAction.LoveNote).HitRegion);
-        var reported = new List<Exception>();
-        using var queue = new OverlayActionDispatchQueue(reported.Add);
-
-        queue.Enqueue(first, firstPoint);
-        await firstEntered.Task.WaitAsync(TestContext.Current.CancellationToken);
-        queue.Enqueue(second, secondPoint);
-        Assert.Equal(["first"], calls);
-        releaseFirst.TrySetResult();
-        await queue.Completion.WaitAsync(TestContext.Current.CancellationToken);
-
-        Assert.Equal(["first", "second"], calls);
-        Assert.Empty(reported);
-    }
-
-    [Fact]
-    public async Task Presented_action_dispatch_does_not_reread_reflowed_hit_geometry()
-    {
-        var fixture = FeatureFixture.Create();
-        var destinations = new List<string>();
-        var router = new OverlayCommandRouter(fixture.Context, (destination, _) =>
-        {
-            destinations.Add(destination);
-            return Task.CompletedTask;
-        });
-        using var surface = new OverlayActionSurfaceController();
-        surface.Bind(router);
-        surface.Open(new PixelRect(0, 0, 640, 480), new PixelPoint(320, 400));
-        var presentedNotes = surface.CreateRenderSnapshot().Actions
-            .Single(action => action.PrimaryAction == OverlayAction.LoveNote);
-
-        surface.UpdateViewport(new PixelRect(100, 100, 900, 700));
-        await surface.HandlePresentedActionAsync(
-            presentedNotes,
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(["notes"], destinations);
-        Assert.Equal(OverlayActionSurfaceKind.Closed, surface.Kind);
-    }
-
-    [Fact]
-    public async Task Queued_close_cancels_an_active_breathing_action_before_dispatching()
-    {
-        var fixture = FeatureFixture.Create();
-        var breathingEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var router = new OverlayCommandRouter(
-            fixture.Context,
-            (_, _) => Task.CompletedTask,
-            async (_, cancellationToken) =>
-            {
-                breathingEntered.TrySetResult();
-                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-            });
-        using var surface = new OverlayActionSurfaceController();
-        surface.Bind(router);
-        surface.Open(new PixelRect(0, 0, 640, 480), new PixelPoint(320, 400));
-        var comfort = surface.CreateRenderSnapshot().Actions
-            .Single(action => action.PrimaryAction == OverlayAction.ComfortMe);
-        await surface.HandlePresentedActionAsync(comfort, TestContext.Current.CancellationToken);
-        var snapshot = surface.CreateRenderSnapshot();
-        var breathe = snapshot.Actions.Single(action => action.ComfortAction == ComfortAction.BreatheWithMe);
-        var close = snapshot.Actions.Single(action => action.ComfortAction == ComfortAction.Close);
-        var reported = new List<Exception>();
-        using var queue = new OverlayActionDispatchQueue(reported.Add);
-
-        queue.Enqueue(surface, breathe);
-        await breathingEntered.Task.WaitAsync(TestContext.Current.CancellationToken);
-        queue.Enqueue(surface, close);
-        await queue.Completion.WaitAsync(TestContext.Current.CancellationToken);
-
-        Assert.Equal(OverlayActionSurfaceKind.Closed, surface.Kind);
-        Assert.False(router.IsBreathing);
-        Assert.Empty(reported);
-    }
-
-    [Fact]
-    public async Task Disposed_overlay_dispatch_queue_finishes_cancelled_work()
-    {
-        var fixture = FeatureFixture.Create();
-        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var router = new OverlayCommandRouter(fixture.Context, async (_, cancellationToken) =>
-        {
-            entered.TrySetResult();
-            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-        });
-        using var surface = new OverlayActionSurfaceController();
-        surface.Bind(router);
-        surface.Open(new PixelRect(0, 0, 640, 480), new PixelPoint(320, 400));
-        var notes = surface.CreateRenderSnapshot().Actions
-            .Single(action => action.PrimaryAction == OverlayAction.LoveNote);
-        var reported = new List<Exception>();
-        var queue = new OverlayActionDispatchQueue(reported.Add);
-
-        queue.Enqueue(surface, notes);
-        await entered.Task.WaitAsync(TestContext.Current.CancellationToken);
-        queue.Dispose();
-        await queue.Completion.WaitAsync(TestContext.Current.CancellationToken);
-
-        Assert.Empty(reported);
-    }
-
-    [Fact]
-    public async Task Stale_pointer_completion_cannot_close_a_newly_reopened_surface()
-    {
-        var fixture = FeatureFixture.Create();
-        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var router = new OverlayCommandRouter(fixture.Context, async (_, _) =>
-        {
-            entered.TrySetResult();
-            await release.Task;
-        });
-        using var surface = new OverlayActionSurfaceController();
-        surface.Bind(router);
-        var viewport = new PixelRect(0, 0, 640, 480);
-        var anchor = new PixelPoint(320, 400);
-        surface.Open(viewport, anchor);
-        var point = Center(surface.Arrangement!.PrimaryActions
-            .Single(item => item.Action == OverlayAction.LoveNote).HitRegion);
-
-        var dispatch = surface.HandlePointerAsync(point, TestContext.Current.CancellationToken);
-        await entered.Task.WaitAsync(TestContext.Current.CancellationToken);
-        surface.Close();
-        surface.Open(viewport, anchor);
-        release.TrySetResult();
-        await dispatch;
-
-        Assert.Equal(OverlayActionSurfaceKind.Primary, surface.Kind);
-        Assert.NotNull(surface.Arrangement);
-    }
-
-    [Fact]
-    public void Comfort_surface_has_exactly_the_approved_actions()
-    {
+        // Breathe with me lives on Home; the only other choice is Stop.
         Assert.Equal(
-            [
-                ComfortAction.BreatheWithMe,
-                ComfortAction.TinyHug,
-                ComfortAction.ReadALoveNote,
-                ComfortAction.TakeAFiveMinuteBreak,
-                ComfortAction.Close,
-            ],
-            OverlayCommandRouter.ComfortActions);
+            [ComfortAction.BreatheWithMe, ComfortAction.Close],
+            Enum.GetValues<ComfortAction>());
     }
 
     [Fact]
@@ -682,7 +520,7 @@ public sealed class FeatureViewModelTests
         var router = new OverlayCommandRouter(fixture.Context);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            router.ExecuteAsync(OverlayAction.LoveNote, TestContext.Current.CancellationToken));
+            router.ExecuteAccessibleAsync(OverlayAction.Pet, TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -858,7 +696,7 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
-    public async Task Breathing_publishes_a_finite_cycle_and_five_minute_pause()
+    public async Task Breathing_publishes_a_finite_cycle()
     {
         var fixture = FeatureFixture.Create();
         var phases = new List<BreathVisualPhase>();
@@ -869,13 +707,13 @@ public sealed class FeatureViewModelTests
         router.ComfortPanelChanged += (_, _) => phases.Add(router.ComfortPanel.Phase);
 
         await router.ExecuteComfortAsync(ComfortAction.BreatheWithMe, TestContext.Current.CancellationToken);
-        await router.ExecuteComfortAsync(ComfortAction.TakeAFiveMinuteBreak, TestContext.Current.CancellationToken);
 
         Assert.False(router.IsBreathing);
         Assert.Equal(BreathVisualPhase.Complete, router.ComfortPanel.Phase);
         Assert.Contains(BreathVisualPhase.Inhale, phases);
         Assert.Contains(BreathVisualPhase.Exhale, phases);
-        Assert.Equal(PauseMode.FiveMinutes, fixture.Context.GetPauseState().Mode);
+        // No five-minute break any more: breathing never pauses Dudu.
+        Assert.Equal(PauseMode.None, fixture.Context.GetPauseState().Mode);
     }
 
     [Fact]
@@ -915,7 +753,6 @@ public sealed class FeatureViewModelTests
                 started.TrySetResult();
                 await Task.Delay(Timeout.InfiniteTimeSpan, token);
             });
-        router.OpenComfortPanel();
         var breathing = router.ExecuteComfortAsync(
             ComfortAction.BreatheWithMe,
             TestContext.Current.CancellationToken);
@@ -1253,66 +1090,6 @@ public sealed class FeatureViewModelTests
         await AssertRevealDismissesUnreadIndicatorAsync("none");
         await AssertRevealDismissesUnreadIndicatorAsync("heart");
     }
-
-    [Fact]
-    public async Task Action_surface_toggles_from_pet_and_routes_primary_and_comfort_hits()
-    {
-        var fixture = FeatureFixture.Create();
-        var destinations = new List<string>();
-        var router = new OverlayCommandRouter(
-            fixture.Context,
-            (destination, _) =>
-            {
-                destinations.Add(destination);
-                return Task.CompletedTask;
-            },
-            (_, _) => Task.CompletedTask);
-        var surface = new OverlayActionSurfaceController();
-        surface.Bind(router);
-        var workArea = new PixelRect(0, 0, 640, 480);
-        var anchor = new Dudu.Core.Assets.PixelPoint(320, 400);
-
-        Assert.Equal(OverlayActionSurfaceKind.Closed, surface.Kind);
-        surface.Open(workArea, anchor);
-        Assert.Equal(OverlayActionSurfaceKind.Primary, surface.Kind);
-        var comfort = surface.Arrangement!.PrimaryActions.Single(item => item.Action == OverlayAction.ComfortMe);
-        await surface.HandlePointerAsync(Center(comfort.HitRegion), TestContext.Current.CancellationToken);
-        Assert.Equal(OverlayActionSurfaceKind.Comfort, surface.Kind);
-        Assert.All(surface.ComfortArrangement!.Actions, item =>
-            Assert.True(surface.ComfortArrangement.Bounds.Contains(item.HitRegion)));
-        var close = surface.ComfortArrangement.Actions.Single(item => item.Action == ComfortAction.Close);
-        await surface.HandlePointerAsync(Center(close.HitRegion), TestContext.Current.CancellationToken);
-        Assert.Equal(OverlayActionSurfaceKind.Closed, surface.Kind);
-
-        surface.Open(workArea, anchor);
-        var notes = surface.Arrangement!.PrimaryActions.Single(item => item.Action == OverlayAction.LoveNote);
-        await surface.HandlePointerAsync(Center(notes.HitRegion), TestContext.Current.CancellationToken);
-        Assert.Equal(["notes"], destinations);
-        Assert.Equal(OverlayActionSurfaceKind.Closed, surface.Kind);
-    }
-
-    [Fact]
-    public async Task Action_surface_keeps_failed_navigation_visible_with_an_error()
-    {
-        var fixture = FeatureFixture.Create();
-        var router = new OverlayCommandRouter(
-            fixture.Context,
-            (_, _) => Task.FromException(new InvalidOperationException("navigation failed")));
-        var surface = new OverlayActionSurfaceController();
-        surface.Bind(router);
-        surface.Open(
-            new PixelRect(0, 0, 640, 480),
-            new Dudu.Core.Assets.PixelPoint(320, 400));
-        var notes = surface.Arrangement!.PrimaryActions.Single(item => item.Action == OverlayAction.LoveNote);
-
-        await surface.HandlePointerAsync(Center(notes.HitRegion), TestContext.Current.CancellationToken);
-
-        Assert.Equal(OverlayActionSurfaceKind.Primary, surface.Kind);
-        Assert.Equal("navigation failed", surface.ErrorMessage);
-    }
-
-    private static Dudu.Core.Assets.PixelPoint Center(PixelRect rectangle) =>
-        new(rectangle.X + rectangle.Width / 2, rectangle.Y + rectangle.Height / 2);
 
     private sealed class FeatureFixture
     {

@@ -35,12 +35,9 @@ public sealed class XamlContractTests
         var colors = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Themes", "Colors.xaml"));
         var stubs = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "XamlCompileStubs.cs"));
 
-        Assert.Contains("SmallChange=\"0.1\"", onboarding);
-        // Slider.StepFrequency is a real WinUI 3 property and defaults to 1: left
-        // unset, the pet-size slider (0.5 to 2) snapped to 50%/150%/200% only, so the
-        // recommended 100% could not be picked. The old DoesNotContain here pinned
-        // that bug in place.
-        Assert.Contains("StepFrequency=\"0.05\"", onboarding);
+        // The pet-size slider left onboarding with the placement step; Settings
+        // keeps its own (see the Settings slider-step test).
+        Assert.DoesNotContain("<Slider", onboarding);
         Assert.Contains("<Setter Property=\"Foreground\" Value=\"{ThemeResource PrimaryButtonForegroundBrush}\" />", controls);
         Assert.Contains("SystemColorHighlightTextColor", colors);
         Assert.Contains("private StackPanel StartupRecoveryPanel", stubs);
@@ -201,13 +198,13 @@ public sealed class XamlContractTests
         {
             ["HomePage.xaml"] = ["ViewModel.GreetingText", "ViewModel.PartnerTimeText", "ViewModel.PartnerClockSpokenText", "ViewModel.PetCommand", "ViewModel.StatusMessage", "ViewModel.ErrorMessage"],
             ["LoveNotesPage.xaml"] = ["ViewModel.PendingRemoteNotes", "ViewModel.RevealRemoteNoteCommand", "ViewModel.OpenedNotes", "ViewModel.SelectedOpenedNote", "ViewModel.SelectedOpenedNoteText", "ViewModel.RequestDeleteOpenedNoteCommand", "ViewModel.DeleteOpenedNoteCommand", "ViewModel.CancelDeleteOpenedNoteCommand"],
-            ["SettingsPage.xaml"] = ["ViewModel.SaveCommand", "ViewModel.SavePlacementCommand", "ViewModel.SaveShortcutCommand", "ViewModel.Connection.CreateCodeCommand", "ViewModel.Connection.RequestRevokeSessionsCommand", "ViewModel.Connection.RequestDeleteRemoteDeviceCommand", "ViewModel.Connection.RequestForgetPairingCommand", "ViewModel.Connection.ConfirmCommand", "ViewModel.Connection.CancelConfirmationCommand", "ViewModel.RequestDeleteMyDataCommand", "ViewModel.ConfirmDeleteMyDataCommand", "ViewModel.CancelDeleteMyDataCommand", "ViewModel.WipeThisPcOnlyCommand", "ViewModel.IsDeleteConfirmVisible", "ViewModel.IsWipeThisPcOnlyVisible"],
+            ["SettingsPage.xaml"] = ["ViewModel.SaveCommand", "ViewModel.SavePlacementCommand", "ViewModel.Connection.CreateCodeCommand", "ViewModel.Connection.RequestRevokeSessionsCommand", "ViewModel.Connection.RequestDeleteRemoteDeviceCommand", "ViewModel.Connection.RequestForgetPairingCommand", "ViewModel.Connection.ConfirmCommand", "ViewModel.Connection.CancelConfirmationCommand", "ViewModel.RequestDeleteMyDataCommand", "ViewModel.ConfirmDeleteMyDataCommand", "ViewModel.CancelDeleteMyDataCommand", "ViewModel.WipeThisPcOnlyCommand", "ViewModel.IsDeleteConfirmVisible", "ViewModel.IsWipeThisPcOnlyVisible"],
         };
         var expectedLabels = new[]
         {
             "home", "love notes", "settings",
             "time in the UK", "time with dudu", "incoming notes", "opened notes",
-            "look and motion", "when windows starts", "pet options", "shortcut", "partner connection", "pairing status", "paired sessions", "your data",
+            "look and motion", "when windows starts", "pet options", "partner connection", "pairing status", "paired sessions", "your data",
         };
 
         foreach (var (name, page) in pages)
@@ -295,38 +292,47 @@ public sealed class XamlContractTests
     [Fact]
     public void Every_cute_overlay_action_has_a_keyboard_accessible_home_counterpart()
     {
-        // Home keeps only the cute actions. LoveNote/ComfortMe and the other comfort
-        // sub-panel actions left Home with the cute-focus cleanup; the router still
-        // lists them until the overlay bubble is removed, so they are excluded here and
-        // must not come back to Home.
+        // Home is the keyboard/UIA surface for every cute action: pet, drink,
+        // eat together, tiny hug and breathe with me.
         var root = FindRepositoryRoot();
         var home = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml"));
-        var removedPrimary = new[] { Dudu.App.Overlay.OverlayAction.LoveNote, Dudu.App.Overlay.OverlayAction.ComfortMe };
-        var keptComfort = new[] { Dudu.App.Overlay.ComfortAction.TinyHug, Dudu.App.Overlay.ComfortAction.BreatheWithMe };
 
+        Assert.Equal(5, Dudu.App.Overlay.OverlayCommandRouter.AccessiblePrimaryActions.Count);
         foreach (var action in Dudu.App.Overlay.OverlayCommandRouter.AccessiblePrimaryActions)
         {
-            if (removedPrimary.Contains(action.Action))
-            {
-                Assert.DoesNotContain($"AutomationProperties.AutomationId=\"{action.AutomationId}\"", home);
-                continue;
-            }
-
             Assert.Contains($"AutomationProperties.AutomationId=\"{action.AutomationId}\"", home);
             Assert.False(string.IsNullOrWhiteSpace(action.SettingsDestination));
         }
 
-        foreach (var action in Dudu.App.Overlay.OverlayCommandRouter.AccessibleComfortActions)
-        {
-            if (!keptComfort.Contains(action.Action))
-            {
-                Assert.DoesNotContain($"AutomationProperties.AutomationId=\"{action.AutomationId}\"", home);
-                continue;
-            }
+        // Tiny hug and breathe run through the overlay-action handler; the
+        // comfort-panel handler (whose enum no longer has TinyHug) is gone.
+        Assert.Contains("Tag=\"TinyHug\" Click=\"OverlayAction_Click\"", home);
+        Assert.Contains("Tag=\"BreatheWithMe\" Click=\"OverlayAction_Click\"", home);
+        Assert.DoesNotContain("ComfortAction_Click", home);
+    }
 
-            Assert.Contains($"AutomationProperties.AutomationId=\"{action.AutomationId}\"", home);
-            Assert.False(string.IsNullOrWhiteSpace(action.SettingsDestination));
-        }
+    [Fact]
+    public void Home_shows_the_breathing_panel_with_a_stop_button()
+    {
+        var root = FindRepositoryRoot();
+        var home = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml"));
+        var code = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml.cs"));
+
+        Assert.Contains("Visibility=\"{x:Bind Breathing.IsVisible, Mode=OneWay}\"", home);
+        Assert.Contains("Text=\"{x:Bind Breathing.PhaseText, Mode=OneWay}\"", home);
+        Assert.Contains("Text=\"{x:Bind Breathing.Instruction, Mode=OneWay}\"", home);
+        Assert.Contains("Click=\"BreathingStop_Click\"", home);
+        Assert.Contains("AutomationProperties.AutomationId=\"HomeBreathingStop\"", home);
+        Assert.Contains("public BreathingPanelPresenter Breathing { get; }", code);
+        Assert.Contains("private async void BreathingStop_Click(", code);
+        // Stopping is the normal early end, not an error.
+        Assert.Contains("catch (OperationCanceledException) when (action == OverlayAction.BreatheWithMe)", code);
+        // Leaving Home stops only a running exercise.
+        Assert.Contains("Breathing.StopIfBreathingAsync()", code);
+        // The presenter exists before InitializeComponent, which x:Bind reads.
+        Assert.True(
+            code.IndexOf("Breathing = new BreathingPanelPresenter(", StringComparison.Ordinal)
+                < code.IndexOf("InitializeComponent();", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -520,19 +526,6 @@ public sealed class XamlContractTests
         var a = Luminance(first);
         var b = Luminance(second);
         return (Math.Max(a, b) + 0.05) / (Math.Min(a, b) + 0.05);
-    }
-
-    [Fact]
-    public void Appearance_shows_the_shortcut_fallback_next_to_the_shortcut_box()
-    {
-        var root = FindRepositoryRoot();
-        var appearance = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "SettingsPage.xaml"));
-        var box = appearance.IndexOf("AutomationProperties.AutomationId=\"AppearanceShortcut\"", StringComparison.Ordinal);
-        var status = appearance.IndexOf("AutomationProperties.AutomationId=\"AppearanceShortcutStatus\"", StringComparison.Ordinal);
-        var save = appearance.IndexOf("AutomationProperties.AutomationId=\"AppearanceSaveShortcut\"", StringComparison.Ordinal);
-
-        Assert.True(box > 0 && status > box && save > status);
-        Assert.Contains("Text=\"{x:Bind ViewModel.ShortcutStatus, Mode=OneWay}\"", appearance, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryRoot()

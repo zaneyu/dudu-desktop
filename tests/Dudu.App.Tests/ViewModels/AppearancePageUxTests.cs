@@ -75,45 +75,6 @@ public sealed class AppearancePageUxTests
         Assert.Contains(nameof(SettingsViewModel.MonitorDeviceName), changed);
     }
 
-    [Theory]
-    [InlineData("D")]
-    [InlineData("Ctrl+Ctrl+D")]
-    [InlineData("Ctrl+Alt")]
-    public async Task Malformed_shortcut_explains_the_expected_shape_and_is_not_applied(string shortcut)
-    {
-        var applied = new List<string>();
-        var fixture = SettingsDataPagesFixture.Create(setGlobalShortcutAsync: (value, _) =>
-        {
-            applied.Add(value);
-            return Task.CompletedTask;
-        });
-        var viewModel = new SettingsViewModel(fixture.Context) { GlobalShortcut = shortcut };
-
-        await viewModel.SaveShortcutAsync(TestContext.Current.CancellationToken);
-
-        Assert.Empty(applied);
-        Assert.Equal("use ctrl alt shift or win plus one key like Ctrl+Alt+D", viewModel.ErrorMessage);
-    }
-
-    [Fact]
-    public async Task Valid_shortcut_is_applied_and_shown_in_its_canonical_form()
-    {
-        var applied = new List<string>();
-        var fixture = SettingsDataPagesFixture.Create(setGlobalShortcutAsync: (value, _) =>
-        {
-            applied.Add(value);
-            return Task.CompletedTask;
-        });
-        var viewModel = new SettingsViewModel(fixture.Context) { GlobalShortcut = " ctrl + alt + k " };
-
-        await viewModel.SaveShortcutAsync(TestContext.Current.CancellationToken);
-
-        Assert.Null(viewModel.ErrorMessage);
-        Assert.Equal(["Ctrl+Alt+K"], applied);
-        Assert.Equal("Ctrl+Alt+K", viewModel.GlobalShortcut);
-        Assert.Equal("otayyy shortcut set", viewModel.StatusMessage);
-    }
-
     [Fact]
     public void Sliders_step_in_fine_increments_and_value_labels_are_announced()
     {

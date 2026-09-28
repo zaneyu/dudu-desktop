@@ -42,7 +42,7 @@ public sealed class StartupContractTests
     }
 
     [Fact]
-    public void Startup_hotkey_and_tray_registration_are_best_effort()
+    public void Startup_tray_registration_is_best_effort_and_no_global_hotkey_is_registered()
     {
         var root = FindRepositoryRoot();
         var bootstrap = File.ReadAllText(Path.Combine(
@@ -52,13 +52,11 @@ public sealed class StartupContractTests
             "Hosting",
             "WindowsCompanionBootstrap.cs"));
 
-        // Startup registers the shortcut persisted in preferences (it used to hard-code
-        // HotkeyGesture.Default, silently reverting a chosen shortcut on every restart) and
-        // still falls back to the default when the stored one is unusable or taken.
-        Assert.Contains("PersistedHotkeyRegistration.Apply(", bootstrap);
-        Assert.Contains("hotkey.SetGesture(HotkeyGesture.Default)", bootstrap);
-        Assert.DoesNotContain("_hotkey.SetGesture(HotkeyGesture.Default)", bootstrap);
-        Assert.Contains("Dudu global hotkey unavailable", bootstrap);
+        // The global hotkey was removed with the cute-focus cleanup: startup
+        // neither registers nor restores a shortcut.
+        Assert.DoesNotContain("GlobalHotkeyService", bootstrap);
+        Assert.DoesNotContain("PersistedHotkeyRegistration", bootstrap);
+        Assert.False(File.Exists(Path.Combine(root, "src", "Dudu.App", "System", "GlobalHotkeyService.cs")));
         Assert.Contains("_tray.Attach(", bootstrap);
         Assert.Contains("Dudu tray icon unavailable", bootstrap);
     }

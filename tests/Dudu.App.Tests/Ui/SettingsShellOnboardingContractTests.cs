@@ -127,45 +127,33 @@ public sealed class SettingsShellOnboardingContractTests
     }
 
     [Fact]
-    public void Recommended_buttons_capture_typed_choices_before_rewriting_the_controls()
+    public void Onboarding_has_three_steps_name_look_and_pairing()
     {
-        // The UI journey types a name and then presses "use recommended defaults";
-        // syncing controls from the draft first wiped the typed name.
+        var onboarding = Read("src", "Dudu.App", "Pages", "OnboardingPage.xaml");
         var code = Read("src", "Dudu.App", "Pages", "OnboardingPage.xaml.cs");
 
-        foreach (var (handler, call) in new[]
+        var steps = Regex.Matches(onboarding, "<StackPanel x:Name=\"([A-Za-z]+Step)\"")
+            .Select(match => match.Groups[1].Value)
+            .ToArray();
+        Assert.Equal(["RecipientStep", "AppearanceStep", "PairingStep"], steps);
+        Assert.Contains("AutomationProperties.AutomationId=\"OnboardingRecipientName\"", onboarding);
+        Assert.Contains("AutomationProperties.AutomationId=\"OnboardingTheme\"", onboarding);
+        Assert.Contains("AutomationProperties.AutomationId=\"OnboardingReducedMotion\"", onboarding);
+        Assert.Contains("AutomationProperties.AutomationId=\"OnboardingSkipPairing\"", onboarding);
+
+        // Reminders, the local-note limit, the placement step and the
+        // startup/fullscreen choices left onboarding (the last two are saved
+        // on and live in Settings).
+        foreach (var removed in new[]
         {
-            ("private async void RecommendedDefaultsButton_Click(", "await _viewModel.AcceptRecommendedDefaultsAsync();"),
-            ("private async void RecommendedPlacementButton_Click(", "await _viewModel.UseRecommendedPlacementAsync();"),
+            "RemindersStep", "PlacementStep", "HydrationBox", "BreakBox", "NoteLimitBox",
+            "PlacementScaleSlider", "RecommendedPlacementButton", "RecommendedDefaultsButton",
+            "HideFullscreenBox", "LaunchAtSignInBox",
         })
         {
-            var body = Slice(code, handler, "\n    }");
-            var sync = body.IndexOf("SyncDraftFromControls();", StringComparison.Ordinal);
-            var accept = body.IndexOf(call, StringComparison.Ordinal);
-            Assert.True(sync >= 0 && accept > sync, $"{handler} must sync the draft before {call}");
-            Assert.Contains("catch (Exception exception)", body);
+            Assert.DoesNotContain(removed, onboarding);
+            Assert.DoesNotContain(removed, code);
         }
-    }
-
-    [Fact]
-    public void Onboarding_ignores_slider_events_raised_while_the_page_builds_itself()
-    {
-        var code = Read("src", "Dudu.App", "Pages", "OnboardingPage.xaml.cs");
-        var onboarding = Read("src", "Dudu.App", "Pages", "OnboardingPage.xaml");
-
-        Assert.Contains("private bool _suppressControlEvents = true;", code);
-        var constructor = Slice(code, "public OnboardingPage(", "\n    }");
-        Assert.True(
-            constructor.IndexOf("InitializeComponent();", StringComparison.Ordinal)
-                < constructor.IndexOf("_suppressControlEvents = false;", StringComparison.Ordinal),
-            "Slider events must stay suppressed through InitializeComponent and the first sync.");
-        var handler = Slice(code, "private async void PlacementScaleSlider_ValueChanged(", "\n    }");
-        Assert.Contains("if (_suppressControlEvents) return;", handler);
-        Assert.True(
-            handler.IndexOf("if (_suppressControlEvents) return;", StringComparison.Ordinal)
-                < handler.IndexOf("_viewModel.PlacementScale = args.NewValue;", StringComparison.Ordinal));
-        Assert.Contains("IsThumbToolTipEnabled=\"False\"", onboarding);
-        Assert.Contains("AutomationProperties.AutomationId=\"OnboardingPetScaleValue\"", onboarding);
     }
 
     [Fact]
@@ -195,8 +183,8 @@ public sealed class SettingsShellOnboardingContractTests
     {
         var code = Read("src", "Dudu.App", "Pages", "OnboardingPage.xaml.cs");
 
-        Assert.Contains("_viewModel.SetLocalNoteDailyLimitInput(NoteLimitBox.Value);", code);
-        Assert.DoesNotContain("(int)Math.Round(NoteLimitBox.Value)", code);
+        Assert.Contains("_viewModel.RecipientName = RecipientNameBox.Text;", code);
+        Assert.DoesNotContain("SetLocalNoteDailyLimitInput", code);
     }
 
     [Theory]

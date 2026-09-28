@@ -69,7 +69,6 @@ public sealed record CompanionSettingsContext(
     Func<bool, CancellationToken, Task> SetUserVisibleAsync)
 {
     public CompanionFeatureContext? Features { get; init; }
-    public OverlayActionSurfaceController? ActionSurface { get; init; }
     public OverlayCommandRouter? OverlayCommands { get; init; }
     public IReadOnlyList<string> AvailableOutfitKeys { get; init; } = ["base"];
 
@@ -260,7 +259,10 @@ public static class WindowsCompanionProductionComposition
         AudioCueService? audioCueService = null;
         IAudioCuePlayer? audioPlayer = null;
         StartupRegistrationService? startup = null;
-        var actionSurface = new OverlayActionSurfaceController();
+        // Declared before the try so the overlay-start callback (which runs
+        // after composition returns) can reach the router assigned further
+        // down; a click on Dudu's body pets through it.
+        OverlayCommandRouter? overlayRouter = null;
 
         try
         {
@@ -408,7 +410,6 @@ public static class WindowsCompanionProductionComposition
                 DateOnly.FromDateTime(DateTime.Now),
                 SeasonalDates.Empty);
             composer = new SkiaFrameComposer(pack);
-            composer.SetActionSurface(actionSurface);
             composer.SetOverlayPalette(OverlaySurfacePalette.For(
                 preferences.Theme,
                 OverlaySurfaceRenderer.IsHighContrastEnabled()));
@@ -669,7 +670,7 @@ public static class WindowsCompanionProductionComposition
                                 Fullscreen: fullscreen,
                                 SessionLocked: activityGateway.IsSessionLocked,
                                 Hidden: activityGateway.IsUserHidden || !overlay.IsVisible,
-                                Busy: pet.Current.State != PetState.Idle || actionSurface.IsOpen);
+                                Busy: pet.Current.State != PetState.Idle);
                         },
                         presentationCoordinator.TryPresentIdleOneShotAsync,
                         overlay.PlanWanderAsync,
@@ -732,7 +733,12 @@ public static class WindowsCompanionProductionComposition
                             AnimationOptionsFor(preferences),
                             cancellationToken),
                         host.ErrorReporter);
-                    await overlay.SetActionSurfaceAsync(actionSurface, cancellationToken);
+                    // Clicking Dudu pets it through the same router as Home's
+                    // "pet dudu" (serialized and error-reported by the overlay's
+                    // dispatch queue); nothing pops up.
+                    await overlay.SetPetHandlerAsync(
+                        token => overlayRouter?.ExecuteAsync(OverlayAction.Pet, token) ?? Task.CompletedTask,
+                        cancellationToken);
                 },
                 initialUserVisible: showOverlay,
                 onPreferencesChanged: (updated, token) =>
@@ -935,8 +941,6 @@ public static class WindowsCompanionProductionComposition
                         }, token), host.ErrorReporter);
                     return Task.CompletedTask;
                 },
-                setGlobalShortcutAsync: runtime.SetGlobalShortcutAsync,
-                getGlobalShortcutStatus: () => runtime.GlobalShortcutStatus,
                 discardHeldRemoteNoteAsync: (messageId, token) =>
                     presentationGateway?.DiscardHeldAsync(PresentationItemKind.RemoteNote, messageId, token)
                         ?? Task.CompletedTask,
@@ -960,10 +964,9 @@ public static class WindowsCompanionProductionComposition
                 stopRemoteSyncAsync: token => remoteSync?.StopAsync(token) ?? Task.CompletedTask,
                 startRemoteSyncAsync: token => remoteSync?.StartAsync(token) ?? Task.CompletedTask,
                 remoteDeleteAvailable: remoteSync is not null);
-            var overlayRouter = new OverlayCommandRouter(
+            overlayRouter = new OverlayCommandRouter(
                 featureContext,
                 (destination, token) => DispatchSettingsDestinationAsync(actions, destination, token));
-            actionSurface.Bind(overlayRouter);
             actions.ConfigureSettings?.Invoke(new CompanionSettingsContext(
                 startupSettings,
                 startup,
@@ -981,7 +984,6 @@ public static class WindowsCompanionProductionComposition
                 runtime.SetUserVisibleAsync)
             {
                 Features = featureContext,
-                ActionSurface = actionSurface,
                 OverlayCommands = overlayRouter,
                 NotificationRouter = composedNotificationRouter,
                 ErrorReporter = host.ErrorReporter,
