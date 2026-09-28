@@ -25,24 +25,24 @@ public sealed class LoveNotesUxTests
     // --------------------------------------------------------------- love notes
 
     [Fact]
-    public async Task Saving_an_opened_note_after_a_refresh_removes_it_from_the_incoming_list()
+    public async Task Revealing_after_a_refresh_removes_the_note_from_the_incoming_list()
     {
         // RemoteEnvelope carries byte[] fields, so a reloaded row never equals
-        // the instance that was revealed; Remove(envelope) silently failed and
-        // the saved note stayed listed as unopened.
+        // the instance that was listed before; Remove(envelope) silently failed and
+        // the opened note stayed listed as unopened.
         var fixture = Fixture.Create();
         fixture.RemoteNotes.Pending.Add(new RemoteEnvelope("m-1", [1, 2, 3], DateTimeOffset.Parse("2026-09-12T09:00:00Z")));
         var viewModel = new LoveNotesViewModel(fixture.Context);
         await viewModel.RefreshAsync(Ct);
-        viewModel.SelectedRemoteEnvelope = viewModel.PendingRemoteNotes.Single();
-        await viewModel.RevealRemoteNoteCommand.ExecuteAsync(viewModel.SelectedRemoteEnvelope);
+        var staleRow = viewModel.PendingRemoteNotes.Single();
         await viewModel.RefreshAsync(Ct);
 
-        await viewModel.SaveOpenedNoteCommand.ExecuteAsync(null);
+        await viewModel.RevealRemoteNoteCommand.ExecuteAsync(staleRow);
 
         Assert.Null(viewModel.ErrorMessage);
         Assert.Empty(viewModel.PendingRemoteNotes);
         Assert.Equal(0, viewModel.UnopenedRemoteNoteCount);
+        Assert.Equal("remote-m-1", Assert.Single(viewModel.OpenedNotes).Id);
     }
 
     [Fact]
@@ -61,55 +61,21 @@ public sealed class LoveNotesUxTests
     }
 
     [Fact]
-    public async Task Refresh_drops_an_opened_note_that_was_already_consumed_elsewhere()
+    public async Task Refresh_drops_an_opened_note_that_was_deleted_elsewhere()
     {
         var fixture = Fixture.Create();
         fixture.RemoteNotes.Pending.Add(new RemoteEnvelope("m-1", [1, 2, 3], DateTimeOffset.Parse("2026-09-12T09:00:00Z")));
         var viewModel = new LoveNotesViewModel(fixture.Context);
         await viewModel.RefreshAsync(Ct);
         await viewModel.RevealRemoteNoteCommand.ExecuteAsync(viewModel.PendingRemoteNotes.Single());
-        Assert.True(viewModel.CanSaveOpenedNote);
+        Assert.Equal("you can do it", viewModel.SelectedOpenedNoteText);
 
-        fixture.RemoteNotes.Pending.Clear(); // saved from the pet meanwhile
+        fixture.LocalNotes.Notes.Clear(); // e.g. delete my data meanwhile
         await viewModel.RefreshAsync(Ct);
 
-        Assert.False(viewModel.CanSaveOpenedNote);
-        Assert.False(viewModel.HasOpenedRemoteNote);
-        Assert.Null(viewModel.OpenedRemoteNoteText);
-    }
-
-    [Fact]
-    public async Task Save_opened_note_is_only_available_for_a_revealed_incoming_note()
-    {
-        var fixture = Fixture.Create();
-        fixture.LocalNotes.Notes.Add(new LocalLoveNote("n-1", "you got this"));
-        fixture.RemoteNotes.Pending.Add(new RemoteEnvelope("m-1", [1, 2, 3], DateTimeOffset.Parse("2026-09-12T09:00:00Z")));
-        var viewModel = new LoveNotesViewModel(fixture.Context);
-        await viewModel.RefreshAsync(Ct);
-        Assert.False(viewModel.CanSaveOpenedNote);
-
-        await viewModel.RevealRemoteNoteCommand.ExecuteAsync(viewModel.PendingRemoteNotes.Single());
-        Assert.True(viewModel.CanSaveOpenedNote);
-
-        var opened = viewModel.OpenedRemoteNoteText;
-        await viewModel.ShowLocalNoteCommand.ExecuteAsync(null);
-        // The pick shows in the jar and leaves the revealed incoming note
-        // (and its save button) alone.
-        Assert.Equal("you got this", viewModel.ChosenLocalNoteText);
-        Assert.Equal(opened, viewModel.OpenedRemoteNoteText);
-        Assert.True(viewModel.CanSaveOpenedNote);
-    }
-
-    [Fact]
-    public async Task Let_dudu_choose_with_an_empty_jar_explains_what_to_do()
-    {
-        var fixture = Fixture.Create();
-        var viewModel = new LoveNotesViewModel(fixture.Context);
-
-        await viewModel.ShowLocalNoteCommand.ExecuteAsync(null);
-
-        // Used to read "cannot add a local note first".
-        Assert.Equal("add a note to the jar or turn one on first", viewModel.ErrorMessage);
+        Assert.Empty(viewModel.OpenedNotes);
+        Assert.Null(viewModel.SelectedOpenedNote);
+        Assert.Null(viewModel.SelectedOpenedNoteText);
     }
 
     [Fact]
@@ -125,16 +91,17 @@ public sealed class LoveNotesUxTests
     }
 
     [Fact]
-    public async Task Note_jar_empty_state_follows_the_list()
+    public async Task Opened_notes_empty_state_follows_the_list()
     {
         var fixture = Fixture.Create();
+        fixture.RemoteNotes.Pending.Add(new RemoteEnvelope("m-1", [1, 2, 3], DateTimeOffset.Parse("2026-09-12T09:00:00Z")));
         var viewModel = new LoveNotesViewModel(fixture.Context);
-        Assert.True(viewModel.HasNoLocalNotes);
+        await viewModel.RefreshAsync(Ct);
+        Assert.True(viewModel.HasNoOpenedNotes);
 
-        viewModel.DraftText = "proud of you";
-        await viewModel.SaveLocalNoteCommand.ExecuteAsync(null);
+        await viewModel.RevealRemoteNoteCommand.ExecuteAsync(viewModel.PendingRemoteNotes.Single());
 
-        Assert.False(viewModel.HasNoLocalNotes);
+        Assert.False(viewModel.HasNoOpenedNotes);
     }
 
     // ------------------------------------------------------------------ helpers
@@ -255,6 +222,8 @@ public sealed class LoveNotesUxTests
     {
         public List<LocalLoveNote> Notes { get; } = [];
         public Task<IReadOnlyList<LocalLoveNote>> ListAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<LocalLoveNote>>(Notes.ToArray());
+        public Task<IReadOnlyList<LocalLoveNote>> ListRemoteAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<LocalLoveNote>>(Notes.Where(note => note.Id.StartsWith("remote-", StringComparison.Ordinal)).Reverse().ToArray());
         public Task<IReadOnlyList<LocalLoveNote>> ListEnabledAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<LocalLoveNote>>(Notes.Where(note => note.Enabled).ToArray());
         public Task SaveToJarAsync(LocalLoveNote note, CancellationToken cancellationToken)
         {

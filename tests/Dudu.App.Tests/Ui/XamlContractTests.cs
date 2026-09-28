@@ -79,7 +79,7 @@ public sealed class XamlContractTests
         var expectedNamedElements = new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
             ["HomePage"] = ["HomeDuduImage", "HomeActionStatus"],
-            ["LoveNotesPage"] = ["LoveNotesDailyLimit", "LoveNotesPendingCount"],
+            ["LoveNotesPage"] = ["LoveNotesPendingCount"],
             ["SettingsPage"] = ["ThemeBox", "StartupToggle", "StartupRecoveryPanel", "StartupRecoveryMessage", "RetryStartupButton", "ConnectionAvailability", "ConnectionPairingCode", "ConnectionCodeExpiry", "ConnectionSessionCount"],
         };
         var viewModelSources = pageContracts.ToDictionary(
@@ -125,7 +125,7 @@ public sealed class XamlContractTests
 
         foreach (var automationId in new[]
         {
-            "OverlayActionPet", "LoveNotesSave",
+            "OverlayActionPet", "LoveNotesOpenedList",
             "AppearanceSave", "ConnectionCreateCode",
             "AppearanceOutfit", "AppearanceSeasonalMode", "AppearanceSaveSeasonal",
         })
@@ -141,6 +141,14 @@ public sealed class XamlContractTests
         Assert.Contains("SelectedItem=\"{x:Bind ViewModel.SelectedRemoteEnvelope, Mode=TwoWay}\"", loveNotes);
         Assert.Contains("AutomationProperties.AutomationId=\"LoveNotesRevealSelected\"", loveNotes);
         Assert.DoesNotContain("RemoteNoteList_SelectionChanged", loveNotes);
+        // Revealing a partner note keeps it in the opened list; the local note jar (editor,
+        // "let dudu choose", daily limit, a separate "save opened note" step) is gone.
+        Assert.Contains("SelectedItem=\"{x:Bind ViewModel.SelectedOpenedNote, Mode=TwoWay}\"", loveNotes);
+        Assert.Contains("AutomationProperties.AutomationId=\"LoveNotesOpened\"", loveNotes);
+        foreach (var removed in new[] { "LoveNotesDraft", "LoveNotesSave", "LoveNotesNew", "LoveNotesChoose", "LoveNotesSaveOpened", "LoveNotesLocalList", "LoveNotesDailyLimit", "jar" })
+        {
+            Assert.DoesNotContain(removed, loveNotes, StringComparison.Ordinal);
+        }
         // LOW: the partner connection section's destructive-confirmation flow (F3/H3's
         // forget-pairing path among them) keeps its automation coverage on the Settings page.
         var connection = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "SettingsPage.xaml"));
@@ -192,13 +200,13 @@ public sealed class XamlContractTests
         var expectedBindings = new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
             ["HomePage.xaml"] = ["ViewModel.GreetingText", "ViewModel.PartnerTimeText", "ViewModel.PartnerClockSpokenText", "ViewModel.PetCommand", "ViewModel.StatusMessage", "ViewModel.ErrorMessage"],
-            ["LoveNotesPage.xaml"] = ["ViewModel.LocalNotes", "ViewModel.PendingRemoteNotes", "ViewModel.SaveLocalNoteCommand", "ViewModel.DeleteLocalNoteCommand", "ViewModel.ShowLocalNoteCommand", "ViewModel.SaveOpenedNoteCommand"],
+            ["LoveNotesPage.xaml"] = ["ViewModel.PendingRemoteNotes", "ViewModel.RevealRemoteNoteCommand", "ViewModel.OpenedNotes", "ViewModel.SelectedOpenedNote", "ViewModel.SelectedOpenedNoteText", "ViewModel.RequestDeleteOpenedNoteCommand", "ViewModel.DeleteOpenedNoteCommand", "ViewModel.CancelDeleteOpenedNoteCommand"],
             ["SettingsPage.xaml"] = ["ViewModel.SaveCommand", "ViewModel.SavePlacementCommand", "ViewModel.SaveShortcutCommand", "ViewModel.Connection.CreateCodeCommand", "ViewModel.Connection.RequestRevokeSessionsCommand", "ViewModel.Connection.RequestDeleteRemoteDeviceCommand", "ViewModel.Connection.RequestForgetPairingCommand", "ViewModel.Connection.ConfirmCommand", "ViewModel.Connection.CancelConfirmationCommand", "ViewModel.RequestDeleteMyDataCommand", "ViewModel.ConfirmDeleteMyDataCommand", "ViewModel.CancelDeleteMyDataCommand", "ViewModel.WipeThisPcOnlyCommand", "ViewModel.IsDeleteConfirmVisible", "ViewModel.IsWipeThisPcOnlyVisible"],
         };
         var expectedLabels = new[]
         {
             "home", "love notes", "settings",
-            "time in the UK", "time with dudu", "local note jar", "incoming notes",
+            "time in the UK", "time with dudu", "incoming notes", "opened notes",
             "look and motion", "when windows starts", "pet options", "shortcut", "partner connection", "pairing status", "paired sessions", "your data",
         };
 

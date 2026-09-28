@@ -421,6 +421,15 @@ up using SQLite's `VACUUM INTO`, validates every backup with
   (`src/Dudu.App/Pages/PrivacyDataPage.xaml`,
   `src/Dudu.App/ViewModels/PrivacyDataViewModel.cs`) exposes "Backup now" and
   "Restore latest backup" actions that call the same backup service.
+- **Revealed partner notes are kept on this PC**: revealing a partner note
+  on the Love Notes page decrypts it, saves its plaintext in the local
+  database (`local_notes`, id `remote-<messageId>`) and consumes the
+  encrypted envelope in one transaction, so she can re-read it from the
+  "opened notes" list. Unopened notes stay ciphertext-only. A revealed note
+  stays in the database, and in any automatic pre-migration backup taken
+  while it existed, until she deletes it from "opened notes" (live database
+  only; older backup copies age out through normal backup pruning) or uses
+  Settings → "Delete my data", which also removes the backups.
 - **Damaged-database preservation**: if a restore attempt fails with an
   `IOException` or `UnauthorizedAccessException` partway through, the
   in-progress (possibly damaged) database file is renamed to

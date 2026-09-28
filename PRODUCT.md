@@ -24,7 +24,7 @@ Do not resemble a themed web dashboard, a dense productivity suite, a childish m
 
 1. Affection without interruption: ambient moments yield to quiet hours, focus, fullscreen work, and explicit pause controls.
 2. Native familiarity: use standard Windows navigation, controls, focus behavior, keyboard access, and system materials.
-3. Private by default: explain local storage and encrypted pairing plainly, without exposing technical machinery in ordinary flows.
+3. Private by default: explain local storage and encrypted pairing plainly, without exposing technical machinery in ordinary flows. Partner notes arrive encrypted; once she opens one it is kept on this PC (and in the automatic pre-migration backups) so she can re-read it, until she deletes it from the opened notes or deletes her data, and the app says so.
 4. One clear next action: onboarding and empty states should be understandable at a glance.
 5. Dudu carries the delight: keep the shell visually quiet so the pet remains the memorable element.
 

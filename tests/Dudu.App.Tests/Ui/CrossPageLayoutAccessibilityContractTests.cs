@@ -107,7 +107,6 @@ public sealed class CrossPageLayoutAccessibilityContractTests
     [InlineData("SettingsPage", "ConnectionPairingCode")]
     [InlineData("SettingsPage", "ConnectionCodeExpiry")]
     [InlineData("SettingsPage", "ConnectionSessionCount")]
-    [InlineData("LoveNotesPage", "LoveNotesDailyLimit")]
     [InlineData("LoveNotesPage", "LoveNotesPendingCount")]
     public void Code_behind_text_keeps_the_accessible_name_in_step(string page, string element)
     {

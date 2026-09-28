@@ -88,42 +88,18 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
-    public async Task Saving_a_note_clears_the_editor_so_fresh_text_creates_a_new_note()
-    {
-        var fixture = FeatureFixture.Create();
-        var ct = TestContext.Current.CancellationToken;
-        var viewModel = new LoveNotesViewModel(fixture.Context);
-
-        viewModel.DraftText = "first";
-        await viewModel.SaveLocalNoteCommand.ExecuteAsync(null);
-
-        Assert.Null(viewModel.SelectedNote);
-        Assert.Equal(string.Empty, viewModel.DraftText);
-        Assert.Equal("first", Assert.Single(fixture.LocalNotes.Notes).Text);
-
-        viewModel.DraftText = "second";
-        await viewModel.SaveLocalNoteCommand.ExecuteAsync(null);
-
-        Assert.Equal(2, fixture.LocalNotes.Notes.Count);
-        Assert.Equal("first", fixture.LocalNotes.Notes[0].Text);
-        Assert.Equal("second", fixture.LocalNotes.Notes[1].Text);
-    }
-
-    [Fact]
     public async Task An_error_hides_an_earlier_success_message_so_both_never_show_together()
     {
         // The request-delete handlers set ErrorMessage directly, so an earlier
-        // "oki saved" and "select one first" could show side by side.
+        // "otayyy opened" and "select one first" could show side by side.
         var fixture = FeatureFixture.Create();
-        var ct = TestContext.Current.CancellationToken;
-        var notes = new LoveNotesViewModel(fixture.Context) { DraftText = "hi" };
-        await notes.SaveLocalNoteAsync(ct);
+        var notes = await RevealOneAsync(fixture, "m-1");
         Assert.True(notes.HasStatus);
-        notes.RequestDeleteLocalNoteCommand.Execute(null);
+        notes.RequestDeleteOpenedNoteCommand.Execute(null);
         Assert.True(notes.HasError);
         Assert.False(notes.HasStatus);
 
-        notes.RequestDeleteLocalNoteCommand.Execute(Assert.Single(notes.LocalNotes));
+        notes.RequestDeleteOpenedNoteCommand.Execute(Assert.Single(notes.OpenedNotes));
         Assert.False(notes.HasError);
         Assert.False(notes.HasStatus);
     }
@@ -133,7 +109,7 @@ public sealed class FeatureViewModelTests
     {
         var fixture = FeatureFixture.Create();
         var notes = new LoveNotesViewModel(fixture.Context);
-        await notes.DeleteLocalNoteCommand.ExecuteAsync(null);
+        await notes.DeleteOpenedNoteCommand.ExecuteAsync(null);
         Assert.Equal("select one first", notes.ErrorMessage);
         await notes.RevealRemoteNoteCommand.ExecuteAsync(null);
         Assert.Equal("select one first", notes.ErrorMessage);
@@ -195,73 +171,72 @@ public sealed class FeatureViewModelTests
     [Fact]
     public void Request_delete_commands_report_select_one_first_on_a_null_selection_and_do_not_open_the_panel()
     {
-        // H-2: the three RequestDelete...Commands used to be silent no-ops with a null
+        // H-2: the RequestDelete...Commands used to be silent no-ops with a null
         // selection (the button that runs them stays enabled with nothing selected).
         var fixture = FeatureFixture.Create();
 
         var notes = new LoveNotesViewModel(fixture.Context);
-        notes.RequestDeleteLocalNoteCommand.Execute(null);
+        notes.RequestDeleteOpenedNoteCommand.Execute(null);
         Assert.Equal("select one first", notes.ErrorMessage);
         Assert.False(notes.IsConfirmingDeleteNote);
     }
 
     [Fact]
-    public async Task Local_note_deletion_requires_a_separate_confirmation()
+    public async Task Opened_note_deletion_requires_a_separate_confirmation()
     {
         var fixture = FeatureFixture.Create();
-        var viewModel = new LoveNotesViewModel(fixture.Context) { DraftText = "first" };
-        await viewModel.SaveLocalNoteCommand.ExecuteAsync(null);
+        var viewModel = await RevealOneAsync(fixture, "m-1");
         var note = Assert.Single(fixture.LocalNotes.Notes);
 
-        viewModel.RequestDeleteLocalNoteCommand.Execute(note);
+        viewModel.RequestDeleteOpenedNoteCommand.Execute(note);
         Assert.True(viewModel.IsConfirmingDeleteNote);
         Assert.Equal(note, viewModel.PendingDeleteNote);
         Assert.Single(fixture.LocalNotes.Notes);
 
-        viewModel.CancelDeleteLocalNoteCommand.Execute(null);
+        viewModel.CancelDeleteOpenedNoteCommand.Execute(null);
         Assert.False(viewModel.IsConfirmingDeleteNote);
         Assert.Single(fixture.LocalNotes.Notes);
 
-        viewModel.RequestDeleteLocalNoteCommand.Execute(note);
-        await viewModel.DeleteLocalNoteCommand.ExecuteAsync(viewModel.PendingDeleteNote);
+        viewModel.RequestDeleteOpenedNoteCommand.Execute(note);
+        await viewModel.DeleteOpenedNoteCommand.ExecuteAsync(viewModel.PendingDeleteNote);
 
         Assert.Empty(fixture.LocalNotes.Notes);
+        Assert.Empty(viewModel.OpenedNotes);
         Assert.False(viewModel.IsConfirmingDeleteNote);
     }
 
     [Fact]
-    public async Task Deleting_a_local_note_matches_by_id_even_if_the_caller_passes_a_stale_copy()
+    public async Task Deleting_an_opened_note_matches_by_id_even_if_the_caller_passes_a_stale_copy()
     {
         // L-2: LocalLoveNote is a record, so removing it from the collection by value
         // equality silently no-ops if the object passed to Delete differs from the one
         // stored (e.g. a stale UI-bound copy with a different Enabled/Text value).
         var fixture = FeatureFixture.Create();
-        var viewModel = new LoveNotesViewModel(fixture.Context) { DraftText = "first" };
-        await viewModel.SaveLocalNoteCommand.ExecuteAsync(null);
+        var viewModel = await RevealOneAsync(fixture, "m-1");
         var stored = Assert.Single(fixture.LocalNotes.Notes);
         var staleCopy = stored with { Enabled = !stored.Enabled };
 
-        await viewModel.DeleteLocalNoteCommand.ExecuteAsync(staleCopy);
+        await viewModel.DeleteOpenedNoteCommand.ExecuteAsync(staleCopy);
 
         Assert.Empty(fixture.LocalNotes.Notes);
+        Assert.Empty(viewModel.OpenedNotes);
     }
 
     [Fact]
     public async Task Selecting_a_different_note_clears_the_pending_delete_and_the_prompt_names_the_target()
     {
-        var fixture = FeatureFixture.Create();
-        var viewModel = new LoveNotesViewModel(fixture.Context) { DraftText = "first note" };
-        await viewModel.SaveLocalNoteCommand.ExecuteAsync(null);
-        viewModel.DraftText = "second note";
-        await viewModel.SaveLocalNoteCommand.ExecuteAsync(null);
+        var fixture = FeatureFixture.Create(
+            revealRemoteNoteAsync: (envelope, _) => Task.FromResult(new RevealedRemoteNote($"note {envelope.MessageId}", "none")));
+        var viewModel = await RevealOneAsync(fixture, "m-1");
+        await RevealOneAsync(fixture, "m-2", viewModel);
         Assert.Equal(2, fixture.LocalNotes.Notes.Count);
         var first = fixture.LocalNotes.Notes[0];
         var second = fixture.LocalNotes.Notes[1];
 
-        viewModel.RequestDeleteLocalNoteCommand.Execute(first);
+        viewModel.RequestDeleteOpenedNoteCommand.Execute(first);
         Assert.Equal($"delete \"{first.Text}\" for good? cannot undo", viewModel.DeleteNotePrompt);
 
-        viewModel.SelectedNote = second;
+        viewModel.SelectedOpenedNote = second;
 
         Assert.False(viewModel.IsConfirmingDeleteNote);
         Assert.Null(viewModel.PendingDeleteNote);
@@ -279,9 +254,9 @@ public sealed class FeatureViewModelTests
         var fixture = FeatureFixture.Create();
         var viewModel = new LoveNotesViewModel(fixture.Context);
         var text = new string('a', 39) + "😀" + " more text after the emoji";
-        var note = new LocalLoveNote("note-1", text);
+        var note = new LocalLoveNote("remote-note-1", text);
 
-        viewModel.RequestDeleteLocalNoteCommand.Execute(note);
+        viewModel.RequestDeleteOpenedNoteCommand.Execute(note);
 
         Assert.Equal(
             $"delete \"{new string('a', 39)}…\" for good? cannot undo",
@@ -292,16 +267,30 @@ public sealed class FeatureViewModelTests
     public async Task Refreshing_the_love_notes_view_model_clears_a_stale_pending_delete_confirmation()
     {
         var fixture = FeatureFixture.Create();
-        var viewModel = new LoveNotesViewModel(fixture.Context) { DraftText = "first" };
-        await viewModel.SaveLocalNoteCommand.ExecuteAsync(null);
+        var viewModel = await RevealOneAsync(fixture, "m-1");
         var note = Assert.Single(fixture.LocalNotes.Notes);
-        viewModel.RequestDeleteLocalNoteCommand.Execute(note);
+        viewModel.RequestDeleteOpenedNoteCommand.Execute(note);
         Assert.True(viewModel.IsConfirmingDeleteNote);
 
         await viewModel.RefreshAsync(TestContext.Current.CancellationToken);
 
         Assert.False(viewModel.IsConfirmingDeleteNote);
         Assert.Null(viewModel.PendingDeleteNote);
+    }
+
+    /// <summary>Adds a pending partner note and reveals it, which keeps it as an opened note.</summary>
+    private static async Task<LoveNotesViewModel> RevealOneAsync(
+        FeatureFixture fixture,
+        string messageId,
+        LoveNotesViewModel? viewModel = null)
+    {
+        var envelope = new RemoteEnvelope(messageId, [1], fixture.Clock.UtcNow);
+        fixture.RemoteNotes.Pending.Add(envelope);
+        viewModel ??= new LoveNotesViewModel(fixture.Context);
+        await viewModel.RefreshAsync(TestContext.Current.CancellationToken);
+        await viewModel.RevealRemoteNoteAsync(envelope, TestContext.Current.CancellationToken);
+        Assert.Null(viewModel.ErrorMessage);
+        return viewModel;
     }
 
     [Fact]
@@ -336,7 +325,7 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
-    public async Task Saving_a_remote_note_to_jar_is_explicit()
+    public async Task Revealing_a_remote_note_keeps_it_without_a_separate_save()
     {
         var fixture = FeatureFixture.Create();
         var envelope = new RemoteEnvelope("message-1", [1], fixture.Clock.UtcNow);
@@ -346,12 +335,12 @@ public sealed class FeatureViewModelTests
 
         Assert.Empty(fixture.LocalNotes.Notes);
         await viewModel.RevealRemoteNoteCommand.ExecuteAsync(envelope);
-        Assert.Empty(fixture.LocalNotes.Notes);
 
-        await viewModel.SaveOpenedNoteCommand.ExecuteAsync(null);
-
-        Assert.Equal("You can do it", Assert.Single(fixture.LocalNotes.Notes).Text);
+        var kept = Assert.Single(fixture.LocalNotes.Notes);
+        Assert.Equal("remote-message-1", kept.Id);
+        Assert.Equal("You can do it", kept.Text);
         Assert.Empty(fixture.RemoteNotes.Pending);
+        Assert.Equal("remote-message-1", Assert.Single(viewModel.OpenedNotes).Id);
         Assert.Contains("pet.dismiss", fixture.Events);
     }
 
@@ -1217,15 +1206,17 @@ public sealed class FeatureViewModelTests
         fixture.RemoteNotes.Pending.Add(envelope);
         var viewModel = new LoveNotesViewModel(fixture.Context);
         await viewModel.RefreshAsync(TestContext.Current.CancellationToken);
-        await viewModel.RevealRemoteNoteAsync(envelope, TestContext.Current.CancellationToken);
         fixture.Transactions.FailNextRemoteCommit = true;
 
-        await viewModel.SaveOpenedNoteAsync(null, TestContext.Current.CancellationToken);
+        await viewModel.RevealRemoteNoteAsync(envelope, TestContext.Current.CancellationToken);
 
         Assert.NotNull(viewModel.ErrorMessage);
         Assert.Empty(fixture.LocalNotes.Notes);
         Assert.Contains(envelope, viewModel.PendingRemoteNotes);
-        Assert.Equal(envelope, viewModel.OpenedRemoteEnvelope);
+        Assert.Empty(viewModel.OpenedNotes);
+        Assert.Null(viewModel.SelectedOpenedNote);
+        // Not saved, so not read: the pet keeps its unread indicator.
+        Assert.DoesNotContain("pet.dismiss", fixture.Events);
     }
 
     [Fact]
@@ -1573,6 +1564,8 @@ public sealed class FeatureViewModelTests
         public List<LocalLoveNote> Notes { get; } = [];
         public List<LocalLoveNote> Enabled => Notes.Where(note => note.Enabled).ToList();
         public Task<IReadOnlyList<LocalLoveNote>> ListAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<LocalLoveNote>>(Notes);
+        public Task<IReadOnlyList<LocalLoveNote>> ListRemoteAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<LocalLoveNote>>(Notes.Where(note => note.Id.StartsWith("remote-", StringComparison.Ordinal)).Reverse().ToArray());
         public Task<IReadOnlyList<LocalLoveNote>> ListEnabledAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<LocalLoveNote>>(Enabled);
         public Task SaveToJarAsync(LocalLoveNote note, CancellationToken cancellationToken)
         {

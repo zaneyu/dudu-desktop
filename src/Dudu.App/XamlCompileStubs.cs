@@ -75,12 +75,10 @@ namespace Dudu.App.Pages
 
     public sealed partial class LoveNotesPage
     {
-        private TextBlock LoveNotesDailyLimit = null!;
         private TextBlock LoveNotesPendingCount = null!;
 
         private void InitializeComponent()
         {
-            LoveNotesDailyLimit = new TextBlock();
             LoveNotesPendingCount = new TextBlock();
         }
     }

@@ -13,8 +13,9 @@ namespace Dudu.App.Tests.ViewModels;
 
 /// <summary>
 /// Minimal hand-built <see cref="CompanionFeatureContext"/> for the Settings page tests
-/// (look and motion, partner connection). FeatureViewModelTests keeps its own (private) fixture; this
-/// one lives in its own file so those page tests can grow without touching that file.
+/// (look and motion, partner connection) and the love notes reveal tests. FeatureViewModelTests
+/// keeps its own (private) fixture; this one lives in its own file so those page tests can grow
+/// without touching that file.
 /// </summary>
 internal sealed class SettingsDataPagesFixture
 {
@@ -23,20 +24,53 @@ internal sealed class SettingsDataPagesFixture
         MutableClock clock,
         ScriptedPairing pairing,
         MemoryPlacementRepository placements,
-        MemoryPreferencesRepository preferences)
+        MemoryPreferencesRepository preferences,
+        MemoryLocalNoteRepository localNotes,
+        MemoryRemoteEnvelopeRepository remoteEnvelopes,
+        RecordingFeatureTransactions transactions,
+        Dictionary<string, RevealedRemoteNote> revealable,
+        List<string> discardedHeldRemoteNoteIds)
     {
         Context = context;
         Clock = clock;
         Pairing = pairing;
         Placements = placements;
         Preferences = preferences;
+        LocalNotes = localNotes;
+        RemoteEnvelopes = remoteEnvelopes;
+        Transactions = transactions;
+        _revealable = revealable;
+        DiscardedHeldRemoteNoteIds = discardedHeldRemoteNoteIds;
     }
+
+    private readonly Dictionary<string, RevealedRemoteNote> _revealable;
 
     public CompanionFeatureContext Context { get; }
     public MutableClock Clock { get; }
     public ScriptedPairing Pairing { get; }
     public MemoryPlacementRepository Placements { get; }
     public MemoryPreferencesRepository Preferences { get; }
+    public MemoryLocalNoteRepository LocalNotes { get; }
+    public MemoryRemoteEnvelopeRepository RemoteEnvelopes { get; }
+    public RecordingFeatureTransactions Transactions { get; }
+
+    /// <summary>Message ids whose envelope was consumed by a save-and-consume transaction.</summary>
+    public List<string> ConsumedMessageIds => Transactions.ConsumedMessageIds;
+
+    /// <summary>Message ids the view model asked the presentation gateway to drop a held copy of.</summary>
+    public List<string> DiscardedHeldRemoteNoteIds { get; }
+
+    /// <summary>Adds one pending (unopened) encrypted note; the default reveal delegate
+    /// "decrypts" it to <paramref name="plaintext"/> with <paramref name="reaction"/>.</summary>
+    public RemoteEnvelope AddPendingEnvelope(string messageId, string plaintext, string reaction = "none")
+    {
+        var envelope = new RemoteEnvelope(messageId, [1, 2, 3], Clock.UtcNow);
+        RemoteEnvelopes.Pending.Add(envelope);
+        _revealable[messageId] = new RevealedRemoteNote(plaintext, reaction);
+        return envelope;
+    }
+
+    public LoveNotesViewModel CreateLoveNotesViewModel() => new(Context);
 
     public static SettingsDataPagesFixture Create(
         TimeZoneInfo? localTimeZone = null,
@@ -55,7 +89,8 @@ internal sealed class SettingsDataPagesFixture
         Func<string?>? getGlobalShortcutStatus = null,
         Func<CancellationToken, Task>? stopRemoteSyncAsync = null,
         Func<CancellationToken, Task>? startRemoteSyncAsync = null,
-        bool remoteDeleteAvailable = false)
+        bool remoteDeleteAvailable = false,
+        Func<RemoteEnvelope, CancellationToken, Task<RevealedRemoteNote>>? revealRemoteNoteAsync = null)
     {
         var clock = new MutableClock(
             DateTimeOffset.Parse("2026-09-19T08:00:00Z"),
@@ -63,7 +98,11 @@ internal sealed class SettingsDataPagesFixture
         var preferences = initialPreferences ?? Dudu.Core.Models.Preferences.Default;
         var preferenceRepository = new MemoryPreferencesRepository();
         var preferenceMutations = new PreferenceMutationCoordinator(preferences, preferenceRepository);
-        var localNotes = new EmptyLocalNoteRepository();
+        var localNotes = new MemoryLocalNoteRepository();
+        var remoteEnvelopes = new MemoryRemoteEnvelopeRepository();
+        var transactions = new RecordingFeatureTransactions(localNotes, remoteEnvelopes);
+        var revealable = new Dictionary<string, RevealedRemoteNote>(StringComparer.Ordinal);
+        var discardedHeldRemoteNoteIds = new List<string>();
         var tasks = new EmptyTaskRepository();
         var focusSessionRepository = focusSessions ?? new EmptyFocusRepository();
         var checkIns = new EmptyCheckInRepository();
@@ -79,7 +118,7 @@ internal sealed class SettingsDataPagesFixture
             tasks,
             focusSessionRepository,
             localNotes,
-            new EmptyRemoteEnvelopeRepository(),
+            remoteEnvelopes,
             new EmptyCountdownRepository(),
             checkIns,
             new CheckInService(checkIns, clock),
@@ -87,7 +126,7 @@ internal sealed class SettingsDataPagesFixture
             new FocusService(focusSessionRepository, clock, tasks),
             new LocalNoteSelector(localNotes, clock, new FixedRandom(), preferences),
             pairing,
-            new UnusedFeatureTransactions(),
+            transactions,
             PetStateMachine.CreateIdle(),
             backupAsync: backupAsync,
             restoreAsync: restoreAsync,
@@ -100,8 +139,27 @@ internal sealed class SettingsDataPagesFixture
             getGlobalShortcutStatus: getGlobalShortcutStatus,
             stopRemoteSyncAsync: stopRemoteSyncAsync,
             startRemoteSyncAsync: startRemoteSyncAsync,
-            remoteDeleteAvailable: remoteDeleteAvailable);
-        return new SettingsDataPagesFixture(context, clock, pairing, placements, preferenceRepository);
+            remoteDeleteAvailable: remoteDeleteAvailable,
+            revealRemoteNoteAsync: revealRemoteNoteAsync ?? ((envelope, _) =>
+                revealable.TryGetValue(envelope.MessageId, out var revealed)
+                    ? Task.FromResult(revealed)
+                    : Task.FromException<RevealedRemoteNote>(new KeyNotFoundException("aiyo cant find that note anymore"))),
+            discardHeldRemoteNoteAsync: (messageId, _) =>
+            {
+                discardedHeldRemoteNoteIds.Add(messageId);
+                return Task.CompletedTask;
+            });
+        return new SettingsDataPagesFixture(
+            context,
+            clock,
+            pairing,
+            placements,
+            preferenceRepository,
+            localNotes,
+            remoteEnvelopes,
+            transactions,
+            revealable,
+            discardedHeldRemoteNoteIds);
     }
 
     /// <summary>A fixed-offset zone five hours west of UTC, built in code so the tests do not
@@ -200,27 +258,47 @@ internal sealed class SettingsDataPagesFixture
         public int Next(int exclusiveMax) => 0;
     }
 
-    private sealed class EmptyRemoteEnvelopeRepository : IRemoteEnvelopeRepository
+    /// <summary>In-memory pending envelopes. Lists return fresh instances (new byte[]
+    /// copies) like the SQLite repository, so record equality never matches across reloads.</summary>
+    internal sealed class MemoryRemoteEnvelopeRepository : IRemoteEnvelopeRepository
     {
+        public List<RemoteEnvelope> Pending { get; } = [];
+        private static RemoteEnvelope Fresh(RemoteEnvelope envelope) =>
+            envelope with { Ciphertext = envelope.Ciphertext.ToArray() };
         public Task<RemoteEnvelope?> GetAsync(string messageId, CancellationToken cancellationToken) =>
-            Task.FromResult<RemoteEnvelope?>(null);
+            Task.FromResult(Pending.Where(item => item.MessageId == messageId).Select(Fresh).FirstOrDefault());
         public Task<IReadOnlyList<RemoteEnvelope>> ListPendingAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<RemoteEnvelope>>([]);
-        public Task<bool> TryInsertAsync(RemoteEnvelope envelope, CancellationToken cancellationToken) =>
-            Task.FromResult(true);
+            Task.FromResult<IReadOnlyList<RemoteEnvelope>>(Pending.Select(Fresh).ToArray());
+        public Task<bool> TryInsertAsync(RemoteEnvelope envelope, CancellationToken cancellationToken)
+        {
+            Pending.Add(envelope);
+            return Task.FromResult(true);
+        }
         public Task<bool> IsProcessedAsync(string messageId, CancellationToken cancellationToken) =>
             Task.FromResult(false);
         public Task<bool> TryMarkProcessedAsync(
             string messageId, DateTimeOffset processedUtc, CancellationToken cancellationToken) =>
             Task.FromResult(true);
+        public Task<bool> TryConsumeAsync(
+            string messageId, DateTimeOffset processedUtc, CancellationToken cancellationToken) =>
+            Task.FromResult(Pending.RemoveAll(item => item.MessageId == messageId) == 1);
         public Task<bool> TryInsertAndMarkProcessedAsync(
             RemoteEnvelope envelope, DateTimeOffset processedUtc, CancellationToken cancellationToken) =>
             Task.FromResult(true);
-        public Task DeleteAsync(string messageId, CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task DeleteAsync(string messageId, CancellationToken cancellationToken)
+        {
+            Pending.RemoveAll(item => item.MessageId == messageId);
+            return Task.CompletedTask;
+        }
         public Task<int> PruneExpiredAsync(
             DateTimeOffset utcNow, TimeSpan retention, CancellationToken cancellationToken) =>
             Task.FromResult(0);
-        public Task<int> DeleteAllAsync(CancellationToken cancellationToken) => Task.FromResult(0);
+        public Task<int> DeleteAllAsync(CancellationToken cancellationToken)
+        {
+            var count = Pending.Count;
+            Pending.Clear();
+            return Task.FromResult(count);
+        }
     }
 
     private sealed class EmptyProfileRepository : IProfileRepository
@@ -276,10 +354,33 @@ internal sealed class SettingsDataPagesFixture
             Task.FromResult<IReadOnlyList<MoodCheckIn>>([]);
     }
 
-    private sealed class EmptyLocalNoteRepository : ILocalNoteRepository
+    /// <summary>In-memory <c>local_notes</c>: rows in insertion order, an upsert keeps a
+    /// row's place (like the SQLite <c>ON CONFLICT DO UPDATE</c>), and
+    /// <see cref="ListRemoteAsync"/> returns only <c>remote-</c> rows, newest first.</summary>
+    internal sealed class MemoryLocalNoteRepository : ILocalNoteRepository
     {
+        public List<LocalLoveNote> Notes { get; } = [];
+        public Task<IReadOnlyList<LocalLoveNote>> ListAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<LocalLoveNote>>(Notes.ToArray());
+        public Task<IReadOnlyList<LocalLoveNote>> ListRemoteAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<LocalLoveNote>>(Notes
+                .Where(note => note.Id.StartsWith("remote-", StringComparison.Ordinal))
+                .Reverse()
+                .ToArray());
         public Task<IReadOnlyList<LocalLoveNote>> ListEnabledAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<LocalLoveNote>>([]);
+            Task.FromResult<IReadOnlyList<LocalLoveNote>>(Notes.Where(note => note.Enabled).ToArray());
+        public Task SaveToJarAsync(LocalLoveNote note, CancellationToken cancellationToken)
+        {
+            var index = Notes.FindIndex(item => item.Id == note.Id);
+            if (index >= 0) Notes[index] = note;
+            else Notes.Add(note);
+            return Task.CompletedTask;
+        }
+        public Task DeleteAsync(string noteId, CancellationToken cancellationToken)
+        {
+            Notes.RemoveAll(item => item.Id == noteId);
+            return Task.CompletedTask;
+        }
         public Task<int> CountUnsolicitedShownAsync(DateOnly localDate, CancellationToken cancellationToken) =>
             Task.FromResult(0);
         public Task<IReadOnlyList<string>> GetMostRecentShownIdsAsync(int count, CancellationToken cancellationToken) =>
@@ -289,8 +390,16 @@ internal sealed class SettingsDataPagesFixture
             CancellationToken cancellationToken) => Task.FromResult(true);
     }
 
-    private sealed class UnusedFeatureTransactions : ICompanionFeatureTransactions
+    /// <summary>Records save-and-consume calls and applies them to the in-memory note and
+    /// envelope stores as one unit: nothing changes when <see cref="FailNextRemoteCommit"/>
+    /// is set. The preference/reminder transactions are not needed by these tests.</summary>
+    internal sealed class RecordingFeatureTransactions(
+        MemoryLocalNoteRepository localNotes,
+        MemoryRemoteEnvelopeRepository remoteEnvelopes) : ICompanionFeatureTransactions
     {
+        public List<string> ConsumedMessageIds { get; } = [];
+        public bool FailNextRemoteCommit { get; set; }
+
         public Task SavePreferencesAndDefaultRemindersAsync(
             Preferences preferences, DateTimeOffset nowUtc, TimeZoneInfo localTimeZone,
             CancellationToken cancellationToken = default) =>
@@ -299,9 +408,24 @@ internal sealed class SettingsDataPagesFixture
             Preferences preferences, IReadOnlyList<Reminder> previousDefaultReminders,
             CancellationToken cancellationToken = default) =>
             Task.FromException(new NotSupportedException("not needed for these tests"));
-        public Task SaveRemoteNoteAndConsumeEnvelopeAsync(
+        public async Task SaveRemoteNoteAndConsumeEnvelopeAsync(
             LocalLoveNote note, string messageId, DateTimeOffset processedUtc,
-            CancellationToken cancellationToken = default) =>
-            Task.FromException(new NotSupportedException("not needed for these tests"));
+            CancellationToken cancellationToken = default)
+        {
+            if (FailNextRemoteCommit)
+            {
+                FailNextRemoteCommit = false;
+                throw new IOException("injected remote transaction failure");
+            }
+
+            if (!remoteEnvelopes.Pending.Any(item => item.MessageId == messageId))
+            {
+                throw new InvalidOperationException("Remote note is unavailable.");
+            }
+
+            await localNotes.SaveToJarAsync(note, cancellationToken);
+            await remoteEnvelopes.TryConsumeAsync(messageId, processedUtc, cancellationToken);
+            ConsumedMessageIds.Add(messageId);
+        }
     }
 }

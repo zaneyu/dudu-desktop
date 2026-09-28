@@ -998,6 +998,12 @@ public static class WindowsCompanionProductionComposition
                     (presentationCoordinator ?? throw new InvalidOperationException(
                         "The pet presentation coordinator is not ready."))
                     .PresentOneShotAsync(petEvent, dismissalId, token),
+                // Decrypts a stored envelope in memory (no network I/O); the love notes
+                // page then keeps the note and consumes the envelope. Offline builds have
+                // no RemoteSyncService and keep the context's "relay offline" default.
+                revealRemoteNoteAsync: remoteSync is null
+                    ? null
+                    : (envelope, token) => remoteSync.RevealAsync(envelope.MessageId, token),
                 backupAsync: async token =>
                 {
                     var path = await services.GetRequiredService<DatabaseBackupService>()

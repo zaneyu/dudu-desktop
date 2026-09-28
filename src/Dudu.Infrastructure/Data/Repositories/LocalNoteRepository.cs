@@ -24,6 +24,26 @@ public sealed class LocalNoteRepository : SqliteRepository, ILocalNoteRepository
         return result;
     }
 
+    /// <summary>Partner notes she revealed (saved as <c>remote-&lt;messageId&gt;</c>), most
+    /// recently first saved first. <c>local_notes</c> has no timestamp column, so rowid
+    /// order stands in for save order; the upsert in <see cref="SaveToJarAsync"/> keeps a
+    /// row's rowid, so re-saving the same note keeps its place.</summary>
+    public async Task<IReadOnlyList<LocalLoveNote>> ListRemoteAsync(CancellationToken cancellationToken)
+    {
+        var result = new List<LocalLoveNote>();
+        await using var connection = await OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        // substr, not LIKE: LIKE treats '_' as a wildcard and is case-insensitive for ASCII.
+        command.CommandText = "SELECT id,text,enabled FROM local_notes WHERE substr(id,1,7)='remote-' ORDER BY rowid DESC;";
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            result.Add(new LocalLoveNote(reader.GetString(0), reader.GetString(1), reader.GetInt32(2) != 0));
+        }
+
+        return result;
+    }
+
     public async Task<IReadOnlyList<LocalLoveNote>> ListEnabledAsync(CancellationToken cancellationToken)
     {
         var result = new List<LocalLoveNote>();

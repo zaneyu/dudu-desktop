@@ -158,7 +158,7 @@ public sealed class SettingsNavigationTests
             ]),
         new("NavReminders", "RemindersPageTitle", ["RemindersMonday", "RemindersFriday", "RemindersSave"]),
         new("NavTasksFocus", "TasksPageTitle", ["TasksCompletedList", "FocusHistoryList", "FocusStart", "FocusEnd"]),
-        new("NavLoveNotes", "LoveNotesPageTitle", ["LoveNotesLocalList", "LoveNotesRemoteList", "LoveNotesRevealSelected", "LoveNotesSave"]),
+        new("NavLoveNotes", "LoveNotesPageTitle", ["LoveNotesRemoteList", "LoveNotesRevealSelected", "LoveNotesOpenedList"]),
         new("NavAppearance", "AppearancePageTitle", ["AppearanceSave", "AppearanceOutfit", "AppearanceSeasonalMode"]),
         new("NavConnection", "ConnectionPageTitle", ["ConnectionCreateCode", "ConnectionSessionsList", "ConnectionForgetPairing", "ConnectionConfirm", "ConnectionCancel"]),
         new("NavPrivacy", "PrivacyPageTitle", ["PrivacyStoredFields", "PrivacyBackup", "PrivacyRestore", "PrivacyDeleteLocal", "PrivacyDeleteRemote", "PrivacyConfirm"]),

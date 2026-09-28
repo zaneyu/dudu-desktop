@@ -132,8 +132,9 @@ public sealed class FullJourneyTests
             Navigate(windowAfterRestart, "NavAppearance", "AppearancePageTitle");
             Assert.True(Find(windowAfterRestart, "AppearanceReducedMotion").AsCheckBox().IsChecked);
 
+            // Revealing keeps the note: it is still in the opened notes after a restart.
             Navigate(windowAfterRestart, "NavLoveNotes", "LoveNotesPageTitle");
-            Assert.NotNull(Find(windowAfterRestart, "LoveNotesRemoteList")
+            Assert.NotNull(Find(windowAfterRestart, "LoveNotesOpenedList")
                 .FindFirstDescendant(cf => cf.ByControlType(ControlType.ListItem)));
         }
         finally
