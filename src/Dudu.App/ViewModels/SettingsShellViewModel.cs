@@ -11,12 +11,8 @@ public sealed class SettingsShellViewModel : INotifyPropertyChanged
     private static readonly SettingsDestination[] DestinationValues =
     [
         new("home", "Home", "NavHome"),
-        new("reminders", "Reminders", "NavReminders"),
-        new("tasks", "Tasks and Focus", "NavTasksFocus"),
         new("notes", "Love Notes", "NavLoveNotes"),
-        new("appearance", "Appearance", "NavAppearance"),
-        new("connection", "Connection", "NavConnection"),
-        new("privacy", "Privacy and Data", "NavPrivacy"),
+        new("settings", "Settings", "NavSettings"),
     ];
 
     private string _currentDestination = "home";

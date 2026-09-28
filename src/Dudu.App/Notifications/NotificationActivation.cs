@@ -93,14 +93,15 @@ public sealed record NotificationActivation(
 
     /// <summary>
     /// The settings page this activation belongs to: Love Notes for a note
-    /// toast, Reminders for anything on a reminder toast. Used to open the
-    /// page for a body click, and as the fallback when a Done/Snooze button
-    /// could not be carried out in the background.
+    /// toast, Home for anything on a reminder toast (there is no Reminders
+    /// page any more). Used to open the page for a body click, and as the
+    /// fallback when a Done/Snooze button could not be carried out in the
+    /// background.
     /// </summary>
     public string Destination => Action switch
     {
         NotificationActivationAction.OpenNote => "notes",
-        _ => "reminders",
+        _ => "home",
     };
 
     /// <summary>

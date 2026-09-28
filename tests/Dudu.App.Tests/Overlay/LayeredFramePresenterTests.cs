@@ -23,12 +23,12 @@ public sealed class LayeredFramePresenterTests
     public void Presented_action_scaling_preserves_the_action_identity()
     {
         var action = new OverlaySurfaceAction(
-            "Tasks",
-            "overlay.tasks",
+            "Love note",
+            "overlay.love-note",
             new PixelRect(64, 32, 64, 48),
-            "tasks")
+            "notes")
         {
-            PrimaryAction = OverlayAction.Tasks,
+            PrimaryAction = OverlayAction.LoveNote,
         };
 
         var scaled = Assert.Single(LayeredFramePresenter.ScaleActionsToClient(
@@ -39,8 +39,8 @@ public sealed class LayeredFramePresenterTests
             clientHeight: 384));
 
         Assert.Equal(new PixelRect(128, 96, 128, 144), scaled.HitRegion);
-        Assert.Equal(OverlayAction.Tasks, scaled.PrimaryAction);
-        Assert.Equal("overlay.tasks", scaled.AutomationId);
+        Assert.Equal(OverlayAction.LoveNote, scaled.PrimaryAction);
+        Assert.Equal("overlay.love-note", scaled.AutomationId);
     }
 
     [Theory]

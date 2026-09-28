@@ -172,7 +172,7 @@ public sealed class ReminderToastActionTests
     // ---- toast click routing ------------------------------------------------
 
     [Fact]
-    public async Task Reminder_toast_body_click_opens_the_reminders_page()
+    public async Task Reminder_toast_body_click_opens_home()
     {
         var sink = new RecordingNotificationSink();
         await new AppNotificationService(sink).ShowReminderAsync("reminder-1", "Stretch", Token);
@@ -182,7 +182,7 @@ public sealed class ReminderToastActionTests
         var router = Router(actions: null, out var navigated, out var dismissed);
         await router.HandleAsync(Map(body!), Token);
 
-        Assert.Equal(["reminders"], navigated);
+        Assert.Equal(["home"], navigated);
         Assert.Empty(dismissed);
     }
 
@@ -216,7 +216,7 @@ public sealed class ReminderToastActionTests
     }
 
     [Fact]
-    public async Task A_snooze_that_could_not_be_saved_opens_the_reminders_page_instead()
+    public async Task A_snooze_that_could_not_be_saved_opens_home_instead()
     {
         var actions = new ReminderToastActions(
             _clock,
@@ -228,20 +228,20 @@ public sealed class ReminderToastActionTests
 
         await router.HandleAsync(Map("action=reminder-snooze&reminderId=toast-busy"), Token);
 
-        Assert.Equal(["reminders"], navigated);
+        Assert.Equal(["home"], navigated);
         Assert.Empty(dismissed);
         Assert.Empty(_dismissedToasts);
     }
 
     [Fact]
-    public async Task Before_the_features_are_ready_done_still_drops_the_toast_and_opens_reminders()
+    public async Task Before_the_features_are_ready_done_still_drops_the_toast_and_opens_home()
     {
         var router = Router(actions: null, out var navigated, out var dismissed);
 
         await router.HandleAsync(Map("action=reminder-done&reminderId=reminder-1"), Token);
 
         Assert.Equal(["reminder-1"], dismissed);
-        Assert.Equal(["reminders"], navigated);
+        Assert.Equal(["home"], navigated);
     }
 
     [Fact]
@@ -263,9 +263,9 @@ public sealed class ReminderToastActionTests
     }
 
     [Theory]
-    [InlineData("action=open-reminder&reminderId=reminder-1", NotificationActivationAction.OpenReminder, "reminders")]
-    [InlineData("action=reminder-done&reminderId=reminder-1", NotificationActivationAction.ReminderDone, "reminders")]
-    [InlineData("action=reminder-snooze&reminderId=reminder-1", NotificationActivationAction.ReminderSnooze, "reminders")]
+    [InlineData("action=open-reminder&reminderId=reminder-1", NotificationActivationAction.OpenReminder, "home")]
+    [InlineData("action=reminder-done&reminderId=reminder-1", NotificationActivationAction.ReminderDone, "home")]
+    [InlineData("action=reminder-snooze&reminderId=reminder-1", NotificationActivationAction.ReminderSnooze, "home")]
     [InlineData("action=open-note&messageId=11111111-1111-4111-8111-111111111111", NotificationActivationAction.OpenNote, "notes")]
     public void Every_activation_maps_to_its_page(string arguments, NotificationActivationAction action, string destination)
     {

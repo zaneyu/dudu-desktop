@@ -42,7 +42,7 @@ public sealed partial class HomePage : Page
         RefreshStartupRecovery();
 
         // The focus line was computed once per refresh, so a running session sat at
-        // "25 min left" for as long as Home stayed open. Tick it like Tasks does.
+        // "25 min left" for as long as Home stayed open. Tick it while Home is shown.
         if (_focusCountdownTimer is null)
         {
             _focusCountdownTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };

@@ -98,11 +98,11 @@ public sealed class ActionBubbleLayoutTests
     public void Action_bubble_deduplicates_and_falls_back_to_pet()
     {
         var layout = ActionBubbleLayout.Arrange(
-            [OverlayAction.Tasks, OverlayAction.Tasks],
+            [OverlayAction.LoveNote, OverlayAction.LoveNote],
             new PixelRect(0, 0, 640, 480),
             new PixelPoint(320, 240));
 
-        Assert.Equal([OverlayAction.Tasks], layout.PrimaryActions.Select(item => item.Action));
+        Assert.Equal([OverlayAction.LoveNote], layout.PrimaryActions.Select(item => item.Action));
         var empty = ActionBubbleLayout.Arrange([], new PixelRect(0, 0, 640, 480), new PixelPoint(320, 240));
         Assert.Equal(OverlayAction.Pet, Assert.Single(empty.PrimaryActions).Action);
     }

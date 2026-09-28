@@ -260,141 +260,6 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
-    public async Task Completing_a_reminder_persists_before_dismissing_pet_state()
-    {
-        var fixture = FeatureFixture.Create();
-        var reminder = fixture.Reminder;
-        fixture.Reminders.Items.Add(reminder);
-        var viewModel = new RemindersViewModel(fixture.Context);
-
-        await viewModel.CompleteCommand.ExecuteAsync(reminder);
-
-        Assert.Equal(["repository.complete", "pet.dismiss"], fixture.Events);
-    }
-
-    [Fact]
-    public async Task Completing_a_not_yet_due_reminder_consumes_its_pending_occurrence()
-    {
-        // Audit regression: completing used to call NextOccurrence with the real
-        // "now", which for a not-yet-due reminder just returns NextDueUtc
-        // unchanged, so "done" was a no-op and the toast still fired later.
-        var fixture = FeatureFixture.Create();
-        var reminder = fixture.Reminder with { NextDueUtc = fixture.Clock.UtcNow.AddHours(2) };
-        fixture.Reminders.Items.Add(reminder);
-        var viewModel = new RemindersViewModel(fixture.Context);
-
-        await viewModel.CompleteCommand.ExecuteAsync(reminder);
-
-        var updated = Assert.Single(viewModel.Reminders);
-        Assert.Equal(reminder.Id, updated.Id);
-        Assert.Null(updated.NextDueUtc);
-    }
-
-    [Fact]
-    public async Task Snoozing_a_reminder_with_a_live_snooze_discards_its_held_presentation()
-    {
-        // Audit regression: CompleteAsync discards a reminder's held/queued
-        // presentation via DiscardHeldReminderAsync, but SnoozeAsync did not
-        // -- so a snoozed reminder that was currently held would still pop
-        // on the next unsuppressed tick. This is the safe case: NextDueUtc
-        // (10:00, the fixture clock's "now") is no later than the 15-minute
-        // snooze (10:15), so the snooze is "live" and will govern re-delivery
-        // on its own -- the held copy is redundant and can be discarded.
-        var discarded = new List<string>();
-        var fixture = FeatureFixture.Create(discardHeldReminderAsync: (id, _) =>
-        {
-            discarded.Add(id);
-            return Task.CompletedTask;
-        });
-        var reminder = fixture.Reminder;
-        fixture.Reminders.Items.Add(reminder);
-        var viewModel = new RemindersViewModel(fixture.Context);
-
-        await viewModel.SnoozeCommand.ExecuteAsync(reminder);
-
-        Assert.Equal([reminder.Id], discarded);
-    }
-
-    [Fact]
-    public async Task Snoozing_a_reminder_with_a_dead_snooze_does_not_discard_its_held_presentation()
-    {
-        // Audit regression: the scheduling engine advances NextDueUtc BEFORE
-        // notifying, so once an occurrence is held (e.g. a bedtime reminder
-        // during quiet hours), the held row is the ONLY record of it --
-        // NextDueUtc already points at the occurrence after this one. A
-        // 15-minute snooze that resolves before that later NextDueUtc is
-        // "dead" (SnoozedUntilUtc < NextDueUtc is ignored by
-        // LoadDueAsync/Reconcile), so discarding the held copy here would
-        // make the reminder vanish entirely instead of resurfacing once the
-        // hold clears.
-        var discarded = new List<string>();
-        var fixture = FeatureFixture.Create(discardHeldReminderAsync: (id, _) =>
-        {
-            discarded.Add(id);
-            return Task.CompletedTask;
-        });
-        var reminder = fixture.Reminder with { NextDueUtc = DateTimeOffset.Parse("2026-09-13T10:00:00Z") };
-        fixture.Reminders.Items.Add(reminder);
-        var viewModel = new RemindersViewModel(fixture.Context);
-
-        await viewModel.SnoozeCommand.ExecuteAsync(reminder);
-
-        Assert.Empty(discarded);
-    }
-
-    [Fact]
-    public async Task Completing_a_reminder_still_reports_success_when_the_notification_dismiss_fails()
-    {
-        // Opus review follow-up 6: after the completion is durably saved,
-        // a throw from a best-effort cleanup call (notification dismiss)
-        // must not surface as a failure for a completion that already
-        // succeeded, and must not skip the other best-effort cleanup (the
-        // held-copy discard) that follows it.
-        var discarded = new List<string>();
-        var fixture = FeatureFixture.Create(
-            dismissReminderNotificationAsync: (_, _) => throw new InvalidOperationException("dismiss boom"),
-            discardHeldReminderAsync: (id, _) =>
-            {
-                discarded.Add(id);
-                return Task.CompletedTask;
-            });
-        var reminder = fixture.Reminder;
-        fixture.Reminders.Items.Add(reminder);
-        var viewModel = new RemindersViewModel(fixture.Context);
-
-        await viewModel.CompleteCommand.ExecuteAsync(reminder);
-
-        Assert.Null(viewModel.ErrorMessage);
-        Assert.Equal("yayyy done le good job", viewModel.StatusMessage);
-        Assert.Equal([reminder.Id], discarded);
-    }
-
-    [Fact]
-    public async Task Snoozing_a_reminder_still_reports_success_when_the_notification_dismiss_fails()
-    {
-        // Opus review follow-up 6: same as completion -- a dismiss failure
-        // after the snooze is durably saved must not report a failure,
-        // and must not skip the held-copy discard check that follows it.
-        var discarded = new List<string>();
-        var fixture = FeatureFixture.Create(
-            dismissReminderNotificationAsync: (_, _) => throw new InvalidOperationException("dismiss boom"),
-            discardHeldReminderAsync: (id, _) =>
-            {
-                discarded.Add(id);
-                return Task.CompletedTask;
-            });
-        var reminder = fixture.Reminder; // NextDueUtc (10:00) <= snoozeUntil (10:15): a live snooze.
-        fixture.Reminders.Items.Add(reminder);
-        var viewModel = new RemindersViewModel(fixture.Context);
-
-        await viewModel.SnoozeCommand.ExecuteAsync(reminder);
-
-        Assert.Null(viewModel.ErrorMessage);
-        Assert.Equal("otayyy snoozed for 15 min", viewModel.StatusMessage);
-        Assert.Equal([reminder.Id], discarded);
-    }
-
-    [Fact]
     public async Task Saving_a_note_clears_the_editor_so_fresh_text_creates_a_new_note()
     {
         var fixture = FeatureFixture.Create();
@@ -417,28 +282,6 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
-    public async Task Saving_a_reminder_clears_the_editor_so_fresh_text_creates_a_new_reminder()
-    {
-        var fixture = FeatureFixture.Create();
-        var ct = TestContext.Current.CancellationToken;
-        var viewModel = new RemindersViewModel(fixture.Context);
-
-        viewModel.Title = "first";
-        await viewModel.SaveCommand.ExecuteAsync(null);
-
-        Assert.Null(viewModel.SelectedReminder);
-        Assert.Equal(string.Empty, viewModel.Title);
-        Assert.Single(fixture.Reminders.Items);
-
-        viewModel.Title = "second";
-        await viewModel.SaveCommand.ExecuteAsync(null);
-
-        Assert.Equal(2, fixture.Reminders.Items.Count);
-        Assert.Equal("first", fixture.Reminders.Items[0].Title);
-        Assert.Equal("second", fixture.Reminders.Items[1].Title);
-    }
-
-    [Fact]
     public async Task An_error_hides_an_earlier_success_message_so_both_never_show_together()
     {
         // The request-delete handlers set ErrorMessage directly, so an earlier
@@ -453,13 +296,6 @@ public sealed class FeatureViewModelTests
 
         Assert.Equal("select one first", home.ErrorMessage);
         Assert.False(home.HasStatus);
-
-        var tasks = new TasksFocusViewModel(fixture.Context) { Title = "Book dinner" };
-        await tasks.SaveTaskAsync(ct);
-        Assert.True(tasks.HasStatus);
-        tasks.RequestDeleteTaskCommand.Execute(null);
-        Assert.True(tasks.HasError);
-        Assert.False(tasks.HasStatus);
 
         var notes = new LoveNotesViewModel(fixture.Context) { DraftText = "hi" };
         await notes.SaveLocalNoteAsync(ct);
@@ -477,12 +313,6 @@ public sealed class FeatureViewModelTests
     public async Task Null_selection_reports_select_one_first_instead_of_internals()
     {
         var fixture = FeatureFixture.Create();
-        var reminders = new RemindersViewModel(fixture.Context);
-        await reminders.CompleteCommand.ExecuteAsync(null);
-        Assert.Equal("select one first", reminders.ErrorMessage);
-        await reminders.SnoozeCommand.ExecuteAsync(null);
-        Assert.Equal("select one first", reminders.ErrorMessage);
-
         var notes = new LoveNotesViewModel(fixture.Context);
         await notes.DeleteLocalNoteCommand.ExecuteAsync(null);
         Assert.Equal("select one first", notes.ErrorMessage);
@@ -492,12 +322,6 @@ public sealed class FeatureViewModelTests
         var home = new HomeViewModel(fixture.Context);
         await home.DeleteCountdownCommand.ExecuteAsync(null);
         Assert.Equal("select one first", home.ErrorMessage);
-
-        var tasks = new TasksFocusViewModel(fixture.Context);
-        await tasks.CompleteTaskCommand.ExecuteAsync(null);
-        Assert.Equal("select one first", tasks.ErrorMessage);
-        await tasks.DeleteTaskCommand.ExecuteAsync(null);
-        Assert.Equal("select one first", tasks.ErrorMessage);
     }
 
     [Fact]
@@ -506,7 +330,7 @@ public sealed class FeatureViewModelTests
         // Regression: ArgumentException.Message appends " (Parameter 'GlobalShortcut')" from
         // ParamName. That framework wording leaked straight into the user-visible error text.
         var fixture = FeatureFixture.Create();
-        var viewModel = new AppearanceViewModel(fixture.Context) { GlobalShortcut = "   " };
+        var viewModel = new SettingsViewModel(fixture.Context) { GlobalShortcut = "   " };
 
         await viewModel.SaveShortcutAsync(TestContext.Current.CancellationToken);
 
@@ -565,11 +389,6 @@ public sealed class FeatureViewModelTests
         Assert.Equal("select one first", home.ErrorMessage);
         Assert.False(home.IsConfirmingDeleteCountdown);
 
-        var tasks = new TasksFocusViewModel(fixture.Context);
-        tasks.RequestDeleteTaskCommand.Execute(null);
-        Assert.Equal("select one first", tasks.ErrorMessage);
-        Assert.False(tasks.IsConfirmingDeleteTask);
-
         var notes = new LoveNotesViewModel(fixture.Context);
         notes.RequestDeleteLocalNoteCommand.Execute(null);
         Assert.Equal("select one first", notes.ErrorMessage);
@@ -597,10 +416,10 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
-    public async Task New_countdown_and_new_task_start_fresh_instead_of_overwriting_the_selection()
+    public async Task New_countdown_starts_fresh_instead_of_overwriting_the_selection()
     {
-        // Once a countdown or task was selected there was no way to start a
-        // fresh one: typing a new title and saving overwrote the selection.
+        // Once a countdown was selected there was no way to start a fresh
+        // one: typing a new title and saving overwrote the selection.
         var fixture = FeatureFixture.Create();
         var ct = TestContext.Current.CancellationToken;
         var home = new HomeViewModel(fixture.Context)
@@ -619,17 +438,6 @@ public sealed class FeatureViewModelTests
         home.CountdownTargetUtc = DateTimeOffset.Parse("2026-12-20T12:00:00Z");
         await home.SaveCountdownAsync(ct);
         Assert.Equal(2, fixture.Countdowns.Items.Count);
-
-        var tasks = new TasksFocusViewModel(fixture.Context) { Title = "book dinner" };
-        await tasks.SaveTaskCommand.ExecuteAsync(null);
-        tasks.SelectTask(tasks.ActiveTasks.Single());
-
-        tasks.NewTaskCommand.Execute(null);
-        Assert.Null(tasks.SelectedTask);
-        Assert.Equal(string.Empty, tasks.Title);
-        tasks.Title = "buy flowers";
-        await tasks.SaveTaskCommand.ExecuteAsync(null);
-        Assert.Equal(2, tasks.ActiveTasks.Count);
     }
 
     [Fact]
@@ -658,30 +466,6 @@ public sealed class FeatureViewModelTests
 
         Assert.Empty(fixture.Countdowns.Items);
         Assert.False(viewModel.IsConfirmingDeleteCountdown);
-    }
-
-    [Fact]
-    public async Task Task_deletion_requires_a_separate_confirmation()
-    {
-        var fixture = FeatureFixture.Create();
-        var viewModel = new TasksFocusViewModel(fixture.Context) { Title = "Book dinner" };
-        await viewModel.SaveTaskAsync(TestContext.Current.CancellationToken);
-        var task = Assert.Single(fixture.Tasks.Items);
-
-        viewModel.RequestDeleteTaskCommand.Execute(task);
-        Assert.True(viewModel.IsConfirmingDeleteTask);
-        Assert.Equal(task, viewModel.PendingDeleteTask);
-        Assert.Single(fixture.Tasks.Items);
-
-        viewModel.CancelDeleteTaskCommand.Execute(null);
-        Assert.False(viewModel.IsConfirmingDeleteTask);
-        Assert.Single(fixture.Tasks.Items);
-
-        viewModel.RequestDeleteTaskCommand.Execute(task);
-        await viewModel.DeleteTaskCommand.ExecuteAsync(viewModel.PendingDeleteTask);
-
-        Assert.Empty(fixture.Tasks.Items);
-        Assert.False(viewModel.IsConfirmingDeleteTask);
     }
 
     [Fact]
@@ -757,30 +541,6 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
-    public async Task Selecting_a_different_task_clears_the_pending_delete_and_the_prompt_names_the_target()
-    {
-        var fixture = FeatureFixture.Create();
-        var ct = TestContext.Current.CancellationToken;
-        var viewModel = new TasksFocusViewModel(fixture.Context) { Title = "Book dinner" };
-        await viewModel.SaveTaskAsync(ct);
-        viewModel.Title = "Buy flowers";
-        await viewModel.SaveTaskAsync(ct);
-        Assert.Equal(2, fixture.Tasks.Items.Count);
-        var first = fixture.Tasks.Items.First(item => item.Title == "Book dinner");
-        var second = fixture.Tasks.Items.First(item => item.Title == "Buy flowers");
-
-        viewModel.RequestDeleteTaskCommand.Execute(first);
-        Assert.Equal($"delete \"{first.Title}\" for good? cannot undo", viewModel.DeleteTaskPrompt);
-
-        viewModel.SelectTask(second);
-
-        Assert.False(viewModel.IsConfirmingDeleteTask);
-        Assert.Null(viewModel.PendingDeleteTask);
-        Assert.Null(viewModel.DeleteTaskPrompt);
-        Assert.Equal(2, fixture.Tasks.Items.Count);
-    }
-
-    [Fact]
     public async Task Selecting_a_different_note_clears_the_pending_delete_and_the_prompt_names_the_target()
     {
         var fixture = FeatureFixture.Create();
@@ -823,25 +583,6 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
-    public async Task Completing_a_task_clears_a_pending_delete_confirmation_for_the_same_task()
-    {
-        // M-4: CompleteTaskAsync changes the task's state outside the delete flow, so a
-        // pending "delete this task" confirmation for it would otherwise go stale.
-        var fixture = FeatureFixture.Create();
-        var viewModel = new TasksFocusViewModel(fixture.Context) { Title = "Book dinner" };
-        await viewModel.SaveTaskAsync(TestContext.Current.CancellationToken);
-        var task = Assert.Single(fixture.Tasks.Items);
-
-        viewModel.RequestDeleteTaskCommand.Execute(task);
-        Assert.True(viewModel.IsConfirmingDeleteTask);
-
-        await viewModel.CompleteTaskCommand.ExecuteAsync(task);
-
-        Assert.False(viewModel.IsConfirmingDeleteTask);
-        Assert.Null(viewModel.PendingDeleteTask);
-    }
-
-    [Fact]
     public async Task Refreshing_the_home_view_model_clears_a_stale_pending_delete_confirmation()
     {
         // M-4: pages/view models are cached by the shell, so a revisit must not show a
@@ -861,22 +602,6 @@ public sealed class FeatureViewModelTests
 
         Assert.False(viewModel.IsConfirmingDeleteCountdown);
         Assert.Null(viewModel.PendingDeleteCountdown);
-    }
-
-    [Fact]
-    public async Task Refreshing_the_tasks_view_model_clears_a_stale_pending_delete_confirmation()
-    {
-        var fixture = FeatureFixture.Create();
-        var viewModel = new TasksFocusViewModel(fixture.Context) { Title = "Book dinner" };
-        await viewModel.SaveTaskAsync(TestContext.Current.CancellationToken);
-        var task = Assert.Single(fixture.Tasks.Items);
-        viewModel.RequestDeleteTaskCommand.Execute(task);
-        Assert.True(viewModel.IsConfirmingDeleteTask);
-
-        await viewModel.RefreshAsync(TestContext.Current.CancellationToken);
-
-        Assert.False(viewModel.IsConfirmingDeleteTask);
-        Assert.Null(viewModel.PendingDeleteTask);
     }
 
     [Fact]
@@ -947,48 +672,11 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
-    public async Task Privacy_destructive_actions_require_a_separate_confirmation()
-    {
-        var calls = new List<string>();
-        var fixture = FeatureFixture.Create(
-            restoreAsync: _ => { calls.Add("restore"); return Task.CompletedTask; },
-            deleteLocalDataAsync: _ => { calls.Add("local"); return Task.CompletedTask; },
-            deleteRemoteDataAsync: _ => { calls.Add("remote"); return Task.CompletedTask; });
-        var viewModel = new PrivacyDataViewModel(fixture.Context);
-
-        viewModel.RequestDeleteLocalDataCommand.Execute(null);
-        Assert.Empty(calls);
-        Assert.Equal(PrivacyConfirmationAction.DeleteLocal, viewModel.PendingConfirmation);
-        Assert.True(viewModel.ConfirmCommand.CanExecute(null));
-
-        await viewModel.ConfirmAsync(TestContext.Current.CancellationToken);
-
-        Assert.Equal(["local"], calls);
-        Assert.Equal(PrivacyConfirmationAction.None, viewModel.PendingConfirmation);
-        Assert.False(viewModel.ConfirmCommand.CanExecute(null));
-    }
-
-    [Fact]
-    public async Task Failed_privacy_action_keeps_confirmation_available_for_retry()
-    {
-        var fixture = FeatureFixture.Create(
-            restoreAsync: _ => Task.FromException(new IOException("restore failed")));
-        var viewModel = new PrivacyDataViewModel(fixture.Context);
-
-        viewModel.RequestRestoreCommand.Execute(null);
-        await viewModel.ConfirmAsync(TestContext.Current.CancellationToken);
-
-        Assert.Equal(PrivacyConfirmationAction.Restore, viewModel.PendingConfirmation);
-        Assert.Equal("cannot finish that try again", viewModel.ErrorMessage);
-        Assert.DoesNotContain("restore failed", viewModel.ErrorMessage);
-    }
-
-    [Fact]
     public async Task Appearance_save_applies_the_shell_theme_only_after_persistence_succeeds()
     {
         var fixture = FeatureFixture.Create();
         var applied = new List<AppTheme>();
-        var viewModel = new AppearanceViewModel(fixture.Context, applied.Add) { Theme = AppTheme.Dark };
+        var viewModel = new SettingsViewModel(fixture.Context, applied.Add) { Theme = AppTheme.Dark };
 
         await viewModel.SaveAsync(TestContext.Current.CancellationToken);
 
@@ -1009,7 +697,7 @@ public sealed class FeatureViewModelTests
         var ct = TestContext.Current.CancellationToken;
         await fixture.Placements.SaveAsync(new PetPlacement("current monitor", 0.3, 0.4, 1.0), ct);
         fixture.Placements.SaveHistory.Clear(); // ignore the setup write above
-        var viewModel = new AppearanceViewModel(fixture.Context) { PetScale = 1.5 };
+        var viewModel = new SettingsViewModel(fixture.Context) { PetScale = 1.5 };
 
         await viewModel.SaveAsync(ct);
 
@@ -1030,7 +718,7 @@ public sealed class FeatureViewModelTests
         var ct = TestContext.Current.CancellationToken;
         await fixture.Placements.SaveAsync(new PetPlacement("current monitor", 0.3, 0.4, 1.0), ct);
         fixture.Placements.SaveHistory.Clear();
-        var viewModel = new AppearanceViewModel(fixture.Context); // PetScale left at its ctor default
+        var viewModel = new SettingsViewModel(fixture.Context); // PetScale left at its ctor default
 
         await viewModel.SaveAsync(ct);
 
@@ -1044,7 +732,7 @@ public sealed class FeatureViewModelTests
         // create a phantom row at the default (0.8, 0.8) and teleport the pet there. Only the
         // explicit "save pet placement" button may create a new row.
         var fixture = FeatureFixture.Create();
-        var viewModel = new AppearanceViewModel(fixture.Context) { PetScale = 1.5 };
+        var viewModel = new SettingsViewModel(fixture.Context) { PetScale = 1.5 };
 
         await viewModel.SaveAsync(TestContext.Current.CancellationToken);
 
@@ -1057,7 +745,7 @@ public sealed class FeatureViewModelTests
         // The explicit "save pet placement" button (as opposed to "save appearance") is the one
         // allowed to create a placement row from scratch -- that behaviour must not change.
         var fixture = FeatureFixture.Create();
-        var viewModel = new AppearanceViewModel(fixture.Context) { PetScale = 1.5 };
+        var viewModel = new SettingsViewModel(fixture.Context) { PetScale = 1.5 };
 
         await viewModel.SavePlacementAsync(TestContext.Current.CancellationToken);
 
@@ -1077,7 +765,7 @@ public sealed class FeatureViewModelTests
         var ct = TestContext.Current.CancellationToken;
         await fixture.Placements.SaveAsync(new PetPlacement("current monitor", 0.3, 0.4, 1.0), ct);
         await fixture.Placements.SaveAsync(new PetPlacement("second monitor", 0.5, 0.5, 1.8), ct);
-        var viewModel = new AppearanceViewModel(fixture.Context);
+        var viewModel = new SettingsViewModel(fixture.Context);
         await viewModel.RefreshAsync(ct);
         Assert.Equal("current monitor", viewModel.MonitorDeviceName);
         Assert.Equal(1.0, viewModel.PetScale);
@@ -1100,7 +788,7 @@ public sealed class FeatureViewModelTests
         var fixture = FeatureFixture.Create();
         var ct = TestContext.Current.CancellationToken;
         await fixture.Placements.SaveAsync(new PetPlacement("current monitor", 0.3, 0.4, 1.0), ct);
-        var viewModel = new AppearanceViewModel(fixture.Context);
+        var viewModel = new SettingsViewModel(fixture.Context);
         await viewModel.RefreshAsync(ct);
         Assert.Equal(1.0, viewModel.PetScale);
 
@@ -1113,7 +801,7 @@ public sealed class FeatureViewModelTests
     public async Task Appearance_saves_sound_preferences_through_the_mutation_coordinator()
     {
         var fixture = FeatureFixture.Create();
-        var viewModel = new AppearanceViewModel(fixture.Context)
+        var viewModel = new SettingsViewModel(fixture.Context)
         {
             SoundsEnabled = false,
             SoundVolume = 0.72,
@@ -1130,7 +818,7 @@ public sealed class FeatureViewModelTests
     public async Task Appearance_saves_manual_outfit_and_recurring_seasonal_dates()
     {
         var fixture = FeatureFixture.Create();
-        var viewModel = new AppearanceViewModel(
+        var viewModel = new SettingsViewModel(
             fixture.Context,
             availableOutfitKeys: ["base", "winter"])
         {
@@ -1155,7 +843,7 @@ public sealed class FeatureViewModelTests
         await fixture.Context.UpdatePreferencesAsync(
             current => current with { Birthday = new MonthDay(2, 29) },
             TestContext.Current.CancellationToken);
-        var viewModel = new AppearanceViewModel(fixture.Context);
+        var viewModel = new SettingsViewModel(fixture.Context);
 
         await viewModel.RefreshAsync(TestContext.Current.CancellationToken);
 
@@ -1167,7 +855,7 @@ public sealed class FeatureViewModelTests
     public void Appearance_reports_the_automatic_outfit_for_the_current_local_date()
     {
         var fixture = FeatureFixture.Create();
-        var viewModel = new AppearanceViewModel(
+        var viewModel = new SettingsViewModel(
             fixture.Context,
             availableOutfitKeys: ["base", "anniversary"])
         {
@@ -1201,8 +889,8 @@ public sealed class FeatureViewModelTests
         second.Bind(secondRouter);
         first.Open(new PixelRect(0, 0, 640, 480), new PixelPoint(320, 400));
         second.Open(new PixelRect(0, 0, 640, 480), new PixelPoint(320, 400));
-        var firstPoint = Center(first.Arrangement!.PrimaryActions.Single(item => item.Action == OverlayAction.Tasks).HitRegion);
-        var secondPoint = Center(second.Arrangement!.PrimaryActions.Single(item => item.Action == OverlayAction.Tasks).HitRegion);
+        var firstPoint = Center(first.Arrangement!.PrimaryActions.Single(item => item.Action == OverlayAction.LoveNote).HitRegion);
+        var secondPoint = Center(second.Arrangement!.PrimaryActions.Single(item => item.Action == OverlayAction.LoveNote).HitRegion);
         var reported = new List<Exception>();
         using var queue = new OverlayActionDispatchQueue(reported.Add);
 
@@ -1230,15 +918,15 @@ public sealed class FeatureViewModelTests
         using var surface = new OverlayActionSurfaceController();
         surface.Bind(router);
         surface.Open(new PixelRect(0, 0, 640, 480), new PixelPoint(320, 400));
-        var presentedTasks = surface.CreateRenderSnapshot().Actions
-            .Single(action => action.PrimaryAction == OverlayAction.Tasks);
+        var presentedNotes = surface.CreateRenderSnapshot().Actions
+            .Single(action => action.PrimaryAction == OverlayAction.LoveNote);
 
         surface.UpdateViewport(new PixelRect(100, 100, 900, 700));
         await surface.HandlePresentedActionAsync(
-            presentedTasks,
+            presentedNotes,
             TestContext.Current.CancellationToken);
 
-        Assert.Equal(["tasks"], destinations);
+        Assert.Equal(["notes"], destinations);
         Assert.Equal(OverlayActionSurfaceKind.Closed, surface.Kind);
     }
 
@@ -1290,12 +978,12 @@ public sealed class FeatureViewModelTests
         using var surface = new OverlayActionSurfaceController();
         surface.Bind(router);
         surface.Open(new PixelRect(0, 0, 640, 480), new PixelPoint(320, 400));
-        var tasks = surface.CreateRenderSnapshot().Actions
-            .Single(action => action.PrimaryAction == OverlayAction.Tasks);
+        var notes = surface.CreateRenderSnapshot().Actions
+            .Single(action => action.PrimaryAction == OverlayAction.LoveNote);
         var reported = new List<Exception>();
         var queue = new OverlayActionDispatchQueue(reported.Add);
 
-        queue.Enqueue(surface, tasks);
+        queue.Enqueue(surface, notes);
         await entered.Task.WaitAsync(TestContext.Current.CancellationToken);
         queue.Dispose();
         await queue.Completion.WaitAsync(TestContext.Current.CancellationToken);
@@ -1320,7 +1008,7 @@ public sealed class FeatureViewModelTests
         var anchor = new PixelPoint(320, 400);
         surface.Open(viewport, anchor);
         var point = Center(surface.Arrangement!.PrimaryActions
-            .Single(item => item.Action == OverlayAction.Tasks).HitRegion);
+            .Single(item => item.Action == OverlayAction.LoveNote).HitRegion);
 
         var dispatch = surface.HandlePointerAsync(point, TestContext.Current.CancellationToken);
         await entered.Task.WaitAsync(TestContext.Current.CancellationToken);
@@ -1354,7 +1042,7 @@ public sealed class FeatureViewModelTests
         var router = new OverlayCommandRouter(fixture.Context);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            router.ExecuteAsync(OverlayAction.Tasks, TestContext.Current.CancellationToken));
+            router.ExecuteAsync(OverlayAction.LoveNote, TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -1694,7 +1382,7 @@ public sealed class FeatureViewModelTests
             Path.Combine(Path.GetTempPath(), "dudu-shared-preferences-" + Guid.NewGuid().ToString("N")),
             new FakeStartupWriter());
         var startupSettings = new StartupSettingsService(startup, fixture.Context.PreferenceMutations);
-        var appearance = new AppearanceViewModel(fixture.Context) { Theme = AppTheme.Dark };
+        var appearance = new SettingsViewModel(fixture.Context) { Theme = AppTheme.Dark };
 
         await startupSettings.SetLaunchAtSignInAsync(false, TestContext.Current.CancellationToken);
         await appearance.SaveAsync(TestContext.Current.CancellationToken);
@@ -1714,7 +1402,7 @@ public sealed class FeatureViewModelTests
             Path.Combine(Path.GetTempPath(), "dudu-concurrent-preferences-" + Guid.NewGuid().ToString("N")),
             new FakeStartupWriter());
         var startupSettings = new StartupSettingsService(startup, fixture.Context.PreferenceMutations);
-        var appearance = new AppearanceViewModel(fixture.Context)
+        var appearance = new SettingsViewModel(fixture.Context)
         {
             Theme = AppTheme.Dark,
             ReducedMotion = true,
@@ -1728,322 +1416,6 @@ public sealed class FeatureViewModelTests
         Assert.Equal(AppTheme.Dark, fixture.Context.CurrentPreferences.Theme);
         Assert.True(fixture.Context.CurrentPreferences.ReducedMotion);
         Assert.Equal(fixture.Context.CurrentPreferences, fixture.Preferences.Current);
-    }
-
-    [Fact]
-    public async Task Concurrent_startup_and_default_reminder_writes_share_the_same_owner()
-    {
-        var fixture = FeatureFixture.Create();
-        await using var startup = new StartupRegistrationService(
-            "/opt/Dudu.exe",
-            Path.Combine(Path.GetTempPath(), "dudu-concurrent-defaults-" + Guid.NewGuid().ToString("N")),
-            new FakeStartupWriter());
-        var startupSettings = new StartupSettingsService(startup, fixture.Context.PreferenceMutations);
-        var reminders = new RemindersViewModel(fixture.Context)
-        {
-            HydrationRemindersEnabled = false,
-            BreakRemindersEnabled = true,
-        };
-
-        await Task.WhenAll(
-            startupSettings.SetLaunchAtSignInAsync(false, TestContext.Current.CancellationToken),
-            reminders.SaveReminderPreferencesAsync(TestContext.Current.CancellationToken));
-
-        Assert.False(fixture.Context.CurrentPreferences.LaunchAtSignIn);
-        Assert.False(fixture.Context.CurrentPreferences.HydrationRemindersEnabled);
-        Assert.True(fixture.Context.CurrentPreferences.BreakRemindersEnabled);
-        Assert.Equal(fixture.Context.CurrentPreferences, fixture.Preferences.Current);
-        Assert.Equal(2, fixture.Reminders.Items.Count(item =>
-            item.Id is "default-hydration" or "default-break"));
-    }
-
-    [Fact]
-    public async Task Focus_end_uses_one_shot_acknowledgment_and_restores_idle()
-    {
-        var fixture = FeatureFixture.Create();
-        var viewModel = new TasksFocusViewModel(fixture.Context);
-        await viewModel.StartFocusOrThrowAsync(TestContext.Current.CancellationToken);
-
-        await viewModel.EndFocusAsync(TestContext.Current.CancellationToken);
-
-        Assert.Contains(
-            fixture.OneShotPresentations,
-            presentation => presentation.Event is PetEvent.FocusEnded && presentation.DismissalId == "focus-end");
-        Assert.Equal(PetState.Idle, fixture.Context.Pet.Current.State);
-        Assert.Equal(FocusStatus.EndedEarly, viewModel.ActiveFocus!.Status);
-    }
-
-    [Fact]
-    public async Task Ending_a_focus_session_refreshes_the_on_screen_history_without_navigating_away()
-    {
-        // Audit regression: FocusHistory was only ever populated by
-        // RefreshAsync (Page_Loaded), so ending a session here left the
-        // on-screen history stale until she navigated away and back.
-        var fixture = FeatureFixture.Create();
-        var viewModel = new TasksFocusViewModel(fixture.Context);
-        await viewModel.StartFocusOrThrowAsync(TestContext.Current.CancellationToken);
-
-        await viewModel.EndFocusAsync(TestContext.Current.CancellationToken);
-
-        var entry = Assert.Single(viewModel.FocusHistory);
-        Assert.Equal("ended early", entry.StatusText);
-    }
-
-    [Fact]
-    public async Task Ending_a_focus_session_still_reports_success_when_the_history_reload_fails()
-    {
-        // Audit regression: the FocusHistory reload used to run inside the
-        // same RunAsync lambda as the already-completed EndAsync call, so a
-        // transient failure reading history (e.g. a repository IOException)
-        // surfaced as "cannot finish that try again" even though the session
-        // had genuinely ended. The reload is best-effort and must not turn a
-        // successful end into a reported failure.
-        var fixture = FeatureFixture.Create();
-        var viewModel = new TasksFocusViewModel(fixture.Context);
-        await viewModel.StartFocusOrThrowAsync(TestContext.Current.CancellationToken);
-        fixture.FocusSessions.ThrowOnListHistory = true;
-
-        await viewModel.EndFocusAsync(TestContext.Current.CancellationToken);
-
-        Assert.Null(viewModel.ErrorMessage);
-        Assert.Equal(FocusStatus.EndedEarly, viewModel.ActiveFocus!.Status);
-    }
-
-    [Fact]
-    public async Task Focus_history_shows_friendly_status_text_and_local_time()
-    {
-        // Regression: the history list used to bind straight to the raw FocusSession, showing
-        // the bare enum name (e.g. "EndedEarly") and an unconverted UTC timestamp.
-        var fixture = FeatureFixture.Create();
-        var ct = TestContext.Current.CancellationToken;
-        var startedUtc = DateTimeOffset.Parse("2026-09-12T10:30:00Z");
-        var session = new FocusSession(
-            Guid.NewGuid(), null, startedUtc, null, TimeSpan.Zero, FocusStatus.EndedEarly, startedUtc);
-        await fixture.FocusSessions.SaveAsync(session, ct);
-        var viewModel = new TasksFocusViewModel(fixture.Context);
-
-        await viewModel.RefreshAsync(ct);
-
-        var entry = Assert.Single(viewModel.FocusHistory);
-        Assert.Equal("ended early", entry.StatusText);
-        Assert.Equal(startedUtc.ToLocalTime().ToString("g"), entry.StartedText);
-    }
-
-    [Fact]
-    public async Task Focus_expiring_naturally_refreshes_the_page_while_attached()
-    {
-        // Audit regression: FocusService.SessionExpired (raised from the background
-        // reminder tick when a session runs out, not a manual "end focus") only ever
-        // routed to the pet. If the Tasks & Focus page was open it kept showing the
-        // session as running and its history list stayed stale until she navigated
-        // away and back.
-        //
-        // Opus review follow-up 2: this reload must not clobber shared page state
-        // with no user action behind it -- it must not clear an error banner she
-        // is currently reading, and must not toggle IsBusy while a real user
-        // command might be running. Only ActiveFocus/FocusHistory should move.
-        var fixture = FeatureFixture.Create();
-        var viewModel = new TasksFocusViewModel(fixture.Context);
-        var started = await viewModel.StartFocusOrThrowAsync(TestContext.Current.CancellationToken);
-        viewModel.AttachFocusExpiry();
-
-        // An error banner she is currently reading, unrelated to focus.
-        viewModel.RequestDeleteTaskCommand.Execute(null);
-        Assert.Equal("select one first", viewModel.ErrorMessage);
-        var busyChanged = false;
-        viewModel.PropertyChanged += (_, args) =>
-        {
-            if (args.PropertyName == nameof(TasksFocusViewModel.IsBusy)) busyChanged = true;
-        };
-
-        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddMinutes(26);
-        var completed = await fixture.Context.FocusService.CompleteExpiredAsync(
-            started.Id, TestContext.Current.CancellationToken);
-
-        Assert.True(completed);
-        Assert.False(viewModel.IsFocusActive);
-        var entry = Assert.Single(viewModel.FocusHistory);
-        Assert.Equal("completed", entry.StatusText);
-        Assert.False(viewModel.IsBusy);
-        Assert.False(busyChanged);
-        Assert.Equal("select one first", viewModel.ErrorMessage);
-    }
-
-    [Fact]
-    public async Task Detaching_focus_expiry_stops_the_automatic_refresh()
-    {
-        var fixture = FeatureFixture.Create();
-        var viewModel = new TasksFocusViewModel(fixture.Context);
-        var started = await viewModel.StartFocusOrThrowAsync(TestContext.Current.CancellationToken);
-        viewModel.AttachFocusExpiry();
-        viewModel.DetachFocusExpiry();
-        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddMinutes(26);
-
-        var completed = await fixture.Context.FocusService.CompleteExpiredAsync(
-            started.Id, TestContext.Current.CancellationToken);
-
-        Assert.True(completed);
-        // Nothing refreshed the view model, so it still shows the pre-completion snapshot.
-        Assert.True(viewModel.IsFocusActive);
-        Assert.Empty(viewModel.FocusHistory);
-    }
-
-    [Fact]
-    public async Task Focus_expiry_refresh_failure_does_not_escape_the_session_expired_event()
-    {
-        var fixture = FeatureFixture.Create();
-        var viewModel = new TasksFocusViewModel(fixture.Context);
-        var started = await viewModel.StartFocusOrThrowAsync(TestContext.Current.CancellationToken);
-        viewModel.AttachFocusExpiry();
-        fixture.FocusSessions.ThrowOnListHistory = true;
-        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddMinutes(26);
-
-        // A throwing history repository must not propagate out of FocusService's
-        // SessionExpired invocation -- that would break the reminder tick for every
-        // other subscriber (e.g. the pet).
-        var completed = await fixture.Context.FocusService.CompleteExpiredAsync(
-            started.Id, TestContext.Current.CancellationToken);
-
-        Assert.True(completed);
-        // Opus review follow-up 2: the quiet reload never goes through
-        // RunAsync, so a failure here must stay silent -- not surface as an
-        // ErrorMessage the user never asked for.
-        Assert.Null(viewModel.ErrorMessage);
-    }
-
-    [Fact]
-    public async Task Focus_expiry_reload_in_flight_does_not_clobber_a_session_started_meanwhile()
-    {
-        // Round 4 Opus follow-up 4: OnFocusSessionExpired used to ignore which
-        // session expired, so a reload it queued for the OLD session could
-        // still land after a NEW session was started in the meantime and wipe
-        // it out with a stale (or null) snapshot fetched before the new
-        // session existed.
-        var fixture = FeatureFixture.Create();
-        var viewModel = new TasksFocusViewModel(fixture.Context);
-        var sessionA = await viewModel.StartFocusOrThrowAsync(TestContext.Current.CancellationToken);
-        viewModel.AttachFocusExpiry();
-
-        var pauseHistory = new TaskCompletionSource<bool>();
-        fixture.FocusSessions.PauseListHistory = pauseHistory;
-        fixture.Clock.UtcNow = fixture.Clock.UtcNow.AddMinutes(26);
-
-        // RefreshAfterExpiryAsync's reload runs its ActiveFocus/FocusHistory
-        // mutation inside one synchronous MutateAsync callback (no
-        // UiDispatcher is configured in tests, so MutateAsync runs the
-        // callback inline): ActiveFocus is assigned first, then
-        // FocusHistory.Clear()/Add(...). Waiting for FocusHistory's own
-        // CollectionChanged -- specifically the Add that lands the
-        // just-completed session A -- therefore proves the WHOLE callback,
-        // including the earlier ActiveFocus assignment, already ran.
-        // Awaiting a signal fired from inside the fake's ListHistoryAsync
-        // (the previous approach) does not: that fake signals BEFORE
-        // returning control to RefreshAfterExpiryAsync, which still has to
-        // resume and run the MutateAsync callback afterward -- under
-        // xunit's sync context the test could resume first and assert
-        // against pre-mutation state, making the FocusHistory assertion
-        // flake and the ActiveFocus assertions below pass vacuously
-        // (unchanged since before the reload, not because the guard held).
-        var historyMutated = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        void OnHistoryChanged(object? sender, NotifyCollectionChangedEventArgs e)
-        {
-            if (e.Action == NotifyCollectionChangedAction.Add)
-            {
-                historyMutated.TrySetResult(true);
-            }
-        }
-        viewModel.FocusHistory.CollectionChanged += OnHistoryChanged;
-        try
-        {
-            // CompleteExpiredAsync raises SessionExpired synchronously. The
-            // fire-and-forget reload it starts runs through GetCurrentAsync --
-            // session A just completed, so it captures a null focus -- and then
-            // blocks inside ListHistoryAsync on pauseHistory, so it is
-            // genuinely in flight (not finished) once this await returns.
-            var completed = await fixture.Context.FocusService.CompleteExpiredAsync(
-                sessionA.Id, TestContext.Current.CancellationToken);
-            Assert.True(completed);
-
-            // Start a new session while the stale reload for session A is still
-            // paused mid-flight.
-            var sessionB = await viewModel.StartFocusOrThrowAsync(TestContext.Current.CancellationToken);
-            Assert.Equal(sessionB.Id, viewModel.ActiveFocus?.Id);
-
-            // Let the paused reload run to completion, then wait for the
-            // FocusHistory mutation to actually apply, instead of polling on
-            // a fixed retry budget.
-            pauseHistory.SetResult(true);
-            await historyMutated.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
-
-            // Session B must survive: the reload was for session A, which is no
-            // longer the active session, so it must not have touched ActiveFocus.
-            Assert.Equal(sessionB.Id, viewModel.ActiveFocus?.Id);
-            Assert.True(viewModel.IsFocusActive);
-            // History still reloads unconditionally -- session A now shows up
-            // there.
-            Assert.Contains(viewModel.FocusHistory, entry => entry.StatusText == "completed");
-        }
-        finally
-        {
-            viewModel.FocusHistory.CollectionChanged -= OnHistoryChanged;
-        }
-    }
-
-    [Theory]
-    [InlineData(true, false, "another focus session is active")]
-    [InlineData(false, true, "injected focus repository failure")]
-    public async Task Start_focus_failure_keeps_action_surface_open_and_does_not_navigate(
-        bool rejectCreate,
-        bool throwOnCreate,
-        string expectedError)
-    {
-        var fixture = FeatureFixture.Create();
-        fixture.FocusSessions.RejectCreate = rejectCreate;
-        fixture.FocusSessions.ThrowOnCreate = throwOnCreate;
-        var destinations = new List<string>();
-        var router = new OverlayCommandRouter(
-            fixture.Context,
-            (destination, _) =>
-            {
-                destinations.Add(destination);
-                return Task.CompletedTask;
-            });
-        var surface = new OverlayActionSurfaceController();
-        surface.Bind(router);
-        surface.Open(new PixelRect(0, 0, 640, 480), new PixelPoint(320, 400));
-        var start = surface.Arrangement!.PrimaryActions.Single(item => item.Action == OverlayAction.StartFocus);
-
-        await surface.HandlePointerAsync(Center(start.HitRegion), TestContext.Current.CancellationToken);
-
-        Assert.Equal(OverlayActionSurfaceKind.Primary, surface.Kind);
-        Assert.Contains(expectedError, surface.ErrorMessage, StringComparison.OrdinalIgnoreCase);
-        Assert.Empty(destinations);
-    }
-
-    [Fact]
-    public async Task Start_focus_navigates_and_closes_only_after_repository_success()
-    {
-        var fixture = FeatureFixture.Create();
-        var destinations = new List<string>();
-        var router = new OverlayCommandRouter(
-            fixture.Context,
-            (destination, _) =>
-            {
-                Assert.NotNull(fixture.FocusSessions.Active);
-                destinations.Add(destination);
-                return Task.CompletedTask;
-            });
-        var surface = new OverlayActionSurfaceController();
-        surface.Bind(router);
-        surface.Open(new PixelRect(0, 0, 640, 480), new PixelPoint(320, 400));
-        var start = surface.Arrangement!.PrimaryActions.Single(item => item.Action == OverlayAction.StartFocus);
-
-        await surface.HandlePointerAsync(Center(start.HitRegion), TestContext.Current.CancellationToken);
-
-        Assert.NotNull(fixture.FocusSessions.Active);
-        Assert.Equal(["tasks"], destinations);
-        Assert.Equal(OverlayActionSurfaceKind.Closed, surface.Kind);
-        Assert.Null(surface.ErrorMessage);
     }
 
     [Fact]
@@ -2151,157 +1523,6 @@ public sealed class FeatureViewModelTests
         Assert.True(fixture.Context.CurrentPreferences.ReducedMotion);
         Assert.Equal(fixture.Context.CurrentPreferences, fixture.Preferences.Current);
         Assert.Equal(fixture.Context.CurrentPreferences, fixture.RuntimePreferences.Current);
-    }
-
-    [Fact]
-    public async Task Editing_a_reminder_uses_its_stored_timezone_for_next_due()
-    {
-        var fixture = FeatureFixture.Create();
-        var viewModel = new RemindersViewModel(fixture.Context)
-        {
-            SelectedReminder = fixture.Reminder with
-            {
-                Rule = new RecurrenceRule.Daily(new TimeOnly(9, 0)),
-                LocalTimeZoneId = "UTC",
-            },
-        };
-
-        await viewModel.SaveAsync(TestContext.Current.CancellationToken);
-
-        Assert.Equal(
-            DateTimeOffset.Parse("2026-09-13T09:00:00Z"),
-            fixture.Reminders.Items.Single(item => item.Id == fixture.Reminder.Id).NextDueUtc);
-    }
-
-    [Fact]
-    public async Task Reminder_default_commit_precedes_runtime_publish_and_failure_keeps_old_state()
-    {
-        var fixture = FeatureFixture.Create();
-        var original = fixture.Context.CurrentPreferences;
-        fixture.Transactions.FailNextReminderCommit = true;
-        var viewModel = new RemindersViewModel(fixture.Context)
-        {
-            HydrationRemindersEnabled = true,
-            BreakRemindersEnabled = true,
-        };
-
-        await viewModel.SaveReminderPreferencesAsync(TestContext.Current.CancellationToken);
-
-        Assert.NotNull(viewModel.ErrorMessage);
-        Assert.Equal(original, fixture.Context.CurrentPreferences);
-        Assert.Equal(original, fixture.RuntimePreferences.Current);
-        Assert.DoesNotContain(fixture.Reminders.Items, item =>
-            item.Id is "default-hydration" or "default-break");
-
-        await viewModel.SaveReminderPreferencesAsync(TestContext.Current.CancellationToken);
-        Assert.True(fixture.Context.CurrentPreferences.HydrationRemindersEnabled);
-        Assert.True(fixture.Context.CurrentPreferences.BreakRemindersEnabled);
-        Assert.Equal(2, fixture.Reminders.Items.Count(item =>
-            item.Id is "default-hydration" or "default-break"));
-    }
-
-    [Fact]
-    public async Task Reminder_evening_and_bedtime_routines_opt_in_and_upsert_stably()
-    {
-        var fixture = FeatureFixture.Create();
-        var viewModel = new RemindersViewModel(fixture.Context);
-
-        await viewModel.SaveReminderPreferencesAsync(TestContext.Current.CancellationToken);
-
-        Assert.False(fixture.Context.CurrentPreferences.EveningCheckInEnabled);
-        Assert.False(fixture.Context.CurrentPreferences.BedtimeRitualEnabled);
-        Assert.All(fixture.Reminders.Items.Where(item =>
-            item.Id is Dudu.Core.Reminders.LocalReminderDefaults.EveningCheckInId
-                or Dudu.Core.Reminders.LocalReminderDefaults.BedtimeId), item =>
-            Assert.False(item.Enabled));
-
-        viewModel.EveningCheckInEnabled = true;
-        viewModel.BedtimeRitualEnabled = true;
-        await viewModel.SaveReminderPreferencesAsync(TestContext.Current.CancellationToken);
-
-        Assert.True(fixture.Context.CurrentPreferences.EveningCheckInEnabled);
-        Assert.True(fixture.Context.CurrentPreferences.BedtimeRitualEnabled);
-        var evening = fixture.Reminders.Items.Single(item =>
-            item.Id == Dudu.Core.Reminders.LocalReminderDefaults.EveningCheckInId);
-        var bedtime = fixture.Reminders.Items.Single(item =>
-            item.Id == Dudu.Core.Reminders.LocalReminderDefaults.BedtimeId);
-        Assert.Equal("how was your day?", evening.Title);
-        Assert.Equal("shuijiaojiao", bedtime.Title);
-        Assert.Equal(new RecurrenceRule.Daily(new TimeOnly(20, 0)), evening.Rule);
-        Assert.Equal(new RecurrenceRule.Daily(new TimeOnly(22, 0)), bedtime.Rule);
-        Assert.All(new[] { evening, bedtime }, item =>
-        {
-            Assert.Null(item.QuietHours);
-            Assert.Equal(QuietHoursBehavior.WaitUntilQuietHoursEnd, item.QuietHoursBehavior);
-            Assert.Equal(MissedOccurrencePolicy.Skip, item.MissedPolicy);
-            Assert.Equal("UTC", item.LocalTimeZoneId);
-        });
-
-        viewModel.EveningCheckInEnabled = false;
-        await viewModel.SaveReminderPreferencesAsync(TestContext.Current.CancellationToken);
-
-        Assert.Equal(4, fixture.Reminders.Items.Count(item =>
-            item.Id is "default-hydration" or "default-break"
-                or Dudu.Core.Reminders.LocalReminderDefaults.EveningCheckInId
-                or Dudu.Core.Reminders.LocalReminderDefaults.BedtimeId));
-        Assert.False(fixture.Reminders.Items.Single(item =>
-            item.Id == Dudu.Core.Reminders.LocalReminderDefaults.EveningCheckInId).Enabled);
-    }
-
-    [Fact]
-    public async Task Saving_reminder_preferences_preserves_next_due_and_snooze_for_an_unchanged_default()
-    {
-        // Audit regression: every save rebuilt all four defaults from scratch via
-        // LocalReminderDefaults.Create, wiping NextDueUtc/SnoozedUntilUtc even for
-        // a default whose own enabled-state and schedule this save never touched.
-        var fixture = FeatureFixture.Create();
-        var previous = fixture.Reminder with
-        {
-            Id = "default-hydration",
-            Enabled = true,
-            Rule = new RecurrenceRule.Daily(new TimeOnly(10, 0)),
-            NextDueUtc = DateTimeOffset.Parse("2026-09-12T11:45:00Z"),
-            SnoozedUntilUtc = DateTimeOffset.Parse("2026-09-12T11:30:00Z"),
-        };
-        fixture.Reminders.Items.Add(previous);
-        var viewModel = new RemindersViewModel(fixture.Context)
-        {
-            HydrationRemindersEnabled = true,
-            BreakRemindersEnabled = true,
-        };
-
-        await viewModel.SaveReminderPreferencesAsync(TestContext.Current.CancellationToken);
-
-        var saved = fixture.Reminders.Items.Single(item => item.Id == "default-hydration");
-        Assert.Equal(previous.NextDueUtc, saved.NextDueUtc);
-        Assert.Equal(previous.SnoozedUntilUtc, saved.SnoozedUntilUtc);
-    }
-
-    [Fact]
-    public async Task Reminder_runtime_apply_failure_restores_exact_previous_default_rows()
-    {
-        var fixture = FeatureFixture.Create();
-        var previous = fixture.Reminder with
-        {
-            Id = "default-hydration",
-            Title = "My water schedule",
-            SnoozedUntilUtc = DateTimeOffset.Parse("2026-09-12T11:30:00Z"),
-        };
-        fixture.Reminders.Items.Add(previous);
-        fixture.RuntimePreferences.FailNextApply = true;
-        var viewModel = new RemindersViewModel(fixture.Context)
-        {
-            HydrationRemindersEnabled = false,
-            BreakRemindersEnabled = true,
-        };
-
-        await viewModel.SaveReminderPreferencesAsync(TestContext.Current.CancellationToken);
-
-        Assert.NotNull(viewModel.ErrorMessage);
-        Assert.Equal(fixture.Context.CurrentPreferences, fixture.Preferences.Current);
-        Assert.Equal(fixture.Context.CurrentPreferences, fixture.RuntimePreferences.Current);
-        Assert.Equal(previous, fixture.Reminders.Items.Single(item => item.Id == "default-hydration"));
-        Assert.DoesNotContain(fixture.Reminders.Items, item => item.Id == "default-break");
     }
 
     [Fact]
@@ -2419,35 +1640,6 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
-    public async Task Tasks_support_due_date_edit_completion_and_deletion()
-    {
-        var fixture = FeatureFixture.Create();
-        var viewModel = new TasksFocusViewModel(fixture.Context)
-        {
-            Title = "Book dinner",
-            DueUtc = DateTimeOffset.Parse("2026-09-20T18:00:00Z"),
-        };
-        await viewModel.SaveTaskAsync(TestContext.Current.CancellationToken);
-        var task = Assert.Single(fixture.Tasks.Items);
-        Assert.Equal(DateTimeOffset.Parse("2026-09-20T18:00:00Z"), task.DueUtc);
-
-        viewModel.SelectTask(task);
-        viewModel.Title = "Book birthday dinner";
-        viewModel.DueUtc = DateTimeOffset.Parse("2026-09-21T18:00:00Z");
-        await viewModel.SaveTaskAsync(TestContext.Current.CancellationToken);
-        var updated = Assert.Single(fixture.Tasks.Items);
-        Assert.Equal(task.Id, updated.Id);
-        Assert.Equal(DateTimeOffset.Parse("2026-09-21T18:00:00Z"), updated.DueUtc);
-
-        await viewModel.CompleteTaskAsync(updated, TestContext.Current.CancellationToken);
-        var completed = Assert.Single(fixture.Tasks.Items);
-        Assert.True(completed.IsCompleted);
-
-        await viewModel.DeleteTaskAsync(completed, TestContext.Current.CancellationToken);
-        Assert.Empty(fixture.Tasks.Items);
-    }
-
-    [Fact]
     public async Task Action_surface_toggles_from_pet_and_routes_primary_and_comfort_hits()
     {
         var fixture = FeatureFixture.Create();
@@ -2478,9 +1670,9 @@ public sealed class FeatureViewModelTests
         Assert.Equal(OverlayActionSurfaceKind.Closed, surface.Kind);
 
         surface.Open(workArea, anchor);
-        var tasks = surface.Arrangement!.PrimaryActions.Single(item => item.Action == OverlayAction.Tasks);
-        await surface.HandlePointerAsync(Center(tasks.HitRegion), TestContext.Current.CancellationToken);
-        Assert.Equal(["tasks"], destinations);
+        var notes = surface.Arrangement!.PrimaryActions.Single(item => item.Action == OverlayAction.LoveNote);
+        await surface.HandlePointerAsync(Center(notes.HitRegion), TestContext.Current.CancellationToken);
+        Assert.Equal(["notes"], destinations);
         Assert.Equal(OverlayActionSurfaceKind.Closed, surface.Kind);
     }
 
@@ -2496,9 +1688,9 @@ public sealed class FeatureViewModelTests
         surface.Open(
             new PixelRect(0, 0, 640, 480),
             new Dudu.Core.Assets.PixelPoint(320, 400));
-        var tasks = surface.Arrangement!.PrimaryActions.Single(item => item.Action == OverlayAction.Tasks);
+        var notes = surface.Arrangement!.PrimaryActions.Single(item => item.Action == OverlayAction.LoveNote);
 
-        await surface.HandlePointerAsync(Center(tasks.HitRegion), TestContext.Current.CancellationToken);
+        await surface.HandlePointerAsync(Center(notes.HitRegion), TestContext.Current.CancellationToken);
 
         Assert.Equal(OverlayActionSurfaceKind.Primary, surface.Kind);
         Assert.Equal("navigation failed", surface.ErrorMessage);

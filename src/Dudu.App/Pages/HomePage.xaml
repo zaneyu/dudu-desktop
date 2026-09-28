@@ -95,14 +95,11 @@
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
                             <Button Content="💧 drink water" Tag="DrinkWater" Click="OverlayAction_Click" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayActionDrinkWater" AutomationProperties.Name="drink water" />
-                            <Button Grid.Column="1" Content="🎯 start focus" Tag="StartFocus" Click="OverlayAction_Click" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayActionStartFocus" AutomationProperties.Name="start focus" />
-                            <Button Grid.Row="1" Content="📝 open tasks" Tag="Tasks" Click="OverlayAction_Click" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayActionTasks" AutomationProperties.Name="open tasks" />
-                            <Button Grid.Row="1" Grid.Column="1" Content="💌 love notes" Tag="LoveNote" Click="OverlayAction_Click" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayActionLoveNote" AutomationProperties.Name="open love notes" />
-                            <Button Grid.Row="2" Content="🫂 comfort me" Tag="ComfortMe" Click="OverlayAction_Click" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayActionComfortMe" AutomationProperties.Name="comfort me" />
-                            <Button Grid.Row="2" Grid.Column="1" Content="🍚 eat together" Tag="EatTogether" Click="OverlayAction_Click" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayActionEatTogether" AutomationProperties.Name="eat together or done eating" />
+                            <Button Grid.Column="1" Content="💌 love notes" Tag="LoveNote" Click="OverlayAction_Click" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayActionLoveNote" AutomationProperties.Name="open love notes" />
+                            <Button Grid.Row="1" Content="🫂 comfort me" Tag="ComfortMe" Click="OverlayAction_Click" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayActionComfortMe" AutomationProperties.Name="comfort me" />
+                            <Button Grid.Row="1" Grid.Column="1" Content="🍚 eat together" Tag="EatTogether" Click="OverlayAction_Click" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayActionEatTogether" AutomationProperties.Name="eat together or done eating" />
                         </Grid>
                         <TextBlock x:Name="HomeActionStatus" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.LiveSetting="Polite" AutomationProperties.AutomationId="HomeActionStatus" AutomationProperties.Name="action status" />
                     </StackPanel>

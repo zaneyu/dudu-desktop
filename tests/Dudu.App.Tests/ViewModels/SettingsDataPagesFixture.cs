@@ -12,8 +12,8 @@ using Dudu.Core.Time;
 namespace Dudu.App.Tests.ViewModels;
 
 /// <summary>
-/// Minimal hand-built <see cref="CompanionFeatureContext"/> for the Connection, Privacy &amp;
-/// Data and Appearance page tests. FeatureViewModelTests keeps its own (private) fixture; this
+/// Minimal hand-built <see cref="CompanionFeatureContext"/> for the Settings page tests
+/// (look and motion, partner connection). FeatureViewModelTests keeps its own (private) fixture; this
 /// one lives in its own file so those page tests can grow without touching that file.
 /// </summary>
 internal sealed class SettingsDataPagesFixture

@@ -18,7 +18,7 @@ public sealed class AwaitableUiDispatcherTests
 
         await AssertRejectedAsync(() => actions.OpenHome(TestContext.Current.CancellationToken));
         await AssertRejectedAsync(() => actions.OpenSettings(null!, TestContext.Current.CancellationToken));
-        await AssertRejectedAsync(() => actions.NavigateSettingsDestination!("tasks", TestContext.Current.CancellationToken));
+        await AssertRejectedAsync(() => actions.NavigateSettingsDestination!("notes", TestContext.Current.CancellationToken));
         await AssertRejectedAsync(() => actions.Exit(TestContext.Current.CancellationToken));
     }
 

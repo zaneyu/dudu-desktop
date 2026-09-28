@@ -2,7 +2,7 @@ using Dudu.Core.Assets;
 
 namespace Dudu.App.Overlay;
 
-public enum OverlayAction { Pet, DrinkWater, StartFocus, Tasks, LoveNote, ComfortMe, EatTogether }
+public enum OverlayAction { Pet, DrinkWater, LoveNote, ComfortMe, EatTogether }
 
 public enum ComfortAction { BreatheWithMe, TinyHug, ReadALoveNote, TakeAFiveMinuteBreak, Close }
 
@@ -112,8 +112,6 @@ public static class ActionBubbleLayout
     {
         OverlayAction.Pet => "pet",
         OverlayAction.DrinkWater => "drink water",
-        OverlayAction.StartFocus => "start focus",
-        OverlayAction.Tasks => "tasks",
         OverlayAction.LoveNote => "love note",
         OverlayAction.ComfortMe => "comfort me",
         // No emoji here: the overlay paints labels with Segoe UI, which has
@@ -128,8 +126,6 @@ public static class ActionBubbleLayout
     {
         OverlayAction.Pet => "OverlayActionPet",
         OverlayAction.DrinkWater => "OverlayActionDrinkWater",
-        OverlayAction.StartFocus => "OverlayActionStartFocus",
-        OverlayAction.Tasks => "OverlayActionTasks",
         OverlayAction.LoveNote => "OverlayActionLoveNote",
         OverlayAction.ComfortMe => "OverlayActionComfortMe",
         OverlayAction.EatTogether => "OverlayActionEatTogether",

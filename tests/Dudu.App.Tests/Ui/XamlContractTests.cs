@@ -61,35 +61,26 @@ public sealed class XamlContractTests
         var pagesDirectory = Path.Combine(root, "src", "Dudu.App", "Pages");
         var pageNames = new[]
         {
-            "HomePage", "RemindersPage", "TasksFocusPage", "LoveNotesPage",
-            "AppearancePage", "ConnectionPage", "PrivacyDataPage",
+            "HomePage", "LoveNotesPage", "SettingsPage",
         };
         var pageFiles = pageNames
             .Select(page => Path.Combine(pagesDirectory, $"{page}.xaml"))
             .ToArray();
 
-        Assert.Equal(7, pageFiles.Length);
+        Assert.Equal(3, pageFiles.Length);
         var allPages = string.Join("\n", pageFiles.Select(File.ReadAllText));
         var stubs = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "XamlCompileStubs.cs"));
         var pageContracts = new Dictionary<string, string>
         {
             ["HomePage"] = "HomeViewModel",
-            ["RemindersPage"] = "RemindersViewModel",
-            ["TasksFocusPage"] = "TasksFocusViewModel",
             ["LoveNotesPage"] = "LoveNotesViewModel",
-            ["AppearancePage"] = "AppearanceViewModel",
-            ["ConnectionPage"] = "ConnectionViewModel",
-            ["PrivacyDataPage"] = "PrivacyDataViewModel",
+            ["SettingsPage"] = "SettingsViewModel",
         };
         var expectedNamedElements = new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
             ["HomePage"] = ["HomeNextReminder", "HomeActiveFocus", "HomePetState", "HomePetAnimation", "HomeActionStatus", "HomeNextCountdown", "CountdownTargetBox", "CountdownTargetValidation", "HomeSaveCountdownButton", "HomeCheckInSummary", "HomeCheckInHistory", "StartupToggle", "StartupRecoveryPanel", "StartupRecoveryMessage", "RetryStartupButton"],
-            ["RemindersPage"] = ["ReminderList", "ScheduleBox", "LocalTimeBox", "RemindersLocalTimeValidation", "SundayBox", "MondayBox", "TuesdayBox", "WednesdayBox", "ThursdayBox", "FridayBox", "SaturdayBox", "IntervalBox", "QuietHoursBox", "SaveReminderButton"],
-            ["TasksFocusPage"] = ["TaskDueBox", "TaskDueValidation", "SaveTaskButton", "FocusCurrent"],
             ["LoveNotesPage"] = ["LoveNotesDailyLimit", "LoveNotesPendingCount"],
-            ["AppearancePage"] = ["ThemeBox"],
-            ["ConnectionPage"] = ["ConnectionAvailability", "ConnectionPairingCode", "ConnectionCodeExpiry", "ConnectionSessionCount"],
-            ["PrivacyDataPage"] = [],
+            ["SettingsPage"] = ["ThemeBox", "ConnectionAvailability", "ConnectionPairingCode", "ConnectionCodeExpiry", "ConnectionSessionCount"],
         };
         var viewModelSources = pageContracts.ToDictionary(
             pair => pair.Key,
@@ -134,8 +125,8 @@ public sealed class XamlContractTests
 
         foreach (var automationId in new[]
         {
-            "OverlayActionPet", "RemindersSave", "TasksSave", "FocusStart", "LoveNotesSave",
-            "AppearanceSave", "ConnectionCreateCode", "PrivacyBackup",
+            "OverlayActionPet", "LoveNotesSave",
+            "AppearanceSave", "ConnectionCreateCode",
             "AppearanceOutfit", "AppearanceSeasonalMode", "AppearanceSaveSeasonal",
         })
         {
@@ -151,12 +142,9 @@ public sealed class XamlContractTests
         Assert.Contains("SelectedItem=\"{x:Bind ViewModel.SelectedRemoteEnvelope, Mode=TwoWay}\"", loveNotes);
         Assert.Contains("AutomationProperties.AutomationId=\"LoveNotesRevealSelected\"", loveNotes);
         Assert.DoesNotContain("RemoteNoteList_SelectionChanged", loveNotes);
-        var privacy = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "PrivacyDataPage.xaml"));
-        Assert.Contains("AutomationProperties.AutomationId=\"PrivacyConfirmationMessage\"", privacy);
-        Assert.Contains("AutomationProperties.AutomationId=\"PrivacyConfirm\"", privacy);
-        // LOW: the Connection page's own destructive-confirmation flow (F3/H3's forget-pairing
-        // path among them) deserves the same automation coverage Privacy's already has.
-        var connection = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "ConnectionPage.xaml"));
+        // LOW: the partner connection section's destructive-confirmation flow (F3/H3's
+        // forget-pairing path among them) keeps its automation coverage on the Settings page.
+        var connection = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "SettingsPage.xaml"));
         Assert.Contains("AutomationProperties.AutomationId=\"ConnectionForgetPairing\"", connection);
         Assert.Contains("AutomationProperties.AutomationId=\"ConnectionConfirm\"", connection);
         Assert.Contains("AutomationProperties.AutomationId=\"ConnectionCancel\"", connection);
@@ -199,29 +187,21 @@ public sealed class XamlContractTests
         var pages = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["HomePage.xaml"] = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml")),
-            ["RemindersPage.xaml"] = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "RemindersPage.xaml")),
-            ["TasksFocusPage.xaml"] = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "TasksFocusPage.xaml")),
             ["LoveNotesPage.xaml"] = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "LoveNotesPage.xaml")),
-            ["AppearancePage.xaml"] = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "AppearancePage.xaml")),
-            ["ConnectionPage.xaml"] = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "ConnectionPage.xaml")),
-            ["PrivacyDataPage.xaml"] = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "PrivacyDataPage.xaml")),
+            ["SettingsPage.xaml"] = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "SettingsPage.xaml")),
         };
         var expectedBindings = new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
             ["HomePage.xaml"] = ["ViewModel.PauseDescription", "ViewModel.PetCommand", "ViewModel.PauseForOneHourCommand", "ViewModel.ResumeCommand", "ViewModel.CountdownTitle", "ViewModel.Countdowns", "ViewModel.CreateCountdownCommand", "ViewModel.SelectedCountdown", "ViewModel.DeleteCountdownCommand", "ViewModel.CheckInNote", "ViewModel.RecordCheckInCommand", "ViewModel.StatusMessage", "ViewModel.ErrorMessage"],
-            ["RemindersPage.xaml"] = ["ViewModel.Reminders", "ViewModel.SaveCommand", "ViewModel.CompleteCommand", "ViewModel.SnoozeCommand", "ViewModel.SaveReminderPreferencesCommand"],
-            ["TasksFocusPage.xaml"] = ["ViewModel.ActiveTasks", "ViewModel.CompletedTasks", "ViewModel.FocusHistory", "ViewModel.SaveTaskCommand", "ViewModel.StartFocusCommand", "ViewModel.PauseFocusCommand", "ViewModel.ResumeFocusCommand", "ViewModel.ExtendFocusCommand", "ViewModel.EndFocusCommand"],
             ["LoveNotesPage.xaml"] = ["ViewModel.LocalNotes", "ViewModel.PendingRemoteNotes", "ViewModel.SaveLocalNoteCommand", "ViewModel.DeleteLocalNoteCommand", "ViewModel.ShowLocalNoteCommand", "ViewModel.SaveOpenedNoteCommand"],
-            ["AppearancePage.xaml"] = ["ViewModel.SaveCommand", "ViewModel.SavePlacementCommand", "ViewModel.SaveShortcutCommand"],
-            ["ConnectionPage.xaml"] = ["ViewModel.CreateCodeCommand", "ViewModel.RequestRevokeSessionsCommand", "ViewModel.RequestDeleteRemoteDeviceCommand", "ViewModel.RequestForgetPairingCommand", "ViewModel.ConfirmCommand", "ViewModel.CancelConfirmationCommand"],
-            ["PrivacyDataPage.xaml"] = ["ViewModel.BackupCommand", "ViewModel.RequestRestoreCommand", "ViewModel.RequestDeleteLocalDataCommand", "ViewModel.RequestDeleteRemoteDataCommand", "ViewModel.ConfirmCommand", "ViewModel.CancelConfirmationCommand"],
+            ["SettingsPage.xaml"] = ["ViewModel.SaveCommand", "ViewModel.SavePlacementCommand", "ViewModel.SaveShortcutCommand", "ViewModel.Connection.CreateCodeCommand", "ViewModel.Connection.RequestRevokeSessionsCommand", "ViewModel.Connection.RequestDeleteRemoteDeviceCommand", "ViewModel.Connection.RequestForgetPairingCommand", "ViewModel.Connection.ConfirmCommand", "ViewModel.Connection.CancelConfirmationCommand"],
         };
         var expectedLabels = new[]
         {
-            "home", "reminders", "tasks and focus", "love notes", "appearance", "connection", "privacy and data",
-            "dudu status", "your reminders", "active tasks", "task details", "focus", "local note jar", "incoming notes",
-            "look and motion", "pet options", "shortcut", "pairing status", "paired sessions", "stored on this pc", "your data",
-            "weekdays", "completed tasks", "focus history", "dudu actions", "comfort actions",
+            "home", "love notes", "settings",
+            "dudu status", "local note jar", "incoming notes",
+            "look and motion", "pet options", "shortcut", "partner connection", "pairing status", "paired sessions",
+            "dudu actions", "comfort actions",
         };
 
         foreach (var (name, page) in pages)
@@ -262,6 +242,48 @@ public sealed class XamlContractTests
         Assert.Contains("private Image DuduFrameImage", stubs);
         Assert.Contains("private Frame OnboardingFrame", stubs);
         Assert.Contains("private Button DuduComfortButton", stubs);
+    }
+
+    [Fact]
+    public void Settings_shell_navigates_to_exactly_home_love_notes_and_settings()
+    {
+        var root = FindRepositoryRoot();
+        var shell = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.App", "Windows", "SettingsWindow.xaml"));
+        var code = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.App", "Windows", "SettingsWindow.xaml.cs"));
+        var stubs = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.App", "XamlCompileStubs.cs"));
+
+        var items = Regex.Matches(
+                shell,
+                "<NavigationViewItem Content=\"([^\"]+)\" Tag=\"([^\"]+)\" AutomationProperties\\.AutomationId=\"([^\"]+)\">")
+            .Select(match => (match.Groups[1].Value, match.Groups[2].Value, match.Groups[3].Value))
+            .ToArray();
+        Assert.Equal(
+            [("home", "home", "NavHome"), ("love notes", "notes", "NavLoveNotes"), ("settings", "settings", "NavSettings")],
+            items);
+        // Every item keeps an icon: LeftCompact shows only icons until the pane opens.
+        Assert.Equal(items.Length, Regex.Matches(shell, "<NavigationViewItem\\.Icon>").Count);
+
+        foreach (var (content, tag, automationId) in items)
+        {
+            Assert.Contains($"(\"{content}\", \"{tag}\", \"{automationId}\"),", stubs);
+            Assert.Contains($"\"{tag}\" => _", code);
+        }
+
+        foreach (var removed in new[] { "reminders", "tasks", "appearance", "connection", "privacy" })
+        {
+            Assert.DoesNotContain($"Tag=\"{removed}\"", shell);
+            Assert.DoesNotContain($"\"{removed}\" => _", code);
+        }
+
+        foreach (var removedPage in new[] { "RemindersPage", "TasksFocusPage", "AppearancePage", "ConnectionPage", "PrivacyDataPage" })
+        {
+            Assert.False(File.Exists(Path.Combine(root, "src", "Dudu.App", "Pages", $"{removedPage}.xaml")));
+            Assert.DoesNotContain(removedPage, code);
+            Assert.DoesNotContain($"partial class {removedPage}", stubs);
+        }
     }
 
     [Fact]
@@ -387,21 +409,17 @@ public sealed class XamlContractTests
     }
 
     [Fact]
-    public void Tasks_and_countdowns_offer_a_new_action_and_mirror_the_selection()
+    public void Countdowns_offer_a_new_action_and_mirror_the_selection()
     {
         // Once an item was selected there was no way to start a fresh one
         // (typing a new title overwrote it), and the countdown list kept its
         // highlight after the view model cleared the selection.
         var root = FindRepositoryRoot();
         var home = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml"));
-        var tasks = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "TasksFocusPage.xaml"));
 
         Assert.Contains("Command=\"{x:Bind ViewModel.NewCountdownCommand}\"", home);
         Assert.Contains("AutomationProperties.AutomationId=\"HomeNewCountdown\"", home);
         Assert.Contains("SelectedItem=\"{x:Bind ViewModel.SelectedCountdown, Mode=OneWay}\"", home);
-        Assert.Contains("Command=\"{x:Bind ViewModel.NewTaskCommand}\"", tasks);
-        Assert.Contains("AutomationProperties.AutomationId=\"TasksNew\"", tasks);
-        Assert.Contains("SelectedItem=\"{x:Bind ViewModel.SelectedTask, Mode=OneWay}\"", tasks);
     }
 
     [Fact]
@@ -411,7 +429,7 @@ public sealed class XamlContractTests
         // are saved by "save appearance", but sat under "save seasonal look",
         // which does not save them, so changes made there were lost.
         var root = FindRepositoryRoot();
-        var appearance = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "AppearancePage.xaml"));
+        var appearance = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "SettingsPage.xaml"));
         var save = appearance.IndexOf("AutomationProperties.AutomationId=\"AppearanceSave\"", StringComparison.Ordinal);
         var seasonal = appearance.IndexOf("AutomationProperties.AutomationId=\"AppearanceSaveSeasonal\"", StringComparison.Ordinal);
         var alwaysOnTop = appearance.IndexOf("AutomationProperties.AutomationId=\"AppearanceAlwaysOnTop\"", StringComparison.Ordinal);
@@ -478,7 +496,7 @@ public sealed class XamlContractTests
     public void Appearance_shows_the_shortcut_fallback_next_to_the_shortcut_box()
     {
         var root = FindRepositoryRoot();
-        var appearance = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "AppearancePage.xaml"));
+        var appearance = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "SettingsPage.xaml"));
         var box = appearance.IndexOf("AutomationProperties.AutomationId=\"AppearanceShortcut\"", StringComparison.Ordinal);
         var status = appearance.IndexOf("AutomationProperties.AutomationId=\"AppearanceShortcutStatus\"", StringComparison.Ordinal);
         var save = appearance.IndexOf("AutomationProperties.AutomationId=\"AppearanceSaveShortcut\"", StringComparison.Ordinal);

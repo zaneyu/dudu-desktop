@@ -32,7 +32,7 @@ public sealed class NotificationColdStartTests
         Assert.False(NotificationInvocationRouter.ActsInBackground(null));
 
     [Fact]
-    public async Task A_cold_start_body_click_opens_the_reminders_page()
+    public async Task A_cold_start_reminder_body_click_opens_home()
     {
         var navigated = new List<string>();
         var router = new NotificationInvocationRouter(
@@ -44,7 +44,7 @@ public sealed class NotificationColdStartTests
             NotificationActivation.TryParse("action=open-reminder&reminderId=r-1"),
             TestContext.Current.CancellationToken);
 
-        Assert.Equal(["reminders"], navigated);
+        Assert.Equal(["home"], navigated);
     }
 
     [Fact]

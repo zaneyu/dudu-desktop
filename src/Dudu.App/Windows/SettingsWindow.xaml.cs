@@ -1,7 +1,6 @@
 using Dudu.App.Animation;
 using Dudu.App.Hosting;
 using Dudu.App.Pages;
-using Dudu.App.System;
 using Dudu.App.ViewModels;
 using Dudu.Core.Assets;
 using Dudu.Core.Models;
@@ -20,12 +19,8 @@ public sealed partial class SettingsWindow : UserControl
     private readonly SettingsShellViewModel _shell;
     private readonly OnboardingViewModel _onboarding;
     private HomePage? _homePage;
-    private RemindersPage? _remindersPage;
-    private TasksFocusPage? _tasksFocusPage;
     private LoveNotesPage? _loveNotesPage;
-    private AppearancePage? _appearancePage;
-    private ConnectionPage? _connectionPage;
-    private PrivacyDataPage? _privacyDataPage;
+    private SettingsPage? _settingsPage;
     private string? _pendingDestination;
     private bool _featurePagesInitialized;
     private bool _initialized;
@@ -145,40 +140,23 @@ public sealed partial class SettingsWindow : UserControl
     private void OnUnloaded(object sender, RoutedEventArgs args)
     {
         _duduTimer.Stop();
-
-        // Defense in depth for the same leak TasksFocusPage.Page_Unloaded
-        // already guards against: App builds a fresh SettingsWindow (-> new
-        // page -> new view model) on every open, so a subscription left on
-        // the singleton FocusService.SessionExpired that never gets
-        // detached leaks forever. Page_Unloaded may not fire at all when
-        // the window is closed outright rather than navigated away from;
-        // this Unloaded on the window's own content is a second chance to
-        // detach in that case. Idempotent (DetachFocusExpiry no-ops if
-        // already detached), and safe if feature pages were never created
-        // (e.g. closed mid-onboarding).
-        _tasksFocusPage?.ViewModel.DetachFocusExpiry();
-        // The shared reminder actions outlive this window; stop refreshing a
-        // page nobody can see (Unloaded does not always run on window close).
-        _remindersPage?.DetachLiveUpdates();
     }
 
     /// <summary>Called by App when an already-open settings window is shown again
     /// (tray, pet, toast). Cached pages only refresh on Loaded, which does not fire for
     /// the page already on screen, so it kept showing whatever it loaded on its last
-    /// visit -- a reminder that has since fired, a note that has since arrived. Re-runs
-    /// the same view-model refresh its Loaded handler does. Appearance is left alone
-    /// (its refresh would overwrite unsaved edits, and nothing else changes it) and
-    /// Privacy has no stored data to reload.</summary>
+    /// visit -- a note that has since arrived, a partner who has since paired. Re-runs
+    /// the same view-model refresh its Loaded handler does. On Settings only the partner
+    /// connection section is re-read: reloading the look-and-motion fields would
+    /// overwrite unsaved edits, and nothing else changes them.</summary>
     public async void RefreshCurrentPage()
     {
         if (!_featurePagesInitialized) return;
         Func<Task>? refresh = ContentFrame.Content switch
         {
             HomePage { IsLoaded: true } page => () => page.ViewModel.RefreshAsync(),
-            RemindersPage { IsLoaded: true } page => () => page.ViewModel.RefreshAsync(),
-            TasksFocusPage { IsLoaded: true } page => () => page.ViewModel.RefreshAsync(),
             LoveNotesPage { IsLoaded: true } page => () => page.ViewModel.RefreshAsync(),
-            ConnectionPage { IsLoaded: true } page => () => page.ViewModel.RefreshAsync(),
+            SettingsPage { IsLoaded: true } page => page.RefreshConnectionAsync,
             _ => null,
         };
         if (refresh is null) return;
@@ -201,10 +179,8 @@ public sealed partial class SettingsWindow : UserControl
     /// WinUI 3 raises reliably (Unloaded is not guaranteed for a closed window's content).</summary>
     public void OnHostWindowClosed()
     {
-        _tasksFocusPage?.ViewModel.DetachFocusExpiry();
-        // The page countdown timers run on the app's UI thread, which outlives this
-        // window; left running they would tick (and keep the pages alive) forever.
-        _tasksFocusPage?.StopFocusCountdown();
+        // The page countdown timer runs on the app's UI thread, which outlives this
+        // window; left running it would tick (and keep the page alive) forever.
         _homePage?.StopFocusCountdown();
     }
 
@@ -393,27 +369,11 @@ public sealed partial class SettingsWindow : UserControl
             new HomeViewModel(features),
             _context.StartupSettings,
             _context.OverlayCommands);
-        _remindersPage = new RemindersPage(new RemindersViewModel(features, _context.ReminderActions));
-        _tasksFocusPage = new TasksFocusPage(new TasksFocusViewModel(features)
-        {
-            // FocusService.SessionExpired (a naturally-expired session, see
-            // TasksFocusViewModel.OnFocusSessionExpired) is raised from the
-            // background reminder tick thread, not guaranteed to be the UI
-            // thread. Without this, MutateAsync runs that reload's mutations
-            // inline on whichever thread raised the event. AwaitableUiDispatcher
-            // runs inline when already on the UI thread (HasThreadAccess), so
-            // this only adds real marshalling for the off-thread case.
-            UiDispatcher = new AwaitableUiDispatcher(
-                () => DispatcherQueue.HasThreadAccess,
-                callback => DispatcherQueue.TryEnqueue(() => callback())).InvokeAsync,
-        });
         _loveNotesPage = new LoveNotesPage(new LoveNotesViewModel(features));
-        _appearancePage = new AppearancePage(new AppearanceViewModel(
+        _settingsPage = new SettingsPage(new SettingsViewModel(
             features,
             ApplyRequestedTheme,
             _context.AvailableOutfitKeys));
-        _connectionPage = new ConnectionPage(new ConnectionViewModel(features));
-        _privacyDataPage = new PrivacyDataPage(new PrivacyDataViewModel(features));
         _featurePagesInitialized = true;
     }
 
@@ -425,7 +385,15 @@ public sealed partial class SettingsWindow : UserControl
             return;
         }
 
-        if (!_shell.Navigate(tag)) return;
+        if (!_shell.Navigate(tag))
+        {
+            // A retired destination (an old "reminders" route, say) must never leave
+            // the first paint blank; once a page is showing, just stay on it.
+            if (ContentFrame.Content is not null) return;
+            tag = "home";
+            _shell.Navigate(tag);
+        }
+
         RootNavigation.SelectedItem = RootNavigation.MenuItems
             .OfType<NavigationViewItem>()
             .FirstOrDefault(item => string.Equals(item.Tag as string, tag, StringComparison.Ordinal));
@@ -433,12 +401,8 @@ public sealed partial class SettingsWindow : UserControl
         ContentFrame.Content = tag switch
         {
             "home" => _homePage,
-            "reminders" => _remindersPage,
-            "tasks" => _tasksFocusPage,
             "notes" => _loveNotesPage,
-            "appearance" => _appearancePage,
-            "connection" => _connectionPage,
-            "privacy" => _privacyDataPage,
+            "settings" => _settingsPage,
             _ => _homePage,
         };
     }

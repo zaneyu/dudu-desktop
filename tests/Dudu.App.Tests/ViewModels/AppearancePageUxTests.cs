@@ -5,14 +5,14 @@ using Xunit;
 
 namespace Dudu.App.Tests.ViewModels;
 
-/// <summary>UI/UX regressions on the Appearance page and its view model.</summary>
+/// <summary>UI/UX regressions on the Settings page (look and motion) and its view model.</summary>
 public sealed class AppearancePageUxTests
 {
     [Fact]
     public void Pet_size_has_a_readable_value_label_that_follows_the_slider()
     {
         var fixture = SettingsDataPagesFixture.Create();
-        var viewModel = new AppearanceViewModel(fixture.Context);
+        var viewModel = new SettingsViewModel(fixture.Context);
         var changed = new List<string?>();
         viewModel.PropertyChanged += (_, args) => changed.Add(args.PropertyName);
 
@@ -21,7 +21,7 @@ public sealed class AppearancePageUxTests
         viewModel.PetScale = 1.25;
 
         Assert.Equal("125%", viewModel.PetScaleLabel);
-        Assert.Contains(nameof(AppearanceViewModel.PetScaleLabel), changed);
+        Assert.Contains(nameof(SettingsViewModel.PetScaleLabel), changed);
     }
 
     [Fact]
@@ -30,7 +30,7 @@ public sealed class AppearancePageUxTests
         var fixture = SettingsDataPagesFixture.Create(
             SettingsDataPagesFixture.UtcMinusFive,
             Preferences.Default with { Anniversary = new MonthDay(2, 14), Birthday = new MonthDay(2, 29) });
-        var viewModel = new AppearanceViewModel(fixture.Context);
+        var viewModel = new SettingsViewModel(fixture.Context);
 
         await viewModel.RefreshAsync(TestContext.Current.CancellationToken);
 
@@ -57,7 +57,7 @@ public sealed class AppearancePageUxTests
         var ct = TestContext.Current.CancellationToken;
         await fixture.Placements.SaveAsync(new PetPlacement("first monitor", 0.3, 0.4, 1.0), ct);
         await fixture.Placements.SaveAsync(new PetPlacement("second monitor", 0.5, 0.5, 1.8), ct);
-        var viewModel = new AppearanceViewModel(fixture.Context);
+        var viewModel = new SettingsViewModel(fixture.Context);
         await viewModel.RefreshAsync(ct);
         viewModel.MonitorDeviceName = "second monitor";
 
@@ -72,7 +72,7 @@ public sealed class AppearancePageUxTests
         Assert.Equal("second monitor", viewModel.MonitorDeviceName);
         Assert.Equal(1.8, viewModel.PetScale);
         // Re-announced so the ComboBox re-selects it after its items were rebuilt.
-        Assert.Contains(nameof(AppearanceViewModel.MonitorDeviceName), changed);
+        Assert.Contains(nameof(SettingsViewModel.MonitorDeviceName), changed);
     }
 
     [Theory]
@@ -87,7 +87,7 @@ public sealed class AppearancePageUxTests
             applied.Add(value);
             return Task.CompletedTask;
         });
-        var viewModel = new AppearanceViewModel(fixture.Context) { GlobalShortcut = shortcut };
+        var viewModel = new SettingsViewModel(fixture.Context) { GlobalShortcut = shortcut };
 
         await viewModel.SaveShortcutAsync(TestContext.Current.CancellationToken);
 
@@ -104,7 +104,7 @@ public sealed class AppearancePageUxTests
             applied.Add(value);
             return Task.CompletedTask;
         });
-        var viewModel = new AppearanceViewModel(fixture.Context) { GlobalShortcut = " ctrl + alt + k " };
+        var viewModel = new SettingsViewModel(fixture.Context) { GlobalShortcut = " ctrl + alt + k " };
 
         await viewModel.SaveShortcutAsync(TestContext.Current.CancellationToken);
 
@@ -118,7 +118,7 @@ public sealed class AppearancePageUxTests
     public void Sliders_step_in_fine_increments_and_value_labels_are_announced()
     {
         var xaml = File.ReadAllText(Path.Combine(
-            ConnectionPageUxTests.FindRepositoryRoot(), "src", "Dudu.App", "Pages", "AppearancePage.xaml"));
+            SettingsPageConnectionTests.FindRepositoryRoot(), "src", "Dudu.App", "Pages", "SettingsPage.xaml"));
 
         // Slider.StepFrequency defaults to 1, so without it dragging the 0..1 volume slider
         // could only land on 0% or 100%, and pet size only on 50%/150%/200%.

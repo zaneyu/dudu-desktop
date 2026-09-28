@@ -24,7 +24,7 @@ public sealed class AppearanceShortcutPersistenceTests
             persistedWhenRegistered.Add(fixture!.Preferences.Current?.GlobalShortcut);
             return Task.CompletedTask;
         });
-        var viewModel = new AppearanceViewModel(fixture.Context) { GlobalShortcut = "ctrl + alt + k" };
+        var viewModel = new SettingsViewModel(fixture.Context) { GlobalShortcut = "ctrl + alt + k" };
 
         await viewModel.SaveShortcutAsync(ct);
 
@@ -43,7 +43,7 @@ public sealed class AppearanceShortcutPersistenceTests
         var fixture = SettingsDataPagesFixture.Create(
             initialPreferences: initial,
             setGlobalShortcutAsync: (_, _) => Task.CompletedTask);
-        var viewModel = new AppearanceViewModel(fixture.Context) { GlobalShortcut = "Ctrl+Shift+F9" };
+        var viewModel = new SettingsViewModel(fixture.Context) { GlobalShortcut = "Ctrl+Shift+F9" };
 
         await viewModel.SaveShortcutAsync(ct);
 
@@ -58,7 +58,7 @@ public sealed class AppearanceShortcutPersistenceTests
             initialPreferences: Preferences.Default with { GlobalShortcut = "Ctrl+Alt+J" },
             setGlobalShortcutAsync: (value, _) => Task.FromException(
                 new HotkeyConflictException($"alala {value} already taken by another shortcut")));
-        var viewModel = new AppearanceViewModel(fixture.Context) { GlobalShortcut = "Ctrl+Alt+K" };
+        var viewModel = new SettingsViewModel(fixture.Context) { GlobalShortcut = "Ctrl+Alt+K" };
 
         await viewModel.SaveShortcutAsync(ct);
 
@@ -82,7 +82,7 @@ public sealed class AppearanceShortcutPersistenceTests
                 applied.Add(value);
                 return Task.CompletedTask;
             });
-        var viewModel = new AppearanceViewModel(fixture.Context) { GlobalShortcut = "alt+ctrl+d" };
+        var viewModel = new SettingsViewModel(fixture.Context) { GlobalShortcut = "alt+ctrl+d" };
 
         await viewModel.SaveShortcutAsync(ct);
 
@@ -102,7 +102,7 @@ public sealed class AppearanceShortcutPersistenceTests
         var fixture = SettingsDataPagesFixture.Create(
             initialPreferences: Preferences.Default with { GlobalShortcut = stored });
 
-        var viewModel = new AppearanceViewModel(fixture.Context);
+        var viewModel = new SettingsViewModel(fixture.Context);
 
         Assert.Equal(expected, viewModel.GlobalShortcut);
     }
@@ -112,7 +112,7 @@ public sealed class AppearanceShortcutPersistenceTests
     {
         var ct = TestContext.Current.CancellationToken;
         var fixture = SettingsDataPagesFixture.Create(setGlobalShortcutAsync: (_, _) => Task.CompletedTask);
-        var viewModel = new AppearanceViewModel(fixture.Context);
+        var viewModel = new SettingsViewModel(fixture.Context);
         Assert.Equal("Ctrl+Alt+D", viewModel.GlobalShortcut);
 
         // Another writer (e.g. a restore) changed the stored shortcut while the page was cached.
@@ -139,7 +139,7 @@ public sealed class AppearanceShortcutPersistenceTests
             },
             getGlobalShortcutStatus: () => status);
 
-        var viewModel = new AppearanceViewModel(fixture.Context);
+        var viewModel = new SettingsViewModel(fixture.Context);
         Assert.Equal("Ctrl+Alt+K", viewModel.GlobalShortcut);
         Assert.Equal("Ctrl+Alt+K is taken by another app, Ctrl+Alt+D opens dudu for now", viewModel.ShortcutStatus);
         Assert.True(viewModel.HasShortcutStatus);
@@ -158,7 +158,7 @@ public sealed class AppearanceShortcutPersistenceTests
     [Fact]
     public void Without_a_runtime_status_the_page_shows_no_shortcut_note()
     {
-        var viewModel = new AppearanceViewModel(SettingsDataPagesFixture.Create().Context);
+        var viewModel = new SettingsViewModel(SettingsDataPagesFixture.Create().Context);
 
         Assert.Equal(string.Empty, viewModel.ShortcutStatus);
         Assert.False(viewModel.HasShortcutStatus);

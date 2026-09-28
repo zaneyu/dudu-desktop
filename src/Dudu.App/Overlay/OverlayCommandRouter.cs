@@ -36,8 +36,6 @@ public sealed class OverlayCommandRouter
     [
         OverlayAction.Pet,
         OverlayAction.DrinkWater,
-        OverlayAction.StartFocus,
-        OverlayAction.Tasks,
         OverlayAction.LoveNote,
         OverlayAction.ComfortMe,
         OverlayAction.EatTogether,
@@ -88,8 +86,6 @@ public sealed class OverlayCommandRouter
         {
             OverlayAction.Pet => ExecutePetAsync(cancellationToken),
             OverlayAction.DrinkWater => ExecuteDrinkWaterAsync(cancellationToken),
-            OverlayAction.StartFocus => ExecuteStartFocusAsync(cancellationToken),
-            OverlayAction.Tasks => NavigateAsync("tasks", cancellationToken),
             OverlayAction.LoveNote => NavigateAsync("notes", cancellationToken),
             OverlayAction.ComfortMe => ExecuteComfortAsync(cancellationToken),
             OverlayAction.EatTogether => ToggleEatTogetherAsync(cancellationToken),
@@ -123,12 +119,6 @@ public sealed class OverlayCommandRouter
             case OverlayAction.DrinkWater:
                 await ExecuteDrinkWaterAsync(cancellationToken);
                 break;
-            case OverlayAction.StartFocus:
-                await ExecuteStartFocusAsync(cancellationToken);
-                return;
-            case OverlayAction.Tasks:
-                await NavigateAsync("tasks", cancellationToken);
-                return;
             case OverlayAction.LoveNote:
                 await NavigateAsync("notes", cancellationToken);
                 return;
@@ -163,8 +153,7 @@ public sealed class OverlayCommandRouter
     public static string EquivalentSettingsDestination(OverlayAction action) => action switch
     {
         OverlayAction.Pet => "home",
-        OverlayAction.DrinkWater => "reminders",
-        OverlayAction.StartFocus or OverlayAction.Tasks => "tasks",
+        OverlayAction.DrinkWater => "home",
         OverlayAction.LoveNote => "notes",
         OverlayAction.ComfortMe or OverlayAction.EatTogether => "home",
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "oh no unknown overlay action"),
@@ -290,13 +279,6 @@ public sealed class OverlayCommandRouter
                 exception.GetType().FullName,
                 exception.HResult);
         }
-    }
-
-    private async Task ExecuteStartFocusAsync(CancellationToken cancellationToken)
-    {
-        var vm = new TasksFocusViewModel(_context);
-        await vm.StartFocusOrThrowAsync(cancellationToken);
-        await NavigateAsync("tasks", cancellationToken);
     }
 
     private Task ExecuteComfortAsync(CancellationToken cancellationToken)

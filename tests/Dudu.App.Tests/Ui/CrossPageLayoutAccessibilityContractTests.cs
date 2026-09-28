@@ -12,13 +12,9 @@ public sealed class CrossPageLayoutAccessibilityContractTests
 {
     public static TheoryData<string> FeaturePages => new()
     {
-        "AppearancePage",
-        "ConnectionPage",
         "HomePage",
         "LoveNotesPage",
-        "PrivacyDataPage",
-        "RemindersPage",
-        "TasksFocusPage",
+        "SettingsPage",
     };
 
     [Theory]
@@ -67,6 +63,25 @@ public sealed class CrossPageLayoutAccessibilityContractTests
         }
     }
 
+    [Fact]
+    public void Settings_connection_status_and_error_rows_let_their_text_wrap()
+    {
+        // The partner connection section keeps its own status/error lines next to the
+        // look-and-motion ones in the Settings page's sticky feedback area.
+        var xaml = Read("src", "Dudu.App", "Pages", "SettingsPage.xaml");
+
+        foreach (var flag in new[] { "HasStatus", "HasError" })
+        {
+            var row = Regex.Match(
+                xaml,
+                $"<Grid ColumnSpacing=\"6\" Visibility=\"\\{{x:Bind ViewModel\\.Connection\\.{flag}, Mode=OneWay\\}}\">(.*?)</Grid>\\n",
+                RegexOptions.Singleline);
+            Assert.True(row.Success, $"SettingsPage: Connection.{flag} row is not a wrapping Grid");
+            Assert.Contains("<ColumnDefinition Width=\"*\" />", row.Value);
+            Assert.Matches("<TextBlock Grid.Column=\"1\"[^>]*TextWrapping=\"Wrap\"", row.Value);
+        }
+    }
+
     [Theory]
     [MemberData(nameof(FeaturePages))]
     public void Bound_dynamic_text_is_also_the_accessible_name(string page)
@@ -76,7 +91,7 @@ public sealed class CrossPageLayoutAccessibilityContractTests
         var xaml = Read("src", "Dudu.App", "Pages", $"{page}.xaml");
         var bound = Regex.Matches(
             xaml,
-            "<TextBlock\\s[^>]*Text=\"\\{x:Bind ViewModel\\.(\\w+), Mode=OneWay\\}\"[^>]*AutomationProperties\\.AutomationId=\"[^\"]+\"[^>]*>");
+            "<TextBlock\\s[^>]*Text=\"\\{x:Bind ViewModel\\.([\\w.]+), Mode=OneWay\\}\"[^>]*AutomationProperties\\.AutomationId=\"[^\"]+\"[^>]*>");
 
         Assert.True(bound.Count >= 2, $"{page}: expected bound status texts, found {bound.Count}");
         foreach (Match tag in bound)
@@ -88,15 +103,12 @@ public sealed class CrossPageLayoutAccessibilityContractTests
     }
 
     [Theory]
-    [InlineData("ConnectionPage", "ConnectionAvailability")]
-    [InlineData("ConnectionPage", "ConnectionPairingCode")]
-    [InlineData("ConnectionPage", "ConnectionCodeExpiry")]
-    [InlineData("ConnectionPage", "ConnectionSessionCount")]
+    [InlineData("SettingsPage", "ConnectionAvailability")]
+    [InlineData("SettingsPage", "ConnectionPairingCode")]
+    [InlineData("SettingsPage", "ConnectionCodeExpiry")]
+    [InlineData("SettingsPage", "ConnectionSessionCount")]
     [InlineData("LoveNotesPage", "LoveNotesDailyLimit")]
     [InlineData("LoveNotesPage", "LoveNotesPendingCount")]
-    [InlineData("RemindersPage", "RemindersLocalTimeValidation")]
-    [InlineData("TasksFocusPage", "TaskDueValidation")]
-    [InlineData("TasksFocusPage", "FocusCurrent")]
     public void Code_behind_text_keeps_the_accessible_name_in_step(string page, string element)
     {
         var code = Read("src", "Dudu.App", "Pages", $"{page}.xaml.cs");
@@ -113,19 +125,6 @@ public sealed class CrossPageLayoutAccessibilityContractTests
         {
             Assert.Matches(@"block\.Text = text;\n\s*AutomationProperties\.SetName\(block, text\);", code);
         }
-    }
-
-    [Theory]
-    [InlineData("RemindersPage", "RemindersLocalTimeValidation", "SetValidationText")]
-    [InlineData("TasksFocusPage", "TaskDueValidation", "SetDueValidationText")]
-    public void Validation_text_is_only_written_through_the_naming_helper(string page, string element, string helper)
-    {
-        var code = Read("src", "Dudu.App", "Pages", $"{page}.xaml.cs");
-        var helperBody = Slice(code, $"private void {helper}(string text)", "\n    }");
-
-        Assert.Single(Regex.Matches(code, $"{element}\\.Text\\s*="));
-        Assert.Contains($"{element}.Text = text;", helperBody);
-        Assert.Contains($"AutomationProperties.SetName({element},", helperBody);
     }
 
     [Fact]
@@ -145,11 +144,10 @@ public sealed class CrossPageLayoutAccessibilityContractTests
         Assert.Contains("catch (Exception exception)", tick);
 
         // Unloaded is not guaranteed for a closed window's content, and the UI thread
-        // outlives the settings window, so closing it stops both page timers.
+        // outlives the settings window, so closing it stops the page timer.
         var shell = Read("src", "Dudu.App", "Windows", "SettingsWindow.xaml.cs");
         var closed = Slice(shell, "public void OnHostWindowClosed()", "\n    }\n");
         Assert.Contains("_homePage?.StopFocusCountdown();", closed);
-        Assert.Contains("_tasksFocusPage?.StopFocusCountdown();", closed);
     }
 
     [Fact]
@@ -174,13 +172,15 @@ public sealed class CrossPageLayoutAccessibilityContractTests
         var shell = Read("src", "Dudu.App", "Windows", "SettingsWindow.xaml.cs");
         var refresh = Slice(shell, "public async void RefreshCurrentPage()", "\n    }\n");
         Assert.Contains("if (!_featurePagesInitialized) return;", refresh);
-        foreach (var page in new[] { "HomePage", "RemindersPage", "TasksFocusPage", "LoveNotesPage", "ConnectionPage" })
+        foreach (var page in new[] { "HomePage", "LoveNotesPage" })
         {
             Assert.Contains($"{page} {{ IsLoaded: true }} page => () => page.ViewModel.RefreshAsync()", refresh);
         }
 
-        // Appearance's refresh would overwrite unsaved edits with stored preferences.
-        Assert.DoesNotContain("AppearancePage", refresh);
+        // Settings re-reads only its partner connection section: the look-and-motion
+        // refresh would overwrite unsaved edits with stored preferences.
+        Assert.Contains("SettingsPage { IsLoaded: true } page => page.RefreshConnectionAsync", refresh);
+        Assert.DoesNotContain("SettingsPage { IsLoaded: true } page => () => page.ViewModel.RefreshAsync()", refresh);
         Assert.Contains("catch (Exception exception)", refresh);
     }
 

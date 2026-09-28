@@ -5,8 +5,9 @@ using Xunit;
 
 namespace Dudu.App.Tests.ViewModels;
 
-/// <summary>UI/UX regressions on the Connection (pairing) page's view model.</summary>
-public sealed class ConnectionPageUxTests
+/// <summary>UI/UX regressions on the partner connection (pairing) section of the Settings
+/// page and its view model. The section used to be a separate Connection page.</summary>
+public sealed class SettingsPageConnectionTests
 {
     private static PairingCodeResult LiveCode(SettingsDataPagesFixture fixture, string code = "ABCD2345") =>
         new(PairingAvailability.Available, code, fixture.Clock.UtcNow.AddMinutes(10));
@@ -197,16 +198,32 @@ public sealed class ConnectionPageUxTests
     }
 
     [Fact]
-    public void Connection_page_binds_the_new_ux_state()
+    public void Settings_view_model_hosts_the_connection_section()
     {
-        var xaml = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "Dudu.App", "Pages", "ConnectionPage.xaml"));
-        var code = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "Dudu.App", "Pages", "ConnectionPage.xaml.cs"));
+        var fixture = SettingsDataPagesFixture.Create();
+        var connection = new ConnectionViewModel(fixture.Context);
 
-        Assert.Contains("Visibility=\"{x:Bind ViewModel.HasPendingConfirmation, Mode=OneWay}\" AutomationProperties.AutomationId=\"ConnectionConfirmationPanel\"", xaml);
-        Assert.Contains("Command=\"{x:Bind ViewModel.RefreshCommand}\"", xaml);
-        Assert.Contains("ViewModel.UpdateCodeExpiry()", code);
-        Assert.Contains("ViewModel.PairingCodeText", code);
-        Assert.Contains("ViewModel.CodeExpiryText", code);
+        var settings = new SettingsViewModel(fixture.Context, connection: connection);
+
+        Assert.Same(connection, settings.Connection);
+        Assert.NotNull(new SettingsViewModel(fixture.Context).Connection);
+    }
+
+    [Fact]
+    public void Settings_page_binds_the_connection_ux_state()
+    {
+        var xaml = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "Dudu.App", "Pages", "SettingsPage.xaml"));
+        var code = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "Dudu.App", "Pages", "SettingsPage.xaml.cs"));
+
+        Assert.Contains("Text=\"partner connection\"", xaml);
+        Assert.Contains("Visibility=\"{x:Bind ViewModel.Connection.HasPendingConfirmation, Mode=OneWay}\" AutomationProperties.AutomationId=\"ConnectionConfirmationPanel\"", xaml);
+        Assert.Contains("Command=\"{x:Bind ViewModel.Connection.RefreshCommand}\"", xaml);
+        Assert.Contains("ViewModel.Connection.UpdateCodeExpiry()", code);
+        Assert.Contains("connection.PairingCodeText", code);
+        Assert.Contains("connection.CodeExpiryText", code);
+        // The 15 s expiry timer runs only while the page is loaded.
+        Assert.Contains("_expiryTimer.Start()", code);
+        Assert.Contains("_expiryTimer.Stop()", code);
         // TextBlocks carry a fixed AutomationProperties.Name in XAML; the code-behind must keep
         // it in step with the displayed text or Narrator never reads the code/status.
         Assert.Contains("AutomationProperties.SetName(block, text)", code);

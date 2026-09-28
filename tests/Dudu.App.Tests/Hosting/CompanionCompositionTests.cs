@@ -61,9 +61,9 @@ public sealed class CompanionCompositionTests
 
         await WindowsCompanionProductionComposition.DispatchSettingsDestinationAsync(
             actions,
-            "tasks",
+            "notes",
             TestContext.Current.CancellationToken);
-        Assert.Equal(["tasks"], destinations);
+        Assert.Equal(["notes"], destinations);
 
         var unavailable = new CompanionUiActions(
             _ => Task.CompletedTask,

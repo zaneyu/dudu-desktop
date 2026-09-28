@@ -47,12 +47,8 @@ namespace Dudu.App.Windows
             foreach (var item in new[]
             {
                 ("home", "home", "NavHome"),
-                ("reminders", "reminders", "NavReminders"),
-                ("tasks and focus", "tasks", "NavTasksFocus"),
                 ("love notes", "notes", "NavLoveNotes"),
-                ("appearance", "appearance", "NavAppearance"),
-                ("connection", "connection", "NavConnection"),
-                ("privacy and data", "privacy", "NavPrivacy"),
+                ("settings", "settings", "NavSettings"),
             })
             {
                 var navigationItem = new NavigationViewItem { Content = item.Item1, Tag = item.Item2 };
@@ -103,58 +99,6 @@ namespace Dudu.App.Pages
         }
     }
 
-    public sealed partial class RemindersPage
-    {
-        private ListView ReminderList = null!;
-        private ComboBox ScheduleBox = null!;
-        private TextBox LocalTimeBox = null!;
-        private TextBlock RemindersLocalTimeValidation = null!;
-        private CheckBox SundayBox = null!;
-        private CheckBox MondayBox = null!;
-        private CheckBox TuesdayBox = null!;
-        private CheckBox WednesdayBox = null!;
-        private CheckBox ThursdayBox = null!;
-        private CheckBox FridayBox = null!;
-        private CheckBox SaturdayBox = null!;
-        private NumberBox IntervalBox = null!;
-        private ComboBox QuietHoursBox = null!;
-        private Button SaveReminderButton = null!;
-
-        private void InitializeComponent()
-        {
-            ReminderList = new ListView();
-            ScheduleBox = new ComboBox();
-            LocalTimeBox = new TextBox();
-            RemindersLocalTimeValidation = new TextBlock();
-            SundayBox = new CheckBox();
-            MondayBox = new CheckBox();
-            TuesdayBox = new CheckBox();
-            WednesdayBox = new CheckBox();
-            ThursdayBox = new CheckBox();
-            FridayBox = new CheckBox();
-            SaturdayBox = new CheckBox();
-            IntervalBox = new NumberBox();
-            QuietHoursBox = new ComboBox();
-            SaveReminderButton = new Button();
-        }
-    }
-
-    public sealed partial class TasksFocusPage
-    {
-        private TextBox TaskDueBox = null!;
-        private TextBlock TaskDueValidation = null!;
-        private Button SaveTaskButton = null!;
-        private TextBlock FocusCurrent = null!;
-
-        private void InitializeComponent()
-        {
-            TaskDueBox = new TextBox();
-            TaskDueValidation = new TextBlock();
-            SaveTaskButton = new Button();
-            FocusCurrent = new TextBlock();
-        }
-    }
-
     public sealed partial class LoveNotesPage
     {
         private TextBlock LoveNotesDailyLimit = null!;
@@ -167,18 +111,9 @@ namespace Dudu.App.Pages
         }
     }
 
-    public sealed partial class AppearancePage
+    public sealed partial class SettingsPage
     {
         private ComboBox ThemeBox = null!;
-
-        private void InitializeComponent()
-        {
-            ThemeBox = new ComboBox();
-        }
-    }
-
-    public sealed partial class ConnectionPage
-    {
         private TextBlock ConnectionAvailability = null!;
         private TextBlock ConnectionPairingCode = null!;
         private TextBlock ConnectionCodeExpiry = null!;
@@ -186,16 +121,12 @@ namespace Dudu.App.Pages
 
         private void InitializeComponent()
         {
+            ThemeBox = new ComboBox();
             ConnectionAvailability = new TextBlock();
             ConnectionPairingCode = new TextBlock();
             ConnectionCodeExpiry = new TextBlock();
             ConnectionSessionCount = new TextBlock();
         }
-    }
-
-    public sealed partial class PrivacyDataPage
-    {
-        private void InitializeComponent() { }
     }
 
     public sealed partial class OnboardingPage

@@ -6,7 +6,9 @@ using Dudu.Core.Models;
 
 namespace Dudu.App.ViewModels;
 
-public sealed class AppearanceViewModel : FeatureViewModelBase
+/// <summary>The one Settings destination: look and motion, pet options, shortcut and
+/// the partner connection (the old Appearance page, with Connection folded in).</summary>
+public sealed class SettingsViewModel : FeatureViewModelBase
 {
     private readonly CompanionFeatureContext _context;
     private readonly Action<AppTheme> _applyShellTheme;
@@ -27,12 +29,14 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
     private string _globalShortcut = "Ctrl+Alt+D";
     private string _shortcutStatus = string.Empty;
 
-    public AppearanceViewModel(
+    public SettingsViewModel(
         CompanionFeatureContext context,
         Action<AppTheme>? applyShellTheme = null,
-        IReadOnlyList<string>? availableOutfitKeys = null)
+        IReadOnlyList<string>? availableOutfitKeys = null,
+        ConnectionViewModel? connection = null)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
+        Connection = connection ?? new ConnectionViewModel(context);
         _applyShellTheme = applyShellTheme ?? (_ => { });
         var preferences = context.CurrentPreferences;
         _theme = preferences.Theme;
@@ -56,6 +60,8 @@ public sealed class AppearanceViewModel : FeatureViewModelBase
         SaveShortcutCommand = new AsyncRelayCommand((CancellationToken ct) => SaveShortcutAsync(ct));
     }
 
+    /// <summary>The "partner connection" section of the page.</summary>
+    public ConnectionViewModel Connection { get; }
     public IAsyncRelayCommand SaveCommand { get; }
     public IAsyncRelayCommand SavePlacementCommand { get; }
     public IAsyncRelayCommand ApplyOutfitCommand { get; }
