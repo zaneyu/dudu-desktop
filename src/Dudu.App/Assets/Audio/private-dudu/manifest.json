@@ -71,8 +71,8 @@
         {
           "CueId": "song-01",
           "FilePath": "dudu-song/song-01.wav",
-          "DurationMs": 8800,
-          "Sha256": "2567b9254ea844f955e5ab65914d8e7ed75464c70d640a7049f1d5567b3e1331"
+          "DurationMs": 29793,
+          "Sha256": "2fc3e6cc9261a1cdbffce0926e20b1d968c17e6b3e29de11db337b0bfdd08284"
         }
       ]
     }

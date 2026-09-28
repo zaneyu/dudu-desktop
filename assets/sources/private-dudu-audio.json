@@ -119,19 +119,23 @@
       ]
     },
     {
-      "id": "dudu-song-placeholder",
-      "pageUrl": null,
-      "creator": "Dudu Desktop (original placeholder tune, synthesized in-repo)",
-      "accessedUtc": "2026-09-28T00:00:00Z",
-      "originalFile": null,
+      "id": "dudu-song",
+      "pageUrl": "https://www.facebook.com/watch/?v=1667407271208819",
+      "accessedUtc": "2026-09-28T18:53:08Z",
+      "originalFile": "clip.m4a",
+      "originalSha256": "e4ec108c642b0bb16c20b195e9abac586632466902d70ea5bccf79474e5facb0",
       "derivedCues": [
         {
           "cueId": "dudu-song/song-01",
-          "sourceRange": null,
+          "sourceRange": {
+            "startMs": 0,
+            "endMs": 29793,
+            "label": "song"
+          },
           "derivedFile": "dudu-song/song-01.wav",
-          "derivedDurationMs": 8800,
-          "derivedSha256": "2567b9254ea844f955e5ab65914d8e7ed75464c70d640a7049f1d5567b3e1331",
-          "transform": "Original pentatonic melody synthesized from sine partials; mono 48 kHz, 16-bit PCM WAV; peak-normalized to -1.5 dBFS; 10 ms fade-in and fade-out. Replace with scripts/set-dudu-song.py."
+          "derivedDurationMs": 29793,
+          "derivedSha256": "2fc3e6cc9261a1cdbffce0926e20b1d968c17e6b3e29de11db337b0bfdd08284",
+          "transform": "Decoded source; converted to mono 48 kHz, 16-bit PCM WAV; peak-normalized to -1.5 dBFS; applied 10 ms fade-in and fade-out."
         }
       ]
     }
