@@ -1,5 +1,4 @@
 using Dudu.Core.Assets;
-using Dudu.Core.Models;
 using Xunit;
 
 namespace Dudu.Core.Tests.Companion;
@@ -7,43 +6,10 @@ namespace Dudu.Core.Tests.Companion;
 public sealed class CompanionFeatureTests
 {
     [Fact]
-    public void Automatic_outfit_uses_anniversary_then_base_fallback()
-    {
-        var selected = SeasonalOutfitPolicy.Select(
-            new DateOnly(2026, 9, 11),
-            new SeasonalDates(Anniversary: new MonthDay(9, 11), Birthday: null),
-            availableKeys: ["base", "anniversary"]);
-
-        Assert.Equal("anniversary", selected);
-    }
-
-    [Fact]
-    public void Leap_day_anniversary_matches_feb_28_in_non_leap_years()
-    {
-        Assert.True(new MonthDay(2, 29).Matches(new DateOnly(2024, 2, 29)));
-        Assert.True(new MonthDay(2, 29).Matches(new DateOnly(2025, 2, 28)));
-        Assert.False(new MonthDay(2, 29).Matches(new DateOnly(2025, 3, 1)));
-        Assert.False(new MonthDay(2, 28).Matches(new DateOnly(2025, 2, 27)));
-
-        var selected = SeasonalOutfitPolicy.Select(
-            new DateOnly(2025, 2, 28),
-            new SeasonalDates(Anniversary: new MonthDay(2, 29), Birthday: null),
-            availableKeys: ["base", "anniversary"]);
-
-        Assert.Equal("anniversary", selected);
-    }
-
-    [Fact]
-    public void Missing_seasonal_art_falls_back_to_base() =>
-        Assert.Equal("base", SeasonalOutfitPolicy.Select(
-            new DateOnly(2026, 12, 25),
-            SeasonalDates.Empty,
-            ["base"]));
-
-    [Fact]
-    public void Seasonal_outfit_uses_base_animation_when_only_its_idle_pose_is_custom()
+    public void Animation_resolution_always_uses_the_base_outfit()
     {
         var baseAnimation = Animation("base-celebrate");
+        var baseIdle = Animation("base-idle");
         var pack = new AssetPack(
             "fixture/manifest.json",
             new AssetManifest
@@ -59,7 +25,7 @@ public sealed class CompanionFeatureTests
                     {
                         Animations = new Dictionary<string, AssetAnimation>(StringComparer.Ordinal)
                         {
-                            ["idle"] = Animation("base-idle"),
+                            ["idle"] = baseIdle,
                             ["celebrate"] = baseAnimation,
                         },
                     },
@@ -68,17 +34,19 @@ public sealed class CompanionFeatureTests
                         Animations = new Dictionary<string, AssetAnimation>(StringComparer.Ordinal)
                         {
                             ["idle"] = Animation("winter-idle"),
+                            ["celebrate"] = Animation("winter-celebrate"),
+                            ["sleep"] = Animation("winter-sleep"),
                         },
                     },
                 },
             });
 
-        var selected = pack.ResolveAnimation(
-            "celebrate",
-            new DateOnly(2026, 12, 25),
-            SeasonalDates.Empty);
-
-        Assert.Same(baseAnimation, selected);
+        // Other outfits stay valid in the manifest, but playback never picks
+        // them: a key base has resolves from base, and a key only another
+        // outfit has falls back to base idle, not that outfit's art.
+        Assert.Same(baseAnimation, pack.ResolveAnimation("celebrate"));
+        Assert.Same(baseIdle, pack.ResolveAnimation("sleep"));
+        Assert.Same(baseIdle, pack.ResolveAnimation("idle"));
     }
 
     private static AssetAnimation Animation(string file) => new()

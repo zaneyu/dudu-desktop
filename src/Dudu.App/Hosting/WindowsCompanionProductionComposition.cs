@@ -70,7 +70,6 @@ public sealed record CompanionSettingsContext(
 {
     public CompanionFeatureContext? Features { get; init; }
     public OverlayCommandRouter? OverlayCommands { get; init; }
-    public IReadOnlyList<string> AvailableOutfitKeys { get; init; } = ["base"];
 
     /// <summary>
     /// Handles a toast click that launched Dudu (cold start) once the runtime
@@ -405,10 +404,7 @@ public static class WindowsCompanionProductionComposition
                         return await AssetManifestLoader.LoadAsync(fallbackManifestPath, cancellationToken);
                     }
                 });
-            var animation = pack.ResolveAnimation(
-                "idle",
-                DateOnly.FromDateTime(DateTime.Now),
-                SeasonalDates.Empty);
+            var animation = pack.ResolveAnimation("idle");
             composer = new SkiaFrameComposer(pack);
             composer.SetOverlayPalette(OverlaySurfacePalette.For(
                 preferences.Theme,
@@ -530,17 +526,13 @@ public static class WindowsCompanionProductionComposition
                     animationEngine = new AnimationEngine(
                         pack,
                         overlay,
-                        composer: composer,
-                        localDate: LocalDateNow(),
-                        seasonalDates: SeasonalDatesFor(preferences),
-                        localDateProvider: LocalDateNow);
+                        composer: composer);
                     presentationCoordinator = new PetPresentationCoordinator(
                         pet,
                         animationEngine.PlayAsync,
                         () => new AnimationOptions
                         {
                             ReducedMotionEnabled = runtimePreferences.Current.ReducedMotion,
-                            OutfitKey = RuntimeOutfitKey(runtimePreferences.Current),
                         },
                         gate: petGate,
                         playAudioAsync: (presentation, token) =>
@@ -610,7 +602,6 @@ public static class WindowsCompanionProductionComposition
                         () => new AnimationOptions
                         {
                             ReducedMotionEnabled = runtimePreferences.Current.ReducedMotion,
-                            OutfitKey = RuntimeOutfitKey(runtimePreferences.Current),
                         },
                         pauseState: () => pause.GetEffective(DateTimeOffset.UtcNow),
                         petGate: petGate,
@@ -744,9 +735,6 @@ public static class WindowsCompanionProductionComposition
                 onPreferencesChanged: (updated, token) =>
                 {
                     runtimePreferences.Set(updated);
-                    animationEngine?.UpdateSeasonalContext(
-                        LocalDateNow(),
-                        SeasonalDatesFor(updated));
                     composer.SetOverlayPalette(OverlaySurfacePalette.For(
                         updated.Theme,
                         OverlaySurfaceRenderer.IsHighContrastEnabled()));
@@ -889,29 +877,6 @@ public static class WindowsCompanionProductionComposition
                 revealRemoteNoteAsync: remoteSync is null
                     ? null
                     : (envelope, token) => remoteSync.RevealAsync(envelope.MessageId, token),
-                backupAsync: async token =>
-                {
-                    var path = await services.GetRequiredService<DatabaseBackupService>()
-                        .CreatePreMigrationBackupAsync(token);
-                    if (path is null)
-                    {
-                        throw new InvalidOperationException("There is no local database to back up.");
-                    }
-                },
-                restoreAsync: async token =>
-                {
-                    var result = await services.GetRequiredService<DatabaseBackupService>()
-                        .RestoreLatestValidAsync(token);
-                    if (!result.Restored)
-                    {
-                        throw new InvalidOperationException(result.Failure switch
-                        {
-                            RestoreFailure.NotFound => "No local backup is available to restore.",
-                            RestoreFailure.IntegrityCheckFailed => "No valid local backup could be restored.",
-                            _ => "The latest local backup could not be restored.",
-                        }, result.Exception);
-                    }
-                },
                 deleteLocalDataAsync: async token =>
                 {
                     // RemoteSyncService only exists when a relay is configured (offline
@@ -925,21 +890,6 @@ public static class WindowsCompanionProductionComposition
 
                     await services.GetRequiredService<LocalDataMaintenanceService>()
                         .DeleteAllUserDataAsync(token);
-                },
-                applyOutfitAsync: (outfit, token) =>
-                {
-                    if (animationEngine is null)
-                    {
-                        throw new NotSupportedException("Outfits are not available in this companion runtime.");
-                    }
-                    _ = StartAnimationPlayback(animationEngine.PlayAsync(
-                        pet.Current,
-                        new AnimationOptions
-                        {
-                            ReducedMotionEnabled = runtimePreferences.Current.ReducedMotion,
-                            OutfitKey = outfit ?? RuntimeOutfitKey(runtimePreferences.Current),
-                        }, token), host.ErrorReporter);
-                    return Task.CompletedTask;
                 },
                 discardHeldRemoteNoteAsync: (messageId, token) =>
                     presentationGateway?.DiscardHeldAsync(PresentationItemKind.RemoteNote, messageId, token)
@@ -987,9 +937,6 @@ public static class WindowsCompanionProductionComposition
                 OverlayCommands = overlayRouter,
                 NotificationRouter = composedNotificationRouter,
                 ErrorReporter = host.ErrorReporter,
-                AvailableOutfitKeys = pack.Manifest.Outfits.Keys
-                    .OrderBy(key => key, StringComparer.Ordinal)
-                    .ToArray(),
             });
             await FixtureRemoteNoteInstaller.InstallIfRequestedAsync(services, cancellationToken);
             return new ComposedPrimaryRuntime(
@@ -1253,8 +1200,6 @@ public static class WindowsCompanionProductionComposition
             pet,
             applyPlacementAsync: (_, _) => Task.CompletedTask,
             setUserVisibleAsync: (_, _) => Task.CompletedTask,
-            backupAsync: token => CreateBackupAsync(services, token),
-            restoreAsync: token => RestoreLatestAsync(services, token),
             deleteLocalDataAsync: async token =>
             {
                 // RemoteSyncService only exists when a relay is configured (offline
@@ -1290,7 +1235,6 @@ public static class WindowsCompanionProductionComposition
             (_, _) => Task.CompletedTask)
         {
             Features = featureContext,
-            AvailableOutfitKeys = ["base"],
             IsSafeMode = true,
             ErrorReporter = host.ErrorReporter,
         });
@@ -1310,32 +1254,6 @@ public static class WindowsCompanionProductionComposition
             crashGuard,
             notifications,
             databaseUnavailable);
-    }
-
-    private static async Task CreateBackupAsync(
-        ServiceProvider services,
-        CancellationToken cancellationToken)
-    {
-        var path = await services.GetRequiredService<DatabaseBackupService>()
-            .CreatePreMigrationBackupAsync(cancellationToken);
-        if (path is null)
-        {
-            throw new InvalidOperationException("There is no local database to back up.");
-        }
-    }
-
-    private static async Task RestoreLatestAsync(
-        ServiceProvider services,
-        CancellationToken cancellationToken)
-    {
-        var result = await services.GetRequiredService<DatabaseBackupService>()
-            .RestoreLatestValidAsync(cancellationToken);
-        if (!result.Restored)
-        {
-            throw new InvalidOperationException(
-                "The latest local backup could not be restored.",
-                result.Exception);
-        }
     }
 
     internal static Task DispatchSettingsDestinationAsync(
@@ -1527,17 +1445,7 @@ public static class WindowsCompanionProductionComposition
         new()
         {
             ReducedMotionEnabled = preferences.ReducedMotion,
-            OutfitKey = RuntimeOutfitKey(preferences),
         };
-
-    private static string? RuntimeOutfitKey(Preferences preferences) =>
-        preferences.AutomaticSeasonalMode ? null : preferences.OutfitKey ?? "base";
-
-    private static SeasonalDates SeasonalDatesFor(Preferences preferences) =>
-        new(preferences.Anniversary, preferences.Birthday);
-
-    private static DateOnly LocalDateNow() =>
-        DateOnly.FromDateTime(DateTime.Now);
 
     private sealed class DelegatingPresentationEnvironmentSink(
         Action<bool> setSessionLocked,

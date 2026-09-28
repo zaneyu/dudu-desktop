@@ -48,9 +48,7 @@ public sealed class OnboardingViewModelTests
         // dormant reminder flags included) is left exactly as it was.
         var initial = new Preferences(
             AppTheme.System,
-            new QuietHours(false, new TimeOnly(22, 0), new TimeOnly(7, 0)),
             false,
-            3,
             false,
             false,
             false,
@@ -326,9 +324,7 @@ public sealed class OnboardingViewModelTests
                 new PreferenceMutationCoordinator(
                     initialPreferences ?? new Preferences(
                     AppTheme.System,
-                    new QuietHours(true, new TimeOnly(22, 0), new TimeOnly(7, 0)),
                     false,
-                    3,
                     true,
                     false,
                     true,

@@ -66,9 +66,7 @@ public sealed class OnboardingFlowRegressionTests
                 new NoopStartupWriter());
             var preferences = new Preferences(
                 AppTheme.System,
-                new QuietHours(true, new TimeOnly(22, 0), new TimeOnly(7, 0)),
                 false,
-                3,
                 true,
                 false,
                 true,

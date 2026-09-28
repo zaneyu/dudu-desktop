@@ -517,13 +517,8 @@ public sealed class DatabaseTests
     {
         await using var fixture = await DatabaseFixture.CreateAsync();
         var cancellationToken = TestContext.Current.CancellationToken;
-        var preferences = new Preferences(AppTheme.Dark,
-            new QuietHours(true, new TimeOnly(23, 0), new TimeOnly(6, 0)), true, 3, true, false, true,
-            TimeSpan.FromMinutes(15),
-            OutfitKey: "winter",
-            AutomaticSeasonalMode: false,
-            Anniversary: new MonthDay(9, 11),
-            Birthday: new MonthDay(2, 29));
+        var preferences = new Preferences(AppTheme.Dark, true, true, false, true,
+            TimeSpan.FromMinutes(15));
         var preferencesRepository = new PreferencesRepository(fixture.Database);
         await preferencesRepository.SaveAsync(preferences, cancellationToken);
         Assert.Equal(preferences, await preferencesRepository.GetAsync(cancellationToken));
@@ -577,7 +572,7 @@ public sealed class DatabaseTests
         // adds its columns, and an existing install starts not paused.
         await using var fixture = await DatabaseFixture.CreateAsync();
         var cancellationToken = TestContext.Current.CancellationToken;
-        var existing = Preferences.Default with { GlobalShortcut = "Ctrl+Shift+K", SoundVolume = 0.6 };
+        var existing = Preferences.Default with { ReducedMotion = true, SoundVolume = 0.6 };
         await new PreferencesRepository(fixture.Database).SaveAsync(existing, cancellationToken);
         await using (var connection = await fixture.Database.CreateConnectionAsync(cancellationToken))
         {
@@ -649,7 +644,7 @@ public sealed class DatabaseTests
     {
         await using var fixture = await DatabaseFixture.CreateAsync();
         var unitOfWork = new AppUnitOfWork(fixture.Database);
-        var preferences = new Preferences(AppTheme.Dark, new QuietHours(true, new TimeOnly(22), new TimeOnly(7)), false, 3, false, false, true, TimeSpan.FromMinutes(15));
+        var preferences = new Preferences(AppTheme.Dark, false, false, false, true, TimeSpan.FromMinutes(15));
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => unitOfWork.ExecuteAsync(async (context, cancellationToken) =>
         {

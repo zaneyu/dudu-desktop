@@ -94,8 +94,9 @@ public sealed class SettingsNavigationTests
                 Assert.NotNull(TryFind(window, actionId));
             }
         }
-        Assert.False(Find(window, "AppearanceOutfit").Properties.IsEnabled.ValueOrDefault);
-        Assert.False(Find(window, "AppearanceSeasonalMode").Properties.IsEnabled.ValueOrDefault);
+        // Outfits and seasonal dates are gone from Settings.
+        Assert.Null(TryFind(window, "AppearanceOutfit"));
+        Assert.Null(TryFind(window, "AppearanceSeasonalMode"));
     }
 
     private static void ExerciseAccessibleRoutes(Window window)
@@ -151,7 +152,7 @@ public sealed class SettingsNavigationTests
         new("NavReminders", "RemindersPageTitle", ["RemindersMonday", "RemindersFriday", "RemindersSave"]),
         new("NavTasksFocus", "TasksPageTitle", ["TasksCompletedList", "FocusHistoryList", "FocusStart", "FocusEnd"]),
         new("NavLoveNotes", "LoveNotesPageTitle", ["LoveNotesRemoteList", "LoveNotesRevealSelected", "LoveNotesOpenedList"]),
-        new("NavAppearance", "AppearancePageTitle", ["AppearanceSave", "AppearanceOutfit", "AppearanceSeasonalMode"]),
+        new("NavAppearance", "AppearancePageTitle", ["AppearanceSave", "AppearanceSavePlacement"]),
         new("NavConnection", "ConnectionPageTitle", ["ConnectionCreateCode", "ConnectionSessionsList", "ConnectionForgetPairing", "ConnectionConfirm", "ConnectionCancel"]),
         new("NavPrivacy", "PrivacyPageTitle", ["PrivacyStoredFields", "PrivacyBackup", "PrivacyRestore", "PrivacyDeleteLocal", "PrivacyDeleteRemote", "PrivacyConfirm"]),
     ];

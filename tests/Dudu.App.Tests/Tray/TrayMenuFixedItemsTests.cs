@@ -152,8 +152,7 @@ public sealed class TrayMenuFixedItemsTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+                false, true, false, true, TimeSpan.FromMinutes(15)),
             pauseState: () => pause.Current,
             clock: () => Now);
 

@@ -71,8 +71,6 @@ internal sealed class SettingsDataPagesFixture
     public static SettingsDataPagesFixture Create(
         TimeZoneInfo? localTimeZone = null,
         Preferences? initialPreferences = null,
-        Func<CancellationToken, Task>? backupAsync = null,
-        Func<CancellationToken, Task>? restoreAsync = null,
         Func<CancellationToken, Task>? deleteLocalDataAsync = null,
         Func<CancellationToken, Task>? deleteRemoteDataAsync = null,
         Func<PetEvent, CancellationToken, Task>? presentPetAsync = null,
@@ -104,8 +102,6 @@ internal sealed class SettingsDataPagesFixture
             pairing,
             transactions,
             PetStateMachine.CreateIdle(),
-            backupAsync: backupAsync,
-            restoreAsync: restoreAsync,
             deleteLocalDataAsync: deleteLocalDataAsync,
             deleteRemoteDataAsync: deleteRemoteDataAsync,
             presentPetAsync: presentPetAsync,

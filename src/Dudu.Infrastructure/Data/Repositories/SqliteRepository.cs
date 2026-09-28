@@ -1,5 +1,4 @@
 using System.Globalization;
-using Dudu.Core.Models;
 using Microsoft.Data.Sqlite;
 
 namespace Dudu.Infrastructure.Data.Repositories;
@@ -64,22 +63,6 @@ public abstract class SqliteRepository
 
     protected static string? ReadString(SqliteDataReader reader, int ordinal) =>
         reader.IsDBNull(ordinal) ? null : reader.GetString(ordinal);
-
-    protected static QuietHours? ReadQuietHours(
-        object? enabled,
-        object? start,
-        object? end)
-    {
-        if (enabled is null || enabled is DBNull)
-        {
-            return null;
-        }
-
-        return new QuietHours(
-            Convert.ToInt32(enabled, CultureInfo.InvariantCulture) != 0,
-            ReadTime(start!),
-            ReadTime(end!));
-    }
 }
 
 internal sealed class SqliteTransactionContext(

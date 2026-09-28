@@ -171,8 +171,7 @@ public sealed class ConnectionViewModelForgetPairingTests
         var clock = new FakeClock();
         var preferences = new Preferences(
             AppTheme.System,
-            new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-            false, 3, true, false, true, TimeSpan.FromMinutes(15));
+            false, true, false, true, TimeSpan.FromMinutes(15));
         var preferenceRepository = new FakePreferencesRepository();
         var preferenceMutations = new PreferenceMutationCoordinator(preferences, preferenceRepository);
         var localNotes = new FakeLocalNoteRepository();

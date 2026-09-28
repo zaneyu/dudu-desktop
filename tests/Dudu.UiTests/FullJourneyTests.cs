@@ -93,12 +93,6 @@ public sealed class FullJourneyTests
             Navigate(window, "NavAppearance", "AppearancePageTitle");
             Find(window, "AppearanceTheme").AsComboBox().Select(1);
             Find(window, "AppearanceReducedMotion").AsCheckBox().IsChecked = true;
-            // Outfit persistence is gated behind a real device pairing
-            // (CanPersistOutfit in SettingsViewModel); this single-device journey never pairs,
-            // so it stays disabled here exactly as SettingsNavigationTests already asserts for an
-            // unpaired device. Faking pairing success to force it enabled would be a shortcut
-            // around a real security boundary, so this journey only verifies the expected state.
-            Assert.False(Find(window, "AppearanceOutfit").Properties.IsEnabled.ValueOrDefault);
             Find(window, "AppearanceSave").AsButton().Invoke();
             WaitForText(window, "AppearanceStatusMessage", "appearance saved");
 

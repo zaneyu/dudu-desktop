@@ -124,16 +124,22 @@ public sealed class XamlContractTests
         {
             "OverlayActionPet", "LoveNotesOpenedList",
             "AppearanceSave", "ConnectionCreateCode",
-            "AppearanceOutfit", "AppearanceSeasonalMode", "AppearanceSaveSeasonal",
         })
         {
             Assert.Contains($"AutomationProperties.AutomationId=\"{automationId}\"", allPages);
         }
 
-        Assert.Contains("SelectedItem=\"{x:Bind ViewModel.SelectedOutfit, Mode=TwoWay}\"", allPages);
-        Assert.Contains("Date=\"{x:Bind ViewModel.AnniversaryDate, Mode=TwoWay}\"", allPages);
-        Assert.Contains("Date=\"{x:Bind ViewModel.BirthdayDate, Mode=TwoWay}\"", allPages);
-        Assert.Contains("ViewModel.OutfitAvailabilityMessage", allPages);
+        // Outfits and seasonal dates are gone: animation always uses the base outfit.
+        foreach (var removed in new[]
+        {
+            "AppearanceOutfit", "AppearanceSeasonalMode", "AppearanceSeasonalAvailability",
+            "AppearanceAnniversary", "AppearanceBirthday", "AppearanceSaveSeasonal",
+            "ViewModel.SelectedOutfit", "ViewModel.AnniversaryDate", "ViewModel.BirthdayDate",
+            "ViewModel.OutfitAvailabilityMessage", "ViewModel.ApplyOutfitCommand", "CalendarDatePicker",
+        })
+        {
+            Assert.DoesNotContain(removed, allPages, StringComparison.Ordinal);
+        }
         var loveNotes = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "LoveNotesPage.xaml"));
         Assert.Contains("SelectedItem=\"{x:Bind ViewModel.SelectedRemoteEnvelope, Mode=TwoWay}\"", loveNotes);
         Assert.Contains("AutomationProperties.AutomationId=\"LoveNotesRevealSelected\"", loveNotes);
@@ -152,10 +158,8 @@ public sealed class XamlContractTests
         Assert.Contains("AutomationProperties.AutomationId=\"ConnectionForgetPairing\"", connection);
         Assert.Contains("AutomationProperties.AutomationId=\"ConnectionConfirm\"", connection);
         Assert.Contains("AutomationProperties.AutomationId=\"ConnectionCancel\"", connection);
-        // Seasonal outfits (anniversary/birthday/winter) aren't shipped yet, so the
-        // copy must say so honestly instead of claiming automatic mode does something
-        // it can't currently do.
-        Assert.Contains("aren't included in this version yet", allPages);
+        Assert.DoesNotContain("seasonal", allPages, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("outfit", allPages, StringComparison.OrdinalIgnoreCase);
         var automationIds = Regex.Matches(
                 allPages,
                 "AutomationProperties\\.AutomationId=\\\"([^\\\"]+)\\\"")
@@ -204,7 +208,7 @@ public sealed class XamlContractTests
         {
             "home", "love notes", "settings",
             "time in the UK", "time with dudu", "incoming notes", "opened notes",
-            "look and motion", "when windows starts", "pet options", "partner connection", "pairing status", "paired sessions", "your data",
+            "look and motion", "when windows starts", "partner connection", "pairing status", "paired sessions", "your data",
         };
 
         foreach (var (name, page) in pages)
@@ -462,16 +466,16 @@ public sealed class XamlContractTests
     public void Appearance_layering_toggles_sit_with_the_button_that_saves_them()
     {
         // "keep dudu above other windows" and "hide dudu during fullscreen work"
-        // are saved by "save appearance", but sat under "save seasonal look",
-        // which does not save them, so changes made there were lost.
+        // are saved by "save appearance", so they must sit above that button
+        // (they once sat under a separate "save seasonal look" that did not save
+        // them, and changes made there were lost).
         var root = FindRepositoryRoot();
         var appearance = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "SettingsPage.xaml"));
         var save = appearance.IndexOf("AutomationProperties.AutomationId=\"AppearanceSave\"", StringComparison.Ordinal);
-        var seasonal = appearance.IndexOf("AutomationProperties.AutomationId=\"AppearanceSaveSeasonal\"", StringComparison.Ordinal);
         var alwaysOnTop = appearance.IndexOf("AutomationProperties.AutomationId=\"AppearanceAlwaysOnTop\"", StringComparison.Ordinal);
         var hideFullscreen = appearance.IndexOf("AutomationProperties.AutomationId=\"AppearanceHideFullscreen\"", StringComparison.Ordinal);
 
-        Assert.True(save > 0 && seasonal > save);
+        Assert.True(save > 0);
         Assert.InRange(alwaysOnTop, 0, save);
         Assert.InRange(hideFullscreen, 0, save);
         // The hotkey only ever shows Dudu and opens Home; it never hides her.

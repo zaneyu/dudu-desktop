@@ -218,9 +218,7 @@ public sealed class ChromeDiagnosticsTests
 
     private static Preferences TestPreferences() => new(
         AppTheme.System,
-        new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
         false,
-        3,
         true,
         false,
         true,

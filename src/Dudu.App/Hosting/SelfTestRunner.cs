@@ -1,5 +1,7 @@
 using Dudu.App.Animation;
 using Dudu.Core.Abstractions;
+using Dudu.Core.Pet;
+using Dudu.Core.Time;
 using Dudu.Infrastructure;
 using Dudu.Infrastructure.Data;
 using Dudu.Infrastructure.Logging;
@@ -12,8 +14,9 @@ namespace Dudu.App.Hosting;
 /// The <c>--self-test</c> launch mode's core logic: open the local database
 /// through the exact same composition path production uses (<c>AddDuduInfrastructure</c>
 /// plus <see cref="Database.InitializeAsync"/>, which runs migrations
-/// idempotently), validate every shipped asset pack manifest, and resolve
-/// the handful of services production resolves eagerly. No window, tray, or
+/// idempotently), validate every shipped asset pack manifest, resolve the
+/// services production resolves from the container and read (never write)
+/// the preferences row. No window, tray, or
 /// overlay is created; no preference is written; no startup shortcut is
 /// registered; the relay is never touched (no <c>RelayOptions</c> is passed
 /// to <c>AddDuduInfrastructure</c>, so only <see cref="Dudu.Core.Abstractions.IPairingService"/>'s
@@ -71,11 +74,7 @@ public static class SelfTestRunner
             if (!await TryRunStepAsync(
                 ServiceResolveStep,
                 logger,
-                _ =>
-                {
-                    ResolveCoreServices(services!);
-                    return Task.CompletedTask;
-                },
+                ct => CheckCoreServicesAsync(services!, ct),
                 cancellationToken))
             {
                 return FailureExitCode;
@@ -137,13 +136,46 @@ public static class SelfTestRunner
         }
     }
 
-    private static void ResolveCoreServices(IServiceProvider services)
+    /// <summary>
+    /// The services the production composition resolves from the
+    /// infrastructure container (the reduced cute-companion surface: the
+    /// preferences/profile/placement/note/envelope/held-presentation
+    /// repositories, the unit of work, the remote-note save+consume
+    /// transaction, pairing, local data maintenance, the automatic database
+    /// backup service, and the pet/ambient core). Nothing here is written.
+    /// </summary>
+    internal static IReadOnlyList<Type> CoreServiceTypes { get; } =
+    [
+        typeof(IPreferencesRepository),
+        typeof(IProfileRepository),
+        typeof(IPetPlacementRepository),
+        typeof(ILocalNoteRepository),
+        typeof(IRemoteEnvelopeRepository),
+        typeof(IHeldPresentationRepository),
+        typeof(IAppUnitOfWork),
+        typeof(ICompanionFeatureTransactions),
+        typeof(IPairingService),
+        typeof(IClock),
+        typeof(LocalDataMaintenanceService),
+        typeof(DatabaseBackupService),
+        typeof(AmbientScheduler),
+        typeof(PetStateMachine),
+    ];
+
+    /// <summary>Resolves <see cref="CoreServiceTypes"/> and reads (never
+    /// writes) the preferences row, so the reduced preferences SELECT is
+    /// exercised against the migrated schema of this very database.</summary>
+    internal static async Task CheckCoreServicesAsync(
+        IServiceProvider services,
+        CancellationToken cancellationToken)
     {
-        _ = services.GetRequiredService<IPreferencesRepository>();
-        _ = services.GetRequiredService<IProfileRepository>();
-        _ = services.GetRequiredService<IPairingService>();
-        _ = services.GetRequiredService<IAppUnitOfWork>();
-        _ = services.GetRequiredService<ICompanionFeatureTransactions>();
+        ArgumentNullException.ThrowIfNull(services);
+        foreach (var serviceType in CoreServiceTypes)
+        {
+            _ = services.GetRequiredService(serviceType);
+        }
+
+        _ = await services.GetRequiredService<IPreferencesRepository>().GetAsync(cancellationToken);
     }
 
     /// <summary>

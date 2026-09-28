@@ -1,5 +1,4 @@
 using System.Text.Json.Serialization;
-using Dudu.Core.Models;
 
 namespace Dudu.Core.Assets;
 
@@ -468,44 +467,26 @@ public sealed class AssetPack
 
     public AssetManifest Manifest { get; }
 
-    public string ResolveOutfit(
-        DateOnly localDate,
-        SeasonalDates dates,
-        string? manualOutfit = null) =>
-        SeasonalOutfitPolicy.Select(localDate, dates, Manifest.Outfits.Keys, manualOutfit);
+    /// <summary>The outfit every animation resolves from. Manifests may still
+    /// declare other outfits (the manifest contract is unchanged), but
+    /// playback always uses <c>base</c>.</summary>
+    public const string BaseOutfitKey = "base";
 
-    public AssetAnimation ResolveAnimation(
-        string animationKey,
-        DateOnly localDate,
-        SeasonalDates dates,
-        string? manualOutfit = null)
+    public AssetAnimation ResolveAnimation(string animationKey)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(animationKey);
-        ArgumentNullException.ThrowIfNull(dates);
 
-        var selectedOutfit = ResolveOutfit(localDate, dates, manualOutfit);
-        if (Manifest.Outfits.TryGetValue(selectedOutfit, out var outfit)
-            && outfit.Animations.TryGetValue(animationKey, out var selectedAnimation))
+        if (Manifest.Outfits.TryGetValue(BaseOutfitKey, out var baseOutfit))
         {
-            return selectedAnimation;
-        }
+            if (baseOutfit.Animations.TryGetValue(animationKey, out var baseAnimation))
+            {
+                return baseAnimation;
+            }
 
-        if (Manifest.Outfits.TryGetValue("base", out var baseOutfit)
-            && baseOutfit.Animations.TryGetValue(animationKey, out var baseAnimation))
-        {
-            return baseAnimation;
-        }
-
-        if (Manifest.Outfits.TryGetValue(selectedOutfit, out outfit)
-            && outfit.Animations.TryGetValue("idle", out var outfitIdle))
-        {
-            return outfitIdle;
-        }
-
-        if (Manifest.Outfits.TryGetValue("base", out baseOutfit)
-            && baseOutfit.Animations.TryGetValue("idle", out var baseIdle))
-        {
-            return baseIdle;
+            if (baseOutfit.Animations.TryGetValue("idle", out var baseIdle))
+            {
+                return baseIdle;
+            }
         }
 
         throw new AssetManifestException("The manifest has no usable base idle animation.");

@@ -53,6 +53,32 @@ public sealed class ProductionStartupContractTests
     }
 
     [Fact]
+    public void No_user_facing_backup_or_restore_is_composed_but_automatic_backup_stays()
+    {
+        // Backup/Restore commands (and safe mode's backup/restore callbacks) are gone;
+        // DatabaseBackupService keeps running on its own (pre-migration backup,
+        // corruption auto-restore, backup-prune reporting).
+        var root = FindRepositoryRoot();
+        var composition = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.App", "Hosting", "WindowsCompanionProductionComposition.cs"));
+        var context = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.App", "ViewModels", "CompanionFeatureContext.cs"));
+
+        foreach (var removed in new[] { "backupAsync:", "restoreAsync:", "RestoreLatestValidAsync(", "CreatePreMigrationBackupAsync(", "CreateBackupAsync(", "RestoreLatestAsync(" })
+        {
+            Assert.DoesNotContain(removed, composition, StringComparison.Ordinal);
+        }
+
+        foreach (var removed in new[] { "BackupAsync", "RestoreAsync", "ApplyOutfitAsync" })
+        {
+            Assert.DoesNotContain(removed, context, StringComparison.Ordinal);
+        }
+
+        Assert.Contains("GetRequiredService<DatabaseBackupService>().FailureReporter =", composition, StringComparison.Ordinal);
+        Assert.Contains("IsSafeMode = true,", composition, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Remote_note_arrival_sink_overrides_the_infrastructure_null_default()
     {
         // Dudu.Infrastructure.DependencyInjection registers NullRemoteNoteArrivalSink as a

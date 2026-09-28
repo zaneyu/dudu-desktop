@@ -246,17 +246,8 @@ public sealed partial class SettingsWindow : UserControl
 
         var presentation = _context.Features?.Pet.Current
             ?? new PetPresentation(PetState.Idle, "idle", null, null, false);
-        var preferences = _context.Features?.CurrentPreferences ?? Preferences.Default;
-        var outfit = preferences.AutomaticSeasonalMode
-            ? null
-            : preferences.OutfitKey ?? "base";
-        var dates = new SeasonalDates(preferences.Anniversary, preferences.Birthday);
-        var animation = _duduPack.ResolveAnimation(
-            presentation.AnimationKey,
-            DateOnly.FromDateTime(DateTime.Now),
-            dates,
-            outfit);
-        var signature = $"{presentation.AnimationKey}|{outfit}|{animation.Frames.Count}|{animation.Loop}";
+        var animation = _duduPack.ResolveAnimation(presentation.AnimationKey);
+        var signature = $"{presentation.AnimationKey}|{animation.Frames.Count}|{animation.Loop}";
         if (!string.Equals(_duduAnimationSignature, signature, StringComparison.Ordinal))
         {
             _duduAnimationSignature = signature;
@@ -368,9 +359,18 @@ public sealed partial class SettingsWindow : UserControl
             new SettingsViewModel(
                 features,
                 ApplyRequestedTheme,
-                _context.AvailableOutfitKeys),
+                isSafeMode: _context.IsSafeMode),
             _context.StartupSettings);
         _featurePagesInitialized = true;
+        if (_context.IsSafeMode)
+        {
+            // Safe mode: the settings page (reduced to "delete my data") is the only
+            // destination, and nothing here plays with a pet that is not running.
+            RootNavigation.IsPaneVisible = false;
+            DuduPetButton.Visibility = Visibility.Collapsed;
+            DuduDrinkButton.Visibility = Visibility.Collapsed;
+            DuduComfortButton.Visibility = Visibility.Collapsed;
+        }
     }
 
     private void ShowDestination(string tag)
@@ -379,6 +379,11 @@ public sealed partial class SettingsWindow : UserControl
         {
             _pendingDestination = tag;
             return;
+        }
+
+        if (_context.IsSafeMode)
+        {
+            tag = "settings";
         }
 
         if (!_shell.Navigate(tag))

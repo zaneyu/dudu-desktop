@@ -127,8 +127,7 @@ public sealed class LoveNotesUxTests
             var clock = new FakeClock(DateTimeOffset.Parse(now), zone ?? TimeZoneInfo.Utc);
             var preferences = new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15));
+                false, true, false, true, TimeSpan.FromMinutes(15));
             var preferenceRepository = new FakePreferencesRepository();
             var localNotes = new FakeLocalNoteRepository();
             var remoteNotes = new FakeRemoteEnvelopeRepository();

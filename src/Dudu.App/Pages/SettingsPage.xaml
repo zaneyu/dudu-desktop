@@ -17,155 +17,138 @@
                     <TextBlock Text="make dudu look and move just how u like, keep ur partner connected, or start fresh" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                 </StackPanel>
 
-                <Border Style="{StaticResource CardStyle}">
-                    <StackPanel Spacing="12">
-                        <Grid ColumnSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="🎨" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
-                            <TextBlock Grid.Column="1" Text="look and motion" Style="{StaticResource SectionHeadingStyle}" />
-                        </Grid>
-                        <ComboBox x:Name="ThemeBox" Header="theme" SelectedIndex="0" SelectionChanged="ThemeBox_SelectionChanged" AutomationProperties.AutomationId="AppearanceTheme" AutomationProperties.Name="theme">
-                            <ComboBoxItem Content="use windows setting" Tag="System" />
-                            <ComboBoxItem Content="light" Tag="Light" />
-                            <ComboBoxItem Content="dark" Tag="Dark" />
-                        </ComboBox>
-                        <CheckBox Content="use reduced motion" IsChecked="{x:Bind ViewModel.ReducedMotion, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceReducedMotion" AutomationProperties.Name="use reduced motion" />
-                        <TextBlock Text="reduced motion uses static poses less movement" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
-                        <CheckBox Content="cute sounds" IsChecked="{x:Bind ViewModel.SoundsEnabled, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceSoundsEnabled" AutomationProperties.Name="cute sounds" />
-                        <Slider Header="sound volume" Minimum="0" Maximum="1" SmallChange="0.01" LargeChange="0.1" StepFrequency="0.01" IsThumbToolTipEnabled="False" Value="{x:Bind ViewModel.SoundVolume, Mode=TwoWay}" IsEnabled="{x:Bind ViewModel.SoundsEnabled, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceSoundVolume" AutomationProperties.Name="sound volume" />
-                        <TextBlock Text="{x:Bind ViewModel.SoundVolumeLabel, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceSoundVolumeLabel" AutomationProperties.Name="{x:Bind ViewModel.SoundVolumeLabel, Mode=OneWay}" />
-                        <Slider Header="pet size" Minimum="0.5" Maximum="2" SmallChange="0.1" LargeChange="0.25" StepFrequency="0.05" IsThumbToolTipEnabled="False" Value="{x:Bind ViewModel.PetScale, Mode=TwoWay}" AutomationProperties.AutomationId="AppearancePetScale" AutomationProperties.Name="pet size" />
-                        <TextBlock Text="{x:Bind ViewModel.PetScaleLabel, Mode=OneWay}" AutomationProperties.AutomationId="AppearancePetScaleLabel" AutomationProperties.Name="{x:Bind ViewModel.PetScaleLabel, Mode=OneWay}" />
-                        <ComboBox Header="monitor" ItemsSource="{x:Bind ViewModel.MonitorOptions, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.MonitorDeviceName, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceMonitor" AutomationProperties.Name="monitor" />
-                        <!-- Saved by "save appearance" below, so they live in this card
-                             (they used to sit under "save seasonal look", which does not
-                             save them, and changes were silently lost). -->
-                        <CheckBox Content="keep dudu above other windows" IsChecked="{x:Bind ViewModel.AlwaysOnTop, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceAlwaysOnTop" AutomationProperties.Name="keep dudu above other windows" />
-                        <CheckBox Content="hide dudu during fullscreen work" IsChecked="{x:Bind ViewModel.HideDuringFullscreen, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceHideFullscreen" AutomationProperties.Name="hide dudu during fullscreen work" />
-                        <Grid ColumnSpacing="8" RowSpacing="8">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Button Content="save appearance" Command="{x:Bind ViewModel.SaveCommand}" Style="{StaticResource PrimaryButtonStyle}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="AppearanceSave" AutomationProperties.Name="save appearance" />
-                            <Button Grid.Column="1" Content="save pet placement" Command="{x:Bind ViewModel.SavePlacementCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="AppearanceSavePlacement" AutomationProperties.Name="save pet placement" />
-                        </Grid>
+                <!-- Safe mode: only "delete my data" (this pc only) is offered, and closing
+                     this window exits dudu. No backup or restore here; automatic recovery of
+                     a damaged database still runs on its own. -->
+                <Border Style="{StaticResource ConfirmCardStyle}" Visibility="{x:Bind ViewModel.IsSafeMode}" AutomationProperties.AutomationId="SettingsSafeModeNotice" AutomationProperties.Name="dudu is in safe mode">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="dudu is in safe mode" FontWeight="SemiBold" />
+                        <TextBlock Text="dudu had trouble starting, so only delete my data works here and it wipes this pc only. close this window to exit dudu" TextWrapping="Wrap" AutomationProperties.AutomationId="SettingsSafeModeMessage" AutomationProperties.Name="dudu had trouble starting, so only delete my data works here and it wipes this pc only. close this window to exit dudu" />
                     </StackPanel>
                 </Border>
 
-                <Border Style="{StaticResource CardStyle}">
-                    <StackPanel Spacing="8">
-                        <Grid ColumnSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="🚀" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
-                            <TextBlock Grid.Column="1" Text="when windows starts" Style="{StaticResource SectionHeadingStyle}" />
-                        </Grid>
-                        <CheckBox x:Name="StartupToggle" Content="launch dudu when i sign in" Checked="StartupToggle_Changed" Unchecked="StartupToggle_Changed" AutomationProperties.AutomationId="SettingsLaunchAtSignIn" AutomationProperties.Name="launch dudu when i sign in" />
-                        <TextBlock Text="startup registration is managed locally on this pc" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
-                        <StackPanel x:Name="StartupRecoveryPanel" Spacing="8" Visibility="Collapsed">
-                            <TextBlock x:Name="StartupRecoveryMessage" AutomationProperties.AutomationId="SettingsStartupRecoveryMessage" AutomationProperties.Name="startup recovery message" Foreground="{ThemeResource WarningBrush}" TextWrapping="Wrap" />
-                            <Button x:Name="RetryStartupButton" Content="retry startup registration" AutomationProperties.AutomationId="SettingsRetryStartupRegistration" AutomationProperties.Name="retry startup registration" Click="RetryStartupButton_Click" />
+                <StackPanel Spacing="20" Visibility="{x:Bind ViewModel.ShowsFullSettings}">
+                    <Border Style="{StaticResource CardStyle}">
+                        <StackPanel Spacing="12">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="🎨" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
+                                <TextBlock Grid.Column="1" Text="look and motion" Style="{StaticResource SectionHeadingStyle}" />
+                            </Grid>
+                            <ComboBox x:Name="ThemeBox" Header="theme" SelectedIndex="0" SelectionChanged="ThemeBox_SelectionChanged" AutomationProperties.AutomationId="AppearanceTheme" AutomationProperties.Name="theme">
+                                <ComboBoxItem Content="use windows setting" Tag="System" />
+                                <ComboBoxItem Content="light" Tag="Light" />
+                                <ComboBoxItem Content="dark" Tag="Dark" />
+                            </ComboBox>
+                            <CheckBox Content="use reduced motion" IsChecked="{x:Bind ViewModel.ReducedMotion, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceReducedMotion" AutomationProperties.Name="use reduced motion" />
+                            <TextBlock Text="reduced motion uses static poses less movement" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                            <CheckBox Content="cute sounds" IsChecked="{x:Bind ViewModel.SoundsEnabled, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceSoundsEnabled" AutomationProperties.Name="cute sounds" />
+                            <Slider Header="sound volume" Minimum="0" Maximum="1" SmallChange="0.01" LargeChange="0.1" StepFrequency="0.01" IsThumbToolTipEnabled="False" Value="{x:Bind ViewModel.SoundVolume, Mode=TwoWay}" IsEnabled="{x:Bind ViewModel.SoundsEnabled, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceSoundVolume" AutomationProperties.Name="sound volume" />
+                            <TextBlock Text="{x:Bind ViewModel.SoundVolumeLabel, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceSoundVolumeLabel" AutomationProperties.Name="{x:Bind ViewModel.SoundVolumeLabel, Mode=OneWay}" />
+                            <Slider Header="pet size" Minimum="0.5" Maximum="2" SmallChange="0.1" LargeChange="0.25" StepFrequency="0.05" IsThumbToolTipEnabled="False" Value="{x:Bind ViewModel.PetScale, Mode=TwoWay}" AutomationProperties.AutomationId="AppearancePetScale" AutomationProperties.Name="pet size" />
+                            <TextBlock Text="{x:Bind ViewModel.PetScaleLabel, Mode=OneWay}" AutomationProperties.AutomationId="AppearancePetScaleLabel" AutomationProperties.Name="{x:Bind ViewModel.PetScaleLabel, Mode=OneWay}" />
+                            <ComboBox Header="monitor" ItemsSource="{x:Bind ViewModel.MonitorOptions, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.MonitorDeviceName, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceMonitor" AutomationProperties.Name="monitor" />
+                            <!-- Saved by "save appearance" below, so they live in this card. -->
+                            <CheckBox Content="keep dudu above other windows" IsChecked="{x:Bind ViewModel.AlwaysOnTop, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceAlwaysOnTop" AutomationProperties.Name="keep dudu above other windows" />
+                            <CheckBox Content="hide dudu during fullscreen work" IsChecked="{x:Bind ViewModel.HideDuringFullscreen, Mode=TwoWay}" AutomationProperties.AutomationId="AppearanceHideFullscreen" AutomationProperties.Name="hide dudu during fullscreen work" />
+                            <Grid ColumnSpacing="8" RowSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Button Content="save appearance" Command="{x:Bind ViewModel.SaveCommand}" Style="{StaticResource PrimaryButtonStyle}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="AppearanceSave" AutomationProperties.Name="save appearance" />
+                                <Button Grid.Column="1" Content="save pet placement" Command="{x:Bind ViewModel.SavePlacementCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="AppearanceSavePlacement" AutomationProperties.Name="save pet placement" />
+                            </Grid>
                         </StackPanel>
-                    </StackPanel>
-                </Border>
+                    </Border>
 
-                <Border Style="{StaticResource CardStyle}">
-                    <StackPanel Spacing="12">
-                        <Grid ColumnSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="👕" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
-                            <TextBlock Grid.Column="1" Text="pet options" Style="{StaticResource SectionHeadingStyle}" />
-                        </Grid>
-                        <TextBlock Text="give dudu a small change of clothes without changing the rest of the app" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
-                        <ComboBox Header="outfit" ItemsSource="{x:Bind ViewModel.OutfitOptions, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.SelectedOutfit, Mode=TwoWay}" IsEnabled="{x:Bind ViewModel.CanPersistOutfit, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceOutfit" AutomationProperties.Name="outfit" />
-                        <TextBlock Text="{x:Bind ViewModel.OutfitAvailabilityMessage, Mode=OneWay}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="AppearanceOutfitAvailability" AutomationProperties.Name="{x:Bind ViewModel.OutfitAvailabilityMessage, Mode=OneWay}" />
-                        <CheckBox Content="let the calendar choose seasonal outfits" IsChecked="{x:Bind ViewModel.AutomaticSeasonalMode, Mode=TwoWay}" IsEnabled="{x:Bind ViewModel.CanConfigureSeasonalMode, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceSeasonalMode" AutomationProperties.Name="let the calendar choose seasonal outfits" />
-                        <TextBlock Text="seasonal outfits for these dates and winter aren't included in this version yet. the dates you save here are kept for when they are." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="AppearanceSeasonalAvailability" AutomationProperties.Name="automatic seasonal mode details" />
-                        <Grid ColumnSpacing="16" RowSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <CalendarDatePicker Header="anniversary (month and day)" Date="{x:Bind ViewModel.AnniversaryDate, Mode=TwoWay}" PlaceholderText="not set" AutomationProperties.AutomationId="AppearanceAnniversary" AutomationProperties.Name="anniversary month and day" />
-                            <CalendarDatePicker Grid.Column="1" Header="birthday (month and day)" Date="{x:Bind ViewModel.BirthdayDate, Mode=TwoWay}" PlaceholderText="not set" AutomationProperties.AutomationId="AppearanceBirthday" AutomationProperties.Name="birthday month and day" />
-                        </Grid>
-                        <Button Content="save seasonal look" Command="{x:Bind ViewModel.ApplyOutfitCommand}" IsEnabled="{x:Bind ViewModel.CanConfigureSeasonalMode, Mode=OneWay}" AutomationProperties.AutomationId="AppearanceSaveSeasonal" AutomationProperties.Name="save seasonal look" HorizontalAlignment="Left" />
-                    </StackPanel>
-                </Border>
-
-                <StackPanel Spacing="4">
-                    <TextBlock Text="partner connection" Style="{StaticResource SectionHeadingStyle}" AutomationProperties.AutomationId="SettingsConnectionHeading" AutomationProperties.Name="partner connection" />
-                    <TextBlock Text="pairing is optional. dudu stays useful offline" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
-                </StackPanel>
-
-                <Border Style="{StaticResource BlushCardStyle}">
-                    <StackPanel Spacing="12">
-                        <Grid ColumnSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="🔗" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
-                            <TextBlock Grid.Column="1" Text="pairing status" Style="{StaticResource SectionHeadingStyle}" />
-                        </Grid>
-                        <TextBlock x:Name="ConnectionAvailability" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionAvailability" AutomationProperties.Name="pairing availability" />
-                        <TextBlock x:Name="ConnectionPairingCode" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionPairingCode" AutomationProperties.Name="pairing code" />
-                        <TextBlock x:Name="ConnectionCodeExpiry" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionCodeExpiry" AutomationProperties.Name="pairing code expiry" />
+                    <Border Style="{StaticResource CardStyle}">
                         <StackPanel Spacing="8">
-                            <Button Content="create 10 min pairing code" Command="{x:Bind ViewModel.Connection.CreateCodeCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="ConnectionCreateCode" AutomationProperties.Name="create 10 min pairing code" />
-                            <Button Content="check again" Command="{x:Bind ViewModel.Connection.RefreshCommand}" AutomationProperties.AutomationId="ConnectionRefresh" AutomationProperties.Name="check pairing status again" />
-                        </StackPanel>
-                    </StackPanel>
-                </Border>
-
-                <Border Style="{StaticResource CardStyle}">
-                    <StackPanel Spacing="12">
-                        <Grid ColumnSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="📱" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
-                            <TextBlock Grid.Column="1" Text="paired sessions" Style="{StaticResource SectionHeadingStyle}" />
-                        </Grid>
-                        <TextBlock x:Name="ConnectionSessionCount" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionSessionCount" AutomationProperties.Name="paired session count" />
-                        <ListView ItemsSource="{x:Bind ViewModel.Connection.Sessions, Mode=OneWay}" MaxHeight="180" AutomationProperties.AutomationId="ConnectionSessionsList" AutomationProperties.Name="paired sessions list">
-                            <ListView.ItemTemplate>
-                                <DataTemplate x:DataType="models:PairingSessionSummary">
-                                    <TextBlock Text="paired sender session" Margin="4" />
-                                </DataTemplate>
-                            </ListView.ItemTemplate>
-                        </ListView>
-                        <StackPanel Spacing="8">
-                            <Button Content="revoke sender sessions" Command="{x:Bind ViewModel.Connection.RequestRevokeSessionsCommand}" AutomationProperties.AutomationId="ConnectionRevokeSessions" AutomationProperties.Name="revoke sender sessions" />
-                            <Button Content="delete remote device data" Command="{x:Bind ViewModel.Connection.RequestDeleteRemoteDeviceCommand}" AutomationProperties.AutomationId="ConnectionDeleteRemote" AutomationProperties.Name="delete remote device data" />
-                            <Button Content="forget pairing on this pc" Command="{x:Bind ViewModel.Connection.RequestForgetPairingCommand}" AutomationProperties.AutomationId="ConnectionForgetPairing" AutomationProperties.Name="forget pairing on this pc" />
-                        </StackPanel>
-                        <Border Style="{StaticResource ConfirmCardStyle}" Visibility="{x:Bind ViewModel.Connection.HasPendingConfirmation, Mode=OneWay}" AutomationProperties.AutomationId="ConnectionConfirmationPanel" AutomationProperties.Name="confirmation panel">
-                            <StackPanel Spacing="8">
-                                <TextBlock Text="{x:Bind ViewModel.Connection.ConfirmationTitle, Mode=OneWay}" FontWeight="SemiBold" />
-                                <TextBlock Text="{x:Bind ViewModel.Connection.ConfirmationMessage, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Assertive" AutomationProperties.AutomationId="ConnectionConfirmationMessage" AutomationProperties.Name="{x:Bind ViewModel.Connection.ConfirmationMessage, Mode=OneWay}" />
-                                <Grid ColumnSpacing="8" RowSpacing="8">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <Button Content="{x:Bind ViewModel.Connection.ConfirmationButtonText, Mode=OneWay}" Command="{x:Bind ViewModel.Connection.ConfirmCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="ConnectionConfirm" AutomationProperties.Name="confirm action" />
-                                    <Button Grid.Column="1" Content="cancel" Command="{x:Bind ViewModel.Connection.CancelConfirmationCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="ConnectionCancel" AutomationProperties.Name="cancel" />
-                                </Grid>
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="🚀" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
+                                <TextBlock Grid.Column="1" Text="when windows starts" Style="{StaticResource SectionHeadingStyle}" />
+                            </Grid>
+                            <CheckBox x:Name="StartupToggle" Content="launch dudu when i sign in" Checked="StartupToggle_Changed" Unchecked="StartupToggle_Changed" AutomationProperties.AutomationId="SettingsLaunchAtSignIn" AutomationProperties.Name="launch dudu when i sign in" />
+                            <TextBlock Text="startup registration is managed locally on this pc" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                            <StackPanel x:Name="StartupRecoveryPanel" Spacing="8" Visibility="Collapsed">
+                                <TextBlock x:Name="StartupRecoveryMessage" AutomationProperties.AutomationId="SettingsStartupRecoveryMessage" AutomationProperties.Name="startup recovery message" Foreground="{ThemeResource WarningBrush}" TextWrapping="Wrap" />
+                                <Button x:Name="RetryStartupButton" Content="retry startup registration" AutomationProperties.AutomationId="SettingsRetryStartupRegistration" AutomationProperties.Name="retry startup registration" Click="RetryStartupButton_Click" />
                             </StackPanel>
-                        </Border>
+                        </StackPanel>
+                    </Border>
+
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="partner connection" Style="{StaticResource SectionHeadingStyle}" AutomationProperties.AutomationId="SettingsConnectionHeading" AutomationProperties.Name="partner connection" />
+                        <TextBlock Text="pairing is optional. dudu stays useful offline" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                     </StackPanel>
-                </Border>
+
+                    <Border Style="{StaticResource BlushCardStyle}">
+                        <StackPanel Spacing="12">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="🔗" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
+                                <TextBlock Grid.Column="1" Text="pairing status" Style="{StaticResource SectionHeadingStyle}" />
+                            </Grid>
+                            <TextBlock x:Name="ConnectionAvailability" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionAvailability" AutomationProperties.Name="pairing availability" />
+                            <TextBlock x:Name="ConnectionPairingCode" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionPairingCode" AutomationProperties.Name="pairing code" />
+                            <TextBlock x:Name="ConnectionCodeExpiry" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionCodeExpiry" AutomationProperties.Name="pairing code expiry" />
+                            <StackPanel Spacing="8">
+                                <Button Content="create 10 min pairing code" Command="{x:Bind ViewModel.Connection.CreateCodeCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="ConnectionCreateCode" AutomationProperties.Name="create 10 min pairing code" />
+                                <Button Content="check again" Command="{x:Bind ViewModel.Connection.RefreshCommand}" AutomationProperties.AutomationId="ConnectionRefresh" AutomationProperties.Name="check pairing status again" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource CardStyle}">
+                        <StackPanel Spacing="12">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="📱" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
+                                <TextBlock Grid.Column="1" Text="paired sessions" Style="{StaticResource SectionHeadingStyle}" />
+                            </Grid>
+                            <TextBlock x:Name="ConnectionSessionCount" TextWrapping="Wrap" AutomationProperties.AutomationId="ConnectionSessionCount" AutomationProperties.Name="paired session count" />
+                            <ListView ItemsSource="{x:Bind ViewModel.Connection.Sessions, Mode=OneWay}" MaxHeight="180" AutomationProperties.AutomationId="ConnectionSessionsList" AutomationProperties.Name="paired sessions list">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate x:DataType="models:PairingSessionSummary">
+                                        <TextBlock Text="paired sender session" Margin="4" />
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                            <StackPanel Spacing="8">
+                                <Button Content="revoke sender sessions" Command="{x:Bind ViewModel.Connection.RequestRevokeSessionsCommand}" AutomationProperties.AutomationId="ConnectionRevokeSessions" AutomationProperties.Name="revoke sender sessions" />
+                                <Button Content="delete remote device data" Command="{x:Bind ViewModel.Connection.RequestDeleteRemoteDeviceCommand}" AutomationProperties.AutomationId="ConnectionDeleteRemote" AutomationProperties.Name="delete remote device data" />
+                                <Button Content="forget pairing on this pc" Command="{x:Bind ViewModel.Connection.RequestForgetPairingCommand}" AutomationProperties.AutomationId="ConnectionForgetPairing" AutomationProperties.Name="forget pairing on this pc" />
+                            </StackPanel>
+                            <Border Style="{StaticResource ConfirmCardStyle}" Visibility="{x:Bind ViewModel.Connection.HasPendingConfirmation, Mode=OneWay}" AutomationProperties.AutomationId="ConnectionConfirmationPanel" AutomationProperties.Name="confirmation panel">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="{x:Bind ViewModel.Connection.ConfirmationTitle, Mode=OneWay}" FontWeight="SemiBold" />
+                                    <TextBlock Text="{x:Bind ViewModel.Connection.ConfirmationMessage, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Assertive" AutomationProperties.AutomationId="ConnectionConfirmationMessage" AutomationProperties.Name="{x:Bind ViewModel.Connection.ConfirmationMessage, Mode=OneWay}" />
+                                    <Grid ColumnSpacing="8" RowSpacing="8">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Button Content="{x:Bind ViewModel.Connection.ConfirmationButtonText, Mode=OneWay}" Command="{x:Bind ViewModel.Connection.ConfirmCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="ConnectionConfirm" AutomationProperties.Name="confirm action" />
+                                        <Button Grid.Column="1" Content="cancel" Command="{x:Bind ViewModel.Connection.CancelConfirmationCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="ConnectionCancel" AutomationProperties.Name="cancel" />
+                                    </Grid>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
 
                 <Border Style="{StaticResource CardStyle}">
                     <StackPanel Spacing="12">

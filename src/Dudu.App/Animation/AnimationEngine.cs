@@ -132,8 +132,6 @@ public sealed record AnimationOptions
 
     public bool ReducedMotionEnabled { get; init; }
 
-    public string? OutfitKey { get; init; }
-
     public bool FadeReducedMotion { get; init; }
 
     public TimeSpan ReducedMotionFadeDuration { get; init; } = TimeSpan.FromMilliseconds(90);
@@ -146,13 +144,10 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
     private readonly IFramePresenter _presenter;
     private readonly IAnimationClock _clock;
     private readonly SkiaFrameComposer _composer;
-    private readonly Func<DateOnly>? _localDateProvider;
     private readonly SemaphoreSlim _mutationGate = new(1, 1);
     private readonly SemaphoreSlim _runGate = new(1, 1);
     private readonly SemaphoreSlim _presentationGate = new(1, 1);
     private readonly object _repaintGate = new();
-    private DateOnly _localDate;
-    private SeasonalDates _seasonalDates;
     private AssetPack _pack;
     private Task? _activeTask;
     private CancellationTokenSource? _activeCancellation;
@@ -176,30 +171,21 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
         AssetPack pack,
         IFramePresenter presenter,
         IAnimationClock? clock = null,
-        SkiaFrameComposer? composer = null,
-        DateOnly? localDate = null,
-        SeasonalDates? seasonalDates = null,
-        Func<DateOnly>? localDateProvider = null)
+        SkiaFrameComposer? composer = null)
     {
         _pack = pack ?? throw new ArgumentNullException(nameof(pack));
         _presenter = presenter ?? throw new ArgumentNullException(nameof(presenter));
         _clock = clock ?? new StopwatchAnimationClock();
         _composer = composer ?? new SkiaFrameComposer(pack);
         _composer.RepaintRequested += OnComposerRepaintRequested;
-        _localDateProvider = localDateProvider;
-        _localDate = localDate ?? DateOnly.FromDateTime(DateTime.Now);
-        _seasonalDates = seasonalDates ?? SeasonalDates.Empty;
     }
 
     public AnimationEngine(
         IFramePresenter presenter,
         AssetPack pack,
         IAnimationClock? clock = null,
-        SkiaFrameComposer? composer = null,
-        DateOnly? localDate = null,
-        SeasonalDates? seasonalDates = null,
-        Func<DateOnly>? localDateProvider = null)
-        : this(pack, presenter, clock, composer, localDate, seasonalDates, localDateProvider)
+        SkiaFrameComposer? composer = null)
+        : this(pack, presenter, clock, composer)
     {
     }
 
@@ -222,22 +208,6 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
             {
                 return _currentPresentation;
             }
-        }
-    }
-
-    /// <summary>
-    /// Updates the calendar context used by automatic outfit resolution. The
-    /// next repaint or presentation observes the new date without requiring a
-    /// process restart or replacing the loaded asset pack.
-    /// </summary>
-    public void UpdateSeasonalContext(DateOnly localDate, SeasonalDates seasonalDates)
-    {
-        ArgumentNullException.ThrowIfNull(seasonalDates);
-        lock (_stateGate)
-        {
-            ThrowIfDisposed();
-            _localDate = localDate;
-            _seasonalDates = seasonalDates;
         }
     }
 
@@ -443,7 +413,7 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
         AnimationOptions options,
         CancellationToken cancellationToken)
     {
-        var resolved = ResolveAnimation(pack, presentation.AnimationKey, options.OutfitKey);
+        var resolved = ResolveAnimation(pack, presentation.AnimationKey);
         var animation = resolved.Animation;
         var semanticDuration = GetSemanticDuration(animation);
         var start = _clock.Timestamp;
@@ -465,16 +435,6 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (options.OutfitKey is null && RefreshLocalDate())
-            {
-                resolved = ResolveAnimation(pack, presentation.AnimationKey, options.OutfitKey);
-                animation = resolved.Animation;
-                semanticDuration = GetSemanticDuration(animation);
-                frameStart = _clock.Timestamp;
-                frameIndex = 0;
-                continue;
-            }
-
             var frame = animation.Frames[frameIndex];
             var frameDuration = TimeSpan.FromMilliseconds(frame.DurationMs);
             var frameEnd = AddDuration(frameStart, frameDuration, _clock.Frequency);
@@ -741,7 +701,7 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
             return previous;
         }
 
-        var resolved = ResolveAnimation(pack, presentation.AnimationKey, options.OutfitKey);
+        var resolved = ResolveAnimation(pack, presentation.AnimationKey);
         var animation = resolved.Animation;
         var sourceFrame = animation.Frames[0];
         var frame = options.ReducedMotionEnabled && animation.ReducedMotion is { } reducedPath
@@ -788,70 +748,14 @@ public sealed class AnimationEngine : IDisposable, IAsyncDisposable
         await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
     }
 
-    private (AssetAnimation Animation, string SourcePath) ResolveAnimation(
+    private static (AssetAnimation Animation, string SourcePath) ResolveAnimation(
         AssetPack pack,
-        string animationKey,
-        string? outfitKey)
+        string animationKey)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(animationKey);
-        RefreshLocalDate();
-        DateOnly localDate;
-        SeasonalDates seasonalDates;
-        lock (_stateGate)
-        {
-            localDate = _localDate;
-            seasonalDates = _seasonalDates;
-        }
-        var selectedOutfit = pack.ResolveOutfit(
-            localDate,
-            seasonalDates,
-            outfitKey);
-
-        if (pack.Manifest.Outfits.TryGetValue(selectedOutfit, out var selected)
-            && selected.Animations.TryGetValue(animationKey, out var selectedAnimation))
-        {
-            return (selectedAnimation, selectedAnimation.Frames[0].File);
-        }
-
-        if (pack.Manifest.Outfits.TryGetValue("base", out var baseOutfit)
-            && baseOutfit.Animations.TryGetValue(animationKey, out var baseAnimation))
-        {
-            return (baseAnimation, baseAnimation.Frames[0].File);
-        }
-
-        if (pack.Manifest.Outfits.TryGetValue(selectedOutfit, out selected)
-            && selected.Animations.TryGetValue("idle", out var selectedIdle))
-        {
-            return (selectedIdle, selectedIdle.Frames[0].File);
-        }
-
-        if (pack.Manifest.Outfits.TryGetValue("base", out baseOutfit)
-            && baseOutfit.Animations.TryGetValue("idle", out var baseIdle))
-        {
-            return (baseIdle, baseIdle.Frames[0].File);
-        }
-
-        throw new AssetManifestException("The manifest has no usable fallback idle animation.");
-    }
-
-    private bool RefreshLocalDate()
-    {
-        if (_localDateProvider is null)
-        {
-            return false;
-        }
-
-        var currentLocalDate = _localDateProvider();
-        lock (_stateGate)
-        {
-            if (currentLocalDate == _localDate)
-            {
-                return false;
-            }
-
-            _localDate = currentLocalDate;
-            return true;
-        }
+        // Playback always resolves from the base outfit (AssetPack falls back
+        // to base idle for a key base does not have).
+        var animation = pack.ResolveAnimation(animationKey);
+        return (animation, animation.Frames[0].File);
     }
 
     private static TimeSpan GetSemanticDuration(AssetAnimation animation)

@@ -8,7 +8,7 @@ using Dudu.Core.Time;
 namespace Dudu.App.ViewModels;
 
 /// <summary>
-/// Application-facing dependencies for the seven settings pages and the pet
+/// Application-facing dependencies for the settings pages and the pet
 /// action surface. The context keeps pages independent from the WinUI shell.
 /// </summary>
 public sealed class CompanionFeatureContext
@@ -30,11 +30,8 @@ public sealed class CompanionFeatureContext
         Func<PetEvent, CancellationToken, Task>? presentPetAsync = null,
         Func<PetEvent, string, CancellationToken, Task>? presentOneShotPetAsync = null,
         Func<RemoteEnvelope, CancellationToken, Task<RevealedRemoteNote>>? revealRemoteNoteAsync = null,
-        Func<CancellationToken, Task>? backupAsync = null,
-        Func<CancellationToken, Task>? restoreAsync = null,
         Func<CancellationToken, Task>? deleteLocalDataAsync = null,
         Func<CancellationToken, Task>? deleteRemoteDataAsync = null,
-        Func<string?, CancellationToken, Task>? applyOutfitAsync = null,
         Func<string, CancellationToken, Task>? discardHeldRemoteNoteAsync = null,
         Func<CancellationToken, Task>? discardHeldRemoteNotesAsync = null,
         AffectionTracker? affection = null,
@@ -70,20 +67,6 @@ public sealed class CompanionFeatureContext
         RevealRemoteNoteAsync = revealRemoteNoteAsync ?? ((_, _) =>
             Task.FromException<RevealedRemoteNote>(new NotSupportedException(
                 "aiyo cant reveal notes relay offline")));
-        BackupAsync = backupAsync ?? ((_) => Task.FromException(
-            new NotSupportedException("oh no backup not ready yet")));
-        RestoreAsync = async token =>
-        {
-            if (restoreAsync is null)
-            {
-                throw new NotSupportedException("cannot restore right now try later");
-            }
-
-            await PreferenceMutations.ExecuteAndReloadAsync(
-                restoreAsync,
-                Preferences.Default,
-                token);
-        };
         DeleteLocalDataAsync = async token =>
         {
             if (deleteLocalDataAsync is null)
@@ -98,8 +81,6 @@ public sealed class CompanionFeatureContext
         };
         DeleteRemoteDataAsync = deleteRemoteDataAsync ?? ((_) => Task.FromException(
             new NotSupportedException("wait cant delete remote data yet")));
-        ApplyOutfitAsync = applyOutfitAsync ?? ((_, _) => Task.FromException(
-            new NotSupportedException("aiyo outfits not ready yet")));
         DiscardHeldRemoteNoteAsync = discardHeldRemoteNoteAsync ?? ((_, _) => Task.CompletedTask);
         DiscardHeldRemoteNotesAsync = discardHeldRemoteNotesAsync ?? (_ => Task.CompletedTask);
         StopRemoteSyncAsync = stopRemoteSyncAsync ?? (_ => Task.CompletedTask);
@@ -144,8 +125,6 @@ public sealed class CompanionFeatureContext
     public Task DrinkAsync(CancellationToken cancellationToken) =>
         PresentOneShotPetAsync(new PetEvent.InteractionRequested("drink"), "drink", cancellationToken);
     public Func<RemoteEnvelope, CancellationToken, Task<RevealedRemoteNote>> RevealRemoteNoteAsync { get; }
-    public Func<CancellationToken, Task> BackupAsync { get; }
-    public Func<CancellationToken, Task> RestoreAsync { get; }
     public Func<CancellationToken, Task> DeleteLocalDataAsync { get; }
     public Func<CancellationToken, Task> DeleteRemoteDataAsync { get; }
 
@@ -161,7 +140,6 @@ public sealed class CompanionFeatureContext
     /// <summary>Restarts the remote sync loop after a remote delete that did not
     /// complete, so nothing was wiped and notes keep arriving. No-op without a relay.</summary>
     public Func<CancellationToken, Task> StartRemoteSyncAsync { get; }
-    public Func<string?, CancellationToken, Task> ApplyOutfitAsync { get; }
     /// <summary>Best-effort removal of a single remote note's queued/held
     /// presentation (in PresentationCoordinator's in-memory queue and its
     /// persisted row), keyed by message id, after it was revealed or
@@ -254,7 +232,7 @@ public abstract class FeatureViewModelBase : CommunityToolkit.Mvvm.ComponentMode
         }
         catch (Exception exception)
         {
-            // A success line left over from an earlier action ("backup created",
+            // A success line left over from an earlier action ("all cleaned up",
             // "code ready") must not stay on screen next to this failure: the page
             // would show a green tick and a red error at once, and the tick would
             // read as if it described the action that just failed.

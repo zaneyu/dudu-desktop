@@ -454,57 +454,6 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
-    public async Task Appearance_saves_manual_outfit_and_recurring_seasonal_dates()
-    {
-        var fixture = FeatureFixture.Create();
-        var viewModel = new SettingsViewModel(
-            fixture.Context,
-            availableOutfitKeys: ["base", "winter"])
-        {
-            SelectedOutfit = "winter",
-            AnniversaryDate = new DateTimeOffset(2026, 9, 12, 0, 0, 0, TimeSpan.Zero),
-            BirthdayDate = new DateTimeOffset(2026, 2, 28, 0, 0, 0, TimeSpan.Zero),
-        };
-
-        await viewModel.ApplyOutfitAsync(TestContext.Current.CancellationToken);
-
-        var saved = Assert.Single(fixture.Preferences.SaveHistory);
-        Assert.Equal("winter", saved.OutfitKey);
-        Assert.False(saved.AutomaticSeasonalMode);
-        Assert.Equal(new MonthDay(9, 12), saved.Anniversary);
-        Assert.Equal(new MonthDay(2, 28), saved.Birthday);
-    }
-
-    [Fact]
-    public async Task Appearance_refresh_preserves_february_29_dates_in_non_leap_years()
-    {
-        var fixture = FeatureFixture.Create();
-        await fixture.Context.UpdatePreferencesAsync(
-            current => current with { Birthday = new MonthDay(2, 29) },
-            TestContext.Current.CancellationToken);
-        var viewModel = new SettingsViewModel(fixture.Context);
-
-        await viewModel.RefreshAsync(TestContext.Current.CancellationToken);
-
-        Assert.Equal(2, viewModel.BirthdayDate?.Month);
-        Assert.Equal(29, viewModel.BirthdayDate?.Day);
-    }
-
-    [Fact]
-    public void Appearance_reports_the_automatic_outfit_for_the_current_local_date()
-    {
-        var fixture = FeatureFixture.Create();
-        var viewModel = new SettingsViewModel(
-            fixture.Context,
-            availableOutfitKeys: ["base", "anniversary"])
-        {
-            AnniversaryDate = new DateTimeOffset(2026, 9, 12, 0, 0, 0, TimeSpan.Zero),
-        };
-
-        Assert.Equal("automatic mode · anniversary today", viewModel.OutfitAvailabilityMessage);
-    }
-
-    [Fact]
     public void Comfort_actions_are_only_breathe_and_stop()
     {
         // Breathe with me lives on Home; the only other choice is Stop.
@@ -949,17 +898,6 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
-    public async Task Restore_reloads_preferences_after_the_database_replacement()
-    {
-        var fixture = FeatureFixture.Create(restoreAsync: _ => Task.CompletedTask);
-        fixture.Preferences.Current = Preferences.Default with { Theme = AppTheme.Dark };
-
-        await fixture.Context.RestoreAsync(TestContext.Current.CancellationToken);
-
-        Assert.Equal(AppTheme.Dark, fixture.Context.CurrentPreferences.Theme);
-    }
-
-    [Fact]
     public async Task Local_deletion_reloads_clean_default_preferences()
     {
         var fixture = FeatureFixture.Create(deleteLocalDataAsync: _ => Task.CompletedTask);
@@ -971,32 +909,32 @@ public sealed class FeatureViewModelTests
     }
 
     [Fact]
-    public async Task Restore_serializes_concurrent_preference_edits_and_reapplies_restored_state()
+    public async Task Local_deletion_serializes_concurrent_preference_edits_and_reapplies_reloaded_state()
     {
-        var restoreEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var releaseRestore = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var restored = Preferences.Default with { Theme = AppTheme.Dark, LocalNoteDailyLimit = 7 };
+        var deleteEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseDelete = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reloaded = Preferences.Default with { Theme = AppTheme.Dark, AmbientMinimumInterval = TimeSpan.FromMinutes(7) };
         FeatureFixture? fixture = null;
-        fixture = FeatureFixture.Create(restoreAsync: async _ =>
+        fixture = FeatureFixture.Create(deleteLocalDataAsync: async _ =>
         {
-            fixture!.Preferences.Current = restored;
-            restoreEntered.TrySetResult();
-            await releaseRestore.Task;
+            fixture!.Preferences.Current = reloaded;
+            deleteEntered.TrySetResult();
+            await releaseDelete.Task;
         });
 
-        var restore = fixture.Context.RestoreAsync(TestContext.Current.CancellationToken);
-        await restoreEntered.Task.WaitAsync(TestContext.Current.CancellationToken);
+        var delete = fixture.Context.DeleteLocalDataAsync(TestContext.Current.CancellationToken);
+        await deleteEntered.Task.WaitAsync(TestContext.Current.CancellationToken);
         var edit = fixture.Context.UpdatePreferencesAsync(
             current => current with { ReducedMotion = true },
             TestContext.Current.CancellationToken);
         Assert.False(edit.IsCompleted);
 
-        releaseRestore.TrySetResult();
-        await restore;
+        releaseDelete.TrySetResult();
+        await delete;
         await edit;
 
         Assert.Equal(AppTheme.Dark, fixture.Context.CurrentPreferences.Theme);
-        Assert.Equal(7, fixture.Context.CurrentPreferences.LocalNoteDailyLimit);
+        Assert.Equal(TimeSpan.FromMinutes(7), fixture.Context.CurrentPreferences.AmbientMinimumInterval);
         Assert.True(fixture.Context.CurrentPreferences.ReducedMotion);
         Assert.Equal(fixture.Context.CurrentPreferences, fixture.Preferences.Current);
         Assert.Equal(fixture.Context.CurrentPreferences, fixture.RuntimePreferences.Current);
@@ -1132,7 +1070,6 @@ public sealed class FeatureViewModelTests
         public List<(PetEvent Event, string DismissalId)> OneShotPresentations { get; }
 
         public static FeatureFixture Create(
-            Func<CancellationToken, Task>? restoreAsync = null,
             Func<CancellationToken, Task>? deleteLocalDataAsync = null,
             Func<CancellationToken, Task>? deleteRemoteDataAsync = null,
             Func<RemoteEnvelope, CancellationToken, Task<RevealedRemoteNote>>? revealRemoteNoteAsync = null,
@@ -1144,9 +1081,7 @@ public sealed class FeatureViewModelTests
             var oneShotPresentations = new List<(PetEvent Event, string DismissalId)>();
             var preferences = new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
                 false,
-                3,
                 true,
                 false,
                 true,
@@ -1201,7 +1136,6 @@ public sealed class FeatureViewModelTests
                 },
                 revealRemoteNoteAsync: revealRemoteNoteAsync
                     ?? ((_, _) => Task.FromResult(new RevealedRemoteNote("You can do it", "none"))),
-                restoreAsync: restoreAsync,
                 deleteLocalDataAsync: deleteLocalDataAsync,
                 deleteRemoteDataAsync: deleteRemoteDataAsync);
             return new FeatureFixture(

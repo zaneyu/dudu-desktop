@@ -25,8 +25,7 @@ public sealed class CompanionCompositionTests
         var background = CompanionLaunchOptions.Parse("--background");
         var startupEnabled = new Preferences(
             AppTheme.System,
-            new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-            false, 3, true, false, true, TimeSpan.FromMinutes(15));
+            false, true, false, true, TimeSpan.FromMinutes(15));
         var startupDisabled = startupEnabled with { LaunchAtSignIn = false };
 
         Assert.True(background.ShouldShowOverlay(startupEnabled));
@@ -103,8 +102,7 @@ public sealed class CompanionCompositionTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+                false, true, false, true, TimeSpan.FromMinutes(15)),
             pauseState: () => pause.Current,
             clock: () => now);
         var router = new CompanionCommandRouter(
@@ -140,8 +138,7 @@ public sealed class CompanionCompositionTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)));
+                false, true, false, true, TimeSpan.FromMinutes(15)));
         var router = new CompanionCommandRouter(
             lifecycle,
             new PauseStateStore(),

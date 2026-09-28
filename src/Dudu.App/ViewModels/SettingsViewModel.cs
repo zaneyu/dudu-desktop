@@ -2,12 +2,11 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Dudu.App.System;
-using Dudu.Core.Assets;
 using Dudu.Core.Models;
 
 namespace Dudu.App.ViewModels;
 
-/// <summary>The one Settings destination: look and motion, pet options, shortcut,
+/// <summary>The one Settings destination: look and motion, pet options,
 /// the partner connection (the old Appearance page, with Connection folded in) and
 /// "delete my data".</summary>
 public sealed class SettingsViewModel : FeatureViewModelBase
@@ -25,10 +24,6 @@ public sealed class SettingsViewModel : FeatureViewModelBase
     private double _loadedPetScale;
     private string _monitorDeviceName;
     private IReadOnlyList<PetPlacement> _placements = [];
-    private string _selectedOutfit = "automatic";
-    private bool _automaticSeasonalMode = true;
-    private DateTimeOffset? _anniversaryDate;
-    private DateTimeOffset? _birthdayDate;
     private bool _alwaysOnTop;
     private bool _hideDuringFullscreen;
     private bool _soundsEnabled;
@@ -40,10 +35,11 @@ public sealed class SettingsViewModel : FeatureViewModelBase
     public SettingsViewModel(
         CompanionFeatureContext context,
         Action<AppTheme>? applyShellTheme = null,
-        IReadOnlyList<string>? availableOutfitKeys = null,
-        ConnectionViewModel? connection = null)
+        ConnectionViewModel? connection = null,
+        bool isSafeMode = false)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
+        IsSafeMode = isSafeMode;
         Connection = connection ?? new ConnectionViewModel(context);
         _applyShellTheme = applyShellTheme ?? (_ => { });
         var preferences = context.CurrentPreferences;
@@ -56,13 +52,8 @@ public sealed class SettingsViewModel : FeatureViewModelBase
         _petScale = 1;
         _loadedPetScale = _petScale;
         _monitorDeviceName = "current monitor";
-        OutfitOptions = new ObservableCollection<string>(
-            ["automatic", ..(availableOutfitKeys ?? ["base"])
-                .Where(key => !string.Equals(key, "automatic", StringComparison.Ordinal))
-                .Distinct(StringComparer.Ordinal)]);
         SaveCommand = new AsyncRelayCommand((CancellationToken ct) => SaveAsync(ct));
         SavePlacementCommand = new AsyncRelayCommand((CancellationToken ct) => SavePlacementAsync(ct));
-        ApplyOutfitCommand = new AsyncRelayCommand((CancellationToken ct) => ApplyOutfitAsync(ct));
         RequestDeleteMyDataCommand = new RelayCommand(RequestDeleteMyData, CanStartDelete);
         CancelDeleteMyDataCommand = new RelayCommand(CancelDeleteMyData, CanStartDelete);
         ConfirmDeleteMyDataCommand = new AsyncRelayCommand(
@@ -80,11 +71,18 @@ public sealed class SettingsViewModel : FeatureViewModelBase
         NotifyDeleteCommandsChanged();
     }
 
+    /// <summary>Safe mode (a crash loop or an unopenable database): the page shows only
+    /// "delete my data" (this pc only, as safe mode wires it) and how to exit. There is no
+    /// user-facing backup or restore; automatic database recovery is unchanged.</summary>
+    public bool IsSafeMode { get; }
+
+    /// <summary>Everything except "delete my data": hidden in safe mode.</summary>
+    public bool ShowsFullSettings => !IsSafeMode;
+
     /// <summary>The "partner connection" section of the page.</summary>
     public ConnectionViewModel Connection { get; }
     public IAsyncRelayCommand SaveCommand { get; }
     public IAsyncRelayCommand SavePlacementCommand { get; }
-    public IAsyncRelayCommand ApplyOutfitCommand { get; }
     public IRelayCommand RequestDeleteMyDataCommand { get; }
     public IRelayCommand CancelDeleteMyDataCommand { get; }
     public IAsyncRelayCommand ConfirmDeleteMyDataCommand { get; }
@@ -104,11 +102,7 @@ public sealed class SettingsViewModel : FeatureViewModelBase
         get => _isWipeThisPcOnlyVisible;
         private set => SetProperty(ref _isWipeThisPcOnlyVisible, value);
     }
-    public ObservableCollection<string> OutfitOptions { get; }
     public ObservableCollection<string> MonitorOptions { get; } = [];
-    public bool CanPersistOutfit => OutfitOptions.Count > 1;
-    public bool CanConfigureSeasonalMode => OutfitOptions.Count > 1;
-    public string OutfitAvailabilityMessage => BuildOutfitAvailabilityMessage();
 
     public AppTheme Theme
     {
@@ -161,69 +155,6 @@ public sealed class SettingsViewModel : FeatureViewModelBase
             }
         }
     }
-    public string SelectedOutfit
-    {
-        get => _selectedOutfit;
-        set
-        {
-            var normalized = OutfitOptions.Contains(value, StringComparer.Ordinal)
-                ? value
-                : "automatic";
-            if (!SetProperty(ref _selectedOutfit, normalized)) return;
-            var automatic = string.Equals(normalized, "automatic", StringComparison.Ordinal);
-            if (_automaticSeasonalMode != automatic)
-            {
-                _automaticSeasonalMode = automatic;
-                OnPropertyChanged(nameof(AutomaticSeasonalMode));
-            }
-            OnPropertyChanged(nameof(OutfitAvailabilityMessage));
-        }
-    }
-
-    public bool AutomaticSeasonalMode
-    {
-        get => _automaticSeasonalMode;
-        set
-        {
-            if (!SetProperty(ref _automaticSeasonalMode, value)) return;
-            if (value && !string.Equals(_selectedOutfit, "automatic", StringComparison.Ordinal))
-            {
-                _selectedOutfit = "automatic";
-                OnPropertyChanged(nameof(SelectedOutfit));
-            }
-            else if (!value && string.Equals(_selectedOutfit, "automatic", StringComparison.Ordinal))
-            {
-                _selectedOutfit = OutfitOptions.FirstOrDefault(
-                    key => !string.Equals(key, "automatic", StringComparison.Ordinal)) ?? "automatic";
-                OnPropertyChanged(nameof(SelectedOutfit));
-            }
-            OnPropertyChanged(nameof(OutfitAvailabilityMessage));
-        }
-    }
-
-    public DateTimeOffset? AnniversaryDate
-    {
-        get => _anniversaryDate;
-        set
-        {
-            if (SetProperty(ref _anniversaryDate, value))
-            {
-                OnPropertyChanged(nameof(OutfitAvailabilityMessage));
-            }
-        }
-    }
-
-    public DateTimeOffset? BirthdayDate
-    {
-        get => _birthdayDate;
-        set
-        {
-            if (SetProperty(ref _birthdayDate, value))
-            {
-                OnPropertyChanged(nameof(OutfitAvailabilityMessage));
-            }
-        }
-    }
     public bool AlwaysOnTop { get => _alwaysOnTop; set => SetProperty(ref _alwaysOnTop, value); }
     public bool HideDuringFullscreen { get => _hideDuringFullscreen; set => SetProperty(ref _hideDuringFullscreen, value); }
     public bool SoundsEnabled { get => _soundsEnabled; set => SetProperty(ref _soundsEnabled, value); }
@@ -255,14 +186,6 @@ public sealed class SettingsViewModel : FeatureViewModelBase
                 HideDuringFullscreen = preferences.HidePetDuringFullscreen;
                 SoundsEnabled = preferences.SoundsEnabled;
                 SoundVolume = preferences.SoundVolume;
-                _automaticSeasonalMode = preferences.AutomaticSeasonalMode;
-                OnPropertyChanged(nameof(AutomaticSeasonalMode));
-                _selectedOutfit = preferences.AutomaticSeasonalMode
-                    ? "automatic"
-                    : preferences.OutfitKey ?? "base";
-                OnPropertyChanged(nameof(SelectedOutfit));
-                AnniversaryDate = ToDate(preferences.Anniversary);
-                BirthdayDate = ToDate(preferences.Birthday);
                 MonitorOptions.Clear();
                 foreach (var placement in placements) MonitorOptions.Add(placement.MonitorDeviceName);
                 if (MonitorOptions.Count == 0) MonitorOptions.Add(MonitorDeviceName);
@@ -293,10 +216,6 @@ public sealed class SettingsViewModel : FeatureViewModelBase
                 HidePetDuringFullscreen = HideDuringFullscreen,
                 SoundsEnabled = SoundsEnabled,
                 SoundVolume = SoundVolume,
-                OutfitKey = AutomaticSeasonalMode ? null : SelectedOutfit,
-                AutomaticSeasonalMode = AutomaticSeasonalMode,
-                Anniversary = ToMonthDay(AnniversaryDate),
-                Birthday = ToMonthDay(BirthdayDate),
             }, cancellationToken);
             _applyShellTheme(Theme);
             // "save appearance" shares the same pet-size slider as "save pet
@@ -340,67 +259,6 @@ public sealed class SettingsViewModel : FeatureViewModelBase
         _loadedPetScale = PetScale;
     }
 
-    public Task ApplyOutfitAsync(CancellationToken cancellationToken = default) =>
-        RunAsync(async () =>
-        {
-            await _context.UpdatePreferencesAsync(current => current with
-            {
-                OutfitKey = AutomaticSeasonalMode ? null : SelectedOutfit,
-                AutomaticSeasonalMode = AutomaticSeasonalMode,
-                Anniversary = ToMonthDay(AnniversaryDate),
-                Birthday = ToMonthDay(BirthdayDate),
-            }, cancellationToken);
-        }, "oki seasonal look saved");
-
-    private string BuildOutfitAvailabilityMessage()
-    {
-        if (!AutomaticSeasonalMode)
-        {
-            return $"manual outfit · {SelectedOutfit}";
-        }
-
-        var selected = SeasonalOutfitPolicy.Select(
-            LocalDate,
-            new SeasonalDates(ToMonthDay(AnniversaryDate), ToMonthDay(BirthdayDate)),
-            OutfitOptions.Where(key => !string.Equals(key, "automatic", StringComparison.Ordinal)));
-        return $"automatic mode · {selected} today";
-    }
-
-    private DateOnly LocalDate =>
-        DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(
-            _context.Clock.UtcNow,
-            _context.Clock.LocalTimeZone).DateTime);
-
-    private static MonthDay? ToMonthDay(DateTimeOffset? date) =>
-        date is { } value ? new MonthDay(value.Month, value.Day) : null;
-
-    // Built at local midnight (with the local offset), not midnight UTC: CalendarDatePicker
-    // shows a DateTimeOffset in the PC's time zone, so a UTC-midnight value displayed as the
-    // previous day anywhere west of UTC (a 14 Feb anniversary appeared as 13 Feb).
-    private DateTimeOffset? ToDate(MonthDay? monthDay)
-    {
-        if (monthDay is not { } value || value.Month is < 1 or > 12 || value.Day is < 1 or > 31)
-        {
-            return null;
-        }
-
-        var year = LocalDate.Year;
-        if (value.Month == 2 && value.Day == 29)
-        {
-            while (!DateTime.IsLeapYear(year))
-            {
-                year++;
-            }
-        }
-
-        if (value.Day > DateTime.DaysInMonth(year, value.Month))
-        {
-            return null;
-        }
-
-        var localMidnight = new DateTime(year, value.Month, value.Day, 0, 0, 0, DateTimeKind.Unspecified);
-        return new DateTimeOffset(localMidnight, _context.Clock.LocalTimeZone.GetUtcOffset(localMidnight));
-    }
     /// <summary>"Delete my data". With a relay configured it stops the sync loop, deletes
     /// the remote device first and only then wipes this pc; if the remote delete does not
     /// complete, the loop is restarted, nothing is wiped, and "wipe this pc only" is

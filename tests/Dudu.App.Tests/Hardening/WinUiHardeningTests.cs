@@ -137,8 +137,8 @@ public sealed class WinUiHardeningTests
             "/opt/Dudu.exe", "/tmp/startup-" + Guid.NewGuid().ToString("N"), new FailingWriter());
         var repository = new StubPrefsRepository();
         var preferences = new Preferences(
-            AppTheme.System, new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-            false, 3, false, false, true, TimeSpan.FromMinutes(15));
+            AppTheme.System,
+            false, false, false, true, TimeSpan.FromMinutes(15));
         var settings = new StartupSettingsService(
             startup, new PreferenceMutationCoordinator(preferences, repository));
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -157,8 +157,8 @@ public sealed class WinUiHardeningTests
             "/opt/Dudu.exe", "/tmp/startup-" + Guid.NewGuid().ToString("N"), new FailingWriter());
         var repository = new StubPrefsRepository();
         var preferences = new Preferences(
-            AppTheme.System, new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-            false, 3, false, false, true, TimeSpan.FromMinutes(15));
+            AppTheme.System,
+            false, false, false, true, TimeSpan.FromMinutes(15));
         var settings = new StartupSettingsService(
             startup, new PreferenceMutationCoordinator(preferences, repository));
 
@@ -183,8 +183,8 @@ public sealed class WinUiHardeningTests
             null, "/tmp/startup-" + Guid.NewGuid().ToString("N"), new StubWriter(), packagedTask);
         var repository = new StubPrefsRepository();
         var preferences = new Preferences(
-            AppTheme.System, new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-            false, 3, false, false, true, TimeSpan.FromMinutes(15));
+            AppTheme.System,
+            false, false, false, true, TimeSpan.FromMinutes(15));
         var settings = new StartupSettingsService(
             startup, new PreferenceMutationCoordinator(preferences, repository));
 
@@ -209,8 +209,8 @@ public sealed class WinUiHardeningTests
             null, "/tmp/startup-" + Guid.NewGuid().ToString("N"), new StubWriter(), packagedTask);
         var repository = new StubPrefsRepository();
         var preferences = new Preferences(
-            AppTheme.System, new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-            false, 3, false, false, true, TimeSpan.FromMinutes(15));
+            AppTheme.System,
+            false, false, false, true, TimeSpan.FromMinutes(15));
         var settings = new StartupSettingsService(
             startup, new PreferenceMutationCoordinator(preferences, repository));
 

@@ -27,9 +27,7 @@ public sealed class AppLifecycleCoordinatorTests
         var pet = PetStateMachine.CreateIdle();
         var preferences = new Preferences(
             AppTheme.System,
-            new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
             false,
-            3,
             true,
             false,
             true,
@@ -93,8 +91,7 @@ public sealed class AppLifecycleCoordinatorTests
             pet,
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+                false, true, false, true, TimeSpan.FromMinutes(15)),
             presentOneShotAsync: (petEvent, dismissalId, _) =>
             {
                 requested.Add(petEvent);
@@ -123,8 +120,7 @@ public sealed class AppLifecycleCoordinatorTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+                false, true, false, true, TimeSpan.FromMinutes(15)),
             isFullscreen: () => false);
 
         await lifecycle.OnFullscreenChangedAsync(true, TestContext.Current.CancellationToken);
@@ -145,8 +141,7 @@ public sealed class AppLifecycleCoordinatorTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+                false, true, false, true, TimeSpan.FromMinutes(15)),
             pauseState: () => PausePolicy.ForOneHour(now),
             clock: () => now);
 
@@ -167,8 +162,7 @@ public sealed class AppLifecycleCoordinatorTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)));
+                false, true, false, true, TimeSpan.FromMinutes(15)));
 
         await lifecycle.OnUserShowOrHideAsync(TestContext.Current.CancellationToken);
         await lifecycle.OnFullscreenChangedAsync(true, TestContext.Current.CancellationToken);
@@ -191,8 +185,7 @@ public sealed class AppLifecycleCoordinatorTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+                false, true, false, true, TimeSpan.FromMinutes(15)),
             openHome: async _ =>
             {
                 await lifecycle!.OnUserShowOrHideAsync();
@@ -221,8 +214,7 @@ public sealed class AppLifecycleCoordinatorTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+                false, true, false, true, TimeSpan.FromMinutes(15)),
             openHome: _ => Task.FromException(new InvalidOperationException("home dispatch failed")),
             initialUserVisible: false,
             presentationEnvironment: sink);
@@ -256,8 +248,7 @@ public sealed class AppLifecycleCoordinatorTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+                false, true, false, true, TimeSpan.FromMinutes(15)),
             initialUserVisible: false,
             openHome: async _ =>
             {
@@ -300,8 +291,7 @@ public sealed class AppLifecycleCoordinatorTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+                false, true, false, true, TimeSpan.FromMinutes(15)),
             initialUserVisible: false,
             presentationEnvironment: sink,
             openHome: async _ =>
@@ -337,8 +327,7 @@ public sealed class AppLifecycleCoordinatorTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+                false, true, false, true, TimeSpan.FromMinutes(15)),
             initialUserVisible: false);
 
         await lifecycle.OnHotkeyAsync(TestContext.Current.CancellationToken);
@@ -368,8 +357,7 @@ public sealed class AppLifecycleCoordinatorTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+                false, true, false, true, TimeSpan.FromMinutes(15)),
             initialUserVisible: true);
 
         await lifecycle.OnUserShowOrHideAsync(TestContext.Current.CancellationToken);
@@ -392,8 +380,7 @@ public sealed class AppLifecycleCoordinatorTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+                false, true, false, true, TimeSpan.FromMinutes(15)),
             initialUserVisible: false);
 
         await lifecycle.SetUserVisibleAsync(true, TestContext.Current.CancellationToken);
@@ -419,8 +406,7 @@ public sealed class AppLifecycleCoordinatorTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+                false, true, false, true, TimeSpan.FromMinutes(15)),
             pauseState: () => flags.State,
             initialUserVisible: true);
 
@@ -454,8 +440,7 @@ public sealed class AppLifecycleCoordinatorTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+                false, true, false, true, TimeSpan.FromMinutes(15)),
             pauseState: () => flags.State,
             clock: () => now,
             initialUserVisible: false);
@@ -561,8 +546,7 @@ public sealed class AppLifecycleCoordinatorTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+                false, true, false, true, TimeSpan.FromMinutes(15)),
             pauseState: () =>
             {
                 var observedPause = pause;
@@ -605,8 +589,7 @@ public sealed class AppLifecycleCoordinatorTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+                false, true, false, true, TimeSpan.FromMinutes(15)),
             pauseState: () => pause,
             clock: () => now,
             initialUserVisible: false);
@@ -635,8 +618,7 @@ public sealed class AppLifecycleCoordinatorTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+                false, true, false, true, TimeSpan.FromMinutes(15)),
             isFullscreen: () => fullscreen,
             initialUserVisible: false);
 
@@ -670,8 +652,7 @@ public sealed class AppLifecycleCoordinatorTests
         var pet = PetStateMachine.CreateIdle();
         var preferences = new Preferences(
             AppTheme.System,
-            new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-            false, 3, true, false, true, TimeSpan.FromMinutes(15));
+            false, true, false, true, TimeSpan.FromMinutes(15));
         var requested = new List<PetEvent>();
         await using var lifecycle = new AppLifecycleCoordinator(
             host,
@@ -713,8 +694,7 @@ public sealed class AppLifecycleCoordinatorTests
         var overlay = new FakeOverlay();
         var preferences = new Preferences(
             AppTheme.System,
-            new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-            false, 3, true, false, true, TimeSpan.FromMinutes(15));
+            false, true, false, true, TimeSpan.FromMinutes(15));
         await using var lifecycle = new AppLifecycleCoordinator(
             new FakeHost(),
             overlay,
@@ -765,8 +745,7 @@ public sealed class AppLifecycleCoordinatorTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+                false, true, false, true, TimeSpan.FromMinutes(15)),
             pauseState: () => pause,
             clock: () => now,
             initialUserVisible: false,
@@ -802,8 +781,7 @@ public sealed class AppLifecycleCoordinatorTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+                false, true, false, true, TimeSpan.FromMinutes(15)),
             pauseState: () => pause,
             clock: () => now,
             initialUserVisible: true);
@@ -833,8 +811,7 @@ public sealed class AppLifecycleCoordinatorTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+                false, true, false, true, TimeSpan.FromMinutes(15)),
             initialUserVisible: false);
 
         await lifecycle.ReconcileVisibilityAsync(TestContext.Current.CancellationToken);
@@ -862,8 +839,7 @@ public sealed class AppLifecycleCoordinatorTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+                false, true, false, true, TimeSpan.FromMinutes(15)),
             initialUserVisible: false,
             presentationEnvironment: sink);
 
@@ -894,8 +870,7 @@ public sealed class AppLifecycleCoordinatorTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, false, TimeSpan.FromMinutes(15)),
+                false, true, false, false, TimeSpan.FromMinutes(15)),
             isFullscreen: () => true,
             initialUserVisible: false);
 
@@ -998,8 +973,7 @@ public sealed class AppLifecycleCoordinatorTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+                false, true, false, true, TimeSpan.FromMinutes(15)),
             initialUserVisible: true,
             presentationEnvironment: sink);
 
@@ -1027,8 +1001,7 @@ public sealed class AppLifecycleCoordinatorTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+                false, true, false, true, TimeSpan.FromMinutes(15)),
             initialUserVisible: true,
             presentationEnvironment: sink);
 
@@ -1056,8 +1029,7 @@ public sealed class AppLifecycleCoordinatorTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+                false, true, false, true, TimeSpan.FromMinutes(15)),
             initialUserVisible: true,
             presentationEnvironment: sink);
 
@@ -1088,8 +1060,7 @@ public sealed class AppLifecycleCoordinatorTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+                false, true, false, true, TimeSpan.FromMinutes(15)),
             initialUserVisible: true,
             presentationEnvironment: sink);
         var pushesBeforeReconcile = sink.UserVisiblePushes.Count;
@@ -1131,8 +1102,7 @@ public sealed class AppLifecycleCoordinatorTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+                false, true, false, true, TimeSpan.FromMinutes(15)),
             initialUserVisible: true,
             presentationEnvironment: sink);
         sink.OnPush = visible =>
@@ -1184,8 +1154,7 @@ public sealed class AppLifecycleCoordinatorTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+                false, true, false, true, TimeSpan.FromMinutes(15)),
             initialUserVisible: true,
             presentationEnvironment: sink);
 
@@ -1225,8 +1194,7 @@ public sealed class AppLifecycleCoordinatorTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+                false, true, false, true, TimeSpan.FromMinutes(15)),
             initialUserVisible: true,
             presentationEnvironment: sink);
 
@@ -1271,8 +1239,7 @@ public sealed class AppLifecycleCoordinatorTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+                false, true, false, true, TimeSpan.FromMinutes(15)),
             initialUserVisible: true,
             presentationEnvironment: sink);
         sink.OnPush = visible =>
