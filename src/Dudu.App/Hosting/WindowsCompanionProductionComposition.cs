@@ -95,6 +95,13 @@ public sealed record CompanionSettingsContext(
     /// UI surface. App.xaml.cs uses this to exit when that window closes.
     /// </summary>
     public bool IsSafeMode { get; init; }
+
+    /// <summary>
+    /// Where the settings window reports a failure to load (operation
+    /// <c>settings-load</c>), so "aiyo couldnt load settings" leaves a record in
+    /// diagnostics.log instead of only a Trace line. Null in tests.
+    /// </summary>
+    public IAppHostErrorReporter? ErrorReporter { get; init; }
 }
 
 public sealed record CompanionLaunchOptions(bool Background, bool SelfTest = false)
@@ -1108,6 +1115,7 @@ public static class WindowsCompanionProductionComposition
                 OverlayCommands = overlayRouter,
                 ReminderActions = reminderToastActions,
                 NotificationRouter = composedNotificationRouter,
+                ErrorReporter = host.ErrorReporter,
                 AvailableOutfitKeys = pack.Manifest.Outfits.Keys
                     .OrderBy(key => key, StringComparer.Ordinal)
                     .ToArray(),
@@ -1437,6 +1445,7 @@ public static class WindowsCompanionProductionComposition
             Features = featureContext,
             AvailableOutfitKeys = ["base"],
             IsSafeMode = true,
+            ErrorReporter = host.ErrorReporter,
         });
 
         // No overlay is composed in safe mode, so the notification service that

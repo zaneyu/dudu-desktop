@@ -125,7 +125,7 @@ public sealed partial class SettingsWindow : UserControl
                 AutomationProperties.SetName(error, error.Text);
                 AutomationProperties.SetLiveSetting(error, AutomationLiveSetting.Assertive);
                 ContentFrame.Content = error;
-                global::System.Diagnostics.Trace.TraceError("Dudu settings load failed: {0}", exception);
+                ReportFailure(SettingsLoadOperation, exception);
             }
         }
 
@@ -473,8 +473,36 @@ public sealed partial class SettingsWindow : UserControl
             RootNavigation.Visibility = Visibility.Visible;
             OnboardingFrame.Visibility = Visibility.Collapsed;
             SetCompanionStatus("setup saved. close this window and open it again to finish loading");
-            global::System.Diagnostics.Trace.TraceError("Dudu settings failed to open after onboarding: {0}", exception);
+            ReportFailure(SettingsLoadOperation, exception);
         }
+    }
+
+    internal const string SettingsLoadOperation = "settings-load";
+
+    /// <summary>A settings window that could not load used to leave only a Trace
+    /// line, so "aiyo couldnt load settings" had no record in diagnostics.log. The
+    /// reporter gets the full exception; the Trace fallback keeps type and HResult
+    /// only. Never throws: it runs inside the load's own catch.</summary>
+    private void ReportFailure(string operation, Exception exception)
+    {
+        try
+        {
+            if (_context.ErrorReporter is { } reporter)
+            {
+                reporter.Report(operation, exception);
+                return;
+            }
+        }
+        catch
+        {
+            // Fall through to the Trace line below.
+        }
+
+        global::System.Diagnostics.Trace.TraceError(
+            "Dudu {0} failed: {1} 0x{2:X8}",
+            operation,
+            exception.GetType().FullName,
+            exception.HResult);
     }
 
     private void FocusSelectedNavigationItem()

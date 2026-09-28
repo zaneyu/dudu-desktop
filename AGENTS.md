@@ -614,6 +614,9 @@ authoritative for future changes.
   `pause-persist` (a pause she chose could not be saved for the next start;
   the pause itself still applies), `tray-attach`, `tray-recreate`,
   `tray-menu-state` (the tray menu falls back to neutral labels),
+  `settings-load` (the settings window could not load and shows "aiyo
+  couldnt load settings", or could not finish opening after onboarding;
+  full exception to the reporter, never note text),
   `taskbar-tray-recreate`, `overlay-create`, `overlay-dispose`,
   `overlay-message-loop`, `fullscreen-poll` (fail-closed to hidden, unchanged),
   native callbacks (`session-lock/unlock`, `suspend`, `resume`,
@@ -679,6 +682,10 @@ Symptom-first lookup (data root overridable via `DUDU_DATA_ROOT`):
   reports; `1009` confirms a staged-token promotion after an interrupted
   key rotation; repeated `1003` with reason `oversize` means poison envelopes
   are being acked-and-skipped by design.
+- "aiyo couldnt load settings" in the settings window: search
+  `diagnostics.log` for `settings-load` (the exception names the failing
+  step). The settings load no longer waits on a relay probe once setup is
+  complete; the Connection page does its own probe.
 - Unopened-note or settings data loss after crash: check for `db-init`,
   `secret-read`, `secret-write`, `backup-prune` phases; secret-write ordering
   (token before device ID) is a recovery invariant — do not "fix" it.
