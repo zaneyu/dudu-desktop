@@ -14,68 +14,6 @@ namespace Dudu.App.Tests.ViewModels;
 public sealed class OnboardingFlowRegressionTests
 {
     [Fact]
-    public async Task Unparseable_quiet_hours_text_blocks_the_step_instead_of_keeping_the_old_time()
-    {
-        await using var fixture = Fixture.Create();
-        var vm = fixture.ViewModel;
-        await AdvanceToAsync(vm, OnboardingStep.QuietHours, fixture.CancellationToken);
-
-        Assert.False(vm.TrySetQuietHoursText("25:00", "07:00"));
-
-        Assert.False(await vm.NextAsync(fixture.CancellationToken));
-        Assert.Equal(OnboardingStep.QuietHours, vm.CurrentStep);
-        Assert.Equal(OnboardingViewModel.QuietHoursTimeFormatMessage, vm.ValidationMessage);
-        Assert.Equal(new TimeOnly(22, 0), vm.QuietHoursStart);
-
-        Assert.True(vm.TrySetQuietHoursText("21:30", "06:45"));
-        Assert.True(await vm.NextAsync(fixture.CancellationToken));
-        Assert.Equal(OnboardingStep.Reminders, vm.CurrentStep);
-        Assert.Equal(new TimeOnly(21, 30), vm.QuietHoursStart);
-        Assert.Equal(new TimeOnly(6, 45), vm.QuietHoursEnd);
-    }
-
-    [Fact]
-    public async Task A_cleared_quiet_hours_box_is_rejected_too()
-    {
-        await using var fixture = Fixture.Create();
-        var vm = fixture.ViewModel;
-        await AdvanceToAsync(vm, OnboardingStep.QuietHours, fixture.CancellationToken);
-
-        Assert.False(vm.TrySetQuietHoursText("22:00", "   "));
-
-        Assert.False(await vm.NextAsync(fixture.CancellationToken));
-        Assert.Equal(OnboardingViewModel.QuietHoursTimeFormatMessage, vm.ValidationMessage);
-    }
-
-    [Fact]
-    public async Task Unparseable_quiet_hours_text_does_not_block_when_quiet_hours_are_off()
-    {
-        await using var fixture = Fixture.Create();
-        var vm = fixture.ViewModel;
-        await AdvanceToAsync(vm, OnboardingStep.QuietHours, fixture.CancellationToken);
-
-        vm.QuietHoursEnabled = false;
-        vm.TrySetQuietHoursText("not a time", "");
-
-        Assert.True(await vm.NextAsync(fixture.CancellationToken));
-        Assert.Equal(OnboardingStep.Reminders, vm.CurrentStep);
-    }
-
-    [Fact]
-    public async Task Equal_quiet_hours_times_explain_what_is_actually_wrong()
-    {
-        await using var fixture = Fixture.Create();
-        var vm = fixture.ViewModel;
-        await AdvanceToAsync(vm, OnboardingStep.QuietHours, fixture.CancellationToken);
-
-        Assert.True(vm.TrySetQuietHoursText("22:00", "22:00"));
-
-        Assert.False(await vm.NextAsync(fixture.CancellationToken));
-        Assert.Equal(OnboardingViewModel.QuietHoursSameTimeMessage, vm.ValidationMessage);
-        Assert.Contains("different", vm.ValidationMessage);
-    }
-
-    [Fact]
     public async Task A_cleared_note_limit_box_is_rejected_instead_of_becoming_zero()
     {
         await using var fixture = Fixture.Create();
@@ -100,7 +38,6 @@ public sealed class OnboardingFlowRegressionTests
         await using var fixture = Fixture.Create();
         var vm = fixture.ViewModel;
         vm.RecipientName = "Mia";
-        vm.TrySetQuietHoursText("nope", "07:00");
         vm.SetLocalNoteDailyLimitInput(double.NaN);
 
         await vm.AcceptRecommendedDefaultsAsync(fixture.CancellationToken);

@@ -58,7 +58,6 @@ public sealed class PresentationCoordinatorTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => visual.Task,
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             playAudioAsync: (_, _) =>
@@ -98,7 +97,6 @@ public sealed class PresentationCoordinatorTests
                 }
             },
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             playAudioAsync: (_, _) =>
@@ -129,7 +127,6 @@ public sealed class PresentationCoordinatorTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.FromException(new InvalidOperationException("playback failed")),
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             playAudioAsync: (_, _) =>
@@ -157,7 +154,6 @@ public sealed class PresentationCoordinatorTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             errorReporter: reporter,
@@ -183,7 +179,6 @@ public sealed class PresentationCoordinatorTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => { order.Add("visual"); return Task.CompletedTask; },
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             playAudioAsync: (_, _) =>
@@ -221,7 +216,6 @@ public sealed class PresentationCoordinatorTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => { played++; return Task.CompletedTask; },
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             errorReporter: reporter);
@@ -262,7 +256,6 @@ public sealed class PresentationCoordinatorTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => { order.Add("visual"); return Task.CompletedTask; },
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             playAudioAsync: async (_, _) =>
@@ -386,7 +379,6 @@ public sealed class PresentationCoordinatorTests
                 await playbackGate.Task;
             },
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1));
         var item = DurableNotification.RemoteNote(NoteOne);
@@ -417,8 +409,7 @@ public sealed class PresentationCoordinatorTests
             pet,
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            isQuietHours: () => true,
-            pauseState: () => PauseState.None,
+            pauseState: () => new PauseState(PauseMode.Indefinite, null),
             petGate: new SemaphoreSlim(1, 1));
         var item = DurableNotification.RemoteNote(NoteOne);
 
@@ -436,7 +427,7 @@ public sealed class PresentationCoordinatorTests
         var policy = new PresentationPolicy(TimeSpan.Zero);
         var playbackGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var playCount = 0;
-        var quiet = true;
+        var paused = true;
         var coordinator = new PresentationCoordinator(
             policy,
             notifications,
@@ -447,8 +438,7 @@ public sealed class PresentationCoordinatorTests
                 await playbackGate.Task;
             },
             () => AnimationOptions.Default,
-            isQuietHours: () => quiet,
-            pauseState: () => PauseState.None,
+            pauseState: () => paused ? new PauseState(PauseMode.Indefinite, null) : PauseState.None,
             petGate: new SemaphoreSlim(1, 1));
         var item = DurableNotification.RemoteNote(NoteOne);
 
@@ -458,7 +448,7 @@ public sealed class PresentationCoordinatorTests
 
         // No longer suppressed: TickAsync dequeues it and starts presenting
         // (blocked on playbackGate), marking it "currently presenting".
-        quiet = false;
+        paused = false;
         var tick = coordinator.TickAsync(CancellationToken.None);
 
         // A concurrent duplicate — even a bypass one — must be deduped
@@ -490,7 +480,6 @@ public sealed class PresentationCoordinatorTests
                 return Task.CompletedTask;
             },
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1));
 
@@ -523,7 +512,6 @@ public sealed class PresentationCoordinatorTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.FromException(new InvalidOperationException("playback failed")),
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1));
 
@@ -552,7 +540,6 @@ public sealed class PresentationCoordinatorTests
             pet,
             (_, _, _) => Task.FromException(new InvalidOperationException("playback failed")),
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1));
 
@@ -583,7 +570,6 @@ public sealed class PresentationCoordinatorTests
             pet,
             (_, _, _) => { played++; return Task.CompletedTask; },
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1));
         coordinator.SetUserVisible(false);
@@ -630,7 +616,6 @@ public sealed class PresentationCoordinatorTests
                     : Task.CompletedTask;
             },
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1));
         coordinator.SetUserVisible(false);
@@ -666,7 +651,6 @@ public sealed class PresentationCoordinatorTests
             pet,
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1));
 
@@ -692,7 +676,6 @@ public sealed class PresentationCoordinatorTests
             pet,
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1));
 
@@ -726,7 +709,6 @@ public sealed class PresentationCoordinatorTests
                 return Task.CompletedTask;
             },
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             ambientScheduler: scheduler,
@@ -770,7 +752,6 @@ public sealed class PresentationCoordinatorTests
                 return Task.CompletedTask;
             },
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             ambientScheduler: scheduler,
@@ -830,7 +811,6 @@ public sealed class PresentationCoordinatorTests
                 return Task.CompletedTask;
             },
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             ambientScheduler: scheduler,
@@ -883,7 +863,6 @@ public sealed class PresentationCoordinatorTests
                 return Task.CompletedTask;
             },
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             ambientScheduler: scheduler,
@@ -935,7 +914,6 @@ public sealed class PresentationCoordinatorTests
                 return Task.CompletedTask;
             },
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             utcNow: () => clock.UtcNow,
@@ -1001,8 +979,7 @@ public sealed class PresentationCoordinatorTests
         var scheduler = new AmbientScheduler(
             clock,
             new FixedRandomSource(),
-            preferences.AmbientMinimumInterval,
-            preferences.QuietHours);
+            preferences.AmbientMinimumInterval);
         var policy = new PresentationPolicy(TimeSpan.Zero);
         var played = new List<PetPresentation>();
         var coordinator = new PresentationCoordinator(
@@ -1015,7 +992,6 @@ public sealed class PresentationCoordinatorTests
                 return Task.CompletedTask;
             },
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             utcNow: () => clock.UtcNow,

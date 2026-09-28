@@ -1,7 +1,6 @@
 using Dudu.Core.Abstractions;
 using Dudu.Core.Assets;
 using Dudu.Core.Models;
-using Dudu.Core.Policies;
 using Dudu.Core.Time;
 
 namespace Dudu.Core.Pet;
@@ -17,19 +16,17 @@ public sealed class AmbientScheduler
         ["blink", "greeting", "sleep", "drink", "celebrate", StickerSentinel];
     private readonly IClock _clock;
     private readonly IRandomSource _random;
-    private readonly QuietHours _quietHours;
     private readonly TimeSpan _minimumInterval;
 
     public AmbientScheduler(IClock clock, IRandomSource random, Preferences preferences)
-        : this(clock, random, preferences.AmbientMinimumInterval, preferences.QuietHours)
+        : this(clock, random, preferences.AmbientMinimumInterval)
     {
     }
 
     public AmbientScheduler(
         IClock clock,
         IRandomSource random,
-        TimeSpan ambientMinimumInterval,
-        QuietHours? quietHours = null)
+        TimeSpan ambientMinimumInterval)
     {
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
         _random = random ?? throw new ArgumentNullException(nameof(random));
@@ -39,7 +36,6 @@ public sealed class AmbientScheduler
         }
 
         _minimumInterval = ambientMinimumInterval;
-        _quietHours = quietHours ?? new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue);
 
         // A fresh scheduler has shown nothing yet, so the first ambient moment is
         // one minimum interval out — not immediately at startup, which would greet
@@ -52,15 +48,6 @@ public sealed class AmbientScheduler
     /// <summary>
     /// Attempts to produce the next ambient pet moment.
     /// </summary>
-    /// <param name="quietHoursOverride">
-    /// Explicit quiet-hours verdict from the caller. When null, the scheduler consults
-    /// <see cref="QuietHoursPolicy"/> itself; when set, the caller's value wins.
-    /// Callers must derive the override from the same policy (same preferences, clock,
-    /// and time zone) — a stale <c>false</c> would bypass quiet hours and a stale
-    /// <c>true</c> would suppress ambience that should play. The only audited caller is
-    /// PresentationCoordinator, which passes its per-tick <c>NowQuiet</c> snapshot taken
-    /// from the same quiet-hours source on the same tick.
-    /// </param>
     /// <param name="availableStickerKeys">
     /// The sticker animation keys the active pack actually ships. Null means the caller
     /// has no pack-specific key list to give, so the scheduler falls back to rolling
@@ -78,7 +65,6 @@ public sealed class AmbientScheduler
         bool busy,
         bool fullscreen,
         bool sessionLocked,
-        bool? quietHoursOverride = null,
         IReadOnlyList<string>? availableStickerKeys = null)
     {
         var now = _clock.UtcNow;
@@ -87,11 +73,7 @@ public sealed class AmbientScheduler
             return null;
         }
 
-        if (now < NextEligibleUtc
-            || (quietHoursOverride ?? QuietHoursPolicy.IsQuiet(
-                now,
-                _quietHours,
-                _clock.LocalTimeZone)))
+        if (now < NextEligibleUtc)
         {
             return null;
         }

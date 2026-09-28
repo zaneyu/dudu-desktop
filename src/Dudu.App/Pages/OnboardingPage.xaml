@@ -30,7 +30,7 @@
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
                             <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="🎨" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
-                            <TextBlock Grid.Column="1" Text="choose a quiet look" Style="{StaticResource SectionHeadingStyle}" />
+                            <TextBlock Grid.Column="1" Text="choose a cozy look" Style="{StaticResource SectionHeadingStyle}" />
                         </Grid>
                         <ComboBox x:Name="ThemeBox" Header="appearance" AutomationProperties.AutomationId="OnboardingTheme" AutomationProperties.Name="appearance" SelectedIndex="0">
                             <ComboBoxItem Content="use windows setting" Tag="System" />
@@ -39,27 +39,6 @@
                         </ComboBox>
                         <CheckBox x:Name="ReducedMotionBox" Content="use reduced motion" AutomationProperties.AutomationId="OnboardingReducedMotion" AutomationProperties.Name="use reduced motion" />
                         <TextBlock Text="reduced motion keeps dudu expressive without extra movement" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
-                    </StackPanel>
-
-                    <StackPanel x:Name="QuietHoursStep" Spacing="12" Visibility="Collapsed">
-                        <Grid ColumnSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="🌙" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
-                            <TextBlock Grid.Column="1" Text="set a quiet window" Style="{StaticResource SectionHeadingStyle}" />
-                        </Grid>
-                        <CheckBox x:Name="QuietHoursBox" Content="quiet hours on" AutomationProperties.AutomationId="OnboardingQuietHoursEnabled" AutomationProperties.Name="quiet hours on" IsChecked="True" />
-                        <Grid ColumnSpacing="16">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <TextBox x:Name="QuietStartBox" Header="starts" Text="22:00" AutomationProperties.AutomationId="OnboardingQuietHoursStart" AutomationProperties.Name="starts" Grid.Column="0" />
-                            <TextBox x:Name="QuietEndBox" Header="ends" Text="07:00" AutomationProperties.AutomationId="OnboardingQuietHoursEnd" AutomationProperties.Name="ends" Grid.Column="1" />
-                        </Grid>
-                        <TextBlock Text="dudu keeps non-urgent prompts quiet during this window" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                     </StackPanel>
 
                     <StackPanel x:Name="RemindersStep" Spacing="12" Visibility="Collapsed">

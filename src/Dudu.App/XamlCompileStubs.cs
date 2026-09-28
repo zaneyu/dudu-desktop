@@ -114,7 +114,6 @@ namespace Dudu.App.Pages
         private TextBlock OnboardingProgress = null!;
         private StackPanel RecipientStep = null!;
         private StackPanel AppearanceStep = null!;
-        private StackPanel QuietHoursStep = null!;
         private StackPanel RemindersStep = null!;
         private StackPanel PlacementStep = null!;
         private StackPanel PairingStep = null!;
@@ -122,9 +121,6 @@ namespace Dudu.App.Pages
         private Button RecommendedDefaultsButton = null!;
         private ComboBox ThemeBox = null!;
         private CheckBox ReducedMotionBox = null!;
-        private CheckBox QuietHoursBox = null!;
-        private TextBox QuietStartBox = null!;
-        private TextBox QuietEndBox = null!;
         private CheckBox HydrationBox = null!;
         private CheckBox BreakBox = null!;
         private NumberBox NoteLimitBox = null!;
@@ -149,7 +145,6 @@ namespace Dudu.App.Pages
             OnboardingProgress = new TextBlock();
             RecipientStep = new StackPanel();
             AppearanceStep = new StackPanel();
-            QuietHoursStep = new StackPanel();
             RemindersStep = new StackPanel();
             PlacementStep = new StackPanel();
             PairingStep = new StackPanel();
@@ -157,9 +152,6 @@ namespace Dudu.App.Pages
             RecommendedDefaultsButton = new Button();
             ThemeBox = new ComboBox();
             ReducedMotionBox = new CheckBox();
-            QuietHoursBox = new CheckBox();
-            QuietStartBox = new TextBox();
-            QuietEndBox = new TextBox();
             HydrationBox = new CheckBox();
             BreakBox = new CheckBox();
             NoteLimitBox = new NumberBox { Value = 3 };

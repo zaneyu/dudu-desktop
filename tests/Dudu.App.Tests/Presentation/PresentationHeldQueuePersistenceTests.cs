@@ -10,7 +10,7 @@ using Xunit;
 namespace Dudu.App.Tests.Presentation;
 
 /// <summary>
-/// P2-B: an item held by quiet hours/fullscreen/lock/pause used to live only
+/// P2-B: an item held by fullscreen/lock/pause/a busy pet used to live only
 /// in <see cref="PresentationPolicy"/>'s in-memory queue, so quitting or
 /// crashing while it was held lost it silently. <see cref="PresentationCoordinator"/>
 /// now mirrors that queue into an <see cref="IHeldPresentationRepository"/> --
@@ -28,7 +28,7 @@ public sealed class PresentationHeldQueuePersistenceTests
     {
         var repository = new RecordingHeldPresentationRepository();
         var pet = PetStateMachine.CreateIdle();
-        var quiet = true;
+        var paused = true;
         var played = 0;
         var coordinator = new PresentationCoordinator(
             new PresentationPolicy(TimeSpan.Zero),
@@ -36,8 +36,7 @@ public sealed class PresentationHeldQueuePersistenceTests
             pet,
             (_, _, _) => { played++; return Task.CompletedTask; },
             () => AnimationOptions.Default,
-            isQuietHours: () => quiet,
-            pauseState: () => PauseState.None,
+            pauseState: () => paused ? new PauseState(PauseMode.Indefinite, null) : PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
 
@@ -52,7 +51,7 @@ public sealed class PresentationHeldQueuePersistenceTests
         Assert.Equal(NoteOne, saved.Id);
         Assert.Equal(0, played);
 
-        quiet = false;
+        paused = false;
         await coordinator.TickAsync(CancellationToken.None);
 
         Assert.Equal(1, played);
@@ -72,8 +71,7 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            isQuietHours: () => true,
-            pauseState: () => PauseState.None,
+            pauseState: () => new PauseState(PauseMode.Indefinite, null),
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
         var messageId = Guid.NewGuid().ToString("D");
@@ -109,7 +107,6 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => { played++; return Task.CompletedTask; },
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository,
@@ -120,8 +117,8 @@ public sealed class PresentationHeldQueuePersistenceTests
             bypassSuppression: false,
             CancellationToken.None);
 
-        // Held purely because the coordinator started user-hidden -- quiet
-        // hours/fullscreen/lock/pause are all clear. A hold caused only by
+        // Held purely because the coordinator started user-hidden --
+        // fullscreen/lock/pause/busy are all clear. A hold caused only by
         // user-hidden still toasts immediately (see PublishAsync's toastNow)
         // and persists the row already marked toasted.
         Assert.Equal(0, played);
@@ -140,9 +137,9 @@ public sealed class PresentationHeldQueuePersistenceTests
     public async Task A_later_occurrence_of_an_already_queued_item_still_toasts_once_hiding_dudu_is_the_only_hold_reason()
     {
         // Finding 12: while an earlier copy of the same item is
-        // held only by quiet hours, a later occurrence's PublishAsync call
+        // held only by a pause, a later occurrence's PublishAsync call
         // hits the already-queued early return and (before this fix) got no
-        // toast at all -- for as long as the hold lasted. Once quiet hours
+        // toast at all -- for as long as the hold lasted. Once the pause
         // ends but she has since hidden Dudu from the tray -- so hiding Dudu
         // becomes the sole reason anything is still held -- that later
         // occurrence must still toast, exactly like the toastNow path for a
@@ -150,19 +147,18 @@ public sealed class PresentationHeldQueuePersistenceTests
         var repository = new RecordingHeldPresentationRepository();
         var notifications = new CountingNotificationService();
         var played = 0;
-        var quiet = true;
+        var paused = true;
         var coordinator = new PresentationCoordinator(
             new PresentationPolicy(TimeSpan.Zero),
             notifications,
             PetStateMachine.CreateIdle(),
             (_, _, _) => { played++; return Task.CompletedTask; },
             () => AnimationOptions.Default,
-            isQuietHours: () => quiet,
-            pauseState: () => PauseState.None,
+            pauseState: () => paused ? new PauseState(PauseMode.Indefinite, null) : PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
 
-        // Held purely by quiet hours -- not by hiding Dudu -- so the first
+        // Held purely by a pause -- not by hiding Dudu -- so the first
         // hold does not toast yet.
         await coordinator.PublishAsync(
             DurableNotification.RemoteNote(NoteOne),
@@ -171,10 +167,10 @@ public sealed class PresentationHeldQueuePersistenceTests
         Assert.Equal(0, notifications.RemoteNoteCalls);
         Assert.Single(repository.Rows);
 
-        // Quiet hours ends, but she hides Dudu right after -- the item is
+        // The pause ends, but she hides Dudu right after -- the item is
         // still sitting in the queue (nothing has ticked/released it), and
         // hiding Dudu is now the only reason it remains held.
-        quiet = false;
+        paused = false;
         coordinator.SetUserVisible(false);
 
         // A later copy of the same item (same Kind:Id key)
@@ -213,26 +209,25 @@ public sealed class PresentationHeldQueuePersistenceTests
         // toasted flag right after showing the toast.
         var repository = new RecordingHeldPresentationRepository();
         var notifications = new CountingNotificationService();
-        var quiet = true;
+        var paused = true;
         var coordinator = new PresentationCoordinator(
             new PresentationPolicy(TimeSpan.Zero),
             notifications,
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            isQuietHours: () => quiet,
-            pauseState: () => PauseState.None,
+            pauseState: () => paused ? new PauseState(PauseMode.Indefinite, null) : PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
 
-        // Held purely by quiet hours, same setup as the sibling test.
+        // Held purely by a pause, same setup as the sibling test.
         await coordinator.PublishAsync(
             DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
         Assert.False(repository.Rows.Values.Single().Toasted);
 
-        quiet = false;
+        paused = false;
         coordinator.SetUserVisible(false);
 
         // The later-occurrence toast fires (hiding Dudu is now the sole
@@ -256,7 +251,6 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => { restartedPlayed++; return Task.CompletedTask; },
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository,
@@ -285,26 +279,25 @@ public sealed class PresentationHeldQueuePersistenceTests
         // held item was finally released.
         var repository = new RecordingHeldPresentationRepository();
         var notifications = new ThrowOnFirstCallNotificationService();
-        var quiet = true;
+        var paused = true;
         var coordinator = new PresentationCoordinator(
             new PresentationPolicy(TimeSpan.Zero),
             notifications,
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            isQuietHours: () => quiet,
-            pauseState: () => PauseState.None,
+            pauseState: () => paused ? new PauseState(PauseMode.Indefinite, null) : PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
 
-        // Held purely by quiet hours, same setup as the sibling tests.
+        // Held purely by a pause, same setup as the sibling tests.
         await coordinator.PublishAsync(
             DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
         Assert.False(repository.Rows.Values.Single().Toasted);
 
-        quiet = false;
+        paused = false;
         coordinator.SetUserVisible(false);
 
         // The later-occurrence toast fires, but the notification service
@@ -336,7 +329,7 @@ public sealed class PresentationHeldQueuePersistenceTests
     {
         var repository = new RecordingHeldPresentationRepository();
         var attempt = 0;
-        var quiet = true;
+        var paused = true;
         var coordinator = new PresentationCoordinator(
             new PresentationPolicy(TimeSpan.Zero),
             new RecordingNotificationService(),
@@ -349,8 +342,7 @@ public sealed class PresentationHeldQueuePersistenceTests
                     : Task.CompletedTask;
             },
             () => AnimationOptions.Default,
-            isQuietHours: () => quiet,
-            pauseState: () => PauseState.None,
+            pauseState: () => paused ? new PauseState(PauseMode.Indefinite, null) : PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
 
@@ -363,7 +355,7 @@ public sealed class PresentationHeldQueuePersistenceTests
         // Released, but playback fails: the row must still exist afterward,
         // not be lost, so a restart before the next successful retry does
         // not silently drop the item.
-        quiet = false;
+        paused = false;
         await coordinator.TickAsync(CancellationToken.None);
         Assert.Single(repository.Rows);
 
@@ -388,7 +380,6 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.FromException(new InvalidOperationException("playback failed")),
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
@@ -422,15 +413,14 @@ public sealed class PresentationHeldQueuePersistenceTests
         // second time.
         var repository = new RecordingHeldPresentationRepository();
         var notifications = new CountingNotificationService();
-        var quiet = true;
+        var paused = true;
         var coordinator = new PresentationCoordinator(
             new PresentationPolicy(TimeSpan.Zero),
             notifications,
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.FromException(new InvalidOperationException("playback failed")),
             () => AnimationOptions.Default,
-            isQuietHours: () => quiet,
-            pauseState: () => PauseState.None,
+            pauseState: () => paused ? new PauseState(PauseMode.Indefinite, null) : PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
 
@@ -439,16 +429,16 @@ public sealed class PresentationHeldQueuePersistenceTests
             bypassSuppression: false,
             CancellationToken.None);
 
-        // Held by quiet hours (not user-hidden), so PublishAsync's own
+        // Held by a pause (not user-hidden), so PublishAsync's own
         // toastNow shortcut never fires -- the row persists untoasted.
         Assert.Equal(0, notifications.RemoteNoteCalls);
         Assert.False(Assert.Single(repository.Rows.Values).Toasted);
 
-        // Quiet hours end: TickAsync releases it, the toast fires for the
+        // The pause ends: TickAsync releases it, the toast fires for the
         // first time inside PresentAsync, but the animation keeps failing
         // so the item is requeued via TickAsync's decline path -- which
         // does not re-persist the row wholesale.
-        quiet = false;
+        paused = false;
         await coordinator.TickAsync(CancellationToken.None);
 
         Assert.Equal(1, notifications.RemoteNoteCalls);
@@ -479,7 +469,6 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => { played++; return Task.CompletedTask; },
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             utcNow: () => DateTimeOffset.Parse("2026-09-19T08:05:00Z"),
@@ -514,7 +503,6 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             // Past the row's ExpiresUtc.
@@ -554,7 +542,6 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             errorReporter: reporter,
@@ -613,7 +600,6 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => { played++; return Task.CompletedTask; },
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => paused,
             petGate: new SemaphoreSlim(1, 1),
             utcNow: () => queuedUtc.AddMinutes(5),
@@ -655,7 +641,6 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
@@ -681,7 +666,6 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
@@ -704,15 +688,14 @@ public sealed class PresentationHeldQueuePersistenceTests
         // TickAsync from working, only fail to survive a restart.
         var repository = new ThrowingHeldPresentationRepository();
         var played = 0;
-        var quiet = true;
+        var paused = true;
         var coordinator = new PresentationCoordinator(
             new PresentationPolicy(TimeSpan.Zero),
             new RecordingNotificationService(),
             PetStateMachine.CreateIdle(),
             (_, _, _) => { played++; return Task.CompletedTask; },
             () => AnimationOptions.Default,
-            isQuietHours: () => quiet,
-            pauseState: () => PauseState.None,
+            pauseState: () => paused ? new PauseState(PauseMode.Indefinite, null) : PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
 
@@ -723,7 +706,7 @@ public sealed class PresentationHeldQueuePersistenceTests
             bypassSuppression: false,
             CancellationToken.None);
 
-        quiet = false;
+        paused = false;
         await coordinator.TickAsync(CancellationToken.None);
 
         Assert.Equal(1, played);
@@ -746,7 +729,7 @@ public sealed class PresentationHeldQueuePersistenceTests
         var repository = new BlockingSaveHeldPresentationRepository(saveStarted, releaseSave.Task);
         var playbackStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releasePlayback = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var quiet = true;
+        var paused = true;
         var playbackAttempt = 0;
         var coordinator = new PresentationCoordinator(
             new PresentationPolicy(TimeSpan.Zero),
@@ -763,8 +746,7 @@ public sealed class PresentationHeldQueuePersistenceTests
                 }
             },
             () => AnimationOptions.Default,
-            isQuietHours: () => quiet,
-            pauseState: () => PauseState.None,
+            pauseState: () => paused ? new PauseState(PauseMode.Indefinite, null) : PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
         var item = DurableNotification.RemoteNote(NoteOne);
@@ -775,7 +757,7 @@ public sealed class PresentationHeldQueuePersistenceTests
 
         // A concurrent tick dequeues the same item for presentation while the
         // save above is still in flight.
-        quiet = false;
+        paused = false;
         var tick = coordinator.TickAsync(CancellationToken.None);
         await playbackStarted.Task;
 
@@ -794,7 +776,7 @@ public sealed class PresentationHeldQueuePersistenceTests
         Assert.Single(repository.Rows);
 
         // A later, successful tick clears it.
-        quiet = false;
+        paused = false;
         await coordinator.TickAsync(CancellationToken.None);
         Assert.Empty(repository.Rows);
     }
@@ -817,7 +799,6 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => { played++; return Task.CompletedTask; },
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
@@ -865,7 +846,6 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
@@ -914,7 +894,7 @@ public sealed class PresentationHeldQueuePersistenceTests
         // failure could still requeue and re-persist it.
         var repository = new RecordingHeldPresentationRepository();
         var policy = new PresentationPolicy(TimeSpan.Zero);
-        var quiet = true;
+        var paused = true;
         var playStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releasePlay = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var messageId = Guid.NewGuid().ToString("D");
@@ -929,8 +909,7 @@ public sealed class PresentationHeldQueuePersistenceTests
                 throw new InvalidOperationException("playback failed");
             },
             () => AnimationOptions.Default,
-            isQuietHours: () => quiet,
-            pauseState: () => PauseState.None,
+            pauseState: () => paused ? new PauseState(PauseMode.Indefinite, null) : PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
 
@@ -940,7 +919,7 @@ public sealed class PresentationHeldQueuePersistenceTests
             CancellationToken.None);
         Assert.Single(repository.Rows);
 
-        quiet = false;
+        paused = false;
         var tick = coordinator.TickAsync(CancellationToken.None);
         await playStarted.Task;
 
@@ -964,7 +943,6 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
@@ -991,7 +969,6 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
@@ -1027,7 +1004,6 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.FromException(new InvalidOperationException("playback failed")),
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
@@ -1076,7 +1052,6 @@ public sealed class PresentationHeldQueuePersistenceTests
                 throw new InvalidOperationException("playback failed");
             },
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
@@ -1111,7 +1086,7 @@ public sealed class PresentationHeldQueuePersistenceTests
         // PublishAsync's immediate-present failure path.
         var repository = new RecordingHeldPresentationRepository();
         var policy = new PresentationPolicy(TimeSpan.Zero);
-        var quiet = true;
+        var paused = true;
         var playStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releasePlay = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var coordinator = new PresentationCoordinator(
@@ -1125,8 +1100,7 @@ public sealed class PresentationHeldQueuePersistenceTests
                 throw new InvalidOperationException("playback failed");
             },
             () => AnimationOptions.Default,
-            isQuietHours: () => quiet,
-            pauseState: () => PauseState.None,
+            pauseState: () => paused ? new PauseState(PauseMode.Indefinite, null) : PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
 
@@ -1136,7 +1110,7 @@ public sealed class PresentationHeldQueuePersistenceTests
             CancellationToken.None);
         Assert.Single(repository.Rows);
 
-        quiet = false;
+        paused = false;
         var tick = coordinator.TickAsync(CancellationToken.None);
         await playStarted.Task;
 
@@ -1193,7 +1167,6 @@ public sealed class PresentationHeldQueuePersistenceTests
                 await playbackGate.Task;
             },
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
@@ -1260,7 +1233,6 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => { played++; return Task.CompletedTask; },
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             utcNow: () => queuedUtc.AddMinutes(5),
@@ -1299,8 +1271,7 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            isQuietHours: () => true,
-            pauseState: () => PauseState.None,
+            pauseState: () => new PauseState(PauseMode.Indefinite, null),
             petGate: new SemaphoreSlim(1, 1),
             errorReporter: reporter,
             heldPresentations: repository);
@@ -1341,8 +1312,7 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            isQuietHours: () => true,
-            pauseState: () => PauseState.None,
+            pauseState: () => new PauseState(PauseMode.Indefinite, null),
             petGate: new SemaphoreSlim(1, 1),
             utcNow: () => now,
             heldPresentations: repository);
@@ -1364,7 +1334,7 @@ public sealed class PresentationHeldQueuePersistenceTests
         var originalQueuedUtc = DateTimeOffset.Parse("2026-09-19T08:00:00Z");
         var repository = new RecordingHeldPresentationRepository();
         var attempt = 0;
-        var quiet = true;
+        var paused = true;
         var now = originalQueuedUtc;
         var coordinator = new PresentationCoordinator(
             new PresentationPolicy(TimeSpan.Zero),
@@ -1378,8 +1348,7 @@ public sealed class PresentationHeldQueuePersistenceTests
                     : Task.CompletedTask;
             },
             () => AnimationOptions.Default,
-            isQuietHours: () => quiet,
-            pauseState: () => PauseState.None,
+            pauseState: () => paused ? new PauseState(PauseMode.Indefinite, null) : PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             utcNow: () => now,
             heldPresentations: repository);
@@ -1392,7 +1361,7 @@ public sealed class PresentationHeldQueuePersistenceTests
 
         // Time passes, then a released retry fails.
         now = originalQueuedUtc.AddHours(3);
-        quiet = false;
+        paused = false;
         await coordinator.TickAsync(CancellationToken.None);
 
         var afterFailedRetry = Assert.Single(repository.Rows.Values);

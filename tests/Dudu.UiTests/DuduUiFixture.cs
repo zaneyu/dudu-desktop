@@ -279,7 +279,6 @@ internal sealed class DuduUiFixture : IDisposable
         foreach (var visibleControlId in new[]
         {
             "OnboardingTheme",
-            "OnboardingQuietHoursEnabled",
             "OnboardingHydrationReminders",
             "OnboardingPlacementStep",
             "OnboardingSkipPairing",

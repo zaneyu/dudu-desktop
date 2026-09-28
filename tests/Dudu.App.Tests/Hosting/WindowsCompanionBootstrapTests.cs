@@ -185,8 +185,7 @@ public sealed class WindowsCompanionBootstrapTests
         // actually failed (trayAttachFailed), tracked independently of
         // launch mode. The forced overlay show still goes through
         // SetUserVisibleAsync's normal TryCanShow gate (pause/lock/suspend/
-        // fullscreen -- quiet hours no longer vetoes visibility, see owner
-        // decision 3), which can veto it, leaving neither a
+        // fullscreen), which can veto it, leaving neither a
         // tray icon nor a visible overlay. Opening Settings directly (not
         // through OnHotkeyAsync, which is itself gated by TryCanShow)
         // guarantees a way to reach and quit the app in that case. But it

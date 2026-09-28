@@ -81,8 +81,8 @@ public sealed record PresentationDecision(
 /// The single policy that decides whether an unsolicited event is queued,
 /// discarded, or released. It owns the durable queue and the minimum silent
 /// interval between releases so a suppressed burst drains one item at a time
-/// instead of flooding the user the moment quiet hours, fullscreen, a locked
-/// session, or a pause ends.
+/// instead of flooding the user the moment fullscreen, a locked session, a
+/// busy pet, or a pause ends.
 /// </summary>
 /// <remarks>
 /// Every public member locks its own internal state (<see cref="_sync"/>),
@@ -262,13 +262,12 @@ public sealed class PresentationPolicy
 
     /// <summary>
     /// Releases at most one queued durable item, and only when the
-    /// environment is fully clear (not quiet, not fullscreen, not paused,
+    /// environment is fully clear (not fullscreen, not paused,
     /// session not locked, pet not busy eating or being dragged, pet not hidden
     /// by the user) and the minimum silent interval has elapsed since the last
     /// release.
     /// </summary>
     public PresentationDecision Decide(
-        bool nowQuiet,
         bool fullscreen,
         bool paused,
         bool sessionLocked = false,
@@ -278,7 +277,7 @@ public sealed class PresentationPolicy
         bool userHidden = false)
     {
         var now = nowUtc ?? DateTimeOffset.UtcNow;
-        var suppressed = nowQuiet || fullscreen || paused || sessionLocked || busy || userHidden;
+        var suppressed = fullscreen || paused || sessionLocked || busy || userHidden;
         lock (_sync)
         {
             List<string>? purgedKeys = null;

@@ -716,7 +716,6 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
         PetStateMachine pet,
         Preferences preferences,
         Func<PauseState>? pauseState = null,
-        Func<bool>? isQuietHours = null,
         Func<bool>? isFullscreen = null,
         Func<DateTimeOffset>? clock = null,
         Func<CancellationToken, Task>? openHome = null,
@@ -778,7 +777,6 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                 pet,
                 preferences,
                 pauseState,
-                isQuietHours,
                 isFullscreen,
                 clock,
                 tray,
@@ -1052,9 +1050,7 @@ public sealed class WindowsCompanionRuntime : IPrimaryAppRuntime, ICompanionEven
                 // visible, so forceVisible alone would fire here on every
                 // ordinary successful start too. The forced show above still
                 // goes through SetUserVisibleAsync's normal TryCanShow gate
-                // (pause/lock/suspend/fullscreen -- quiet hours gates
-                // proactive presentation only, never the overlay's own
-                // visibility), so a failed
+                // (pause/lock/suspend/fullscreen), so a failed
                 // tray attach can still leave a launch with neither a tray
                 // icon nor a visible overlay — no exit surface at all.
                 // _overlay.IsVisible reflects whether Show() actually ran

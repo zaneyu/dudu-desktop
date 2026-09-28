@@ -168,7 +168,6 @@ public sealed class SettingsNavigationTests
         Find(window, "OnboardingRecommendedDefaults").AsButton().Invoke();
         Advance(window, "OnboardingTheme");
         Find(window, "OnboardingReducedMotion").AsCheckBox().IsChecked = true;
-        Advance(window, "OnboardingQuietHoursEnabled");
         Advance(window, "OnboardingHydrationReminders");
         Find(window, "OnboardingLaunchAtSignIn").AsCheckBox().IsChecked = false;
         Advance(window, "OnboardingPlacementStep");

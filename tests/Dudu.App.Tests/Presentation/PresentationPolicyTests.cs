@@ -9,10 +9,10 @@ public sealed class PresentationPolicyTests
     private const string NoteTwo = "22222222-2222-4222-8222-222222222222";
 
     [Fact]
-    public void Quiet_hours_alone_hold_every_item_and_release_them_in_order_afterwards()
+    public void A_pause_alone_holds_every_item_and_releases_them_in_order_afterwards()
     {
-        // No item kind ignores quiet hours any more (the bedtime routine that
-        // did went with reminders), so quiet hours hold everything.
+        // No item kind ignores a suppressor (the bedtime routine that ignored
+        // one went with reminders), so a pause holds everything.
         var now = DateTimeOffset.Parse("2026-09-18T22:00:00Z");
         var policy = new PresentationPolicy(TimeSpan.Zero);
         var first = DurableNotification.RemoteNote(NoteOne);
@@ -20,20 +20,20 @@ public sealed class PresentationPolicyTests
         policy.Enqueue(first);
         policy.Enqueue(second);
 
-        var held = policy.Decide(nowQuiet: true, fullscreen: false, paused: false, nowUtc: now);
+        var held = policy.Decide(fullscreen: false, paused: true, nowUtc: now);
         Assert.Empty(held.ToPresent);
         Assert.Equal(2, held.RemainingQueuedCount);
 
-        Assert.Equal(first, Assert.Single(policy.Decide(false, false, false, nowUtc: now).ToPresent));
-        Assert.Equal(second, Assert.Single(policy.Decide(false, false, false, nowUtc: now).ToPresent));
+        Assert.Equal(first, Assert.Single(policy.Decide(false, false, nowUtc: now).ToPresent));
+        Assert.Equal(second, Assert.Single(policy.Decide(false, false, nowUtc: now).ToPresent));
     }
 
     [Fact]
-    public void Leaving_quiet_hours_releases_one_durable_item_not_a_burst()
+    public void Leaving_suppression_releases_one_durable_item_not_a_burst()
     {
         var policy = PresentationPolicyFixture.WithQueuedNotes(3);
 
-        var decision = policy.Decide(nowQuiet: false, fullscreen: false, paused: false);
+        var decision = policy.Decide(fullscreen: false, paused: false);
 
         Assert.Single(decision.ToPresent);
         Assert.Equal(2, decision.RemainingQueuedCount);
@@ -44,7 +44,7 @@ public sealed class PresentationPolicyTests
     {
         var policy = PresentationPolicyFixture.WithQueuedNotes(1);
 
-        var decision = policy.Decide(nowQuiet: true, fullscreen: false, paused: false);
+        var decision = policy.Decide(fullscreen: false, paused: true);
 
         Assert.Empty(decision.ToPresent);
         Assert.Equal(1, decision.RemainingQueuedCount);
@@ -58,14 +58,12 @@ public sealed class PresentationPolicyTests
         policy.Enqueue(DurableNotification.RemoteNote(NoteTwo));
         var start = new DateTimeOffset(2026, 9, 11, 10, 0, 0, TimeSpan.Zero);
 
-        var first = policy.Decide(nowQuiet: false, fullscreen: false, paused: false, nowUtc: start);
+        var first = policy.Decide(fullscreen: false, paused: false, nowUtc: start);
         var second = policy.Decide(
-            nowQuiet: false,
             fullscreen: false,
             paused: false,
             nowUtc: start.AddSeconds(30));
         var third = policy.Decide(
-            nowQuiet: false,
             fullscreen: false,
             paused: false,
             nowUtc: start.AddSeconds(91));
@@ -107,7 +105,7 @@ public sealed class PresentationPolicyTests
 
         Assert.True(policy.IsQueued(item));
 
-        var decision = policy.Decide(nowQuiet: false, fullscreen: false, paused: false);
+        var decision = policy.Decide(fullscreen: false, paused: false);
 
         Assert.Single(decision.ToPresent);
         Assert.False(policy.IsQueued(item));

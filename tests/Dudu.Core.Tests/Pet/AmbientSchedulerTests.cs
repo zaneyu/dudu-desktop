@@ -152,24 +152,16 @@ public sealed class AmbientSchedulerTests
     }
 
     [Fact]
-    public void Explicit_quiet_override_wins_over_the_policy_in_both_directions()
+    public void Ambient_is_eligible_at_night_when_nothing_else_suppresses()
     {
-        var clock = new FakeClock(DateTimeOffset.Parse("2026-09-11T23:00:00Z"));
-        var quiet = new QuietHours(true, new TimeOnly(22, 0), new TimeOnly(7, 0));
+        var clock = new FakeClock(DateTimeOffset.Parse("2026-09-14T23:30:00Z"));
+        var scheduler = new AmbientScheduler(clock, new FixedRandomSource(), TimeSpan.FromMinutes(15));
+        clock.Advance(TimeSpan.FromMinutes(16));
 
-        var policyDriven = new AmbientScheduler(clock, new FixedRandomSource(), TimeSpan.Zero, quiet);
-        Assert.Null(policyDriven.TryGetNextEvent(
-            paused: false, busy: false, fullscreen: false, sessionLocked: false));
+        var next = scheduler.TryGetNextEvent(
+            paused: false, busy: false, fullscreen: false, sessionLocked: false, ["sticker-001"]);
 
-        var overridden = new AmbientScheduler(clock, new FixedRandomSource(), TimeSpan.Zero, quiet);
-        Assert.IsType<PetEvent.AmbientRequested>(overridden.TryGetNextEvent(
-            paused: false, busy: false, fullscreen: false, sessionLocked: false,
-            quietHoursOverride: false));
-
-        var forcedQuiet = new AmbientScheduler(clock, new FixedRandomSource(), TimeSpan.Zero, quiet with { Enabled = false });
-        Assert.Null(forcedQuiet.TryGetNextEvent(
-            paused: false, busy: false, fullscreen: false, sessionLocked: false,
-            quietHoursOverride: true));
+        Assert.IsType<PetEvent.AmbientRequested>(next);
     }
 
     private sealed class FakeClock(DateTimeOffset now) : IClock

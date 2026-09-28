@@ -10,7 +10,6 @@ using Dudu.Core.Abstractions;
 using Dudu.Core.Assets;
 using Dudu.Core.Models;
 using Dudu.Core.Pet;
-using Dudu.Core.Policies;
 using Dudu.Core.Time;
 using Dudu.Core;
 using Dudu.Infrastructure;
@@ -117,8 +116,7 @@ public sealed record CompanionLaunchOptions(bool Background, bool SelfTest = fal
     /// Every launch asks for the companion to be shown, including the
     /// background launch at sign-in: a desktop pet that is invisible after
     /// boot reads as broken. Pause, lock and fullscreen still veto the show
-    /// downstream in AppLifecycleCoordinator.TryCanShow -- quiet hours gates
-    /// proactive presentation only, never the overlay's own visibility.
+    /// downstream in AppLifecycleCoordinator.TryCanShow.
     /// </summary>
     public bool ShouldShowOverlay(Preferences preferences)
     {
@@ -157,7 +155,7 @@ public static class WindowsCompanionProductionComposition
 {
     /// <summary>
     /// Minimum silence between unsolicited releases once a suppressed queue
-    /// starts draining, so leaving quiet hours/fullscreen/lock/pause drains
+    /// starts draining, so leaving fullscreen/lock/pause/a busy pet drains
     /// one durable item at a time instead of a burst.
     /// </summary>
     private static readonly TimeSpan PresentationMinimumSilentInterval = TimeSpan.FromSeconds(90);
@@ -479,10 +477,6 @@ public static class WindowsCompanionProductionComposition
                 audioCatalog,
                 audioPlayer,
                 () => runtimePreferences.Current,
-                isQuietHours: () => QuietHoursPolicy.IsQuiet(
-                    DateTimeOffset.UtcNow,
-                    runtimePreferences.Current.QuietHours,
-                    TimeZoneInfo.Local),
                 // Same pause gate the presentations use: "pause until
                 // fullscreen ends" only silences Dudu while fullscreen is on
                 // (and fullscreen already mutes on its own), so sounds are not
@@ -617,10 +611,6 @@ public static class WindowsCompanionProductionComposition
                             ReducedMotionEnabled = runtimePreferences.Current.ReducedMotion,
                             OutfitKey = RuntimeOutfitKey(runtimePreferences.Current),
                         },
-                        isQuietHours: () => QuietHoursPolicy.IsQuiet(
-                            DateTimeOffset.UtcNow,
-                            runtimePreferences.Current.QuietHours,
-                            TimeZoneInfo.Local),
                         pauseState: () => pause.GetEffective(DateTimeOffset.UtcNow),
                         petGate: petGate,
                         ambientScheduler: services.GetRequiredService<AmbientScheduler>(),
@@ -643,7 +633,7 @@ public static class WindowsCompanionProductionComposition
                                     or "sticker-014" or "sticker-021"))
                                 .ToArray()
                             : null,
-                        // P2-B: so an item held by quiet hours/fullscreen/lock/pause
+                        // P2-B: so an item held by fullscreen/lock/pause/a busy pet
                         // survives a quit or crash instead of only living in
                         // PresentationPolicy's in-memory queue.
                         heldPresentations: services.GetRequiredService<IHeldPresentationRepository>(),
@@ -679,7 +669,6 @@ public static class WindowsCompanionProductionComposition
                                 Fullscreen: fullscreen,
                                 SessionLocked: activityGateway.IsSessionLocked,
                                 Hidden: activityGateway.IsUserHidden || !overlay.IsVisible,
-                                QuietHours: QuietHoursPolicy.IsQuiet(now, current.QuietHours, TimeZoneInfo.Local),
                                 Busy: pet.Current.State != PetState.Idle || actionSurface.IsOpen);
                         },
                         presentationCoordinator.TryPresentIdleOneShotAsync,
@@ -746,10 +735,6 @@ public static class WindowsCompanionProductionComposition
                     await overlay.SetActionSurfaceAsync(actionSurface, cancellationToken);
                 },
                 initialUserVisible: showOverlay,
-                isQuietHours: () => QuietHoursPolicy.IsQuiet(
-                    DateTimeOffset.UtcNow,
-                    runtimePreferences.Current.QuietHours,
-                    TimeZoneInfo.Local),
                 onPreferencesChanged: (updated, token) =>
                 {
                     runtimePreferences.Set(updated);

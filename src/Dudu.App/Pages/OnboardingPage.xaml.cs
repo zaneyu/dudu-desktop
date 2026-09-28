@@ -289,7 +289,6 @@ public sealed partial class OnboardingPage : Page
     {
         RecipientStep.Visibility = Visibility.Collapsed;
         AppearanceStep.Visibility = Visibility.Collapsed;
-        QuietHoursStep.Visibility = Visibility.Collapsed;
         RemindersStep.Visibility = Visibility.Collapsed;
         PlacementStep.Visibility = Visibility.Collapsed;
         PairingStep.Visibility = Visibility.Collapsed;
@@ -298,7 +297,6 @@ public sealed partial class OnboardingPage : Page
         {
             case OnboardingStep.Recipient: RecipientStep.Visibility = Visibility.Visible; break;
             case OnboardingStep.Appearance: AppearanceStep.Visibility = Visibility.Visible; break;
-            case OnboardingStep.QuietHours: QuietHoursStep.Visibility = Visibility.Visible; break;
             case OnboardingStep.Reminders: RemindersStep.Visibility = Visibility.Visible; break;
             case OnboardingStep.Placement: PlacementStep.Visibility = Visibility.Visible; break;
             case OnboardingStep.Pairing: PairingStep.Visibility = Visibility.Visible; break;
@@ -358,10 +356,6 @@ public sealed partial class OnboardingPage : Page
     {
         _viewModel.RecipientName = RecipientNameBox.Text;
         _viewModel.ReducedMotion = ReducedMotionBox.IsChecked == true;
-        _viewModel.QuietHoursEnabled = QuietHoursBox.IsChecked == true;
-        // Unparseable times are flagged (and block the quiet-hours step) instead
-        // of being silently dropped in favour of the previous value.
-        _viewModel.TrySetQuietHoursText(QuietStartBox.Text, QuietEndBox.Text);
         _viewModel.HydrationRemindersEnabled = HydrationBox.IsChecked == true;
         _viewModel.BreakRemindersEnabled = BreakBox.IsChecked == true;
         // A cleared NumberBox reports NaN; the view model rejects it rather than
@@ -385,9 +379,6 @@ public sealed partial class OnboardingPage : Page
         {
             RecipientNameBox.Text = _viewModel.RecipientName;
             ReducedMotionBox.IsChecked = _viewModel.ReducedMotion;
-            QuietHoursBox.IsChecked = _viewModel.QuietHoursEnabled;
-            QuietStartBox.Text = _viewModel.QuietHoursStart.ToString("HH:mm");
-            QuietEndBox.Text = _viewModel.QuietHoursEnd.ToString("HH:mm");
             HydrationBox.IsChecked = _viewModel.HydrationRemindersEnabled;
             BreakBox.IsChecked = _viewModel.BreakRemindersEnabled;
             NoteLimitBox.Value = _viewModel.LocalNoteDailyLimit;

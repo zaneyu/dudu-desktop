@@ -45,12 +45,11 @@ public sealed class OnboardingTests
             actions++;
             Find(window, "OnboardingRecommendedDefaults").AsButton().Invoke();
             actions++;
-            // Recipient -> Appearance -> Quiet Hours -> Reminders -> Placement.
+            // Recipient -> Appearance -> Reminders -> Placement.
             Advance(
                 window,
                 ref actions,
                 "OnboardingTheme",
-                "OnboardingQuietHoursEnabled",
                 "OnboardingHydrationReminders",
                 "OnboardingPlacementStep");
             var overlay = WaitForOverlay(automation);

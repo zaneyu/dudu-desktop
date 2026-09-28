@@ -62,7 +62,6 @@ public sealed class PresentationCoordinator :
     private readonly Func<PetPresentation, AnimationOptions, CancellationToken, Task> _playAsync;
     private readonly Func<AudioCueEvent, CancellationToken, Task>? _playAudioAsync;
     private readonly Func<AnimationOptions> _options;
-    private readonly Func<bool> _isQuietHours;
     private readonly Func<PauseState> _pauseState;
     private readonly SemaphoreSlim _petGate;
     private readonly AmbientScheduler? _ambientScheduler;
@@ -143,7 +142,6 @@ public sealed class PresentationCoordinator :
         PetStateMachine pet,
         Func<PetPresentation, AnimationOptions, CancellationToken, Task> playAsync,
         Func<AnimationOptions> options,
-        Func<bool> isQuietHours,
         Func<PauseState> pauseState,
         SemaphoreSlim petGate,
         AmbientScheduler? ambientScheduler = null,
@@ -164,7 +162,6 @@ public sealed class PresentationCoordinator :
         _playAsync = playAsync ?? throw new ArgumentNullException(nameof(playAsync));
         _playAudioAsync = playAudioAsync;
         _options = options ?? throw new ArgumentNullException(nameof(options));
-        _isQuietHours = isQuietHours ?? throw new ArgumentNullException(nameof(isQuietHours));
         _pauseState = pauseState ?? throw new ArgumentNullException(nameof(pauseState));
         _petGate = petGate ?? throw new ArgumentNullException(nameof(petGate));
         _ambientScheduler = ambientScheduler;
@@ -387,7 +384,7 @@ public sealed class PresentationCoordinator :
     /// <summary>
     /// Repopulates PresentationPolicy's in-memory queue from
     /// <see cref="IHeldPresentationRepository"/> so an item held back by
-    /// quiet hours/fullscreen/lock/pause at the moment the app last quit or
+    /// fullscreen/lock/pause/a busy pet at the moment the app last quit or
     /// crashed is not lost. No-op when no repository was supplied. A row that
     /// has already expired, or is older than <see cref="MaxHeldAge"/>, is
     /// dropped (deleted, not enqueued) rather than surfaced on this launch;
@@ -490,7 +487,7 @@ public sealed class PresentationCoordinator :
     /// Publishes a newly-arrived durable item. Bypass items are presented
     /// immediately regardless of the environment (except a hidden pet);
     /// everything else is queued
-    /// while quiet hours, a busy pet (eating or dragged), fullscreen, a locked session, or a pause is
+    /// while a busy pet (eating or dragged), fullscreen, a locked session, or a pause is
     /// active, and presented immediately otherwise. An item whose kind+id is
     /// already queued or is currently being presented is a duplicate and is
     /// dropped rather than queued or presented a second time — this is what
@@ -531,7 +528,7 @@ public sealed class PresentationCoordinator :
                 // 7 days, across restarts) -- only the pet animation needs
                 // to wait for the original held item to release, not the
                 // notification for a new occurrence arriving in the
-                // meantime. Quiet-hours (and every other suppressor)
+                // meantime. Every suppressor's
                 // coalescing multiple occurrences into the single held row
                 // is unchanged: this only fires when hiding Dudu is the
                 // sole reason anything is held, exactly like toastNow below
@@ -620,7 +617,7 @@ public sealed class PresentationCoordinator :
 
         if (queuedForHold)
         {
-            // Held back by quiet hours/fullscreen/lock/pause: persist it so
+            // Held back by fullscreen/lock/pause/a busy pet: persist it so
             // it survives a quit or crash while still queued. No-op when no
             // IHeldPresentationRepository was supplied.
             await PersistHeldAsync(item, now, cancellationToken);
@@ -679,7 +676,6 @@ public sealed class PresentationCoordinator :
         {
             environment = CaptureEnvironment(now);
             var decision = _policy.Decide(
-                environment.NowQuiet,
                 environment.Fullscreen,
                 environment.Paused,
                 environment.SessionLocked,
@@ -813,7 +809,6 @@ public sealed class PresentationCoordinator :
             environment.Busy,
             environment.Fullscreen,
             environment.SessionLocked,
-            environment.NowQuiet,
             _availableStickerKeys);
         if (ambient is not PetEvent.AmbientRequested ambientRequest)
         {
@@ -1215,13 +1210,13 @@ public sealed class PresentationCoordinator :
             // holds them too, so a note is never "presented" as the drag
             // loop and then acknowledged.
             var busy = _pet.IsEatingActive || _pet.IsDragging;
-            return new SuppressionSnapshot(_isQuietHours(), liveFullscreen, paused, sessionLocked, busy, userHidden);
+            return new SuppressionSnapshot(liveFullscreen, paused, sessionLocked, busy, userHidden);
         }
         catch (Exception exception)
         {
             // Single fail-closed policy: any environment fault suppresses.
             ReportFailure("presentation-tick", exception);
-            return new SuppressionSnapshot(NowQuiet: true, Fullscreen: true, Paused: true, SessionLocked: true, Busy: true, UserHidden: true);
+            return new SuppressionSnapshot(Fullscreen: true, Paused: true, SessionLocked: true, Busy: true, UserHidden: true);
         }
     }
 
@@ -1239,7 +1234,7 @@ public sealed class PresentationCoordinator :
     }
 
     private static bool IsSuppressed(SuppressionSnapshot snapshot) =>
-        snapshot.NowQuiet || snapshot.Fullscreen || snapshot.Paused
+        snapshot.Fullscreen || snapshot.Paused
         || snapshot.SessionLocked || snapshot.Busy || snapshot.UserHidden;
 
     /// <summary>
@@ -1250,7 +1245,7 @@ public sealed class PresentationCoordinator :
     /// overlay) can still fire immediately instead of waiting on un-hide.
     /// </summary>
     private static bool IsSuppressedExcludingUserHidden(SuppressionSnapshot snapshot) =>
-        snapshot.NowQuiet || snapshot.Fullscreen || snapshot.Paused
+        snapshot.Fullscreen || snapshot.Paused
         || snapshot.SessionLocked || snapshot.Busy;
 
     private async Task PlayWithTimeoutAsync(PetPresentation presentation, CancellationToken cancellationToken)
@@ -1561,7 +1556,6 @@ public sealed class PresentationCoordinator :
     };
 
     private readonly record struct SuppressionSnapshot(
-        bool NowQuiet,
         bool Fullscreen,
         bool Paused,
         bool SessionLocked,

@@ -71,7 +71,6 @@ public sealed class SinkDiagnosticsTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.FromException(failure),
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             utcNow: () => DueUtc,
@@ -98,7 +97,6 @@ public sealed class SinkDiagnosticsTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             errorReporter: reporter);

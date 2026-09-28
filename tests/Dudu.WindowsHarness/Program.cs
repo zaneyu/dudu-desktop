@@ -414,7 +414,6 @@ static async Task<int> RunOutagePresentationScenarioAsync()
             return Task.CompletedTask;
         },
         () => AnimationOptions.Default,
-        isQuietHours: () => false,
         pauseState: () => pause,
         petGate: new SemaphoreSlim(1, 1),
         heldPresentations: services.GetRequiredService<IHeldPresentationRepository>());

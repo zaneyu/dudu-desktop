@@ -31,7 +31,6 @@ public sealed class AudioCueService : IAsyncDisposable
     private readonly AudioCatalog _catalog;
     private readonly IAudioCuePlayer _player;
     private readonly Func<Preferences> _preferences;
-    private readonly Func<bool> _isQuietHours;
     private readonly Func<bool> _isPaused;
     private readonly Func<bool> _isFullscreen;
     private readonly Func<bool> _isSessionLocked;
@@ -55,7 +54,6 @@ public sealed class AudioCueService : IAsyncDisposable
         AudioCatalog catalog,
         IAudioCuePlayer player,
         Func<Preferences> preferences,
-        Func<bool>? isQuietHours = null,
         Func<bool>? isPaused = null,
         Func<bool>? isFullscreen = null,
         Func<bool>? isSessionLocked = null,
@@ -67,7 +65,6 @@ public sealed class AudioCueService : IAsyncDisposable
         _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
         _player = player ?? throw new ArgumentNullException(nameof(player));
         _preferences = preferences ?? throw new ArgumentNullException(nameof(preferences));
-        _isQuietHours = isQuietHours ?? (() => false);
         _isPaused = isPaused ?? (() => false);
         _isFullscreen = isFullscreen ?? (() => false);
         _isSessionLocked = isSessionLocked ?? (() => false);
@@ -232,7 +229,6 @@ public sealed class AudioCueService : IAsyncDisposable
         // advanced the variant rotation for nothing.
         return !preferences.SoundsEnabled
             || Preferences.ClampSoundVolume(preferences.SoundVolume) <= 0
-            || _isQuietHours()
             || _isPaused()
             || _isFullscreen()
             || _isSessionLocked()

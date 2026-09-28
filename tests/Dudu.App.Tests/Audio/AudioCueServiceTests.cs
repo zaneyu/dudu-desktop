@@ -238,12 +238,12 @@ public sealed class AudioCueServiceTests
 
     [Theory]
     [InlineData(false, "disabled")]
-    [InlineData(true, "quiet")]
+    [InlineData(true, "paused")]
     public async Task Suppresses_when_global_preferences_or_environment_suppress(bool soundsEnabled, string reason)
     {
         var player = new RecordingPlayer();
         var service = CreateService(player, preferences: Preferences.Default with { SoundsEnabled = soundsEnabled },
-            isQuiet: reason == "quiet");
+            flags: new EnvironmentFlags { Paused = reason == "paused" });
 
         var result = await PlayAsync(service, AudioCueEvent.Greeting);
 
@@ -329,7 +329,6 @@ public sealed class AudioCueServiceTests
         Preferences? preferences = null,
         MutableClock? now = null,
         int seed = 0,
-        bool isQuiet = false,
         EnvironmentFlags? flags = null,
         AudioCatalog? catalog = null,
         IAppHostErrorReporter? errorReporter = null)
@@ -340,7 +339,6 @@ public sealed class AudioCueServiceTests
             catalog ?? CreateCatalog(),
             player,
             () => preferences ?? Preferences.Default,
-            () => isQuiet,
             () => flags.Paused,
             () => flags.Fullscreen,
             () => flags.Locked,

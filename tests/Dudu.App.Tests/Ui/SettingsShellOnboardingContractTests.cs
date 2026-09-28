@@ -195,9 +195,7 @@ public sealed class SettingsShellOnboardingContractTests
     {
         var code = Read("src", "Dudu.App", "Pages", "OnboardingPage.xaml.cs");
 
-        Assert.Contains("_viewModel.TrySetQuietHoursText(QuietStartBox.Text, QuietEndBox.Text);", code);
         Assert.Contains("_viewModel.SetLocalNoteDailyLimitInput(NoteLimitBox.Value);", code);
-        Assert.DoesNotContain("TimeOnly.TryParse(QuietStartBox.Text", code);
         Assert.DoesNotContain("(int)Math.Round(NoteLimitBox.Value)", code);
     }
 

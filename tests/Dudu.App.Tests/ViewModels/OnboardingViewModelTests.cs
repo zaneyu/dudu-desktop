@@ -11,17 +11,14 @@ namespace Dudu.App.Tests.ViewModels;
 public sealed class OnboardingViewModelTests
 {
     [Fact]
-    public async Task Recommended_defaults_create_a_quiet_low_interruption_profile()
+    public async Task Recommended_defaults_create_a_low_interruption_profile()
     {
         await using var fixture = OnboardingFixture.Create();
 
         await fixture.ViewModel.AcceptRecommendedDefaultsAsync(fixture.CancellationToken);
 
-        Assert.Equal(new TimeOnly(22, 0), fixture.ViewModel.QuietHoursStart);
-        Assert.Equal(new TimeOnly(7, 0), fixture.ViewModel.QuietHoursEnd);
         Assert.Equal(3, fixture.ViewModel.LocalNoteDailyLimit);
         Assert.True(fixture.ViewModel.HidePetDuringFullscreen);
-        Assert.True(fixture.ViewModel.QuietHoursEnabled);
         Assert.True(fixture.ViewModel.HydrationRemindersEnabled);
         Assert.True(fixture.ViewModel.BreakRemindersEnabled);
     }

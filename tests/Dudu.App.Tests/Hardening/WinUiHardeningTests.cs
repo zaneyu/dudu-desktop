@@ -109,7 +109,6 @@ public sealed class WinUiHardeningTests
             pet,
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            () => false,
             () => PauseState.None,
             gate,
             isFullscreenNow: () => throw new InvalidOperationException("sampler down"));

@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.ComponentModel;
-using System.Globalization;
 using System.Runtime.CompilerServices;
 using Dudu.App.Hosting;
 using Dudu.App.Overlay;
@@ -14,10 +13,9 @@ public enum OnboardingStep
 {
     Recipient = 0,
     Appearance = 1,
-    QuietHours = 2,
-    Reminders = 3,
-    Placement = 4,
-    Pairing = 5,
+    Reminders = 2,
+    Placement = 3,
+    Pairing = 4,
 }
 
 /// <summary>
@@ -27,11 +25,9 @@ public enum OnboardingStep
 /// </summary>
 public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposable
 {
-    public const int StepCount = 6;
+    public const int StepCount = 5;
     public const string DefaultMonitorDeviceName = "PRIMARY";
     public const string RecipientNameMessage = "add a name for dudu to call u, up to 80 characters";
-    public const string QuietHoursSameTimeMessage = "quiet hours need different start and end times";
-    public const string QuietHoursTimeFormatMessage = "use a time like 22:00 for quiet hours";
     public const string LocalNoteLimitMessage = "wait note limit must be 0 to 12";
 
     private readonly PreferenceMutationCoordinator _preferenceMutations;
@@ -50,9 +46,6 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
     private string _recipientName = string.Empty;
     private AppTheme _theme = AppTheme.System;
     private bool _reducedMotion;
-    private bool _quietHoursEnabled = true;
-    private TimeOnly _quietHoursStart = new(22, 0);
-    private TimeOnly _quietHoursEnd = new(7, 0);
     private int _localNoteDailyLimit = 3;
     private bool _hydrationRemindersEnabled = true;
     private bool _breakRemindersEnabled = true;
@@ -69,7 +62,6 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
     private string? _validationMessage;
     private string? _runtimeApplyError;
     private string? _startupRegistrationError;
-    private bool _quietHoursInputInvalid;
     private bool _localNoteLimitInputInvalid;
     private long _placementPreviewGeneration;
 
@@ -111,28 +103,6 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
     public string RecipientName { get => _recipientName; set => Set(ref _recipientName, value ?? string.Empty); }
     public AppTheme Theme { get => _theme; set => Set(ref _theme, value); }
     public bool ReducedMotion { get => _reducedMotion; set => Set(ref _reducedMotion, value); }
-    public bool QuietHoursEnabled { get => _quietHoursEnabled; set => Set(ref _quietHoursEnabled, value); }
-    public TimeOnly QuietHoursStart
-    {
-        get => _quietHoursStart;
-        set
-        {
-            // A typed-in value supersedes whatever unparseable text came before it.
-            _quietHoursInputInvalid = false;
-            Set(ref _quietHoursStart, value);
-        }
-    }
-
-    public TimeOnly QuietHoursEnd
-    {
-        get => _quietHoursEnd;
-        set
-        {
-            _quietHoursInputInvalid = false;
-            Set(ref _quietHoursEnd, value);
-        }
-    }
-
     public int LocalNoteDailyLimit
     {
         get => _localNoteDailyLimit;
@@ -170,9 +140,6 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
             var preferences = _preferenceMutations.Current;
             Theme = preferences.Theme;
             ReducedMotion = preferences.ReducedMotion;
-            QuietHoursEnabled = preferences.QuietHours.Enabled;
-            QuietHoursStart = preferences.QuietHours.Start;
-            QuietHoursEnd = preferences.QuietHours.End;
             LocalNoteDailyLimit = preferences.LocalNoteDailyLimit;
             HydrationRemindersEnabled = preferences.HydrationRemindersEnabled;
             BreakRemindersEnabled = preferences.BreakRemindersEnabled;
@@ -234,9 +201,6 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            QuietHoursEnabled = true;
-            QuietHoursStart = new TimeOnly(22, 0);
-            QuietHoursEnd = new TimeOnly(7, 0);
             LocalNoteDailyLimit = 3;
             HidePetDuringFullscreen = true;
             ReducedMotion = false;
@@ -291,22 +255,6 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
         await _placementPreviewer(
             current.Placement with { NormalizedX = 0.8, NormalizedY = 0.8, Scale = 1.0 },
             cancellationToken);
-    }
-
-    /// <summary>Applies the raw quiet-hours text boxes. Unparseable text used to be
-    /// dropped silently, so a typo such as "25:00" or a cleared box kept the previous
-    /// time and onboarding advanced as if the user's entry had been accepted. Now an
-    /// unparseable entry is remembered and blocks the quiet-hours step (while quiet
-    /// hours are on) until it is corrected.</summary>
-    public bool TrySetQuietHoursText(string? startText, string? endText)
-    {
-        ThrowIfDisposed();
-        var startParsed = TryParseQuietTime(startText, out var start);
-        var endParsed = TryParseQuietTime(endText, out var end);
-        if (startParsed) QuietHoursStart = start;
-        if (endParsed) QuietHoursEnd = end;
-        _quietHoursInputInvalid = !(startParsed && endParsed);
-        return !_quietHoursInputInvalid;
     }
 
     /// <summary>Applies the note-limit NumberBox value. A cleared NumberBox reports
@@ -436,7 +384,6 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
                     current => current with
                     {
                         Theme = Theme,
-                        QuietHours = new QuietHours(QuietHoursEnabled, QuietHoursStart, QuietHoursEnd),
                         ReducedMotion = ReducedMotion,
                         LocalNoteDailyLimit = LocalNoteDailyLimit,
                         LaunchAtSignIn = LaunchAtSignIn,
@@ -522,7 +469,6 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
     {
         OnboardingStep.Recipient => ValidateRecipient(),
         OnboardingStep.Appearance => null,
-        OnboardingStep.QuietHours => ValidateQuietHours(),
         OnboardingStep.Reminders => ValidateReminderDefaults(),
         OnboardingStep.Placement => ValidatePlacement(),
         OnboardingStep.Pairing => null,
@@ -530,7 +476,6 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
     };
 
     private string? ValidateAll() => ValidateRecipient()
-        ?? ValidateQuietHours()
         ?? ValidateReminderDefaults()
         ?? ValidatePlacement();
 
@@ -542,23 +487,9 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
             : null;
     }
 
-    private string? ValidateQuietHours()
-    {
-        if (!QuietHoursEnabled) return null;
-        if (_quietHoursInputInvalid) return QuietHoursTimeFormatMessage;
-        return QuietHoursStart == QuietHoursEnd ? QuietHoursSameTimeMessage : null;
-    }
-
     private string? ValidateReminderDefaults() => _localNoteLimitInputInvalid || LocalNoteDailyLimit is < 0 or > 12
         ? LocalNoteLimitMessage
         : null;
-
-    private static bool TryParseQuietTime(string? text, out TimeOnly time)
-    {
-        time = default;
-        return !string.IsNullOrWhiteSpace(text)
-            && TimeOnly.TryParse(text.Trim(), CultureInfo.CurrentCulture, DateTimeStyles.None, out time);
-    }
 
     private string? ValidatePlacement() => string.IsNullOrWhiteSpace(_monitorDeviceName)
         || !double.IsFinite(PlacementX)

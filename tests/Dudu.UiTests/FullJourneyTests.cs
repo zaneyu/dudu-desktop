@@ -166,7 +166,6 @@ public sealed class FullJourneyTests
         Find(window, "OnboardingRecipientName").AsTextBox().Enter("Mia");
         Find(window, "OnboardingRecommendedDefaults").AsButton().Invoke();
         Advance(window, "OnboardingTheme");
-        Advance(window, "OnboardingQuietHoursEnabled");
         Advance(window, "OnboardingHydrationReminders");
         Advance(window, "OnboardingPlacementStep");
         Advance(window, "OnboardingSkipPairing");
