@@ -558,7 +558,10 @@ public sealed class PresentationHeldQueuePersistenceTests
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             errorReporter: reporter,
-            heldPresentations: repository);
+            heldPresentations: repository,
+            // Pin the clock: with the real clock the 2026-09-19 row ages out
+            // (MaxHeldAge) before its kind is ever looked at.
+            utcNow: () => DateTimeOffset.Parse("2026-09-19T08:05:00Z"));
 
         await coordinator.StartAsync(CancellationToken.None);
 

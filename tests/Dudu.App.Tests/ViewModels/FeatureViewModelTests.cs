@@ -228,10 +228,13 @@ public sealed class FeatureViewModelTests
         var first = fixture.LocalNotes.Notes[0];
         var second = fixture.LocalNotes.Notes[1];
 
-        viewModel.RequestDeleteOpenedNoteCommand.Execute(first);
-        Assert.Equal($"delete \"{first.Text}\" for good? cannot undo", viewModel.DeleteNotePrompt);
+        // Revealing m-2 left it selected, so ask to delete it and then select
+        // the other note: a real selection change must drop the pending delete.
+        Assert.Equal(second.Id, viewModel.SelectedOpenedNote?.Id);
+        viewModel.RequestDeleteOpenedNoteCommand.Execute(second);
+        Assert.Equal($"delete \"{second.Text}\" for good? cannot undo", viewModel.DeleteNotePrompt);
 
-        viewModel.SelectedOpenedNote = second;
+        viewModel.SelectedOpenedNote = first;
 
         Assert.False(viewModel.IsConfirmingDeleteNote);
         Assert.Null(viewModel.PendingDeleteNote);
