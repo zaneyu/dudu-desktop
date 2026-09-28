@@ -89,8 +89,6 @@ public sealed class CompanionFeatureContext
     }
 
     public IClock Clock { get; }
-    [Obsolete("Use CurrentPreferences or UpdatePreferencesAsync so concurrent pages do not overwrite each other.")]
-    public Preferences InitialPreferences => CurrentPreferences;
     public Preferences CurrentPreferences => PreferenceMutations.Current;
     public PreferenceMutationCoordinator PreferenceMutations { get; }
     public IProfileRepository Profiles { get; }
@@ -113,8 +111,8 @@ public sealed class CompanionFeatureContext
 
     /// <summary>Pets Dudu from any surface: resets the shared tantrum clock
     /// and plays <c>petted</c>, or <c>celebrate</c> on a third pet within a
-    /// minute. An interaction (not an ambient) so it also plays during focus
-    /// or a meal.</summary>
+    /// minute. An interaction (not an ambient) so it also plays during a
+    /// meal.</summary>
     public Task PetAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();

@@ -1,6 +1,5 @@
 using System.Reflection;
 using Dudu.App.Hosting;
-using Dudu.App.System;
 using Dudu.App.ViewModels;
 using Dudu.Core.Abstractions;
 using Dudu.Core.Models;
@@ -12,14 +11,13 @@ namespace Dudu.App.Tests.Overlay;
 /// <summary>
 /// Minimal <see cref="CompanionFeatureContext"/> for overlay surface tests.
 /// Repositories and services the overlay never touches are inert
-/// <see cref="DispatchProxy"/> stand-ins; only the presentation, pause and
-/// navigation seams the overlay actually drives are configurable.
+/// <see cref="DispatchProxy"/> stand-ins; only the presentation seam the overlay
+/// actually drives is configurable.
 /// </summary>
 internal static class OverlayTestFeatureContext
 {
     public static CompanionFeatureContext Create(
-        Func<PetEvent, string, CancellationToken, Task>? presentOneShotPetAsync = null,
-        Func<PauseState, CancellationToken, Task>? applyPauseAsync = null)
+        Func<PetEvent, string, CancellationToken, Task>? presentOneShotPetAsync = null)
     {
         var clock = new FixedClock();
         var preferences = Preferences.Default;
@@ -36,7 +34,6 @@ internal static class OverlayTestFeatureContext
             Inert<IPairingService>(),
             Inert<ICompanionFeatureTransactions>(),
             pet,
-            applyPauseAsync: applyPauseAsync,
             presentPetAsync: (petEvent, _) =>
             {
                 pet.Handle(petEvent);

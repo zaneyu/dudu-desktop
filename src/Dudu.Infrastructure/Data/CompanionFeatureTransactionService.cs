@@ -3,7 +3,8 @@ using Dudu.Core.Models;
 
 namespace Dudu.Infrastructure.Data;
 
-/// <summary>SQLite-backed cross-repository operations used by Task 14.</summary>
+/// <summary>SQLite-backed cross-repository operation behind the love notes reveal:
+/// keep the revealed remote note and consume its envelope in one unit of work.</summary>
 public sealed class CompanionFeatureTransactionService : ICompanionFeatureTransactions
 {
     private readonly IAppUnitOfWork _unitOfWork;

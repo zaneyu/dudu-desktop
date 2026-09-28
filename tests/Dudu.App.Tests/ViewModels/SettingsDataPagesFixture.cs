@@ -70,7 +70,6 @@ internal sealed class SettingsDataPagesFixture
 
     public static SettingsDataPagesFixture Create(
         TimeZoneInfo? localTimeZone = null,
-        Preferences? initialPreferences = null,
         Func<CancellationToken, Task>? deleteLocalDataAsync = null,
         Func<CancellationToken, Task>? deleteRemoteDataAsync = null,
         Func<PetEvent, CancellationToken, Task>? presentPetAsync = null,
@@ -82,7 +81,7 @@ internal sealed class SettingsDataPagesFixture
         var clock = new MutableClock(
             DateTimeOffset.Parse("2026-09-19T08:00:00Z"),
             localTimeZone ?? TimeZoneInfo.Utc);
-        var preferences = initialPreferences ?? Dudu.Core.Models.Preferences.Default;
+        var preferences = Dudu.Core.Models.Preferences.Default;
         var preferenceRepository = new MemoryPreferencesRepository();
         var preferenceMutations = new PreferenceMutationCoordinator(preferences, preferenceRepository);
         var localNotes = new MemoryLocalNoteRepository();

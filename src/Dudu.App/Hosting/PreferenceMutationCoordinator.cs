@@ -89,24 +89,11 @@ public sealed class PreferenceMutationCoordinator
     public Task<Preferences> UpdateAsync(
         Func<Preferences, Preferences> update,
         CancellationToken cancellationToken = default) =>
-        UpdateTransactionalAsync(
+        MutateCoreAsync(
             update,
             (_, value, token) => _repository.SaveAsync(value, token),
             (previous, _, token) => _repository.SaveAsync(previous, token),
             applyRuntime: true,
-            cancellationToken);
-
-    public Task<Preferences> UpdateTransactionalAsync(
-        Func<Preferences, Preferences> update,
-        Func<Preferences, Preferences, CancellationToken, Task> persistAsync,
-        Func<Preferences, Preferences, CancellationToken, Task> compensatePersistenceAsync,
-        bool applyRuntime,
-        CancellationToken cancellationToken = default) =>
-        MutateCoreAsync(
-            update,
-            persistAsync,
-            compensatePersistenceAsync,
-            applyRuntime,
             cancellationToken);
 
     public Task<Preferences> CommitAsync(
@@ -119,54 +106,6 @@ public sealed class PreferenceMutationCoordinator
             static (_, _, _) => Task.CompletedTask,
             applyRuntime: false,
             cancellationToken);
-
-    /// <summary>
-    /// For a preference whose runtime side effect can be refused by the OS
-    /// (the global shortcut: another app may already own the chord), apply
-    /// that side effect FIRST and persist only once it succeeded, so a refused
-    /// value is never saved. If persistence then fails, the side effect is
-    /// undone and the persistence failure is rethrown. The general runtime
-    /// apply callback is not invoked: nothing else changed.
-    /// </summary>
-    public Task<Preferences> ApplyThenPersistAsync(
-        Func<Preferences, Preferences> update,
-        Func<Preferences, Preferences, CancellationToken, Task> applyAsync,
-        Func<Preferences, Preferences, CancellationToken, Task> undoApplyAsync,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(applyAsync);
-        ArgumentNullException.ThrowIfNull(undoApplyAsync);
-        return MutateCoreAsync(
-            update,
-            async (previous, updated, token) =>
-            {
-                await applyAsync(previous, updated, token);
-                try
-                {
-                    await _repository.SaveAsync(updated, token);
-                }
-                catch (Exception persistFailure)
-                {
-                    try
-                    {
-                        await undoApplyAsync(previous, updated, CancellationToken.None);
-                    }
-                    catch (Exception undoFailure)
-                    {
-                        throw new AggregateException(
-                            "Dudu could not restore the runtime setting after saving it failed.",
-                            persistFailure,
-                            undoFailure);
-                    }
-
-                    ExceptionDispatchInfo.Capture(persistFailure).Throw();
-                    throw;
-                }
-            },
-            static (_, _, _) => Task.CompletedTask,
-            applyRuntime: false,
-            cancellationToken);
-    }
 
     /// <summary>Runs a post-commit runtime operation under the same process-wide
     /// ordering lock. If another writer committed first, the callback receives

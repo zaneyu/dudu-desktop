@@ -1,4 +1,3 @@
-using Dudu.App.Hosting;
 using Dudu.App.Overlay;
 using Dudu.App.ViewModels;
 using Microsoft.UI.Xaml;

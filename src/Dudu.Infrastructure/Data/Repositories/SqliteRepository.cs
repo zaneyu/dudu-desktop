@@ -46,16 +46,6 @@ public abstract class SqliteRepository
     protected static DateTimeOffset? ReadNullableUtc(object? value) =>
         value is null || value is DBNull ? null : ReadUtc(value);
 
-    protected static string Date(DateOnly value) => value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-
-    protected static DateOnly ReadDate(object value) =>
-        DateOnly.Parse(Convert.ToString(value, CultureInfo.InvariantCulture)!, CultureInfo.InvariantCulture);
-
-    protected static string Time(TimeOnly value) => value.ToString("HH:mm:ss.fffffff", CultureInfo.InvariantCulture);
-
-    protected static TimeOnly ReadTime(object value) =>
-        TimeOnly.Parse(Convert.ToString(value, CultureInfo.InvariantCulture)!, CultureInfo.InvariantCulture);
-
     protected static object Db(object? value) => value ?? DBNull.Value;
 
     protected static void Add(SqliteCommand command, string name, object? value) =>
