@@ -11,7 +11,6 @@ public sealed class OverlayCommandRouter
     private readonly Func<string, CancellationToken, Task>? _navigateSettings;
     private readonly Func<TimeSpan, CancellationToken, Task> _delayAsync;
     private CancellationTokenSource? _breathingCancellation;
-    private bool _closePanelAfterBreathingCancellation;
     private bool _isBreathing;
     private string _breathingInstruction = "breathe in for 4, out for 6";
     private ComfortPanelState _comfortPanel = ComfortPanelState.Closed;
@@ -324,7 +323,6 @@ public sealed class OverlayCommandRouter
         {
             _breathingCancellation?.Cancel();
             _breathingCancellation = linked;
-            _closePanelAfterBreathingCancellation = false;
             _isBreathing = true;
         }
         try
@@ -339,22 +337,25 @@ public sealed class OverlayCommandRouter
         }
         finally
         {
-            bool closePanel;
+            // Only the run that still owns the breathing state may reset it. A run
+            // superseded by a restart must not clear IsBreathing or overwrite the
+            // newer run's panel, and CancelBreathing already set both itself.
+            bool owner;
             lock (_gate)
             {
-                _isBreathing = false;
-                closePanel = _closePanelAfterBreathingCancellation;
-                if (ReferenceEquals(_breathingCancellation, linked))
+                owner = ReferenceEquals(_breathingCancellation, linked);
+                if (owner)
                 {
+                    _isBreathing = false;
                     _breathingCancellation = null;
-                    _closePanelAfterBreathingCancellation = false;
                 }
             }
-            SetComfortPanel(closePanel
-                ? ComfortPanelState.Closed
-                : linked.IsCancellationRequested
+            if (owner)
+            {
+                SetComfortPanel(linked.IsCancellationRequested
                     ? new ComfortPanelState(true, false, BreathVisualPhase.Idle, "breathing exercise cancelled")
                     : new ComfortPanelState(true, false, BreathVisualPhase.Complete, "good job lihai breathe done"));
+            }
         }
     }
 
@@ -362,7 +363,6 @@ public sealed class OverlayCommandRouter
     {
         lock (_gate)
         {
-            _closePanelAfterBreathingCancellation = closePanel;
             _breathingCancellation?.Cancel();
             _breathingCancellation = null;
             _isBreathing = false;
