@@ -1,20 +1,15 @@
-using Dudu.Core.Models;
-
 namespace Dudu.App.Presentation;
 
 /// <summary>The category of an unsolicited event waiting to be presented.</summary>
 public enum PresentationItemKind
 {
     RemoteNote,
-    Reminder,
-    Ambient,
-    LocalNote,
 }
 
 /// <summary>
 /// A privacy-safe description of an unsolicited event. Remote items carry
-/// only identifiers; local-note text stays in-process so the pet can render
-/// the selected local note without involving notifications or the relay.
+/// only identifiers. Ambient moments are not durable items at all: the
+/// presentation coordinator plays them directly.
 /// </summary>
 public sealed record DurableNotification
 {
@@ -26,22 +21,6 @@ public sealed record DurableNotification
     public DateTimeOffset? ExpiresUtc { get; }
 
     internal bool IsExpired(DateTimeOffset nowUtc) => ExpiresUtc is { } expiry && nowUtc >= expiry;
-
-    internal bool IsRoutine => Kind == PresentationItemKind.Reminder
-        && Id is Dudu.Core.Reminders.LocalReminderDefaults.EveningCheckInId
-            or Dudu.Core.Reminders.LocalReminderDefaults.BedtimeId;
-
-    /// <summary>
-    /// The bedtime/goodnight routine is by definition a quiet-hours-start
-    /// message: it is scheduled at 22:00, exactly when the recommended quiet
-    /// hours (22:00-07:00) begin, and expires at the next local midnight. Held
-    /// for quiet hours it was always purged before they ended, so it never
-    /// appeared at all. It ignores quiet hours only -- lock, pause,
-    /// fullscreen, focus and a hidden pet still hold it as before (and its
-    /// audio cue stays muted by quiet hours in AudioCueService).
-    /// </summary>
-    internal bool IgnoresQuietHours => Kind == PresentationItemKind.Reminder
-        && Id == Dudu.Core.Reminders.LocalReminderDefaults.BedtimeId;
 
     /// <summary>
     /// The identity used to detect duplicates, both while an item sits in
@@ -83,55 +62,6 @@ public sealed record DurableNotification
 
         return new DurableNotification(PresentationItemKind.RemoteNote, messageId, null);
     }
-
-    public static DurableNotification Reminder(
-        string reminderId,
-        string title,
-        string? body = null,
-        string? animationKey = null,
-        DateTimeOffset? expiresUtc = null)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(reminderId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(title);
-        return new DurableNotification(PresentationItemKind.Reminder, reminderId, title, body, animationKey, expiresUtc);
-    }
-
-    /// <summary>
-    /// Ambient items are never queued (see <see cref="PresentationPolicy.Enqueue"/>);
-    /// this factory exists so that discard behavior is real, constructible
-    /// code rather than an enum value nothing can produce.
-    /// </summary>
-    public static DurableNotification Ambient(string animationKey)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(animationKey);
-        return new DurableNotification(
-            PresentationItemKind.Ambient,
-            animationKey,
-            null,
-            animationKey: animationKey);
-    }
-
-    /// <summary>
-    /// Creates a local note selected by the ambient scheduler. It is a
-    /// queueable durable presentation item, unlike a bare ambient animation,
-    /// so failed playback can be retried without selecting or recording a
-    /// second note.
-    /// </summary>
-    public static DurableNotification LocalNote(
-        LocalLoveNote note,
-        string animationKey)
-    {
-        ArgumentNullException.ThrowIfNull(note);
-        ArgumentException.ThrowIfNullOrWhiteSpace(note.Id);
-        ArgumentException.ThrowIfNullOrWhiteSpace(note.Text);
-        ArgumentException.ThrowIfNullOrWhiteSpace(animationKey);
-        return new DurableNotification(
-            PresentationItemKind.LocalNote,
-            note.Id,
-            "A little note for you",
-            note.Text,
-            animationKey);
-    }
 }
 
 /// <summary>The outcome of one <see cref="PresentationPolicy.Decide"/> call.</summary>
@@ -151,13 +81,13 @@ public sealed record PresentationDecision(
 /// The single policy that decides whether an unsolicited event is queued,
 /// discarded, or released. It owns the durable queue and the minimum silent
 /// interval between releases so a suppressed burst drains one item at a time
-/// instead of flooding the user the moment quiet hours, fullscreen, a locked
-/// session, or a pause ends.
+/// instead of flooding the user the moment fullscreen, a locked session, a
+/// busy pet, or a pause ends.
 /// </summary>
 /// <remarks>
 /// Every public member locks its own internal state (<see cref="_sync"/>),
 /// so this type is safe for concurrent callers on its own — it does not rely
-/// on a caller (such as <c>AppHost</c>'s reminder-tick semaphore) to
+/// on a caller (such as <c>AppHost</c>'s presentation-tick semaphore) to
 /// serialize access.
 /// </remarks>
 public sealed class PresentationPolicy
@@ -190,18 +120,12 @@ public sealed class PresentationPolicy
     }
 
     /// <summary>
-    /// Queues a durable item. Ambient items are always discarded rather than
-    /// queued, and an item whose kind+id is already queued is not
+    /// Queues a durable item. An item whose kind+id is already queued is not
     /// double-queued. Returns true when the item was actually enqueued.
     /// </summary>
     public bool Enqueue(DurableNotification item)
     {
         ArgumentNullException.ThrowIfNull(item);
-        if (item.Kind == PresentationItemKind.Ambient)
-        {
-            return false;
-        }
-
         lock (_sync)
         {
             if (!_queuedIds.Add(item.Key))
@@ -220,11 +144,6 @@ public sealed class PresentationPolicy
     public bool Requeue(DurableNotification item)
     {
         ArgumentNullException.ThrowIfNull(item);
-        if (item.Kind == PresentationItemKind.Ambient)
-        {
-            return false;
-        }
-
         lock (_sync)
         {
             if (!_queuedIds.Add(item.Key))
@@ -253,7 +172,7 @@ public sealed class PresentationPolicy
     /// <summary>
     /// Removes a queued item by key, for good, without presenting it.
     /// Used when the event it represents is separately resolved (e.g. a
-    /// reminder completed from the Reminders page) before this queue ever
+    /// partner note revealed from the Love Notes page) before this queue ever
     /// released it. Returns true when an item was actually removed.
     /// </summary>
     public bool Remove(string key)
@@ -343,25 +262,22 @@ public sealed class PresentationPolicy
 
     /// <summary>
     /// Releases at most one queued durable item, and only when the
-    /// environment is fully clear (not quiet, not fullscreen, not paused,
-    /// session not locked, focus not active, pet not hidden by the user) and
-    /// the minimum silent interval has elapsed since the last release. While
-    /// quiet hours are the only thing holding items back, an item that
-    /// <see cref="DurableNotification.IgnoresQuietHours"/> is still released.
+    /// environment is fully clear (not fullscreen, not paused,
+    /// session not locked, pet not busy eating or being dragged, pet not hidden
+    /// by the user) and the minimum silent interval has elapsed since the last
+    /// release.
     /// </summary>
     public PresentationDecision Decide(
-        bool nowQuiet,
         bool fullscreen,
         bool paused,
         bool sessionLocked = false,
-        bool focusActive = false,
+        bool busy = false,
         DateTimeOffset? nowUtc = null,
         bool recordRelease = true,
         bool userHidden = false)
     {
         var now = nowUtc ?? DateTimeOffset.UtcNow;
-        var suppressedExceptQuiet = fullscreen || paused || sessionLocked || focusActive || userHidden;
-        var suppressed = nowQuiet || suppressedExceptQuiet;
+        var suppressed = fullscreen || paused || sessionLocked || busy || userHidden;
         lock (_sync)
         {
             List<string>? purgedKeys = null;
@@ -383,42 +299,13 @@ public sealed class PresentationPolicy
             IReadOnlyList<string> purged = purgedKeys ?? (IReadOnlyList<string>)Array.Empty<string>();
 
             if (_queue.Count == 0
-                || suppressedExceptQuiet
+                || suppressed
                 || (_lastReleaseUtc is { } last && now - last < _minimumSilentInterval))
             {
                 return new PresentationDecision(Array.Empty<DurableNotification>(), _queue.Count, purged);
             }
 
-            DurableNotification? item = null;
-            if (!suppressed)
-            {
-                item = _queue.Dequeue();
-            }
-            else
-            {
-                // Only quiet hours hold things back: release the first item
-                // that ignores quiet hours (the bedtime routine), keeping the
-                // order of everything else.
-                var count = _queue.Count;
-                for (var index = 0; index < count; index++)
-                {
-                    var queued = _queue.Dequeue();
-                    if (item is null && queued.IgnoresQuietHours)
-                    {
-                        item = queued;
-                    }
-                    else
-                    {
-                        _queue.Enqueue(queued);
-                    }
-                }
-
-                if (item is null)
-                {
-                    return new PresentationDecision(Array.Empty<DurableNotification>(), _queue.Count, purged);
-                }
-            }
-
+            var item = _queue.Dequeue();
             _queuedIds.Remove(item.Key);
             if (recordRelease)
             {

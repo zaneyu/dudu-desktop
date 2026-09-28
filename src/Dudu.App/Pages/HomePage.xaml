@@ -2,8 +2,6 @@
     x:Class="Dudu.App.Pages.HomePage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:models="using:Dudu.Core.Models"
-    xmlns:viewmodels="using:Dudu.App.ViewModels"
     Background="{ThemeResource WindowSurfaceBrush}">
     <Grid>
         <Grid.RowDefinitions>
@@ -15,12 +13,23 @@
             <StackPanel MaxWidth="880" Margin="32,24,32,32" Spacing="20">
                 <StackPanel Spacing="4">
                     <TextBlock Text="home" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="HomePageTitle" AutomationProperties.Name="home" />
-                    <TextBlock Text="hi hi, dudu missed u. everything you use most is right up here" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                    <TextBlock Text="{x:Bind ViewModel.GreetingText, Mode=OneWay}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="HomeGreeting" AutomationProperties.Name="{x:Bind ViewModel.GreetingText, Mode=OneWay}" />
                 </StackPanel>
 
-                <!-- UK partner clock: the most-glanced card, so it sits first. The seconds
-                     tick visually only; UI Automation sees one element, the label, whose
-                     name is the minute-granular spoken time and is not a live region. -->
+                <!-- Big Dudu: the settings window mirrors the header's current frame here
+                     (ShowDuduFrame), so Home always shows the same pose as the pet. -->
+                <Border Style="{StaticResource BlushCardStyle}">
+                    <Border HorizontalAlignment="Center" Padding="16" CornerRadius="120"
+                            Background="{ThemeResource HoneySurfaceBrush}"
+                            BorderBrush="{ThemeResource SoftBorderBrush}"
+                            BorderThickness="1">
+                        <Image x:Name="HomeDuduImage" Height="200" MaxWidth="360" Stretch="Uniform" AutomationProperties.AutomationId="HomeDuduImage" AutomationProperties.Name="dudu" />
+                    </Border>
+                </Border>
+
+                <!-- UK partner clock. The seconds tick visually only; UI Automation sees
+                     one element, the label, whose name is the minute-granular spoken time
+                     and is not a live region. -->
                 <Border Style="{StaticResource HoneyCardStyle}">
                     <Grid ColumnSpacing="16">
                         <Grid.ColumnDefinitions>
@@ -38,74 +47,9 @@
                             </StackPanel>
                             <TextBlock Text="{x:Bind ViewModel.PartnerDateLine, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.AccessibilityView="Raw" />
                             <TextBlock Text="{x:Bind ViewModel.PartnerOffsetLine, Mode=OneWay}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AccessibilityView="Raw" />
-                            <TextBlock Text="{x:Bind ViewModel.PartnerMoodText, Mode=OneWay}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AccessibilityView="Raw" />
+                            <TextBlock Text="{x:Bind ViewModel.PartnerTimeOfDayText, Mode=OneWay}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AccessibilityView="Raw" />
                         </StackPanel>
                     </Grid>
-                </Border>
-
-                <Border Style="{StaticResource BlushCardStyle}">
-                    <StackPanel Spacing="12">
-                        <Grid ColumnSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="🐻" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
-                            <TextBlock Grid.Column="1" Text="dudu status" Style="{StaticResource SectionHeadingStyle}" />
-                        </Grid>
-                        <TextBlock Text="{x:Bind ViewModel.PauseDescription, Mode=OneWay}" TextWrapping="Wrap" FontWeight="SemiBold" AutomationProperties.AutomationId="HomePauseDescription" AutomationProperties.Name="{x:Bind ViewModel.PauseDescription, Mode=OneWay}" />
-                        <StackPanel Spacing="4">
-                            <TextBlock x:Name="HomeNextReminder" Text="{x:Bind ViewModel.NextReminderText, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.AutomationId="HomeNextReminder" AutomationProperties.Name="{x:Bind ViewModel.NextReminderText, Mode=OneWay}" />
-                            <TextBlock x:Name="HomeActiveFocus" Text="{x:Bind ViewModel.ActiveFocusText, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.AutomationId="HomeActiveFocus" AutomationProperties.Name="{x:Bind ViewModel.ActiveFocusText, Mode=OneWay}" />
-                            <TextBlock x:Name="HomePetState" Text="{x:Bind ViewModel.PetStateText, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.AutomationId="HomePetState" AutomationProperties.Name="{x:Bind ViewModel.PetStateText, Mode=OneWay}" />
-                            <TextBlock x:Name="HomePetAnimation" Text="{x:Bind ViewModel.PetAnimationText, Mode=OneWay}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="HomePetAnimation" AutomationProperties.Name="{x:Bind ViewModel.PetAnimationText, Mode=OneWay}" />
-                        </StackPanel>
-                        <Grid ColumnSpacing="8" RowSpacing="8">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
-                            <Button Grid.ColumnSpan="2" Content="🤲 pet dudu" Command="{x:Bind ViewModel.PetCommand}" Style="{StaticResource PrimaryButtonStyle}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayActionPet" AutomationProperties.Name="pet dudu" />
-                            <Button Grid.Row="1" Content="⏸ pause 1 hour" Command="{x:Bind ViewModel.PauseForOneHourCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="HomePause" AutomationProperties.Name="pause for one hour" />
-                            <Button Grid.Row="1" Grid.Column="1" Content="▶ resume" Command="{x:Bind ViewModel.ResumeCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="HomeResume" AutomationProperties.Name="resume" />
-                        </Grid>
-                    </StackPanel>
-                </Border>
-
-                <Border Style="{StaticResource CardStyle}">
-                    <StackPanel Spacing="12">
-                        <Grid ColumnSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="✨" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
-                            <TextBlock Grid.Column="1" Text="dudu actions" Style="{StaticResource SectionHeadingStyle}" />
-                        </Grid>
-                        <TextBlock Text="same as dudu's bubble, but keyboard friendly" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
-                        <Grid ColumnSpacing="8" RowSpacing="8">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
-                            <Button Content="💧 drink water" Tag="DrinkWater" Click="OverlayAction_Click" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayActionDrinkWater" AutomationProperties.Name="drink water" />
-                            <Button Grid.Column="1" Content="🎯 start focus" Tag="StartFocus" Click="OverlayAction_Click" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayActionStartFocus" AutomationProperties.Name="start focus" />
-                            <Button Grid.Row="1" Content="📝 open tasks" Tag="Tasks" Click="OverlayAction_Click" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayActionTasks" AutomationProperties.Name="open tasks" />
-                            <Button Grid.Row="1" Grid.Column="1" Content="💌 love notes" Tag="LoveNote" Click="OverlayAction_Click" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayActionLoveNote" AutomationProperties.Name="open love notes" />
-                            <Button Grid.Row="2" Content="🫂 comfort me" Tag="ComfortMe" Click="OverlayAction_Click" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayActionComfortMe" AutomationProperties.Name="comfort me" />
-                            <Button Grid.Row="2" Grid.Column="1" Content="🍚 eat together" Tag="EatTogether" Click="OverlayAction_Click" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayActionEatTogether" AutomationProperties.Name="eat together or done eating" />
-                        </Grid>
-                        <TextBlock x:Name="HomeActionStatus" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.LiveSetting="Polite" AutomationProperties.AutomationId="HomeActionStatus" AutomationProperties.Name="action status" />
-                    </StackPanel>
                 </Border>
 
                 <Border Style="{StaticResource CardStyle}">
@@ -116,9 +60,8 @@
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
                             <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="🧸" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
-                            <TextBlock Grid.Column="1" Text="comfort actions" Style="{StaticResource SectionHeadingStyle}" />
+                            <TextBlock Grid.Column="1" Text="time with dudu" Style="{StaticResource SectionHeadingStyle}" />
                         </Grid>
-                        <TextBlock Text="pick something gentle. no mood is tracked" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                         <Grid ColumnSpacing="8" RowSpacing="8">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
@@ -129,114 +72,28 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
-                            <Button Content="🌬 breathe with me" Tag="BreatheWithMe" Click="ComfortAction_Click" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayComfortActionBreatheWithMe" AutomationProperties.Name="breathe with me" />
-                            <Button Grid.Column="1" Content="🤗 tiny hug" Tag="TinyHug" Click="ComfortAction_Click" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayComfortActionTinyHug" AutomationProperties.Name="tiny hug" />
-                            <Button Grid.Row="1" Content="💌 read a note" Tag="ReadALoveNote" Click="ComfortAction_Click" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayComfortActionReadALoveNote" AutomationProperties.Name="read a love note" />
-                            <Button Grid.Row="1" Grid.Column="1" Content="☕ 5-min break" Tag="TakeAFiveMinuteBreak" Click="ComfortAction_Click" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayComfortActionTakeAFiveMinuteBreak" AutomationProperties.Name="take a five-minute break" />
-                            <Button Grid.Row="2" Grid.ColumnSpan="2" Content="close comfort" Tag="Close" Click="ComfortAction_Click" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayComfortActionClose" AutomationProperties.Name="close comfort" />
+                            <Button Grid.ColumnSpan="2" Content="🤲 pet dudu" Command="{x:Bind ViewModel.PetCommand}" Style="{StaticResource PrimaryButtonStyle}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayActionPet" AutomationProperties.Name="pet dudu" />
+                            <Button Grid.Row="1" Content="💧 drink water" Tag="DrinkWater" Click="OverlayAction_Click" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayActionDrinkWater" AutomationProperties.Name="drink water" />
+                            <Button Grid.Row="1" Grid.Column="1" Content="🍚 eat together" Tag="EatTogether" Click="OverlayAction_Click" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayActionEatTogether" AutomationProperties.Name="eat together or done eating" />
+                            <Button Grid.Row="2" Content="🤗 tiny hug" Tag="TinyHug" Click="OverlayAction_Click" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayComfortActionTinyHug" AutomationProperties.Name="tiny hug" />
+                            <Button Grid.Row="2" Grid.Column="1" Content="🌬 breathe with me" Tag="BreatheWithMe" Click="OverlayAction_Click" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="OverlayComfortActionBreatheWithMe" AutomationProperties.Name="breathe with me" />
                         </Grid>
-                    </StackPanel>
-                </Border>
-
-                <Border Style="{StaticResource CardStyle}">
-                    <StackPanel Spacing="12">
-                        <Grid ColumnSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="📅" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
-                            <TextBlock Grid.Column="1" Text="countdowns" Style="{StaticResource SectionHeadingStyle}" />
-                        </Grid>
-                        <TextBlock x:Name="HomeNextCountdown" Text="{x:Bind ViewModel.NextCountdownText, Mode=OneWay}" TextWrapping="Wrap" FontWeight="SemiBold" AutomationProperties.AutomationId="HomeNextCountdown" AutomationProperties.Name="{x:Bind ViewModel.NextCountdownText, Mode=OneWay}" />
-                        <Expander Header="add a date to look forward to" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" AutomationProperties.AutomationId="HomeCountdownAddExpander" AutomationProperties.Name="add a date to look forward to">
-                            <StackPanel Spacing="8">
-                                <TextBox Header="title" Text="{x:Bind ViewModel.CountdownTitle, Mode=TwoWay}" PlaceholderText="for example, next visit" AutomationProperties.AutomationId="HomeCountdownTitle" AutomationProperties.Name="title" />
-                                <TextBox x:Name="CountdownTargetBox" Header="target" PlaceholderText="blank means tmrw" TextChanged="CountdownTarget_Changed" AutomationProperties.AutomationId="HomeCountdownTarget" AutomationProperties.Name="target" />
-                                <TextBlock x:Name="CountdownTargetValidation" TextWrapping="Wrap" Foreground="{ThemeResource ErrorBrush}" Visibility="Collapsed" AutomationProperties.AutomationId="HomeCountdownTargetValidation" AutomationProperties.Name="countdown target validation" />
-                                <Grid ColumnSpacing="8" RowSpacing="8">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <Button x:Name="HomeSaveCountdownButton" Content="save countdown" Command="{x:Bind ViewModel.CreateCountdownCommand}" Style="{StaticResource PrimaryButtonStyle}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="HomeSaveCountdown" AutomationProperties.Name="save" />
-                                    <Button Grid.Column="1" Content="new countdown" Command="{x:Bind ViewModel.NewCountdownCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="HomeNewCountdown" AutomationProperties.Name="new countdown" />
-                                </Grid>
-                            </StackPanel>
-                        </Expander>
-                        <ListView ItemsSource="{x:Bind ViewModel.Countdowns, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.SelectedCountdown, Mode=OneWay}" SelectionChanged="CountdownList_SelectionChanged" MaxHeight="220" AutomationProperties.AutomationId="HomeCountdownList" AutomationProperties.Name="countdowns list">
-                            <ListView.ItemTemplate>
-                                <DataTemplate x:DataType="models:Countdown"><TextBlock Text="{x:Bind Title}" Margin="4" TextWrapping="Wrap" /></DataTemplate>
-                            </ListView.ItemTemplate>
-                        </ListView>
-                        <Button Content="delete selected countdown" Command="{x:Bind ViewModel.RequestDeleteCountdownCommand}" CommandParameter="{x:Bind ViewModel.SelectedCountdown, Mode=OneWay}" AutomationProperties.AutomationId="HomeDeleteCountdown" AutomationProperties.Name="delete selected countdown" />
-                        <Border Style="{StaticResource ConfirmCardStyle}" Visibility="{x:Bind ViewModel.IsConfirmingDeleteCountdown, Mode=OneWay}" AutomationProperties.AutomationId="HomeDeleteCountdownConfirmationPanel" AutomationProperties.Name="delete countdown confirmation panel">
-                            <StackPanel Spacing="8">
-                                <TextBlock Text="{x:Bind ViewModel.DeleteCountdownPrompt, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Assertive" AutomationProperties.AutomationId="HomeDeleteCountdownConfirmationMessage" AutomationProperties.Name="{x:Bind ViewModel.DeleteCountdownPrompt, Mode=OneWay}" />
-                                <Grid ColumnSpacing="8">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <Button Content="confirm delete" Command="{x:Bind ViewModel.DeleteCountdownCommand}" CommandParameter="{x:Bind ViewModel.PendingDeleteCountdown, Mode=OneWay}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="HomeDeleteCountdownConfirm" AutomationProperties.Name="confirm delete countdown" />
-                                    <Button Grid.Column="1" Content="cancel" Command="{x:Bind ViewModel.CancelDeleteCountdownCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="HomeDeleteCountdownCancel" AutomationProperties.Name="cancel delete countdown" />
-                                </Grid>
-                            </StackPanel>
+                        <!-- Breathe with me: shown while the exercise runs (and after it ends, until
+                             closed). Stop ends it; leaving Home stops a running one too. -->
+                        <Border Style="{StaticResource HoneyCardStyle}" Visibility="{x:Bind Breathing.IsVisible, Mode=OneWay}" AutomationProperties.AutomationId="HomeBreathingPanel" AutomationProperties.Name="breathe with me">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Spacing="2" VerticalAlignment="Center" AutomationProperties.LiveSetting="Polite">
+                                    <TextBlock Text="{x:Bind Breathing.PhaseText, Mode=OneWay}" FontSize="20" FontWeight="SemiBold" Foreground="{ThemeResource CocoaAccentBrush}" TextWrapping="Wrap" AutomationProperties.AutomationId="HomeBreathingPhase" AutomationProperties.Name="{x:Bind Breathing.PhaseText, Mode=OneWay}" />
+                                    <TextBlock Text="{x:Bind Breathing.Instruction, Mode=OneWay}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.AutomationId="HomeBreathingInstruction" AutomationProperties.Name="{x:Bind Breathing.Instruction, Mode=OneWay}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="stop" Click="BreathingStop_Click" VerticalAlignment="Center" AutomationProperties.AutomationId="HomeBreathingStop" AutomationProperties.Name="stop breathing" />
+                            </Grid>
                         </Border>
-                    </StackPanel>
-                </Border>
-
-                <Border Style="{StaticResource CardStyle}">
-                    <StackPanel Spacing="12">
-                        <Grid ColumnSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="🌙" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
-                            <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.CheckInSectionHeading, Mode=OneWay}" Style="{StaticResource SectionHeadingStyle}" />
-                        </Grid>
-                        <TextBlock Text="optional, saved on this pc only. dudu's check-in, not a message from your partner. turn on the evening prompt in reminders." TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
-                        <TextBlock Text="{x:Bind ViewModel.YesterdayReflectionText, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.AutomationId="HomeYesterdayReflection" AutomationProperties.Name="{x:Bind ViewModel.YesterdayReflectionText, Mode=OneWay}" />
-                        <ComboBox Header="how are u feeling?" SelectedIndex="1" SelectionChanged="MoodBox_SelectionChanged" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="HomeMoodChoice" AutomationProperties.Name="how are u feeling?">
-                            <ComboBoxItem Content="great" Tag="Great" />
-                            <ComboBoxItem Content="okay" Tag="Okay" />
-                            <ComboBoxItem Content="tired" Tag="Tired" />
-                            <ComboBoxItem Content="rough" Tag="Rough" />
-                        </ComboBox>
-                        <TextBox Header="note" Text="{x:Bind ViewModel.CheckInNote, Mode=TwoWay}" TextWrapping="Wrap" AcceptsReturn="True" PlaceholderText="optional, just for you" AutomationProperties.AutomationId="HomeCheckInNote" AutomationProperties.Name="note" />
-                        <Button Content="save check-in" Command="{x:Bind ViewModel.RecordCheckInCommand}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="HomeSaveCheckIn" AutomationProperties.Name="save check-in" />
-                        <TextBlock x:Name="HomeCheckInSummary" Text="{x:Bind ViewModel.CheckInSummaryText, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.AutomationId="HomeCheckInSummary" AutomationProperties.Name="{x:Bind ViewModel.CheckInSummaryText, Mode=OneWay}" />
-                        <ItemsControl x:Name="HomeCheckInHistory" ItemsSource="{x:Bind ViewModel.RecentCheckIns, Mode=OneWay}" AutomationProperties.AutomationId="HomeCheckInHistory" AutomationProperties.Name="check-in history">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate x:DataType="models:MoodCheckIn">
-                                    <StackPanel Margin="0,4" Spacing="2">
-                                        <TextBlock Text="{x:Bind viewmodels:HomeViewModel.FormatCheckInChoice(Choice)}" />
-                                        <TextBlock Text="{x:Bind viewmodels:HomeViewModel.FormatCheckInTime(CreatedUtc)}" Foreground="{ThemeResource TextSecondaryBrush}" />
-                                        <TextBlock Text="{x:Bind Note}" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
-                                    </StackPanel>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </StackPanel>
-                </Border>
-
-                <Border Style="{StaticResource CardStyle}">
-                    <StackPanel Spacing="8">
-                        <Grid ColumnSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="🚀" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
-                            <TextBlock Grid.Column="1" Text="when windows starts" Style="{StaticResource SectionHeadingStyle}" />
-                        </Grid>
-                        <CheckBox x:Name="StartupToggle" Content="launch dudu when i sign in" Checked="StartupToggle_Changed" Unchecked="StartupToggle_Changed" AutomationProperties.AutomationId="SettingsLaunchAtSignIn" AutomationProperties.Name="launch dudu when i sign in" />
-                        <TextBlock Text="startup registration is managed locally on this pc" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
-                        <StackPanel x:Name="StartupRecoveryPanel" Spacing="8" Visibility="Collapsed">
-                            <TextBlock x:Name="StartupRecoveryMessage" AutomationProperties.AutomationId="HomeStartupRecoveryMessage" AutomationProperties.Name="startup recovery message" Foreground="{ThemeResource WarningBrush}" TextWrapping="Wrap" />
-                            <Button x:Name="RetryStartupButton" Content="retry startup registration" AutomationProperties.AutomationId="HomeRetryStartupRegistration" AutomationProperties.Name="retry startup registration" Click="RetryStartupButton_Click" />
-                        </StackPanel>
+                        <TextBlock x:Name="HomeActionStatus" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.LiveSetting="Polite" AutomationProperties.AutomationId="HomeActionStatus" AutomationProperties.Name="action status" />
                     </StackPanel>
                 </Border>
             </StackPanel>

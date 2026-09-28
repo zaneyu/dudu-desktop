@@ -1,14 +1,9 @@
 using System.Reflection;
 using Dudu.App.Hosting;
-using Dudu.App.System;
 using Dudu.App.ViewModels;
 using Dudu.Core.Abstractions;
-using Dudu.Core.CheckIns;
-using Dudu.Core.Focus;
 using Dudu.Core.Models;
-using Dudu.Core.Notes;
 using Dudu.Core.Pet;
-using Dudu.Core.Tasks;
 using Dudu.Core.Time;
 
 namespace Dudu.App.Tests.Overlay;
@@ -16,45 +11,29 @@ namespace Dudu.App.Tests.Overlay;
 /// <summary>
 /// Minimal <see cref="CompanionFeatureContext"/> for overlay surface tests.
 /// Repositories and services the overlay never touches are inert
-/// <see cref="DispatchProxy"/> stand-ins; only the presentation, pause and
-/// navigation seams the overlay actually drives are configurable.
+/// <see cref="DispatchProxy"/> stand-ins; only the presentation seam the overlay
+/// actually drives is configurable.
 /// </summary>
 internal static class OverlayTestFeatureContext
 {
     public static CompanionFeatureContext Create(
-        Func<PetEvent, string, CancellationToken, Task>? presentOneShotPetAsync = null,
-        Func<PauseState, CancellationToken, Task>? applyPauseAsync = null)
+        Func<PetEvent, string, CancellationToken, Task>? presentOneShotPetAsync = null)
     {
         var clock = new FixedClock();
         var preferences = Preferences.Default;
         var preferenceRepository = Inert<IPreferencesRepository>();
-        var tasks = Inert<ITaskRepository>();
         var localNotes = Inert<ILocalNoteRepository>();
-        var checkIns = Inert<ICheckInRepository>();
-        var focusSessions = Inert<IFocusSessionRepository>();
-        var reminders = Inert<IReminderRepository>();
         var pet = PetStateMachine.CreateIdle();
         return new CompanionFeatureContext(
             clock,
             new PreferenceMutationCoordinator(preferences, preferenceRepository),
             Inert<IProfileRepository>(),
             Inert<IPetPlacementRepository>(),
-            reminders,
-            Inert<IReminderWriter>(),
-            tasks,
-            focusSessions,
             localNotes,
             Inert<IRemoteEnvelopeRepository>(),
-            Inert<ICountdownRepository>(),
-            checkIns,
-            new CheckInService(checkIns, clock),
-            new TaskService(tasks, clock),
-            new FocusService(focusSessions, clock, tasks),
-            new LocalNoteSelector(localNotes, clock, new FirstRandom(), preferences),
             Inert<IPairingService>(),
             Inert<ICompanionFeatureTransactions>(),
             pet,
-            applyPauseAsync: applyPauseAsync,
             presentPetAsync: (petEvent, _) =>
             {
                 pet.Handle(petEvent);
@@ -98,10 +77,5 @@ internal static class OverlayTestFeatureContext
         public DateTimeOffset UtcNow { get; } = DateTimeOffset.Parse("2026-09-12T10:00:00Z");
 
         public TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
-    }
-
-    private sealed class FirstRandom : IRandomSource
-    {
-        public int Next(int exclusiveMax) => 0;
     }
 }

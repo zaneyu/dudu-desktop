@@ -82,43 +82,6 @@ public sealed class ChromeDiagnosticsTests
     }
 
     [Fact]
-    public void Hotkey_conflict_reports_hotkey_set_gesture_and_preserves_previous()
-    {
-        var reporter = new RecordingErrorReporter();
-        var native = new FakeHotkeyNativeApi();
-        using var service = new GlobalHotkeyService(native, reporter);
-
-        service.SetGesture(HotkeyGesture.Parse("Ctrl+Alt+D"));
-        native.RejectNextRegistration();
-
-        var exception = Assert.Throws<HotkeyConflictException>(() =>
-            service.SetGesture(HotkeyGesture.Parse("Ctrl+Shift+D")));
-
-        Assert.Equal("Ctrl+Alt+D", service.CurrentGesture.ToString());
-        Assert.Contains(reporter.Reports, report =>
-            report.Operation == "hotkey-set-gesture"
-            && ReferenceEquals(exception, report.Exception));
-    }
-
-    [Fact]
-    public void Hotkey_owner_move_conflict_reports_hotkey_attach()
-    {
-        var reporter = new RecordingErrorReporter();
-        var native = new FakeHotkeyNativeApi();
-        using var service = new GlobalHotkeyService(native, reporter);
-
-        service.AttachOwnerWindow(42);
-        service.SetGesture(HotkeyGesture.Default);
-        native.RejectNextRegistration();
-
-        Assert.Throws<HotkeyConflictException>(() => service.AttachOwnerWindow(43));
-
-        Assert.Contains(reporter.Reports, report =>
-            report.Operation == "hotkey-attach"
-            && report.Exception is HotkeyConflictException);
-    }
-
-    [Fact]
     public void Tray_attach_failure_reports_tray_attach_and_still_throws()
     {
         var reporter = new RecordingErrorReporter();
@@ -220,11 +183,14 @@ public sealed class ChromeDiagnosticsTests
         foreach (var operation in new[]
             {
                 "session-lock", "session-unlock", "suspend", "resume",
-                "display-change", "taskbar-created", "fullscreen-poll", "hotkey",
+                "display-change", "taskbar-created", "fullscreen-poll",
             })
         {
             Assert.Contains($"\"{operation}\"", bootstrap, StringComparison.Ordinal);
         }
+
+        // The global hotkey (and its "hotkey" native callback) was removed.
+        Assert.DoesNotContain("\"hotkey\"", bootstrap, StringComparison.Ordinal);
 
         // The callback and poll failures must route through the shared
         // reporter rather than a bare Trace that a file sink would miss.
@@ -252,9 +218,7 @@ public sealed class ChromeDiagnosticsTests
 
     private static Preferences TestPreferences() => new(
         AppTheme.System,
-        new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
         false,
-        3,
         true,
         false,
         true,
@@ -345,25 +309,5 @@ public sealed class ChromeDiagnosticsTests
             if (ThrowOnRecreate) throw new InvalidOperationException("recreate down");
             return RecreateResult;
         }
-    }
-
-    private sealed class FakeHotkeyNativeApi : IGlobalHotkeyNativeApi
-    {
-        private bool _rejectNext;
-
-        public void RejectNextRegistration() => _rejectNext = true;
-
-        public bool Register(int id, HotkeyModifiers modifiers, uint key)
-        {
-            if (_rejectNext)
-            {
-                _rejectNext = false;
-                return false;
-            }
-
-            return true;
-        }
-
-        public bool Unregister(int id) => true;
     }
 }

@@ -98,9 +98,10 @@ public sealed class SchemaUpgradeTests
         await using var fixture = await SchemaThreeFixture.CreateAsync(cancellationToken);
 
         // Database.OpenAsync running to completion here *is* the db-init success
-        // assertion: SeedData.SeedAsync runs as part of it, and the old
-        // UNIQUE(text) + missing watermark combination (B7 + seed resurrection)
-        // could make it throw on this exact upgrade path.
+        // assertion: the old UNIQUE(text) + missing watermark combination (B7 +
+        // seed resurrection) could make it throw on this exact upgrade path.
+        // Default notes are no longer seeded at all, so the ones she deleted
+        // stay deleted and the surviving legacy rows stay dormant.
         await using var database = await Database.OpenAsync(fixture.Options, cancellationToken);
 
         var notes = await new LocalNoteRepository(database).ListAsync(cancellationToken);
@@ -152,15 +153,15 @@ public sealed class SchemaUpgradeTests
             Assert.True(reader.IsDBNull(4));
         }
 
-        // An explicit re-seed (as a later launch's db-init would trigger) stays a no-op.
-        await using var reseedConnection = await database.CreateConnectionAsync(cancellationToken);
-        await SeedData.SeedAsync(reseedConnection, cancellationToken);
-        var afterReseed = await new LocalNoteRepository(database).ListAsync(cancellationToken);
+        // A later launch's db-init re-runs initialization and still plants nothing.
+        database.InvalidateInitialization();
+        await database.InitializeAsync(cancellationToken);
+        var afterReinit = await new LocalNoteRepository(database).ListAsync(cancellationToken);
         foreach (var deletedId in SchemaThreeFixture.DeletedDefaultNoteIds)
         {
-            Assert.DoesNotContain(afterReseed, note => note.Id == deletedId);
+            Assert.DoesNotContain(afterReinit, note => note.Id == deletedId);
         }
-        Assert.Equal(notes.Count, afterReseed.Count);
+        Assert.Equal(notes.Count, afterReinit.Count);
     }
 
     [Fact]

@@ -24,34 +24,6 @@ public sealed class NotificationPrivacyTests
     }
 
     [Fact]
-    public async Task Reminder_notification_carries_only_the_reminder_title_and_done_snooze_buttons()
-    {
-        var sink = new RecordingNotificationSink();
-        var service = new AppNotificationService(sink);
-
-        await service.ShowReminderAsync(
-            "reminder-1",
-            "Stretch",
-            TestContext.Current.CancellationToken);
-
-        var notification = Assert.Single(sink.Items);
-        Assert.Equal("Stretch", notification.Title);
-        Assert.Null(notification.Body);
-        Assert.Collection(
-            notification.Buttons,
-            button =>
-            {
-                Assert.Equal("Done", button.Label);
-                Assert.Equal("action=reminder-done&reminderId=reminder-1", button.ActivationArguments);
-            },
-            button =>
-            {
-                Assert.Equal("Snooze", button.Label);
-                Assert.Equal("action=reminder-snooze&reminderId=reminder-1", button.ActivationArguments);
-            });
-    }
-
-    [Fact]
     public async Task A_failed_registration_falls_back_to_not_attempting_a_toast()
     {
         var sink = new RecordingNotificationSink { RegistrationSucceeds = false };

@@ -4,20 +4,19 @@ namespace Dudu.App.Notifications;
 public enum NotificationActivationAction
 {
     OpenNote,
-    ReminderDone,
-    ReminderSnooze,
-    /// <summary>A click on a reminder toast's body (not one of its buttons).</summary>
-    OpenReminder,
 }
 
 /// <summary>
-/// A parsed toast activation: which toast (or toast button) was clicked and
-/// the id it carries. NotificationInvocationRouter acts on it.
+/// A parsed toast activation: which toast was clicked and the id it carries.
+/// NotificationInvocationRouter acts on it. Only note toasts are understood;
+/// a toast left in Action Center by an older build (e.g. a retired reminder
+/// toast's <c>reminder-done</c>, <c>reminder-snooze</c> or
+/// <c>open-reminder</c> action) parses to null like any other unknown
+/// activation, so clicking it neither acts nor opens a page.
 /// </summary>
 public sealed record NotificationActivation(
     NotificationActivationAction Action,
-    string? MessageId,
-    string? ReminderId)
+    string? MessageId)
 {
     /// <summary>
     /// Parses a raw activation-arguments string such as
@@ -80,28 +79,16 @@ public sealed record NotificationActivation(
         return action switch
         {
             "open-note" when HasMessageId(values, out var messageId) =>
-                new NotificationActivation(NotificationActivationAction.OpenNote, messageId, null),
-            "reminder-done" when HasValue(values, "reminderId", out var reminderId) =>
-                new NotificationActivation(NotificationActivationAction.ReminderDone, null, reminderId),
-            "reminder-snooze" when HasValue(values, "reminderId", out var reminderId) =>
-                new NotificationActivation(NotificationActivationAction.ReminderSnooze, null, reminderId),
-            "open-reminder" when HasValue(values, "reminderId", out var reminderId) =>
-                new NotificationActivation(NotificationActivationAction.OpenReminder, null, reminderId),
+                new NotificationActivation(NotificationActivationAction.OpenNote, messageId),
             _ => null,
         };
     }
 
     /// <summary>
-    /// The settings page this activation belongs to: Love Notes for a note
-    /// toast, Reminders for anything on a reminder toast. Used to open the
-    /// page for a body click, and as the fallback when a Done/Snooze button
-    /// could not be carried out in the background.
+    /// The settings page this activation belongs to. Note toasts are the only
+    /// activations this build understands, so it is always Love Notes.
     /// </summary>
-    public string Destination => Action switch
-    {
-        NotificationActivationAction.OpenNote => "notes",
-        _ => "reminders",
-    };
+    public string Destination => "notes";
 
     /// <summary>
     /// A message id is looked up as a <see cref="Guid"/> downstream, so an

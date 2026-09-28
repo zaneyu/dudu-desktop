@@ -149,7 +149,6 @@ public sealed class PetActivitySchedulerTests
         nameof(PetActivityGate.Fullscreen),
         nameof(PetActivityGate.SessionLocked),
         nameof(PetActivityGate.Hidden),
-        nameof(PetActivityGate.QuietHours),
         nameof(PetActivityGate.Busy),
     ];
 
@@ -167,7 +166,6 @@ public sealed class PetActivitySchedulerTests
             nameof(PetActivityGate.Fullscreen) => PetActivityGate.Open with { Fullscreen = true },
             nameof(PetActivityGate.SessionLocked) => PetActivityGate.Open with { SessionLocked = true },
             nameof(PetActivityGate.Hidden) => PetActivityGate.Open with { Hidden = true },
-            nameof(PetActivityGate.QuietHours) => PetActivityGate.Open with { QuietHours = true },
             _ => PetActivityGate.Open with { Busy = true },
         };
 

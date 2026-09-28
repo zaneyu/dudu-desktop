@@ -6,14 +6,11 @@ namespace Dudu.Core.Pet;
 public sealed class PetStateMachine
 {
     /// <summary>
-    /// Upper bound for queued reminder/note ids. The pending sets are only used
+    /// Upper bound for queued note ids. The pending sets are only used
     /// for a single coalesced display card, so anything beyond the newest N is
     /// dropped (oldest first) instead of growing without bound across a session.
     /// </summary>
     public const int MaxPendingItems = 50;
-
-    /// <summary>Bubble shown while a focus session is running.</summary>
-    public const string FocusBubble = "studying with you 📚";
 
     /// <summary>Bubble shown while an eat-together meal is running.</summary>
     public const string EatingBubble = "eating together 🍜";
@@ -25,8 +22,6 @@ public sealed class PetStateMachine
     public const string TantrumBubble = "pet me!! 😤";
 
     private readonly object _sync = new();
-    private readonly HashSet<string> _dueReminderIds = new(StringComparer.Ordinal);
-    private readonly List<string> _dueReminderOrder = [];
     private readonly HashSet<string> _remoteMessageIds = new(StringComparer.Ordinal);
     private readonly List<string> _remoteMessageOrder = [];
     private PetPresentation _current;
@@ -35,8 +30,6 @@ public sealed class PetStateMachine
     // by a timer. It persists until ComfortDismissed, Dismissed("comfort"), or an
     // acknowledgement while the comfort card is showing.
     private bool _comfortActive;
-    private string? _focusId;
-    private string? _focusTransition;
     private bool _welcomeBackPending;
     private string? _ambientAnimation;
     private string? _interactionAnimation;
@@ -61,7 +54,7 @@ public sealed class PetStateMachine
     }
 
     /// <summary>
-    /// Number of pending reminder/note ids backing the coalesced display cards.
+    /// Number of pending note ids backing the coalesced display card.
     /// Exposed for diagnostics and tests; the display itself stays a single card.
     /// </summary>
     public int PendingCount
@@ -70,20 +63,7 @@ public sealed class PetStateMachine
         {
             lock (_sync)
             {
-                return _dueReminderIds.Count + _remoteMessageIds.Count;
-            }
-        }
-    }
-
-    /// <summary>True while a focus session is latched, even when a higher
-    /// priority presentation (drag, petting, welcome-back) is on screen.</summary>
-    public bool IsFocusActive
-    {
-        get
-        {
-            lock (_sync)
-            {
-                return IsFocusLatched();
+                return _remoteMessageIds.Count;
             }
         }
     }
@@ -141,27 +121,6 @@ public sealed class PetStateMachine
 
             case PetEvent.RemoteNoteArrived remoteNote:
                 AddPending(_remoteMessageIds, _remoteMessageOrder, remoteNote.MessageId);
-                break;
-
-            case PetEvent.ReminderDue reminder:
-                AddPending(_dueReminderIds, _dueReminderOrder, reminder.ReminderId);
-                break;
-
-            case PetEvent.FocusStarted focus:
-                _focusId = focus.FocusId;
-                _focusTransition = null;
-                _ambientAnimation = null;
-                break;
-
-            case PetEvent.FocusEnded focus:
-                if (_focusId is not null
-                    && string.Equals(_focusId, focus.FocusId, StringComparison.Ordinal))
-                {
-                    _focusId = null;
-                    _focusTransition = "focus-end";
-                    _ambientAnimation = null;
-                }
-
                 break;
 
             case PetEvent.WelcomeBackRequested:
@@ -242,11 +201,6 @@ public sealed class PetStateMachine
                 break;
 
             case PetEvent.PresentationAcknowledged:
-                if (_current.State == PetState.FocusTransition)
-                {
-                    _focusTransition = null;
-                }
-
                 if (_current.State == PetState.Comfort)
                 {
                     _comfortActive = false;
@@ -277,39 +231,20 @@ public sealed class PetStateMachine
         }
 
         // An explicit user one-shot briefly plays over everything below it
-        // (a waiting note card, focus, a meal) and then hands back to it.
+        // (a waiting note card, a meal) and then hands back to it.
         if (!_paused && _interactionAnimation is not null)
         {
             return Present(PetState.Interaction, _interactionAnimation, BubbleFor(_interactionAnimation));
         }
 
-        // Pending notes and reminders each coalesce into a single display card
-        // no matter how many ids are queued behind it.
+        // Pending notes coalesce into a single display card no matter how
+        // many ids are queued behind it.
         if (!_paused && !IsQuietCompanyActive() && _remoteMessageIds.Count > 0)
         {
             var body = _remoteMessageIds.Count > 1
                 ? $"{_remoteMessageIds.Count} notes waiting"
                 : null;
             return new(PetState.RemoteNote, "note-arrival", "A note arrived 💌", body, true);
-        }
-
-        if (!_paused && !IsQuietCompanyActive() && _dueReminderIds.Count > 0)
-        {
-            var body = _dueReminderIds.Count > 1
-                ? $"{_dueReminderIds.Count} reminders due"
-                : null;
-            // Reminder has no separate source clip. The note-arrival pose is
-            // the closest real Dudu interaction and keeps a due reminder from
-            // degrading to the generic idle fallback.
-            var presentation = Present(PetState.Reminder, "note-arrival");
-            return body is null ? presentation : presentation with { BubbleBody = body };
-        }
-
-        if (_focusTransition is not null)
-        {
-            // The thumbs-up clip is the closest real Dudu expression for a
-            // completed focus session.
-            return Present(PetState.FocusTransition, "celebrate");
         }
 
         if (!_paused && _welcomeBackPending)
@@ -322,16 +257,9 @@ public sealed class PetStateMachine
             return Present(PetState.Ambient, _ambientAnimation, BubbleFor(_ambientAnimation));
         }
 
-        // A meal is the more recent, shorter commitment, so it shows over a
-        // focus session that happens to still be running underneath it.
         if (IsEatingLatched())
         {
             return Present(PetState.Eating, "eat", EatingBubble);
-        }
-
-        if (IsFocusLatched())
-        {
-            return Present(PetState.Focus, "focus", FocusBubble);
         }
 
         return Present(PetState.Idle, "idle");
@@ -361,24 +289,10 @@ public sealed class PetStateMachine
             return;
         }
 
-        if (_dueReminderIds.Remove(itemId))
-        {
-            _dueReminderOrder.Remove(itemId);
-            return;
-        }
-
         if (string.Equals(itemId, "comfort", StringComparison.Ordinal)
             || string.Equals(itemId, "comfort-hug", StringComparison.Ordinal))
         {
             _comfortActive = false;
-
-            return;
-        }
-
-        if (string.Equals(itemId, "focus-end", StringComparison.Ordinal)
-            || string.Equals(itemId, "focus-transition", StringComparison.Ordinal))
-        {
-            _focusTransition = null;
 
             return;
         }
@@ -408,13 +322,11 @@ public sealed class PetStateMachine
         }
     }
 
-    private bool IsFocusLatched() => _focusId is not null;
-
     private bool IsEatingLatched() => _eatingId is not null;
 
-    /// <summary>Focus and eating both keep Dudu as quiet company: unsolicited
-    /// notes, reminders, and ambient moments wait until they end.</summary>
-    private bool IsQuietCompanyActive() => IsFocusLatched() || IsEatingLatched();
+    /// <summary>An eat-together meal keeps Dudu as quiet company: unsolicited
+    /// notes and ambient moments wait until it ends.</summary>
+    private bool IsQuietCompanyActive() => IsEatingLatched();
 
     private static bool IsAllowedAmbientAnimation(string animationKey)
     {

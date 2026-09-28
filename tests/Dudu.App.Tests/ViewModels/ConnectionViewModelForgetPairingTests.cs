@@ -1,12 +1,8 @@
 using Dudu.App.Hosting;
 using Dudu.App.ViewModels;
 using Dudu.Core.Abstractions;
-using Dudu.Core.CheckIns;
-using Dudu.Core.Focus;
 using Dudu.Core.Models;
-using Dudu.Core.Notes;
 using Dudu.Core.Pet;
-using Dudu.Core.Tasks;
 using Dudu.Core.Time;
 using Xunit;
 
@@ -175,32 +171,18 @@ public sealed class ConnectionViewModelForgetPairingTests
         var clock = new FakeClock();
         var preferences = new Preferences(
             AppTheme.System,
-            new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-            false, 3, true, false, true, TimeSpan.FromMinutes(15));
+            false, true, false, true, TimeSpan.FromMinutes(15));
         var preferenceRepository = new FakePreferencesRepository();
         var preferenceMutations = new PreferenceMutationCoordinator(preferences, preferenceRepository);
         var localNotes = new FakeLocalNoteRepository();
-        var tasks = new FakeTaskRepository();
-        var focusSessions = new FakeFocusRepository();
-        var checkIns = new FakeCheckInRepository();
 
         return new CompanionFeatureContext(
             clock,
             preferenceMutations,
             new FakeProfileRepository(),
             new FakePlacementRepository(),
-            new FakeReminderRepository(),
-            new FakeReminderRepository(),
-            tasks,
-            focusSessions,
             localNotes,
             remoteEnvelopes,
-            new FakeCountdownRepository(),
-            checkIns,
-            new CheckInService(checkIns, clock),
-            new TaskService(tasks, clock),
-            new FocusService(focusSessions, clock, tasks),
-            new LocalNoteSelector(localNotes, clock, new FixedRandom(), preferences),
             new FakePairing(remoteEnvelopes, wipesEnvelopesOnForget, availabilityToReport, sessionCountToReport),
             new ThrowingFeatureTransactions(),
             PetStateMachine.CreateIdle(),
@@ -211,11 +193,6 @@ public sealed class ConnectionViewModelForgetPairingTests
     {
         public DateTimeOffset UtcNow => DateTimeOffset.Parse("2026-09-19T08:00:00Z");
         public TimeZoneInfo LocalTimeZone => TimeZoneInfo.Utc;
-    }
-
-    private sealed class FixedRandom : IRandomSource
-    {
-        public int Next(int exclusiveMax) => 0;
     }
 
     private sealed class FakeRemoteEnvelopeRepository : IRemoteEnvelopeRepository
@@ -298,62 +275,8 @@ public sealed class ConnectionViewModelForgetPairingTests
         public Task DeleteAsync(string monitorDeviceName, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
-    private sealed class FakeReminderRepository : IReminderRepository, IReminderWriter
-    {
-        public Task<IReadOnlyList<Reminder>> LoadDueAsync(DateTimeOffset utcNow, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<Reminder>>([]);
-        public Task<bool> RecordOccurrencesAndAdvanceAsync(
-            Reminder reminder,
-            IReadOnlyList<ReminderOccurrence> occurrences,
-            DateTimeOffset? nextDueUtc,
-            CancellationToken cancellationToken) => Task.FromResult(true);
-        public Task SaveAsync(Reminder reminder, CancellationToken cancellationToken = default) => Task.CompletedTask;
-    }
-
-    private sealed class FakeTaskRepository : ITaskRepository
-    {
-        public Task<TaskItem?> GetAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult<TaskItem?>(null);
-        public Task<IReadOnlyList<TaskItem>> ListActiveAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<TaskItem>>([]);
-        public Task SaveAsync(TaskItem task, CancellationToken cancellationToken) => Task.CompletedTask;
-    }
-
-    private sealed class FakeFocusRepository : IFocusSessionRepository
-    {
-        public Task<FocusSession?> GetAsync(Guid id, CancellationToken cancellationToken) => Task.FromResult<FocusSession?>(null);
-        public Task<FocusSession?> GetActiveAsync(CancellationToken cancellationToken) => Task.FromResult<FocusSession?>(null);
-        public Task<bool> TryCreateActiveAsync(FocusSession session, CancellationToken cancellationToken) => Task.FromResult(true);
-        public Task<bool> TryCompareAndSetAsync(FocusSession expected, FocusSession replacement, CancellationToken cancellationToken) => Task.FromResult(true);
-        public Task SaveAsync(FocusSession session, CancellationToken cancellationToken) => Task.CompletedTask;
-    }
-
-    private sealed class FakeCountdownRepository : ICountdownRepository
-    {
-        public Task<Countdown?> GetAsync(string id, CancellationToken cancellationToken) => Task.FromResult<Countdown?>(null);
-        public Task<IReadOnlyList<Countdown>> ListAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<Countdown>>([]);
-        public Task SaveAsync(Countdown countdown, CancellationToken cancellationToken) => Task.CompletedTask;
-        public Task DeleteAsync(string id, CancellationToken cancellationToken) => Task.CompletedTask;
-    }
-
-    private sealed class FakeCheckInRepository : ICheckInRepository
-    {
-        public Task SaveAsync(MoodCheckIn checkIn, CancellationToken cancellationToken) => Task.CompletedTask;
-        public Task<IReadOnlyList<MoodCheckIn>> ListSinceAsync(DateTimeOffset sinceUtc, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<MoodCheckIn>>([]);
-    }
-
     private sealed class FakeLocalNoteRepository : ILocalNoteRepository
     {
-        public Task<IReadOnlyList<LocalLoveNote>> ListEnabledAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<LocalLoveNote>>([]);
-        public Task<int> CountUnsolicitedShownAsync(DateOnly localDate, CancellationToken cancellationToken) =>
-            Task.FromResult(0);
-        public Task<IReadOnlyList<string>> GetMostRecentShownIdsAsync(int count, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<string>>([]);
-        public Task<bool> TryRecordShownAsync(
-            string noteId, DateTimeOffset shownUtc, DateOnly localDate, int dailyLimit, bool unsolicited,
-            CancellationToken cancellationToken) => Task.FromResult(true);
     }
 
     private sealed class FakePairing(
@@ -395,14 +318,6 @@ public sealed class ConnectionViewModelForgetPairingTests
 
     private sealed class ThrowingFeatureTransactions : ICompanionFeatureTransactions
     {
-        public Task SavePreferencesAndDefaultRemindersAsync(
-            Preferences preferences, DateTimeOffset nowUtc, TimeZoneInfo localTimeZone,
-            CancellationToken cancellationToken = default) =>
-            Task.FromException(new NotSupportedException("not needed for this test"));
-        public Task RestorePreferencesAndDefaultRemindersAsync(
-            Preferences preferences, IReadOnlyList<Reminder> previousDefaultReminders,
-            CancellationToken cancellationToken = default) =>
-            Task.FromException(new NotSupportedException("not needed for this test"));
         public Task SaveRemoteNoteAndConsumeEnvelopeAsync(
             LocalLoveNote note, string messageId, DateTimeOffset processedUtc,
             CancellationToken cancellationToken = default) =>

@@ -53,7 +53,6 @@ public sealed class PetPresentationCoordinatorTests
     [InlineData(PetState.Idle, "drag", AudioCueEvent.Drag, AudioCuePriority.Interactive)]
     [InlineData(PetState.RemoteNote, "note-arrival", AudioCueEvent.RemoteNote, AudioCuePriority.Background)]
     [InlineData(PetState.WelcomeBack, "welcome-back", AudioCueEvent.Greeting, AudioCuePriority.Background)]
-    [InlineData(PetState.Reminder, "reminder", AudioCueEvent.Reminder, AudioCuePriority.Background)]
     public void User_actions_get_interactive_priority_and_arrivals_stay_background(
         PetState state,
         string animationKey,
@@ -317,31 +316,6 @@ public sealed class PetPresentationCoordinatorTests
         Assert.Equal(2, invocation);
         Assert.Equal("greeting", presentations[0].AnimationKey);
         Assert.Equal(PetState.Idle, presentations[1].State);
-        Assert.Equal(PetState.Idle, pet.Current.State);
-    }
-
-    [Fact]
-    public async Task Focus_end_is_acknowledged_then_restores_authoritative_idle_state()
-    {
-        var pet = PetStateMachine.CreateIdle();
-        pet.Handle(new PetEvent.FocusStarted("focus-1"));
-        var presentations = new List<PetPresentation>();
-        var coordinator = new PetPresentationCoordinator(
-            pet,
-            (presentation, _, _) =>
-            {
-                presentations.Add(presentation);
-                return Task.CompletedTask;
-            });
-
-        await coordinator.PresentOneShotAsync(
-            new PetEvent.FocusEnded("focus-1"),
-            "focus-end",
-            TestContext.Current.CancellationToken);
-
-        Assert.Equal(PetState.FocusTransition, presentations[0].State);
-        Assert.Equal("celebrate", presentations[0].AnimationKey);
-        Assert.Equal(PetState.Idle, presentations[^1].State);
         Assert.Equal(PetState.Idle, pet.Current.State);
     }
 

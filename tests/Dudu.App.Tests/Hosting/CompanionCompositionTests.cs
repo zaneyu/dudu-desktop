@@ -25,8 +25,7 @@ public sealed class CompanionCompositionTests
         var background = CompanionLaunchOptions.Parse("--background");
         var startupEnabled = new Preferences(
             AppTheme.System,
-            new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-            false, 3, true, false, true, TimeSpan.FromMinutes(15));
+            false, true, false, true, TimeSpan.FromMinutes(15));
         var startupDisabled = startupEnabled with { LaunchAtSignIn = false };
 
         Assert.True(background.ShouldShowOverlay(startupEnabled));
@@ -61,9 +60,9 @@ public sealed class CompanionCompositionTests
 
         await WindowsCompanionProductionComposition.DispatchSettingsDestinationAsync(
             actions,
-            "tasks",
+            "notes",
             TestContext.Current.CancellationToken);
-        Assert.Equal(["tasks"], destinations);
+        Assert.Equal(["notes"], destinations);
 
         var unavailable = new CompanionUiActions(
             _ => Task.CompletedTask,
@@ -103,8 +102,7 @@ public sealed class CompanionCompositionTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)),
+                false, true, false, true, TimeSpan.FromMinutes(15)),
             pauseState: () => pause.Current,
             clock: () => now);
         var router = new CompanionCommandRouter(
@@ -114,19 +112,14 @@ public sealed class CompanionCompositionTests
             _ => { exit++; return Task.CompletedTask; },
             () => now);
 
-        await router.HandleAsync(TrayCommand.PauseOneHour, TestContext.Current.CancellationToken);
-        Assert.Equal(PauseMode.OneHour, pause.Current.Mode);
-        await router.HandleAsync(TrayCommand.PauseUntilTomorrowAtSeven, TestContext.Current.CancellationToken);
-        Assert.Equal(PauseMode.UntilTomorrowAtSeven, pause.Current.Mode);
-        await router.HandleAsync(TrayCommand.PauseUntilFullscreenEnds, TestContext.Current.CancellationToken);
-        Assert.Equal(PauseMode.UntilFullscreenEnds, pause.Current.Mode);
-        // "pause indefinitely or resume" resumes whatever pause is active
-        // (here: until fullscreen ends), and pauses indefinitely otherwise.
-        await router.HandleAsync(TrayCommand.PauseIndefinitelyOrResume, TestContext.Current.CancellationToken);
+        // "pause 1 hour or resume" pauses for one hour when not paused and
+        // resumes whatever pause is active otherwise.
+        await router.HandleAsync(TrayCommand.PauseOneHourOrResume, TestContext.Current.CancellationToken);
+        Assert.Equal(new PauseState(PauseMode.OneHour, now.AddHours(1)), pause.Current);
+        await router.HandleAsync(TrayCommand.PauseOneHourOrResume, TestContext.Current.CancellationToken);
         Assert.Equal(PauseMode.None, pause.Current.Mode);
-        await router.HandleAsync(TrayCommand.PauseIndefinitelyOrResume, TestContext.Current.CancellationToken);
-        Assert.Equal(PauseMode.Indefinite, pause.Current.Mode);
-        await router.HandleAsync(TrayCommand.PauseIndefinitelyOrResume, TestContext.Current.CancellationToken);
+        pause.Set(new PauseState(PauseMode.UntilFullscreenEnds, null));
+        await router.HandleAsync(TrayCommand.PauseOneHourOrResume, TestContext.Current.CancellationToken);
         Assert.Equal(PauseMode.None, pause.Current.Mode);
         await router.HandleAsync(TrayCommand.OpenSettings, TestContext.Current.CancellationToken);
         await router.HandleAsync(TrayCommand.Exit, TestContext.Current.CancellationToken);
@@ -145,8 +138,7 @@ public sealed class CompanionCompositionTests
             PetStateMachine.CreateIdle(),
             new Preferences(
                 AppTheme.System,
-                new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-                false, 3, true, false, true, TimeSpan.FromMinutes(15)));
+                false, true, false, true, TimeSpan.FromMinutes(15)));
         var router = new CompanionCommandRouter(
             lifecycle,
             new PauseStateStore(),

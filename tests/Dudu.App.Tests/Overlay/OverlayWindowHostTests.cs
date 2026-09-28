@@ -234,7 +234,9 @@ public sealed class OverlayWindowHostTests
         var right = handleMessage[handleMessage.IndexOf("case WmRButtonUp:", StringComparison.Ordinal)..handleMessage.IndexOf("case WmMouseWheel:", StringComparison.Ordinal)];
         Assert.Contains("ShouldPetOnRightClick(_dragging)", right, StringComparison.Ordinal);
         Assert.Contains("PetFromClick();", right, StringComparison.Ordinal);
-        Assert.Contains("_actionDispatchQueue.EnqueuePet(surface)", Body(source, "private void PetFromClick()"), StringComparison.Ordinal);
+        Assert.Contains("_actionDispatchQueue.EnqueuePet(petAsync)", Body(source, "private void PetFromClick()"), StringComparison.Ordinal);
+        Assert.DoesNotContain("_actionSurface", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("FindPresentedOverlayActionAt", source, StringComparison.Ordinal);
 
         Assert.DoesNotContain("ToggleFromPetBody", source, StringComparison.Ordinal);
         Assert.DoesNotContain("_showContextMenu", source, StringComparison.Ordinal);

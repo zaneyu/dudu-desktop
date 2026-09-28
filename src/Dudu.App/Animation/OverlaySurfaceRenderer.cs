@@ -1,21 +1,16 @@
 using System.Runtime.InteropServices;
-using Dudu.App.Overlay;
 using Dudu.Core.Models;
 using SkiaSharp;
 
 namespace Dudu.App.Animation;
 
-/// <summary>Paints the native overlay actions into the same premultiplied frame
-/// used for hit testing.  Geometry comes exclusively from the controller, so
-/// painted and clickable regions cannot drift apart.</summary>
+/// <summary>Overlay rendering helpers shared by the pet canvas: the Windows
+/// high-contrast reading that picks the overlay palette. (The pointer-only
+/// action bubble it used to paint was removed; clicking Dudu just pets.)</summary>
 internal static class OverlaySurfaceRenderer
 {
     private const uint SpiGetHighContrast = 0x0042;
     private const uint HcfHighContrastOn = 0x00000001;
-    private static readonly SKTypeface Typeface =
-        SKTypeface.FromFamilyName("Segoe UI") ?? SKTypeface.Default;
-    private static readonly SKFont LabelFont = new(Typeface, 14);
-    private static readonly SKFont DetailFont = new(Typeface, 11);
 
     public static bool IsHighContrastEnabled()
     {
@@ -27,145 +22,6 @@ internal static class OverlaySurfaceRenderer
         return SystemParametersInfoW(SpiGetHighContrast, highContrast.Size, ref highContrast, 0)
             && (highContrast.Flags & HcfHighContrastOn) != 0;
     }
-
-    public static void Draw(
-        SKCanvas canvas,
-        OverlaySurfaceSnapshot snapshot,
-        OverlaySurfacePalette? requestedPalette = null)
-    {
-        ArgumentNullException.ThrowIfNull(canvas);
-        ArgumentNullException.ThrowIfNull(snapshot);
-        if (snapshot.Kind == OverlayActionSurfaceKind.Closed)
-        {
-            return;
-        }
-
-        // A status/error surface is still useful when the work area was too
-        // small to arrange buttons. Fall back to the current canvas clip so
-        // the failure is painted instead of silently disappearing.
-        var surface = snapshot.Bounds is { } bounds && bounds.IsValid
-            ? ToRect(bounds)
-            : canvas.LocalClipBounds;
-        if (surface.Width <= 0 || surface.Height <= 0)
-        {
-            return;
-        }
-
-        var palette = requestedPalette
-            ?? OverlaySurfacePalette.For(snapshot.Theme, snapshot.IsHighContrast || IsHighContrastEnabled());
-        canvas.Save();
-        try
-        {
-            canvas.ClipRect(surface);
-            using var surfacePaint = Fill(palette.Surface);
-            using var borderPaint = Stroke(palette.Border);
-            using var actionPaint = Fill(palette.ActionSurface);
-            using var actionBorderPaint = Stroke(palette.ActionBorder);
-            using var textPaint = Fill(palette.Text);
-            using var detailPaint = Fill(palette.DetailText);
-            using var errorPaint = Fill(palette.ErrorText);
-
-            canvas.DrawRoundRect(surface, 12, 12, surfacePaint);
-            canvas.DrawRoundRect(surface, 12, 12, borderPaint);
-            foreach (var action in snapshot.Actions)
-            {
-                var region = ToRect(action.HitRegion);
-                canvas.DrawRoundRect(region, 8, 8, actionPaint);
-                canvas.DrawRoundRect(region, 8, 8, actionBorderPaint);
-                DrawCenteredLabel(canvas, action.Label, region, LabelFont, textPaint);
-            }
-
-            if (snapshot.Kind == OverlayActionSurfaceKind.Comfort
-                && string.IsNullOrWhiteSpace(snapshot.ErrorMessage)
-                && !string.IsNullOrWhiteSpace(snapshot.ComfortPanel.Instruction))
-            {
-                // The instruction already says what to do ("breathe in for
-                // 4"; reduced motion gets its own stable wording from the
-                // router). Prefixing the raw phase enum or the setting name
-                // painted "Inhale breathe in for 4" and "reduced motion
-                // breathe slowly..." into the bubble.
-                var detail = OverlaySurfaceText.ComfortDetail(snapshot.ComfortPanel);
-                DrawDetail(canvas, detail, snapshot.DetailRegion, detailPaint);
-            }
-
-            if (!string.IsNullOrWhiteSpace(snapshot.ErrorMessage))
-            {
-                // Status surfaces intentionally render without action regions;
-                // the matching Settings/Home route carries the accessible live
-                // error text as well.
-                DrawDetail(canvas, snapshot.ErrorMessage, snapshot.DetailRegion, errorPaint);
-            }
-        }
-        finally
-        {
-            canvas.Restore();
-        }
-    }
-
-    private static void DrawDetail(SKCanvas canvas, string text, PixelRect? requestedRegion, SKPaint paint)
-    {
-        if (string.IsNullOrWhiteSpace(text)) return;
-        if (requestedRegion is not { } pixelRegion || !pixelRegion.IsValid) return;
-        var region = ToRect(pixelRegion);
-        canvas.Save();
-        try
-        {
-            canvas.ClipRect(region);
-            var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            var line = string.Empty;
-            var baseline = region.Top + DetailFont.Size;
-            var lineHeight = DetailFont.Size + 3;
-            foreach (var word in words)
-            {
-                var candidate = line.Length == 0 ? word : $"{line} {word}";
-                if (line.Length > 0 && DetailFont.MeasureText(candidate, paint) > region.Width)
-                {
-                    canvas.DrawText(line, region.Left, baseline, SKTextAlign.Left, DetailFont, paint);
-                    baseline += lineHeight;
-                    if (baseline > region.Bottom) return;
-                    line = word;
-                }
-                else
-                {
-                    line = candidate;
-                }
-            }
-
-            if (line.Length > 0 && baseline <= region.Bottom)
-            {
-                canvas.DrawText(line, region.Left, baseline, SKTextAlign.Left, DetailFont, paint);
-            }
-        }
-        finally
-        {
-            canvas.Restore();
-        }
-    }
-
-    private static void DrawCenteredLabel(SKCanvas canvas, string text, SKRect region, SKFont font, SKPaint paint)
-    {
-        font.GetFontMetrics(out var metrics);
-        var baseline = region.MidY - (metrics.Ascent + metrics.Descent) / 2;
-        canvas.DrawText(text, region.MidX, baseline, SKTextAlign.Center, font, paint);
-    }
-
-    private static SKPaint Fill(SKColor color) => new()
-    {
-        IsAntialias = true,
-        Color = color,
-        Style = SKPaintStyle.Fill,
-    };
-
-    private static SKPaint Stroke(SKColor color) => new()
-    {
-        IsAntialias = true,
-        Color = color,
-        Style = SKPaintStyle.Stroke,
-        StrokeWidth = 1,
-    };
-
-    private static SKRect ToRect(PixelRect rectangle) =>
-        SKRect.Create(rectangle.X, rectangle.Y, rectangle.Width, rectangle.Height);
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct HighContrast
@@ -182,56 +38,6 @@ internal static class OverlaySurfaceRenderer
         uint parameter,
         ref HighContrast value,
         uint winIni);
-}
-
-/// <summary>Immutable information for one painted action.  Automation ID and
-/// settings destination document its keyboard/tray equivalent.</summary>
-public sealed record OverlaySurfaceAction(string Label, PixelRect HitRegion)
-{
-    public string AutomationId { get; init; } = string.Empty;
-    public string SettingsDestination { get; init; } = string.Empty;
-    public OverlayAction? PrimaryAction { get; init; }
-    public ComfortAction? ComfortAction { get; init; }
-
-    public OverlaySurfaceAction(
-        string label,
-        string automationId,
-        PixelRect hitRegion,
-        string settingsDestination = "")
-        : this(label, hitRegion)
-    {
-        AutomationId = automationId ?? string.Empty;
-        SettingsDestination = settingsDestination ?? string.Empty;
-    }
-}
-
-public sealed record OverlaySurfaceSnapshot(
-    OverlayActionSurfaceKind Kind,
-    PixelRect? Bounds,
-    IReadOnlyList<OverlaySurfaceAction> Actions,
-    ComfortPanelState ComfortPanel,
-    bool IsReducedMotion,
-    string? ErrorMessage)
-{
-    public PixelRect? DetailRegion { get; init; }
-    public long GeometryVersion { get; init; }
-    public AppTheme Theme { get; init; } = AppTheme.System;
-    public bool IsHighContrast { get; init; }
-
-    public OverlaySurfaceSnapshot(
-        OverlayActionSurfaceKind kind,
-        PixelRect? bounds,
-        IReadOnlyList<OverlaySurfaceAction> actions,
-        ComfortPanelState comfortPanel,
-        bool isReducedMotion,
-        string? errorMessage,
-        AppTheme theme,
-        bool isHighContrast)
-        : this(kind, bounds, actions, comfortPanel, isReducedMotion, errorMessage)
-    {
-        Theme = theme;
-        IsHighContrast = isHighContrast;
-    }
 }
 
 /// <summary>Theme and high-contrast aware colors for the no-activate surface.
@@ -256,17 +62,6 @@ public sealed record OverlaySurfacePalette(
                 new SKColor(255, 250, 246, 248), new SKColor(210, 194, 211),
                 SKColors.White, new SKColor(228, 214, 225),
                 new SKColor(46, 40, 48), new SKColor(94, 82, 96), new SKColor(170, 58, 55));
-}
-
-/// <summary>Text painted into the overlay's detail line, kept free of Skia so
-/// it can be tested without the native renderer.</summary>
-internal static class OverlaySurfaceText
-{
-    public static string ComfortDetail(ComfortPanelState panel)
-    {
-        ArgumentNullException.ThrowIfNull(panel);
-        return panel.Instruction;
-    }
 }
 
 /// <summary>One rendered UK partner-clock pill and where it sits on the pet

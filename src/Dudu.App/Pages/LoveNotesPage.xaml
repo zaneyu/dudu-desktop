@@ -15,64 +15,8 @@
             <StackPanel MaxWidth="880" Margin="32,24,32,32" Spacing="20">
                 <StackPanel Spacing="4">
                     <TextBlock Text="love notes" Style="{StaticResource PageTitleStyle}" AutomationProperties.AutomationId="LoveNotesPageTitle" AutomationProperties.Name="love notes" />
-                    <TextBlock Text="a jar of sweet notes on this pc, plus encrypted ones sent to you" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
+                    <TextBlock Text="encrypted notes from your partner. once you open one it stays on this pc till you delete it" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" />
                 </StackPanel>
-
-                <Border Style="{StaticResource CardStyle}">
-                    <StackPanel Spacing="12">
-                        <Grid ColumnSpacing="12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="🍯" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
-                            <TextBlock Grid.Column="1" Text="local note jar" Style="{StaticResource SectionHeadingStyle}" />
-                        </Grid>
-                        <TextBlock x:Name="LoveNotesDailyLimit" TextWrapping="Wrap" AutomationProperties.AutomationId="LoveNotesDailyLimit" AutomationProperties.Name="daily note limit" />
-                        <TextBlock Text="the jar is empty. write a note below to add one" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" Visibility="{x:Bind ViewModel.HasNoLocalNotes, Mode=OneWay}" />
-                        <ListView ItemsSource="{x:Bind ViewModel.LocalNotes, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.SelectedNote, Mode=TwoWay}" SelectionChanged="LocalNoteList_SelectionChanged" MaxHeight="220" AutomationProperties.AutomationId="LoveNotesLocalList" AutomationProperties.Name="local note jar list">
-                            <ListView.ItemTemplate>
-                                <DataTemplate x:DataType="models:LocalLoveNote">
-                                    <TextBlock Text="{x:Bind Text}" TextWrapping="Wrap" Margin="4" />
-                                </DataTemplate>
-                            </ListView.ItemTemplate>
-                        </ListView>
-                        <TextBox Header="note" Text="{x:Bind ViewModel.DraftText, Mode=TwoWay}" TextWrapping="Wrap" AcceptsReturn="True" AutomationProperties.AutomationId="LoveNotesDraft" AutomationProperties.Name="note" />
-                        <CheckBox Content="include this note in dudus local choices" IsChecked="{x:Bind ViewModel.DraftEnabled, Mode=TwoWay}" AutomationProperties.AutomationId="LoveNotesDraftEnabled" AutomationProperties.Name="include this note in dudus local choices" />
-                        <Grid ColumnSpacing="8" RowSpacing="8">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
-                            <Button Content="save note" Command="{x:Bind ViewModel.SaveLocalNoteCommand}" Style="{StaticResource PrimaryButtonStyle}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="LoveNotesSave" AutomationProperties.Name="save note" />
-                            <Button Grid.Column="1" Content="new note" Command="{x:Bind ViewModel.NewNoteCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="LoveNotesNew" AutomationProperties.Name="new note" />
-                            <Button Grid.Row="1" Grid.ColumnSpan="2" Content="let dudu choose" Command="{x:Bind ViewModel.ShowLocalNoteCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="LoveNotesChoose" AutomationProperties.Name="let dudu choose" />
-                        </Grid>
-                        <StackPanel Spacing="4" Visibility="{x:Bind ViewModel.HasChosenLocalNote, Mode=OneWay}">
-                            <TextBlock Text="dudu picked this one for you" Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" />
-                            <TextBlock Text="{x:Bind ViewModel.ChosenLocalNoteText, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" AutomationProperties.AutomationId="LoveNotesChosen" AutomationProperties.Name="{x:Bind ViewModel.ChosenLocalNoteText, Mode=OneWay}" />
-                        </StackPanel>
-                        <!-- Destructive: kept on its own row, away from save (DESIGN.md). -->
-                        <Button Content="delete selected" Command="{x:Bind ViewModel.RequestDeleteLocalNoteCommand}" CommandParameter="{x:Bind ViewModel.SelectedNote, Mode=OneWay}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="LoveNotesDelete" AutomationProperties.Name="delete selected" />
-                        <Border Style="{StaticResource ConfirmCardStyle}" Visibility="{x:Bind ViewModel.IsConfirmingDeleteNote, Mode=OneWay}" AutomationProperties.AutomationId="LoveNotesDeleteConfirmationPanel" AutomationProperties.Name="delete note confirmation panel">
-                            <StackPanel Spacing="8">
-                                <TextBlock Text="{x:Bind ViewModel.DeleteNotePrompt, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Assertive" AutomationProperties.AutomationId="LoveNotesDeleteConfirmationMessage" AutomationProperties.Name="{x:Bind ViewModel.DeleteNotePrompt, Mode=OneWay}" />
-                                <Grid ColumnSpacing="8" RowSpacing="8">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <Button Content="confirm delete" Command="{x:Bind ViewModel.DeleteLocalNoteCommand}" CommandParameter="{x:Bind ViewModel.PendingDeleteNote, Mode=OneWay}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="LoveNotesDeleteConfirm" AutomationProperties.Name="confirm delete note" />
-                                    <Button Grid.Column="1" Content="cancel" Command="{x:Bind ViewModel.CancelDeleteLocalNoteCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="LoveNotesDeleteCancel" AutomationProperties.Name="cancel delete note" />
-                                </Grid>
-                            </StackPanel>
-                        </Border>
-                    </StackPanel>
-                </Border>
 
                 <Border Style="{StaticResource BlushCardStyle}">
                     <StackPanel Spacing="12">
@@ -92,9 +36,44 @@
                                 </DataTemplate>
                             </ListView.ItemTemplate>
                         </ListView>
-                        <Button Content="reveal selected note" Command="{x:Bind ViewModel.RevealRemoteNoteCommand}" CommandParameter="{x:Bind ViewModel.SelectedRemoteEnvelope, Mode=OneWay}" IsEnabled="{x:Bind ViewModel.CanRevealRemoteNote, Mode=OneWay}" AutomationProperties.AutomationId="LoveNotesRevealSelected" AutomationProperties.Name="reveal selected note" HorizontalAlignment="Left" />
-                        <TextBox Header="opened note" Text="{x:Bind ViewModel.OpenedRemoteNoteText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" AutomationProperties.AutomationId="LoveNotesOpened" AutomationProperties.Name="opened note" />
-                        <Button Content="save opened note to local jar" Command="{x:Bind ViewModel.SaveOpenedNoteCommand}" IsEnabled="{x:Bind ViewModel.CanSaveOpenedNote, Mode=OneWay}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="LoveNotesSaveOpened" AutomationProperties.Name="save opened note to local jar" HorizontalAlignment="Left" />
+                        <Button Content="reveal selected note" Command="{x:Bind ViewModel.RevealRemoteNoteCommand}" CommandParameter="{x:Bind ViewModel.SelectedRemoteEnvelope, Mode=OneWay}" IsEnabled="{x:Bind ViewModel.CanRevealRemoteNote, Mode=OneWay}" Style="{StaticResource PrimaryButtonStyle}" AutomationProperties.AutomationId="LoveNotesRevealSelected" AutomationProperties.Name="reveal selected note" HorizontalAlignment="Left" />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="12">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource IconChipStyle}"><TextBlock Text="💗" Style="{StaticResource ChipEmojiStyle}" AutomationProperties.AccessibilityView="Raw" /></Border>
+                            <TextBlock Grid.Column="1" Text="opened notes" Style="{StaticResource SectionHeadingStyle}" />
+                        </Grid>
+                        <TextBlock Text="no opened notes yet. reveal one above and it stays here" TextWrapping="Wrap" Foreground="{ThemeResource TextSecondaryBrush}" Visibility="{x:Bind ViewModel.HasNoOpenedNotes, Mode=OneWay}" />
+                        <ListView ItemsSource="{x:Bind ViewModel.OpenedNotes, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.SelectedOpenedNote, Mode=TwoWay}" MaxHeight="220" AutomationProperties.AutomationId="LoveNotesOpenedList" AutomationProperties.Name="opened notes list">
+                            <ListView.ItemTemplate>
+                                <DataTemplate x:DataType="models:LocalLoveNote">
+                                    <TextBlock Text="{x:Bind Text}" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" Margin="4" />
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                        <TextBox Header="opened note" Text="{x:Bind ViewModel.SelectedOpenedNoteText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" AutomationProperties.AutomationId="LoveNotesOpened" AutomationProperties.Name="opened note" />
+                        <!-- Destructive: kept on its own row, below the note (DESIGN.md). -->
+                        <Button Content="delete selected" Command="{x:Bind ViewModel.RequestDeleteOpenedNoteCommand}" CommandParameter="{x:Bind ViewModel.SelectedOpenedNote, Mode=OneWay}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="LoveNotesDelete" AutomationProperties.Name="delete selected" />
+                        <Border Style="{StaticResource ConfirmCardStyle}" Visibility="{x:Bind ViewModel.IsConfirmingDeleteNote, Mode=OneWay}" AutomationProperties.AutomationId="LoveNotesDeleteConfirmationPanel" AutomationProperties.Name="delete note confirmation panel">
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="{x:Bind ViewModel.DeleteNotePrompt, Mode=OneWay}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Assertive" AutomationProperties.AutomationId="LoveNotesDeleteConfirmationMessage" AutomationProperties.Name="{x:Bind ViewModel.DeleteNotePrompt, Mode=OneWay}" />
+                                <Grid ColumnSpacing="8" RowSpacing="8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Button Content="confirm delete" Command="{x:Bind ViewModel.DeleteOpenedNoteCommand}" CommandParameter="{x:Bind ViewModel.PendingDeleteNote, Mode=OneWay}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="LoveNotesDeleteConfirm" AutomationProperties.Name="confirm delete note" />
+                                    <Button Grid.Column="1" Content="cancel" Command="{x:Bind ViewModel.CancelDeleteOpenedNoteCommand}" HorizontalAlignment="Stretch" AutomationProperties.AutomationId="LoveNotesDeleteCancel" AutomationProperties.Name="cancel delete note" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </Border>
             </StackPanel>

@@ -8,15 +8,14 @@ using Microsoft.Extensions.DependencyInjection;
 /// <summary>
 /// The stability signals task-23's eight-hour run cares about: did the process ever crash, did
 /// its GDI/USER object handles or working set grow without bound, and did the database end up
-/// with more than one row for the same reminder occurrence or remote note.
+/// with more than one row for the same remote note.
 /// </summary>
 internal readonly record struct StabilityReport(
     bool Crashed,
     double GdiHandleGrowthPercent,
     double UserHandleGrowthPercent,
     double WorkingSetGrowthMegabytesPerHour,
-    int DuplicateNoteRows,
-    int DuplicateReminderOccurrenceRows)
+    int DuplicateNoteRows)
 {
     public string ToJson() => string.Create(CultureInfo.InvariantCulture, $$"""
         {
@@ -24,8 +23,7 @@ internal readonly record struct StabilityReport(
           "gdiHandleGrowthPercent": {{GdiHandleGrowthPercent}},
           "userHandleGrowthPercent": {{UserHandleGrowthPercent}},
           "workingSetGrowthMbPerHour": {{WorkingSetGrowthMegabytesPerHour}},
-          "duplicateNoteRows": {{DuplicateNoteRows}},
-          "duplicateReminderOccurrenceRows": {{DuplicateReminderOccurrenceRows}}
+          "duplicateNoteRows": {{DuplicateNoteRows}}
         }
         """);
 }
@@ -73,11 +71,6 @@ internal static class StabilityThresholds
             failures.Add($"{report.DuplicateNoteRows} duplicate remote-note row(s) found");
         }
 
-        if (report.DuplicateReminderOccurrenceRows > 0)
-        {
-            failures.Add($"{report.DuplicateReminderOccurrenceRows} duplicate reminder-occurrence row(s) found");
-        }
-
         return failures;
     }
 }
@@ -86,7 +79,7 @@ internal static class StabilityThresholds
 /// Windows-only long-run stability scenario (task 23 brief, steps 2 and 4): launches a published
 /// <c>Dudu.App.exe</c>, lets it run unattended for <c>--hours</c> hours (default 8), periodically
 /// samples its GDI/USER handle counts and working set, then -- after the process has exited --
-/// checks its own database for duplicate reminder-occurrence or remote-note rows. Cannot run on a
+/// checks its own database for duplicate remote-note rows. Cannot run on a
 /// non-Windows build host; see <c>docs/testing/windows-acceptance.md</c> for the Windows-deferred
 /// eight-hour evidence this scenario is meant to produce.
 /// </summary>
@@ -193,15 +186,14 @@ internal static class LongRunScenario
                 }
             }
 
-            var (duplicateNoteRows, duplicateReminderRows) = await CountDuplicateRowsAsync(dataRoot);
+            var duplicateNoteRows = await CountDuplicateNoteRowsAsync(dataRoot);
 
             var report = new StabilityReport(
                 crashed,
                 gdiGrowthPercent,
                 userGrowthPercent,
                 workingSetGrowthMbPerHour,
-                duplicateNoteRows,
-                duplicateReminderRows);
+                duplicateNoteRows);
 
             var outputDirectory = Path.GetDirectoryName(Path.GetFullPath(outputPath));
             if (!string.IsNullOrEmpty(outputDirectory))
@@ -239,14 +231,14 @@ internal static class LongRunScenario
     }
 
     /// <summary>
-    /// Counts rows that share a primary key after the run: <c>remote_envelopes.message_id</c> and
-    /// <c>(reminder_occurrences.reminder_id, due_utc)</c> are both primary keys, so the schema
-    /// already refuses true duplicates at insert time -- this check only catches a regression in
-    /// that guarantee. It cannot detect a notification shown twice for the same occurrence (that
+    /// Counts rows that share a primary key after the run: <c>remote_envelopes.message_id</c> is a
+    /// primary key, so the schema already refuses true duplicates at insert time -- this check
+    /// only catches a regression in that guarantee. It cannot detect a notification shown twice
+    /// for the same note (that
     /// would need OS notification-log auditing, out of scope here), which the Windows acceptance
     /// doc must call out as a gap rather than imply this check covers it.
     /// </summary>
-    private static async Task<(int DuplicateNoteRows, int DuplicateReminderRows)> CountDuplicateRowsAsync(
+    private static async Task<int> CountDuplicateNoteRowsAsync(
         string dataRoot)
     {
         var paths = AppPaths.ForRoot(dataRoot);
@@ -262,13 +254,7 @@ internal static class LongRunScenario
             "SELECT (SELECT COUNT(*) FROM remote_envelopes) - (SELECT COUNT(DISTINCT message_id) FROM remote_envelopes);";
         var duplicateNoteRows = Convert.ToInt32(await noteCommand.ExecuteScalarAsync(CancellationToken.None), CultureInfo.InvariantCulture);
 
-        using var reminderCommand = connection.CreateCommand();
-        reminderCommand.CommandText =
-            "SELECT (SELECT COUNT(*) FROM reminder_occurrences) - " +
-            "(SELECT COUNT(DISTINCT reminder_id || '|' || due_utc) FROM reminder_occurrences);";
-        var duplicateReminderRows = Convert.ToInt32(await reminderCommand.ExecuteScalarAsync(CancellationToken.None), CultureInfo.InvariantCulture);
-
-        return (duplicateNoteRows, duplicateReminderRows);
+        return duplicateNoteRows;
     }
 
     private static string? ReadOption(string[] args, string name)

@@ -1,39 +1,38 @@
 using System.Diagnostics;
 using System.ComponentModel;
-using System.Globalization;
 using System.Runtime.CompilerServices;
 using Dudu.App.Hosting;
 using Dudu.App.Overlay;
 using Dudu.App.System;
 using Dudu.Core.Abstractions;
 using Dudu.Core.Models;
-using Dudu.Core.Reminders;
 
 namespace Dudu.App.ViewModels;
 
+/// <summary>The three onboarding steps: her name, the look (theme and
+/// reduced motion), then pairing (check or skip).</summary>
 public enum OnboardingStep
 {
+    /// <summary>"what should dudu call you?"</summary>
     Recipient = 0,
+    /// <summary>The look: theme and reduced motion.</summary>
     Appearance = 1,
-    QuietHours = 2,
-    Reminders = 3,
-    Placement = 4,
-    Pairing = 5,
+    Pairing = 2,
 }
 
 /// <summary>
 /// Draft-only onboarding state. Nothing is written until CompleteAsync has
 /// validated the whole draft and committed the profile, preferences, and
-/// placement through one application unit of work.
+/// placement through one application unit of work. Launch at sign-in and
+/// hide-during-fullscreen are not asked here: onboarding saves them on (the
+/// long-standing defaults) and Settings changes them later.
 /// </summary>
 public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposable
 {
-    public const int StepCount = 6;
+    public const int StepCount = 3;
     public const string DefaultMonitorDeviceName = "PRIMARY";
     public const string RecipientNameMessage = "add a name for dudu to call u, up to 80 characters";
-    public const string QuietHoursSameTimeMessage = "quiet hours need different start and end times";
-    public const string QuietHoursTimeFormatMessage = "use a time like 22:00 for quiet hours";
-    public const string LocalNoteLimitMessage = "wait note limit must be 0 to 12";
+    private const double DefaultPlacementCoordinate = 0.8;
 
     private readonly PreferenceMutationCoordinator _preferenceMutations;
     private readonly IProfileRepository _profileRepository;
@@ -44,23 +43,14 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
     private readonly PetPlacement _initialPlacement;
     private readonly Func<Preferences, PetPlacement, CancellationToken, Task>? _runtimeApplier;
     private readonly Func<CancellationToken, Task<MonitorPlacementSnapshot>>? _placementCapture;
-    private readonly Func<PetPlacement, CancellationToken, Task>? _placementPreviewer;
     private readonly string _monitorDeviceName;
     private readonly SemaphoreSlim _navigationGate = new(1, 1);
     private bool _disposed;
     private string _recipientName = string.Empty;
     private AppTheme _theme = AppTheme.System;
     private bool _reducedMotion;
-    private bool _quietHoursEnabled = true;
-    private TimeOnly _quietHoursStart = new(22, 0);
-    private TimeOnly _quietHoursEnd = new(7, 0);
-    private int _localNoteDailyLimit = 3;
-    private bool _hydrationRemindersEnabled = true;
-    private bool _breakRemindersEnabled = true;
-    private bool _hidePetDuringFullscreen = true;
-    private bool _launchAtSignIn = true;
-    private double _placementX = 0.8;
-    private double _placementY = 0.8;
+    private double _placementX = DefaultPlacementCoordinate;
+    private double _placementY = DefaultPlacementCoordinate;
     private double _placementScale = 1.0;
     private OnboardingStep _currentStep;
     private PairingAvailability _pairingAvailability = PairingAvailability.Offline;
@@ -70,9 +60,6 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
     private string? _validationMessage;
     private string? _runtimeApplyError;
     private string? _startupRegistrationError;
-    private bool _quietHoursInputInvalid;
-    private bool _localNoteLimitInputInvalid;
-    private long _placementPreviewGeneration;
 
     public OnboardingViewModel(
         PreferenceMutationCoordinator preferenceMutations,
@@ -84,8 +71,7 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
         string? monitorDeviceName = null,
         PetPlacement? initialPlacement = null,
         Func<Preferences, PetPlacement, CancellationToken, Task>? runtimeApplier = null,
-        Func<CancellationToken, Task<MonitorPlacementSnapshot>>? placementCapture = null,
-        Func<PetPlacement, CancellationToken, Task>? placementPreviewer = null)
+        Func<CancellationToken, Task<MonitorPlacementSnapshot>>? placementCapture = null)
     {
         _preferenceMutations = preferenceMutations ?? throw new ArgumentNullException(nameof(preferenceMutations));
         _profileRepository = profileRepository ?? throw new ArgumentNullException(nameof(profileRepository));
@@ -95,8 +81,8 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
         _startupSettings = startupSettings ?? throw new ArgumentNullException(nameof(startupSettings));
         _initialPlacement = initialPlacement ?? new PetPlacement(
             string.IsNullOrWhiteSpace(monitorDeviceName) ? DefaultMonitorDeviceName : monitorDeviceName.Trim(),
-            0.8,
-            0.8,
+            DefaultPlacementCoordinate,
+            DefaultPlacementCoordinate,
             1);
         _monitorDeviceName = _initialPlacement.MonitorDeviceName;
         _runtimeApplier = runtimeApplier;
@@ -104,7 +90,6 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
         _placementY = _initialPlacement.NormalizedY;
         _placementScale = MonitorPlacementService.ClampScale(_initialPlacement.Scale);
         _placementCapture = placementCapture;
-        _placementPreviewer = placementPreviewer;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -112,44 +97,6 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
     public string RecipientName { get => _recipientName; set => Set(ref _recipientName, value ?? string.Empty); }
     public AppTheme Theme { get => _theme; set => Set(ref _theme, value); }
     public bool ReducedMotion { get => _reducedMotion; set => Set(ref _reducedMotion, value); }
-    public bool QuietHoursEnabled { get => _quietHoursEnabled; set => Set(ref _quietHoursEnabled, value); }
-    public TimeOnly QuietHoursStart
-    {
-        get => _quietHoursStart;
-        set
-        {
-            // A typed-in value supersedes whatever unparseable text came before it.
-            _quietHoursInputInvalid = false;
-            Set(ref _quietHoursStart, value);
-        }
-    }
-
-    public TimeOnly QuietHoursEnd
-    {
-        get => _quietHoursEnd;
-        set
-        {
-            _quietHoursInputInvalid = false;
-            Set(ref _quietHoursEnd, value);
-        }
-    }
-
-    public int LocalNoteDailyLimit
-    {
-        get => _localNoteDailyLimit;
-        set
-        {
-            _localNoteLimitInputInvalid = false;
-            Set(ref _localNoteDailyLimit, value);
-        }
-    }
-    public bool HydrationRemindersEnabled { get => _hydrationRemindersEnabled; set => Set(ref _hydrationRemindersEnabled, value); }
-    public bool BreakRemindersEnabled { get => _breakRemindersEnabled; set => Set(ref _breakRemindersEnabled, value); }
-    public bool HidePetDuringFullscreen { get => _hidePetDuringFullscreen; set => Set(ref _hidePetDuringFullscreen, value); }
-    public bool LaunchAtSignIn { get => _launchAtSignIn; set => Set(ref _launchAtSignIn, value); }
-    public double PlacementX { get => _placementX; set => Set(ref _placementX, value); }
-    public double PlacementY { get => _placementY; set => Set(ref _placementY, value); }
-    public double PlacementScale { get => _placementScale; set => Set(ref _placementScale, value); }
     public OnboardingStep CurrentStep { get => _currentStep; private set => Set(ref _currentStep, value); }
     public PairingAvailability PairingAvailability { get => _pairingAvailability; private set => Set(ref _pairingAvailability, value); }
     public bool PairingSkipped { get => _pairingSkipped; private set => Set(ref _pairingSkipped, value); }
@@ -171,14 +118,6 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
             var preferences = _preferenceMutations.Current;
             Theme = preferences.Theme;
             ReducedMotion = preferences.ReducedMotion;
-            QuietHoursEnabled = preferences.QuietHours.Enabled;
-            QuietHoursStart = preferences.QuietHours.Start;
-            QuietHoursEnd = preferences.QuietHours.End;
-            LocalNoteDailyLimit = preferences.LocalNoteDailyLimit;
-            HydrationRemindersEnabled = preferences.HydrationRemindersEnabled;
-            BreakRemindersEnabled = preferences.BreakRemindersEnabled;
-            LaunchAtSignIn = preferences.LaunchAtSignIn;
-            HidePetDuringFullscreen = preferences.HidePetDuringFullscreen;
 
             var profile = await _profileRepository.GetAsync(cancellationToken);
             if (profile is not null)
@@ -190,9 +129,9 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
             var placement = await _petPlacementRepository.GetAsync(_monitorDeviceName, cancellationToken);
             if (placement is not null)
             {
-                PlacementX = placement.NormalizedX;
-                PlacementY = placement.NormalizedY;
-                PlacementScale = MonitorPlacementService.ClampScale(placement.Scale);
+                _placementX = placement.NormalizedX;
+                _placementY = placement.NormalizedY;
+                _placementScale = MonitorPlacementService.ClampScale(placement.Scale);
             }
 
             // The pairing step is the only reader of this probe. Every settings
@@ -226,104 +165,6 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
         {
             _navigationGate.Release();
         }
-    }
-
-    public async Task AcceptRecommendedDefaultsAsync(CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        await _navigationGate.WaitAsync(cancellationToken);
-        try
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            QuietHoursEnabled = true;
-            QuietHoursStart = new TimeOnly(22, 0);
-            QuietHoursEnd = new TimeOnly(7, 0);
-            LocalNoteDailyLimit = 3;
-            HidePetDuringFullscreen = true;
-            ReducedMotion = false;
-            LaunchAtSignIn = true;
-            HydrationRemindersEnabled = true;
-            BreakRemindersEnabled = true;
-            ValidationMessage = null;
-        }
-        finally
-        {
-            _navigationGate.Release();
-        }
-    }
-
-    public async Task PreviewPlacementAsync(CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        if (_placementCapture is null || _placementPreviewer is null)
-        {
-            return;
-        }
-
-        // Slider drags raise many overlapping previews; the latest one must win, so a
-        // preview superseded while it awaited the capture is dropped instead of being
-        // applied late and snapping dudu back to an older size.
-        var generation = Interlocked.Increment(ref _placementPreviewGeneration);
-        var current = await _placementCapture(cancellationToken);
-        if (generation != Interlocked.Read(ref _placementPreviewGeneration))
-        {
-            return;
-        }
-
-        var preview = current.Placement with
-        {
-            Scale = MonitorPlacementService.ClampScale(PlacementScale),
-        };
-        await _placementPreviewer(preview, cancellationToken);
-    }
-
-    public async Task UseRecommendedPlacementAsync(CancellationToken cancellationToken = default)
-    {
-        ThrowIfDisposed();
-        PlacementX = 0.8;
-        PlacementY = 0.8;
-        PlacementScale = 1.0;
-        if (_placementCapture is null || _placementPreviewer is null)
-        {
-            return;
-        }
-
-        var current = await _placementCapture(cancellationToken);
-        await _placementPreviewer(
-            current.Placement with { NormalizedX = 0.8, NormalizedY = 0.8, Scale = 1.0 },
-            cancellationToken);
-    }
-
-    /// <summary>Applies the raw quiet-hours text boxes. Unparseable text used to be
-    /// dropped silently, so a typo such as "25:00" or a cleared box kept the previous
-    /// time and onboarding advanced as if the user's entry had been accepted. Now an
-    /// unparseable entry is remembered and blocks the quiet-hours step (while quiet
-    /// hours are on) until it is corrected.</summary>
-    public bool TrySetQuietHoursText(string? startText, string? endText)
-    {
-        ThrowIfDisposed();
-        var startParsed = TryParseQuietTime(startText, out var start);
-        var endParsed = TryParseQuietTime(endText, out var end);
-        if (startParsed) QuietHoursStart = start;
-        if (endParsed) QuietHoursEnd = end;
-        _quietHoursInputInvalid = !(startParsed && endParsed);
-        return !_quietHoursInputInvalid;
-    }
-
-    /// <summary>Applies the note-limit NumberBox value. A cleared NumberBox reports
-    /// NaN, which the old (int)Math.Round cast silently turned into a limit of 0 (no
-    /// local notes at all). A non-finite entry is now rejected by validation instead.</summary>
-    public void SetLocalNoteDailyLimitInput(double value)
-    {
-        ThrowIfDisposed();
-        if (!double.IsFinite(value))
-        {
-            _localNoteLimitInputInvalid = true;
-            return;
-        }
-
-        var rounded = Math.Round(value, MidpointRounding.AwayFromZero);
-        LocalNoteDailyLimit = rounded is < int.MinValue or > int.MaxValue ? -1 : (int)rounded;
     }
 
     public void SkipPairing()
@@ -426,24 +267,22 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
                     ? null
                     : await _placementCapture(cancellationToken);
                 var profile = new Profile(RecipientName.Trim(), OnboardingComplete: true);
+                // Wherever Dudu sits now (she may have dragged it), else the
+                // saved or default spot on this monitor.
                 var placement = capturedPlacement?.Placement
                     ?? new PetPlacement(
                         _monitorDeviceName,
-                        PlacementX,
-                        PlacementY,
-                        MonitorPlacementService.ClampScale(PlacementScale));
+                        SafeCoordinate(_placementX),
+                        SafeCoordinate(_placementY),
+                        MonitorPlacementService.ClampScale(_placementScale));
 
                 await _preferenceMutations.CommitAsync(
                     current => current with
                     {
                         Theme = Theme,
-                        QuietHours = new QuietHours(QuietHoursEnabled, QuietHoursStart, QuietHoursEnd),
                         ReducedMotion = ReducedMotion,
-                        LocalNoteDailyLimit = LocalNoteDailyLimit,
-                        LaunchAtSignIn = LaunchAtSignIn,
-                        HidePetDuringFullscreen = HidePetDuringFullscreen,
-                        HydrationRemindersEnabled = HydrationRemindersEnabled,
-                        BreakRemindersEnabled = BreakRemindersEnabled,
+                        LaunchAtSignIn = true,
+                        HidePetDuringFullscreen = true,
                     },
                     async (_, updated, token) =>
                     {
@@ -452,16 +291,6 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
                             await context.Profiles.SaveAsync(profile, transactionToken);
                             await context.Preferences.SaveAsync(updated, transactionToken);
                             await context.PetPlacements.SaveAsync(placement, transactionToken);
-                            if (context.Reminders is IReminderWriter reminderWriter)
-                            {
-                                foreach (var reminder in LocalReminderDefaults.Create(
-                                    updated,
-                                    DateTimeOffset.UtcNow,
-                                    TimeZoneInfo.Local))
-                                {
-                                    await reminderWriter.SaveAsync(reminder, transactionToken);
-                                }
-                            }
                         }, token);
                     },
                     cancellationToken);
@@ -533,16 +362,11 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
     {
         OnboardingStep.Recipient => ValidateRecipient(),
         OnboardingStep.Appearance => null,
-        OnboardingStep.QuietHours => ValidateQuietHours(),
-        OnboardingStep.Reminders => ValidateReminderDefaults(),
-        OnboardingStep.Placement => ValidatePlacement(),
         OnboardingStep.Pairing => null,
         _ => "choose next step ah",
     };
 
     private string? ValidateAll() => ValidateRecipient()
-        ?? ValidateQuietHours()
-        ?? ValidateReminderDefaults()
         ?? ValidatePlacement();
 
     private string? ValidateRecipient()
@@ -553,33 +377,15 @@ public sealed class OnboardingViewModel : INotifyPropertyChanged, IAsyncDisposab
             : null;
     }
 
-    private string? ValidateQuietHours()
-    {
-        if (!QuietHoursEnabled) return null;
-        if (_quietHoursInputInvalid) return QuietHoursTimeFormatMessage;
-        return QuietHoursStart == QuietHoursEnd ? QuietHoursSameTimeMessage : null;
-    }
-
-    private string? ValidateReminderDefaults() => _localNoteLimitInputInvalid || LocalNoteDailyLimit is < 0 or > 12
-        ? LocalNoteLimitMessage
-        : null;
-
-    private static bool TryParseQuietTime(string? text, out TimeOnly time)
-    {
-        time = default;
-        return !string.IsNullOrWhiteSpace(text)
-            && TimeOnly.TryParse(text.Trim(), CultureInfo.CurrentCulture, DateTimeStyles.None, out time);
-    }
-
     private string? ValidatePlacement() => string.IsNullOrWhiteSpace(_monitorDeviceName)
-        || !double.IsFinite(PlacementX)
-        || !double.IsFinite(PlacementY)
-        || PlacementX is < 0 or > 1
-        || PlacementY is < 0 or > 1
-        || !double.IsFinite(PlacementScale)
-        || PlacementScale is < MonitorPlacementService.MinimumScale or > MonitorPlacementService.MaximumScale
         ? "aiyo pick a safe pet spot"
         : null;
+
+    /// <summary>A stored coordinate that is not a finite 0..1 fraction falls
+    /// back to the default spot rather than blocking setup: there is no
+    /// placement step to fix it from any more.</summary>
+    private static double SafeCoordinate(double value) =>
+        double.IsFinite(value) && value is >= 0 and <= 1 ? value : DefaultPlacementCoordinate;
 
     private void ThrowIfDisposed()
     {

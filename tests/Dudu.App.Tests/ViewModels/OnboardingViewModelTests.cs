@@ -11,19 +11,71 @@ namespace Dudu.App.Tests.ViewModels;
 public sealed class OnboardingViewModelTests
 {
     [Fact]
-    public async Task Recommended_defaults_create_a_quiet_low_interruption_profile()
+    public async Task Onboarding_has_three_steps_name_then_look_then_pairing()
     {
         await using var fixture = OnboardingFixture.Create();
+        var vm = fixture.ViewModel;
 
-        await fixture.ViewModel.AcceptRecommendedDefaultsAsync(fixture.CancellationToken);
+        Assert.Equal(3, OnboardingViewModel.StepCount);
+        Assert.Equal(
+            [OnboardingStep.Recipient, OnboardingStep.Appearance, OnboardingStep.Pairing],
+            Enum.GetValues<OnboardingStep>());
+        Assert.Equal(OnboardingStep.Recipient, vm.CurrentStep);
+        Assert.Equal("step 1 of 3", vm.ProgressText);
 
-        Assert.Equal(new TimeOnly(22, 0), fixture.ViewModel.QuietHoursStart);
-        Assert.Equal(new TimeOnly(7, 0), fixture.ViewModel.QuietHoursEnd);
-        Assert.Equal(3, fixture.ViewModel.LocalNoteDailyLimit);
-        Assert.True(fixture.ViewModel.HidePetDuringFullscreen);
-        Assert.True(fixture.ViewModel.QuietHoursEnabled);
-        Assert.True(fixture.ViewModel.HydrationRemindersEnabled);
-        Assert.True(fixture.ViewModel.BreakRemindersEnabled);
+        vm.RecipientName = "Mia";
+        Assert.True(await vm.NextAsync(fixture.CancellationToken));
+        Assert.Equal(OnboardingStep.Appearance, vm.CurrentStep);
+        Assert.Equal("step 2 of 3", vm.ProgressText);
+
+        Assert.True(await vm.NextAsync(fixture.CancellationToken));
+        Assert.Equal(OnboardingStep.Pairing, vm.CurrentStep);
+        Assert.Equal("step 3 of 3", vm.ProgressText);
+        Assert.Empty(fixture.Events);
+
+        vm.SkipPairing();
+        Assert.True(await vm.NextAsync(fixture.CancellationToken));
+        Assert.True(vm.IsComplete);
+        Assert.Equal(1, fixture.UnitOfWork.CommitCount);
+    }
+
+    [Fact]
+    public async Task Completion_saves_startup_and_fullscreen_on_and_writes_nothing_reminder_related()
+    {
+        // Launch at sign-in and hide-during-fullscreen are not asked during
+        // onboarding any more: they are saved on (the long-standing defaults)
+        // and changed later in Settings. Everything else in the row (the
+        // dormant reminder flags included) is left exactly as it was.
+        var initial = new Preferences(
+            AppTheme.System,
+            false,
+            false,
+            false,
+            false,
+            TimeSpan.FromMinutes(15));
+        await using var fixture = OnboardingFixture.Create(initialPreferences: initial);
+        fixture.ViewModel.RecipientName = "Mia";
+        fixture.ViewModel.Theme = AppTheme.Dark;
+        fixture.ViewModel.ReducedMotion = true;
+
+        Assert.True(await fixture.ViewModel.CompleteAsync(fixture.CancellationToken));
+
+        var saved = fixture.SavedPreferences!;
+        Assert.True(saved.LaunchAtSignIn);
+        Assert.True(saved.HidePetDuringFullscreen);
+        Assert.Equal(AppTheme.Dark, saved.Theme);
+        Assert.True(saved.ReducedMotion);
+        Assert.Equal(
+            initial with
+            {
+                Theme = AppTheme.Dark,
+                ReducedMotion = true,
+                LaunchAtSignIn = true,
+                HidePetDuringFullscreen = true,
+            },
+            saved);
+        Assert.Equal("Mia", fixture.SavedProfile!.RecipientName);
+        Assert.Equal("MONITOR-2", Assert.Single(fixture.SavedPlacements).MonitorDeviceName);
     }
 
     [Fact]
@@ -32,8 +84,6 @@ public sealed class OnboardingViewModelTests
         await using var fixture = OnboardingFixture.Create();
         fixture.ViewModel.RecipientName = "Mia";
         fixture.ViewModel.SkipPairing();
-        fixture.ViewModel.HydrationRemindersEnabled = false;
-        fixture.ViewModel.BreakRemindersEnabled = true;
 
         var completed = await fixture.ViewModel.CompleteAsync(fixture.CancellationToken);
 
@@ -41,25 +91,10 @@ public sealed class OnboardingViewModelTests
         Assert.Equal("Mia", fixture.SavedProfile!.RecipientName);
         Assert.True(fixture.SavedProfile.OnboardingComplete);
         Assert.Equal(1, fixture.UnitOfWork.CommitCount);
-        Assert.Equal(3, fixture.SavedPreferences!.LocalNoteDailyLimit);
-        Assert.False(fixture.SavedPreferences.HydrationRemindersEnabled);
-        Assert.True(fixture.SavedPreferences.BreakRemindersEnabled);
+        Assert.True(fixture.SavedPreferences!.LaunchAtSignIn);
+        Assert.True(fixture.SavedPreferences.HidePetDuringFullscreen);
         Assert.Single(fixture.SavedPlacements);
         Assert.Equal("MONITOR-2", fixture.SavedPlacements[0].MonitorDeviceName);
-        Assert.Equal(4, fixture.Reminders.Saved.Count);
-        Assert.Equal(
-            new[] { false, true },
-            fixture.Reminders.Saved
-                .Where(reminder => reminder.Id is "default-hydration" or "default-break")
-                .OrderBy(reminder => reminder.Id == "default-break")
-                .Select(reminder => reminder.Enabled));
-        Assert.All(fixture.Reminders.Saved.Where(reminder =>
-            reminder.Id is "default-hydration" or "default-break"), reminder =>
-            Assert.Equal(fixture.SavedPreferences!.QuietHours, reminder.QuietHours));
-        Assert.All(fixture.Reminders.Saved.Where(reminder =>
-            reminder.Id is Dudu.Core.Reminders.LocalReminderDefaults.EveningCheckInId
-                or Dudu.Core.Reminders.LocalReminderDefaults.BedtimeId), reminder =>
-            Assert.Null(reminder.QuietHours));
         Assert.Equal(new[] { "commit", "runtime" }, fixture.Events);
     }
 
@@ -78,7 +113,6 @@ public sealed class OnboardingViewModelTests
         Assert.Null(fixture.SavedProfile);
         Assert.Null(fixture.SavedPreferences);
         Assert.Empty(fixture.SavedPlacements);
-        Assert.Empty(fixture.Reminders.Saved);
     }
 
     [Fact]
@@ -212,36 +246,12 @@ public sealed class OnboardingViewModelTests
         Assert.False(fixture.StartupSettings.DesiredLaunchAtSignIn);
         fixture.StartupWriter.FailDelete = false;
         fixture.ViewModel.RecipientName = "Mia";
-        fixture.ViewModel.LaunchAtSignIn = true;
 
         Assert.True(await fixture.ViewModel.CompleteAsync(fixture.CancellationToken));
 
         Assert.True(fixture.Startup.IsEnabled);
         Assert.True(fixture.StartupSettings.Current.LaunchAtSignIn);
         Assert.True(fixture.SavedPreferences!.LaunchAtSignIn);
-        Assert.Equal(fixture.StartupSettings.Current, fixture.SavedPreferences);
-        Assert.False(fixture.StartupSettings.NeedsReconciliation);
-        Assert.Null(fixture.StartupSettings.ReconciliationError);
-        Assert.Null(fixture.ViewModel.StartupRegistrationError);
-    }
-
-    [Fact]
-    public async Task Onboarding_false_replaces_failed_precompletion_true_reconciliation_target()
-    {
-        await using var fixture = OnboardingFixture.Create();
-        fixture.StartupWriter.FailWrite = true;
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            fixture.StartupSettings.ReconcileExternalAsync(true, fixture.CancellationToken));
-        Assert.True(fixture.StartupSettings.DesiredLaunchAtSignIn);
-        fixture.StartupWriter.FailWrite = false;
-        fixture.ViewModel.RecipientName = "Mia";
-        fixture.ViewModel.LaunchAtSignIn = false;
-
-        Assert.True(await fixture.ViewModel.CompleteAsync(fixture.CancellationToken));
-
-        Assert.False(fixture.Startup.IsEnabled);
-        Assert.False(fixture.StartupSettings.Current.LaunchAtSignIn);
-        Assert.False(fixture.SavedPreferences!.LaunchAtSignIn);
         Assert.Equal(fixture.StartupSettings.Current, fixture.SavedPreferences);
         Assert.False(fixture.StartupSettings.NeedsReconciliation);
         Assert.Null(fixture.StartupSettings.ReconciliationError);
@@ -296,14 +306,14 @@ public sealed class OnboardingViewModelTests
             PetPlacement? initialPlacement,
             List<string>? events,
             Func<CancellationToken, Task<MonitorPlacementSnapshot>>? placementCapture,
-            IPairingService? pairing)
+            IPairingService? pairing,
+            Preferences? initialPreferences)
         {
             Preferences = new RecordingPreferencesRepository();
             Profiles = new RecordingProfileRepository();
             Placements = new RecordingPlacementRepository();
-            Reminders = new RecordingReminderRepository();
             Events = events ?? [];
-            UnitOfWork = new RecordingUnitOfWork(Profiles, Preferences, Placements, Reminders, failCommit, Events);
+            UnitOfWork = new RecordingUnitOfWork(Profiles, Preferences, Placements, failCommit, Events);
             StartupWriter = new RecordingStartupWriter();
             Startup = new StartupRegistrationService(
                 "/opt/dudu/Dudu.exe",
@@ -312,11 +322,9 @@ public sealed class OnboardingViewModelTests
             StartupSettings = new StartupSettingsService(
                 Startup,
                 new PreferenceMutationCoordinator(
-                    new Preferences(
+                    initialPreferences ?? new Preferences(
                     AppTheme.System,
-                    new QuietHours(true, new TimeOnly(22, 0), new TimeOnly(7, 0)),
                     false,
-                    3,
                     true,
                     false,
                     true,
@@ -352,7 +360,6 @@ public sealed class OnboardingViewModelTests
         public RecordingPreferencesRepository Preferences { get; }
         public RecordingProfileRepository Profiles { get; }
         public RecordingPlacementRepository Placements { get; }
-        public RecordingReminderRepository Reminders { get; }
         public RecordingUnitOfWork UnitOfWork { get; }
         public StartupRegistrationService Startup { get; }
         public RecordingStartupWriter StartupWriter { get; }
@@ -372,8 +379,9 @@ public sealed class OnboardingViewModelTests
             PetPlacement? initialPlacement = null,
             List<string>? events = null,
             Func<CancellationToken, Task<MonitorPlacementSnapshot>>? placementCapture = null,
-            IPairingService? pairing = null) =>
-            new(failCommit, runtimeApplier, initialPlacement, events, placementCapture, pairing);
+            IPairingService? pairing = null,
+            Preferences? initialPreferences = null) =>
+            new(failCommit, runtimeApplier, initialPlacement, events, placementCapture, pairing, initialPreferences);
 
         public async ValueTask DisposeAsync()
         {
@@ -458,32 +466,10 @@ public sealed class OnboardingViewModelTests
         }
     }
 
-    private sealed class RecordingReminderRepository : IReminderRepository, IReminderWriter
-    {
-        public List<Reminder> Saved { get; } = [];
-        public Task<IReadOnlyList<Reminder>> LoadDueAsync(DateTimeOffset utcNow, CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<Reminder>>(Saved);
-        public Task<bool> RecordOccurrencesAndAdvanceAsync(Reminder reminder, IReadOnlyList<ReminderOccurrence> occurrences, DateTimeOffset? nextDueUtc, CancellationToken cancellationToken) =>
-            Task.FromResult(true);
-        public Task SaveAsync(Reminder reminder, CancellationToken cancellationToken = default)
-        {
-            Saved.RemoveAll(item => item.Id == reminder.Id);
-            Saved.Add(reminder);
-            return Task.CompletedTask;
-        }
-        public List<Reminder> Snapshot() => [.. Saved];
-        public void Restore(IEnumerable<Reminder> snapshot)
-        {
-            Saved.Clear();
-            Saved.AddRange(snapshot);
-        }
-    }
-
     private sealed class RecordingUnitOfWork(
         RecordingProfileRepository profiles,
         RecordingPreferencesRepository preferences,
         RecordingPlacementRepository placements,
-        RecordingReminderRepository reminders,
         bool failCommit,
         List<string> events) : IAppUnitOfWork
     {
@@ -495,10 +481,9 @@ public sealed class OnboardingViewModelTests
             var profile = profiles.Saved;
             var savedPreferences = preferences.Saved;
             var placementsSnapshot = placements.Snapshot();
-            var remindersSnapshot = reminders.Snapshot();
             try
             {
-                await action(new RecordingContext(profiles, preferences, placements, reminders), cancellationToken);
+                await action(new RecordingContext(profiles, preferences, placements), cancellationToken);
                 if (failCommit) throw new InvalidOperationException("simulated commit failure");
                 events.Add("commit");
             }
@@ -507,7 +492,6 @@ public sealed class OnboardingViewModelTests
                 profiles.Restore(profile);
                 preferences.Restore(savedPreferences);
                 placements.Restore(placementsSnapshot);
-                reminders.Restore(remindersSnapshot);
                 throw;
             }
         }
@@ -519,18 +503,12 @@ public sealed class OnboardingViewModelTests
     private sealed class RecordingContext(
         IProfileRepository profiles,
         IPreferencesRepository preferences,
-        IPetPlacementRepository placements,
-        IReminderRepository reminders) : IAppUnitOfWorkContext
+        IPetPlacementRepository placements) : IAppUnitOfWorkContext
     {
-        public ICheckInRepository CheckIns => throw new NotSupportedException();
-        public ICountdownRepository Countdowns => throw new NotSupportedException();
-        public IFocusSessionRepository FocusSessions => throw new NotSupportedException();
         public ILocalNoteRepository LocalNotes => throw new NotSupportedException();
         public IPetPlacementRepository PetPlacements => placements;
         public IPreferencesRepository Preferences => preferences;
         public IProfileRepository Profiles => profiles;
         public IRemoteEnvelopeRepository RemoteEnvelopes => throw new NotSupportedException();
-        public IReminderRepository Reminders => reminders;
-        public ITaskRepository Tasks => throw new NotSupportedException();
     }
 }

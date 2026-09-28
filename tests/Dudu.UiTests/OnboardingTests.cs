@@ -43,21 +43,16 @@ public sealed class OnboardingTests
 
             Find(window, "OnboardingRecipientName").AsTextBox().Enter("Mia");
             actions++;
-            Find(window, "OnboardingRecommendedDefaults").AsButton().Invoke();
-            actions++;
-            // Recipient -> Appearance -> Quiet Hours -> Reminders -> Placement.
+            // Name -> Look -> Pairing; Dudu appears on the pairing step.
             Advance(
                 window,
                 ref actions,
                 "OnboardingTheme",
-                "OnboardingQuietHoursEnabled",
-                "OnboardingHydrationReminders",
-                "OnboardingPlacementStep");
+                "OnboardingSkipPairing");
             var overlay = WaitForOverlay(automation);
             Assert.False(overlay.Properties.IsOffscreen.ValueOrDefault);
 
-            // Placement -> Pairing, then skip the optional pairing step.
-            Advance(window, ref actions, "OnboardingSkipPairing");
+            // Skip the optional pairing step.
             Find(window, "OnboardingSkipPairing").AsButton().Invoke();
             actions++;
             Find(window, "OnboardingComplete").AsButton().Invoke();

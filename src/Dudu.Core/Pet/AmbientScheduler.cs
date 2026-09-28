@@ -1,7 +1,6 @@
 using Dudu.Core.Abstractions;
 using Dudu.Core.Assets;
 using Dudu.Core.Models;
-using Dudu.Core.Policies;
 using Dudu.Core.Time;
 
 namespace Dudu.Core.Pet;
@@ -10,26 +9,24 @@ public sealed class AmbientScheduler
 {
     // Keep ambient selection aligned with the shipped private pack. A missing
     // animation silently falls back to idle, which makes Dudu feel broken even
-    // though the state machine appears to be moving.
-    private const string IdleAnimationKey = "idle";
+    // though the state machine appears to be moving. "idle" itself is not in
+    // the pool: with no note bubble an idle pick is an invisible moment.
     private const string StickerSentinel = "sticker";
     private static readonly string[] AnimationKeys =
-        [IdleAnimationKey, "blink", "greeting", "sleep", "drink", "celebrate", StickerSentinel];
+        ["blink", "greeting", "sleep", "drink", "celebrate", StickerSentinel];
     private readonly IClock _clock;
     private readonly IRandomSource _random;
-    private readonly QuietHours _quietHours;
     private readonly TimeSpan _minimumInterval;
 
     public AmbientScheduler(IClock clock, IRandomSource random, Preferences preferences)
-        : this(clock, random, preferences.AmbientMinimumInterval, preferences.QuietHours)
+        : this(clock, random, preferences.AmbientMinimumInterval)
     {
     }
 
     public AmbientScheduler(
         IClock clock,
         IRandomSource random,
-        TimeSpan ambientMinimumInterval,
-        QuietHours? quietHours = null)
+        TimeSpan ambientMinimumInterval)
     {
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
         _random = random ?? throw new ArgumentNullException(nameof(random));
@@ -39,7 +36,6 @@ public sealed class AmbientScheduler
         }
 
         _minimumInterval = ambientMinimumInterval;
-        _quietHours = quietHours ?? new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue);
 
         // A fresh scheduler has shown nothing yet, so the first ambient moment is
         // one minimum interval out — not immediately at startup, which would greet
@@ -52,15 +48,6 @@ public sealed class AmbientScheduler
     /// <summary>
     /// Attempts to produce the next ambient pet moment.
     /// </summary>
-    /// <param name="quietHoursOverride">
-    /// Explicit quiet-hours verdict from the caller. When null, the scheduler consults
-    /// <see cref="QuietHoursPolicy"/> itself; when set, the caller's value wins.
-    /// Callers must derive the override from the same policy (same preferences, clock,
-    /// and time zone) — a stale <c>false</c> would bypass quiet hours and a stale
-    /// <c>true</c> would suppress ambience that should play. The only audited caller is
-    /// PresentationCoordinator, which passes its per-tick <c>NowQuiet</c> snapshot taken
-    /// from the same quiet-hours source on the same tick.
-    /// </param>
     /// <param name="availableStickerKeys">
     /// The sticker animation keys the active pack actually ships. Null means the caller
     /// has no pack-specific key list to give, so the scheduler falls back to rolling
@@ -69,29 +56,24 @@ public sealed class AmbientScheduler
     /// does (<c>PresentationCoordinator</c>) passes the pack's real keys here to avoid
     /// rolling a number the pack has no art for. An empty (non-null) list means the
     /// active pack legitimately ships zero stickers (e.g. the fallback pack) — that is
-    /// authoritative, not a "no list given" signal, so a sticker slot draw falls back to
-    /// the idle animation instead of rolling the legacy 1..30 range or indexing into the
-    /// empty list.
+    /// authoritative, not a "no list given" signal, so a sticker slot draw yields no
+    /// moment at all (null) instead of rolling the legacy 1..30 range or indexing into the
+    /// empty list. That slot is still consumed: the next moment waits a full delay.
     /// </param>
     public PetEvent? TryGetNextEvent(
         bool paused,
-        bool focusActive,
+        bool busy,
         bool fullscreen,
         bool sessionLocked,
-        bool? quietHoursOverride = null,
         IReadOnlyList<string>? availableStickerKeys = null)
     {
         var now = _clock.UtcNow;
-        if (paused || focusActive || fullscreen || sessionLocked)
+        if (paused || busy || fullscreen || sessionLocked)
         {
             return null;
         }
 
-        if (now < NextEligibleUtc
-            || (quietHoursOverride ?? QuietHoursPolicy.IsQuiet(
-                now,
-                _quietHours,
-                _clock.LocalTimeZone)))
+        if (now < NextEligibleUtc)
         {
             return null;
         }
@@ -103,10 +85,10 @@ public sealed class AmbientScheduler
         var randomDelay = TimeSpan.FromMinutes(15 + NextRandom(31));
         var delay = randomDelay < _minimumInterval ? _minimumInterval : randomDelay;
         NextEligibleUtc = now + delay;
-        return new PetEvent.AmbientRequested(animationKey);
+        return animationKey is null ? null : new PetEvent.AmbientRequested(animationKey);
     }
 
-    private string SelectStickerKey(IReadOnlyList<string>? availableStickerKeys)
+    private string? SelectStickerKey(IReadOnlyList<string>? availableStickerKeys)
     {
         if (availableStickerKeys is null)
         {
@@ -119,9 +101,9 @@ public sealed class AmbientScheduler
             // nothing to pick. Still draw once so the random-source sequence lines up
             // the same as the non-empty/null branches (the trailing next-eligible-delay
             // draw must land at the same position regardless of which branch is taken),
-            // then fall back to idle instead of indexing into the empty list.
+            // then yield no moment instead of indexing into the empty list.
             NextRandom(1);
-            return IdleAnimationKey;
+            return null;
         }
 
         return availableStickerKeys[NextRandom(availableStickerKeys.Count)];
@@ -129,11 +111,11 @@ public sealed class AmbientScheduler
 
     public PetEvent? TryCreateEvent(
         bool paused,
-        bool focusActive,
+        bool busy,
         bool fullscreen,
         bool sessionLocked)
     {
-        return TryGetNextEvent(paused, focusActive, fullscreen, sessionLocked);
+        return TryGetNextEvent(paused, busy, fullscreen, sessionLocked);
     }
 
     private int NextRandom(int exclusiveMax)

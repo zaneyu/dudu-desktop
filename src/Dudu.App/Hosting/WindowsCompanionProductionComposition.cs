@@ -10,7 +10,6 @@ using Dudu.Core.Abstractions;
 using Dudu.Core.Assets;
 using Dudu.Core.Models;
 using Dudu.Core.Pet;
-using Dudu.Core.Policies;
 using Dudu.Core.Time;
 using Dudu.Core;
 using Dudu.Infrastructure;
@@ -70,17 +69,7 @@ public sealed record CompanionSettingsContext(
     Func<bool, CancellationToken, Task> SetUserVisibleAsync)
 {
     public CompanionFeatureContext? Features { get; init; }
-    public OverlayActionSurfaceController? ActionSurface { get; init; }
     public OverlayCommandRouter? OverlayCommands { get; init; }
-    public IReadOnlyList<string> AvailableOutfitKeys { get; init; } = ["base"];
-
-    /// <summary>
-    /// The one reminder Done/Snooze service shared by the toast buttons and
-    /// the Reminders page, so both follow the same rules and the page can
-    /// refresh when a toast answered a reminder while it was open. Null when
-    /// no feature runtime is composed (safe mode).
-    /// </summary>
-    public ReminderToastActions? ReminderActions { get; init; }
 
     /// <summary>
     /// Handles a toast click that launched Dudu (cold start) once the runtime
@@ -125,8 +114,7 @@ public sealed record CompanionLaunchOptions(bool Background, bool SelfTest = fal
     /// Every launch asks for the companion to be shown, including the
     /// background launch at sign-in: a desktop pet that is invisible after
     /// boot reads as broken. Pause, lock and fullscreen still veto the show
-    /// downstream in AppLifecycleCoordinator.TryCanShow -- quiet hours gates
-    /// proactive presentation only, never the overlay's own visibility.
+    /// downstream in AppLifecycleCoordinator.TryCanShow.
     /// </summary>
     public bool ShouldShowOverlay(Preferences preferences)
     {
@@ -142,9 +130,8 @@ public sealed record CompanionLaunchOptions(bool Background, bool SelfTest = fal
 }
 
 /// <summary>
-/// Overrides Dudu.Infrastructure's Null* safe defaults for
-/// <see cref="IReminderDueSink"/> and <see cref="IRemoteNoteArrivalSink"/>
-/// with the real WinUI-backed sinks. Extracted out of the composition root so
+/// Overrides Dudu.Infrastructure's Null* safe default for
+/// <see cref="IRemoteNoteArrivalSink"/> with the real WinUI-backed sink. Extracted out of the composition root so
 /// a real <see cref="IServiceCollection"/> can be built and its resolved
 /// types asserted in a test, instead of only pattern-matching the
 /// composition source as text -- a source-text test still passes with the
@@ -158,10 +145,6 @@ internal static class ProductionPresentationSinks
     {
         ArgumentNullException.ThrowIfNull(gateway);
         return services
-            .AddSingleton<IReminderDueSink>(provider => new ReminderDueSink(
-                provider.GetRequiredService<IReminderRepository>(),
-                gateway,
-                profiles: provider.GetRequiredService<IProfileRepository>()))
             .AddSingleton<IRemoteNoteArrivalSink>(provider => new RemoteNoteArrivalSink(gateway));
     }
 }
@@ -170,7 +153,7 @@ public static class WindowsCompanionProductionComposition
 {
     /// <summary>
     /// Minimum silence between unsolicited releases once a suppressed queue
-    /// starts draining, so leaving quiet hours/fullscreen/lock/pause drains
+    /// starts draining, so leaving fullscreen/lock/pause/a busy pet drains
     /// one durable item at a time instead of a burst.
     /// </summary>
     private static readonly TimeSpan PresentationMinimumSilentInterval = TimeSpan.FromSeconds(90);
@@ -231,15 +214,10 @@ public static class WindowsCompanionProductionComposition
         // The real presentation gateway does not exist yet at this point: it
         // depends on the pet state machine, animation engine, and pause
         // store, all of which are only available once the overlay is
-        // composed further below. IReminderDueSink must be registered before
-        // BuildServiceProvider (ReminderEngine resolves it eagerly), so it
-        // captures this variable and resolves the gateway lazily once the
-        // rest of the runtime is ready.
+        // composed further below. IRemoteNoteArrivalSink must be registered
+        // before BuildServiceProvider, so it captures this variable and
+        // resolves the gateway lazily once the rest of the runtime is ready.
         PresentationCoordinator? presentationGateway = null;
-        // Toast Done/Snooze handling; composed once the feature services
-        // exist (after the overlay), while the toast handler that uses it is
-        // registered earlier, inside initializeOverlay.
-        ReminderToastActions? reminderToastActions = null;
         // Kept for a toast click that launched Dudu (handled by App once the
         // runtime is composed); set inside initializeOverlay below.
         NotificationInvocationRouter? composedNotificationRouter = null;
@@ -259,18 +237,10 @@ public static class WindowsCompanionProductionComposition
             .BuildServiceProvider();
         var host = new AppHost(services, paths);
         WireDataFailureDiagnostics(services, paths);
-        if (services.GetService<IReminderDueSink>() is ReminderDueSink reminderDueSink)
-        {
-            // The sink was eagerly resolved during AppHost construction,
-            // before the host's error reporter existed; attach it now so
-            // reminder-notify diagnostics reach the shared sink.
-            reminderDueSink.ErrorReporter = host.ErrorReporter;
-        }
-
         if (services.GetService<IRemoteNoteArrivalSink>() is RemoteNoteArrivalSink remoteNoteArrivalSink)
         {
-            // Same reasoning as the reminder sink above: the host's error
-            // reporter does not exist yet when this sink is registered.
+            // The host's error reporter does not exist yet when this sink is
+            // registered; attach it now so its diagnostics reach the shared sink.
             remoteNoteArrivalSink.ErrorReporter = host.ErrorReporter;
         }
         var composer = default(SkiaFrameComposer);
@@ -288,7 +258,10 @@ public static class WindowsCompanionProductionComposition
         AudioCueService? audioCueService = null;
         IAudioCuePlayer? audioPlayer = null;
         StartupRegistrationService? startup = null;
-        var actionSurface = new OverlayActionSurfaceController();
+        // Declared before the try so the overlay-start callback (which runs
+        // after composition returns) can reach the router assigned further
+        // down; a click on Dudu's body pets through it.
+        OverlayCommandRouter? overlayRouter = null;
 
         try
         {
@@ -404,70 +377,6 @@ public static class WindowsCompanionProductionComposition
                     databaseUnavailable);
             }
 
-            // L2 / merge note: subscribed only past the safe-mode return
-            // above, so a safe-mode run (overlay and remote sync disabled)
-            // never wires it — there is no presentationCoordinator for it to
-            // ever resolve to in that mode, and the raw pet.Handle fallback
-            // below would be the only thing running for the rest of the
-            // process's life. FocusService itself lives for the process
-            // lifetime, so this subscription is never explicitly removed;
-            // it is fine to leak for that duration, same as every other
-            // handler this composition method wires up.
-            //
-            // The 30-second reminder tick (ReminderEngine.TickAsync, via
-            // AppHost) completes an expired focus session on the user's
-            // behalf, but nothing else ever raises FocusEnded for that path
-            // (only TasksFocusViewModel.EndFocusAsync does, for a manual
-            // end) — without this, the pet stays latched in Focus, which
-            // suppresses every reminder and note presentation until restart.
-            // Route it through the same one-shot path a manual end uses.
-            services.GetRequiredService<Dudu.Core.Focus.FocusService>().SessionExpired += focusId =>
-            {
-                var focusEnded = new PetEvent.FocusEnded(focusId.ToString("D"));
-                // M3: apply synchronously and first, so a reminder or note
-                // becoming due on the very same 30-second tick sees the
-                // post-FocusEnded state deterministically. Previously this
-                // ordering only held via PetPresentationCoordinator's
-                // internal petGate SemaphoreSlim happening to still be
-                // uncontended — fragile, not a real guarantee. FocusEnded is
-                // idempotent (confirmed in PetStateMachine.Handle: a second
-                // call with the same FocusId is a no-op once _focusId is
-                // already null), so PresentOneShotAsync's own internal
-                // pet.Handle(focusEnded) below is a safe replay, not a
-                // double transition.
-                pet.Handle(focusEnded);
-
-                Task callback;
-                if (presentationCoordinator is null)
-                {
-                    // Composed inside initializeOverlay below; a session
-                    // expiring before that (implausible this early in
-                    // startup, but not worth crashing over) still needs to
-                    // self-clear the FocusTransition latch the same way the
-                    // real one-shot path would (M2) — nothing else will
-                    // ever raise Dismissed("focus-end") for it otherwise.
-                    pet.Handle(PetEvent.CompletionForOneShot(focusEnded, "focus-end"));
-                    callback = Task.CompletedTask;
-                }
-                else
-                {
-                    callback = presentationCoordinator.PresentOneShotAsync(focusEnded, "focus-end", CancellationToken.None);
-                }
-
-                _ = ObserveNativeCallbackAsync(callback, "focus-expiry", host.ErrorReporter);
-            };
-
-            // A focus session still running from before a restart must
-            // re-latch the pet, or Dudu idles (and notes/reminders are not
-            // held back) for the rest of that session.
-            await ObserveNativeCallbackAsync(
-                RestoreActiveFocusAsync(
-                    services.GetRequiredService<Dudu.Core.Focus.FocusService>(),
-                    pet,
-                    cancellationToken),
-                "focus-restore",
-                host.ErrorReporter);
-
             var placementRepository = services.GetRequiredService<IPetPlacementRepository>();
             var savedPlacements = await placementRepository.ListAsync(cancellationToken);
             var assetsRoot = Path.Combine(AppContext.BaseDirectory, "Assets");
@@ -495,12 +404,8 @@ public static class WindowsCompanionProductionComposition
                         return await AssetManifestLoader.LoadAsync(fallbackManifestPath, cancellationToken);
                     }
                 });
-            var animation = pack.ResolveAnimation(
-                "idle",
-                DateOnly.FromDateTime(DateTime.Now),
-                SeasonalDates.Empty);
+            var animation = pack.ResolveAnimation("idle");
             composer = new SkiaFrameComposer(pack);
-            composer.SetActionSurface(actionSurface);
             composer.SetOverlayPalette(OverlaySurfacePalette.For(
                 preferences.Theme,
                 OverlaySurfaceRenderer.IsHighContrastEnabled()));
@@ -569,10 +474,6 @@ public static class WindowsCompanionProductionComposition
                 audioCatalog,
                 audioPlayer,
                 () => runtimePreferences.Current,
-                isQuietHours: () => QuietHoursPolicy.IsQuiet(
-                    DateTimeOffset.UtcNow,
-                    runtimePreferences.Current.QuietHours,
-                    TimeZoneInfo.Local),
                 // Same pause gate the presentations use: "pause until
                 // fullscreen ends" only silences Dudu while fullscreen is on
                 // (and fullscreen already mutes on its own), so sounds are not
@@ -625,17 +526,13 @@ public static class WindowsCompanionProductionComposition
                     animationEngine = new AnimationEngine(
                         pack,
                         overlay,
-                        composer: composer,
-                        localDate: LocalDateNow(),
-                        seasonalDates: SeasonalDatesFor(preferences),
-                        localDateProvider: LocalDateNow);
+                        composer: composer);
                     presentationCoordinator = new PetPresentationCoordinator(
                         pet,
                         animationEngine.PlayAsync,
                         () => new AnimationOptions
                         {
                             ReducedMotionEnabled = runtimePreferences.Current.ReducedMotion,
-                            OutfitKey = RuntimeOutfitKey(runtimePreferences.Current),
                         },
                         gate: petGate,
                         playAudioAsync: (presentation, token) =>
@@ -651,8 +548,6 @@ public static class WindowsCompanionProductionComposition
                     AppNotificationService invokedNotifications = notificationService;
                     var notificationRouter = CreateNotificationInvocationRouter(
                         actions,
-                        invokedNotifications,
-                        () => reminderToastActions,
                         host.ErrorReporter);
                     composedNotificationRouter = notificationRouter;
                     try
@@ -707,16 +602,10 @@ public static class WindowsCompanionProductionComposition
                         () => new AnimationOptions
                         {
                             ReducedMotionEnabled = runtimePreferences.Current.ReducedMotion,
-                            OutfitKey = RuntimeOutfitKey(runtimePreferences.Current),
                         },
-                        isQuietHours: () => QuietHoursPolicy.IsQuiet(
-                            DateTimeOffset.UtcNow,
-                            runtimePreferences.Current.QuietHours,
-                            TimeZoneInfo.Local),
                         pauseState: () => pause.GetEffective(DateTimeOffset.UtcNow),
                         petGate: petGate,
                         ambientScheduler: services.GetRequiredService<AmbientScheduler>(),
-                        localNoteSelector: services.GetRequiredService<Dudu.Core.Notes.LocalNoteSelector>(),
                         errorReporter: host.ErrorReporter,
                         playAudioAsync: (cue, token) => audioCueService.TryPlayAsync(
                             cue, AudioCueSelection.PriorityFor(cue), token),
@@ -736,22 +625,20 @@ public static class WindowsCompanionProductionComposition
                                     or "sticker-014" or "sticker-021"))
                                 .ToArray()
                             : null,
-                        // P2-B: so an item held by quiet hours/fullscreen/lock/pause
+                        // P2-B: so an item held by fullscreen/lock/pause/a busy pet
                         // survives a quit or crash instead of only living in
                         // PresentationPolicy's in-memory queue.
                         heldPresentations: services.GetRequiredService<IHeldPresentationRepository>(),
                         // Finding B: the events sink and startup visibility
                         // gate that push real fullscreen/lock/visibility
                         // state both run later, after this method returns --
-                        // this gateway must start user-hidden so the
-                        // startup reminder tick's direct call into the
-                        // reminder engine (AppHost.RunReminderTickAsync
-                        // still runs that unconditionally; only its
-                        // reconcile and its queue release are deferred via
-                        // releasePresentations: false, see the comment
-                        // there) cannot animate an overdue reminder straight
-                        // into a window that is not shown yet and delete
-                        // its row on that "successful" presentation.
+                        // this gateway must start user-hidden so a publish
+                        // that arrives before AppHost's first presentation
+                        // tick has reconciled visibility (AppHost's startup
+                        // only starts this gateway, see the comment there)
+                        // cannot animate a held item straight into a window
+                        // that is not shown yet and delete its row on that
+                        // "successful" presentation.
                         initialUserHidden: true,
                         affection: affection);
                     // Idle fidgets and short wanders between notes, built from the
@@ -774,8 +661,7 @@ public static class WindowsCompanionProductionComposition
                                 Fullscreen: fullscreen,
                                 SessionLocked: activityGateway.IsSessionLocked,
                                 Hidden: activityGateway.IsUserHidden || !overlay.IsVisible,
-                                QuietHours: QuietHoursPolicy.IsQuiet(now, current.QuietHours, TimeZoneInfo.Local),
-                                Busy: pet.Current.State != PetState.Idle || actionSurface.IsOpen);
+                                Busy: pet.Current.State != PetState.Idle);
                         },
                         presentationCoordinator.TryPresentIdleOneShotAsync,
                         overlay.PlanWanderAsync,
@@ -838,19 +724,17 @@ public static class WindowsCompanionProductionComposition
                             AnimationOptionsFor(preferences),
                             cancellationToken),
                         host.ErrorReporter);
-                    await overlay.SetActionSurfaceAsync(actionSurface, cancellationToken);
+                    // Clicking Dudu pets it through the same router as Home's
+                    // "pet dudu" (serialized and error-reported by the overlay's
+                    // dispatch queue); nothing pops up.
+                    await overlay.SetPetHandlerAsync(
+                        token => overlayRouter?.ExecuteAsync(OverlayAction.Pet, token) ?? Task.CompletedTask,
+                        cancellationToken);
                 },
                 initialUserVisible: showOverlay,
-                isQuietHours: () => QuietHoursPolicy.IsQuiet(
-                    DateTimeOffset.UtcNow,
-                    runtimePreferences.Current.QuietHours,
-                    TimeZoneInfo.Local),
                 onPreferencesChanged: (updated, token) =>
                 {
                     runtimePreferences.Set(updated);
-                    animationEngine?.UpdateSeasonalContext(
-                        LocalDateNow(),
-                        SeasonalDatesFor(updated));
                     composer.SetOverlayPalette(OverlaySurfacePalette.For(
                         updated.Theme,
                         OverlaySurfaceRenderer.IsHighContrastEnabled()));
@@ -927,19 +811,8 @@ public static class WindowsCompanionProductionComposition
                 preferenceMutations,
                 profileRepository,
                 services.GetRequiredService<IPetPlacementRepository>(),
-                services.GetRequiredService<IReminderRepository>(),
-                services.GetRequiredService<IReminderRepository>() as IReminderWriter
-                    ?? throw new InvalidOperationException("Reminder writer is not registered."),
-                services.GetRequiredService<ITaskRepository>(),
-                services.GetRequiredService<IFocusSessionRepository>(),
                 services.GetRequiredService<ILocalNoteRepository>(),
                 services.GetRequiredService<IRemoteEnvelopeRepository>(),
-                services.GetRequiredService<ICountdownRepository>(),
-                services.GetRequiredService<ICheckInRepository>(),
-                services.GetRequiredService<Dudu.Core.CheckIns.CheckInService>(),
-                services.GetRequiredService<Dudu.Core.Tasks.TaskService>(),
-                services.GetRequiredService<Dudu.Core.Focus.FocusService>(),
-                services.GetRequiredService<Dudu.Core.Notes.LocalNoteSelector>(),
                 services.GetRequiredService<IPairingService>(),
                 services.GetRequiredService<ICompanionFeatureTransactions>(),
                 pet,
@@ -957,8 +830,8 @@ public static class WindowsCompanionProductionComposition
                 },
                 presentPetAsync: async (petEvent, token) =>
                 {
-                    // Under the shared pet gate: a state change (focus start,
-                    // a meal, a dismiss) waits for a running one-shot such as
+                    // Under the shared pet gate: a state change (a meal start,
+                    // a meal end, a dismiss) waits for a running one-shot such as
                     // a drink to finish instead of replacing its playback.
                     // The gate is held only to mutate and start playback,
                     // never across a loop.
@@ -998,29 +871,12 @@ public static class WindowsCompanionProductionComposition
                     (presentationCoordinator ?? throw new InvalidOperationException(
                         "The pet presentation coordinator is not ready."))
                     .PresentOneShotAsync(petEvent, dismissalId, token),
-                backupAsync: async token =>
-                {
-                    var path = await services.GetRequiredService<DatabaseBackupService>()
-                        .CreatePreMigrationBackupAsync(token);
-                    if (path is null)
-                    {
-                        throw new InvalidOperationException("There is no local database to back up.");
-                    }
-                },
-                restoreAsync: async token =>
-                {
-                    var result = await services.GetRequiredService<DatabaseBackupService>()
-                        .RestoreLatestValidAsync(token);
-                    if (!result.Restored)
-                    {
-                        throw new InvalidOperationException(result.Failure switch
-                        {
-                            RestoreFailure.NotFound => "No local backup is available to restore.",
-                            RestoreFailure.IntegrityCheckFailed => "No valid local backup could be restored.",
-                            _ => "The latest local backup could not be restored.",
-                        }, result.Exception);
-                    }
-                },
+                // Decrypts a stored envelope in memory (no network I/O); the love notes
+                // page then keeps the note and consumes the envelope. Offline builds have
+                // no RemoteSyncService and keep the context's "relay offline" default.
+                revealRemoteNoteAsync: remoteSync is null
+                    ? null
+                    : (envelope, token) => remoteSync.RevealAsync(envelope.MessageId, token),
                 deleteLocalDataAsync: async token =>
                 {
                     // RemoteSyncService only exists when a relay is configured (offline
@@ -1035,31 +891,6 @@ public static class WindowsCompanionProductionComposition
                     await services.GetRequiredService<LocalDataMaintenanceService>()
                         .DeleteAllUserDataAsync(token);
                 },
-                applyOutfitAsync: (outfit, token) =>
-                {
-                    if (animationEngine is null)
-                    {
-                        throw new NotSupportedException("Outfits are not available in this companion runtime.");
-                    }
-                    _ = StartAnimationPlayback(animationEngine.PlayAsync(
-                        pet.Current,
-                        new AnimationOptions
-                        {
-                            ReducedMotionEnabled = runtimePreferences.Current.ReducedMotion,
-                            OutfitKey = outfit ?? RuntimeOutfitKey(runtimePreferences.Current),
-                        }, token), host.ErrorReporter);
-                    return Task.CompletedTask;
-                },
-                setGlobalShortcutAsync: runtime.SetGlobalShortcutAsync,
-                getGlobalShortcutStatus: () => runtime.GlobalShortcutStatus,
-                dismissReminderNotificationAsync: (reminderId, token) =>
-                    notificationService?.DismissReminderAsync(reminderId, token) ?? Task.CompletedTask,
-                discardHeldReminderAsync: (reminderId, token) =>
-                    presentationGateway?.DiscardHeldAsync(PresentationItemKind.Reminder, reminderId, token)
-                        ?? Task.CompletedTask,
-                discardHeldLocalNoteAsync: (noteId, token) =>
-                    presentationGateway?.DiscardHeldAsync(PresentationItemKind.LocalNote, noteId, token)
-                        ?? Task.CompletedTask,
                 discardHeldRemoteNoteAsync: (messageId, token) =>
                     presentationGateway?.DiscardHeldAsync(PresentationItemKind.RemoteNote, messageId, token)
                         ?? Task.CompletedTask,
@@ -1075,25 +906,17 @@ public static class WindowsCompanionProductionComposition
                         throw new NotSupportedException(result.ErrorMessage ?? "Remote-device deletion is unavailable.");
                     }
                 },
-                affection: affection);
-            reminderToastActions = new ReminderToastActions(
-                featureContext.Clock,
-                featureContext.Reminders,
-                featureContext.DismissReminderNotificationAsync,
-                featureContext.DiscardHeldReminderAsync,
-                featureContext.PresentPetAsync,
-                host.ErrorReporter);
-            // The row alone cannot tell an announced occurrence from a pending
-            // one once the engine has advanced it; the engine reports each
-            // announcement so Done/Snooze from the page answer that occurrence
-            // instead of consuming the next one. Subscribed before the host
-            // starts ticking (the runtime is only started after this returns).
-            services.GetRequiredService<Dudu.Core.Reminders.ReminderEngine>().OccurrenceDelivered +=
-                reminderToastActions.RecordAnnounced;
-            var overlayRouter = new OverlayCommandRouter(
+                affection: affection,
+                // "Delete my data" goes remote first only when a relay is configured; the
+                // sync loop is stopped around the remote delete so no poll can re-register
+                // a fresh device before the local wipe, and restarted if the remote delete
+                // did not complete (nothing is wiped then).
+                stopRemoteSyncAsync: token => remoteSync?.StopAsync(token) ?? Task.CompletedTask,
+                startRemoteSyncAsync: token => remoteSync?.StartAsync(token) ?? Task.CompletedTask,
+                remoteDeleteAvailable: remoteSync is not null);
+            overlayRouter = new OverlayCommandRouter(
                 featureContext,
                 (destination, token) => DispatchSettingsDestinationAsync(actions, destination, token));
-            actionSurface.Bind(overlayRouter);
             actions.ConfigureSettings?.Invoke(new CompanionSettingsContext(
                 startupSettings,
                 startup,
@@ -1111,14 +934,9 @@ public static class WindowsCompanionProductionComposition
                 runtime.SetUserVisibleAsync)
             {
                 Features = featureContext,
-                ActionSurface = actionSurface,
                 OverlayCommands = overlayRouter,
-                ReminderActions = reminderToastActions,
                 NotificationRouter = composedNotificationRouter,
                 ErrorReporter = host.ErrorReporter,
-                AvailableOutfitKeys = pack.Manifest.Outfits.Keys
-                    .OrderBy(key => key, StringComparer.Ordinal)
-                    .ToArray(),
             });
             await FixtureRemoteNoteInstaller.InstallIfRequestedAsync(services, cancellationToken);
             return new ComposedPrimaryRuntime(
@@ -1262,18 +1080,6 @@ public static class WindowsCompanionProductionComposition
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
-    private static async Task RestoreActiveFocusAsync(
-        Dudu.Core.Focus.FocusService focus,
-        PetStateMachine pet,
-        CancellationToken cancellationToken)
-    {
-        var active = await focus.GetCurrentAsync(cancellationToken);
-        if (active is { Status: FocusStatus.Running or FocusStatus.Paused })
-        {
-            pet.Handle(new PetEvent.FocusStarted(active.Id.ToString("D")));
-        }
-    }
-
     /// <summary>Observes a fire-and-forget playback. A fault (for example a
     /// frame the composer cannot decode) leaves the pet unpainted, so it is
     /// reported as <c>animation-playback</c> to diagnostics.log instead of a
@@ -1382,32 +1188,18 @@ public static class WindowsCompanionProductionComposition
         // the database, settings services, and the recoverable settings surface alive.
         var profileRepository = services.GetRequiredService<IProfileRepository>();
         var placements = services.GetRequiredService<IPetPlacementRepository>();
-        var reminderRepository = services.GetRequiredService<IReminderRepository>();
         var featureContext = new CompanionFeatureContext(
             services.GetRequiredService<IClock>(),
             preferenceMutations,
             profileRepository,
             placements,
-            reminderRepository,
-            reminderRepository as IReminderWriter
-                ?? throw new InvalidOperationException("Reminder writer is not registered."),
-            services.GetRequiredService<ITaskRepository>(),
-            services.GetRequiredService<IFocusSessionRepository>(),
             services.GetRequiredService<ILocalNoteRepository>(),
             services.GetRequiredService<IRemoteEnvelopeRepository>(),
-            services.GetRequiredService<ICountdownRepository>(),
-            services.GetRequiredService<ICheckInRepository>(),
-            services.GetRequiredService<Dudu.Core.CheckIns.CheckInService>(),
-            services.GetRequiredService<Dudu.Core.Tasks.TaskService>(),
-            services.GetRequiredService<Dudu.Core.Focus.FocusService>(),
-            services.GetRequiredService<Dudu.Core.Notes.LocalNoteSelector>(),
             services.GetRequiredService<IPairingService>(),
             services.GetRequiredService<ICompanionFeatureTransactions>(),
             pet,
             applyPlacementAsync: (_, _) => Task.CompletedTask,
             setUserVisibleAsync: (_, _) => Task.CompletedTask,
-            backupAsync: token => CreateBackupAsync(services, token),
-            restoreAsync: token => RestoreLatestAsync(services, token),
             deleteLocalDataAsync: async token =>
             {
                 // RemoteSyncService only exists when a relay is configured (offline
@@ -1443,7 +1235,6 @@ public static class WindowsCompanionProductionComposition
             (_, _) => Task.CompletedTask)
         {
             Features = featureContext,
-            AvailableOutfitKeys = ["base"],
             IsSafeMode = true,
             ErrorReporter = host.ErrorReporter,
         });
@@ -1465,32 +1256,6 @@ public static class WindowsCompanionProductionComposition
             databaseUnavailable);
     }
 
-    private static async Task CreateBackupAsync(
-        ServiceProvider services,
-        CancellationToken cancellationToken)
-    {
-        var path = await services.GetRequiredService<DatabaseBackupService>()
-            .CreatePreMigrationBackupAsync(cancellationToken);
-        if (path is null)
-        {
-            throw new InvalidOperationException("There is no local database to back up.");
-        }
-    }
-
-    private static async Task RestoreLatestAsync(
-        ServiceProvider services,
-        CancellationToken cancellationToken)
-    {
-        var result = await services.GetRequiredService<DatabaseBackupService>()
-            .RestoreLatestValidAsync(cancellationToken);
-        if (!result.Restored)
-        {
-            throw new InvalidOperationException(
-                "The latest local backup could not be restored.",
-                result.Exception);
-        }
-    }
-
     internal static Task DispatchSettingsDestinationAsync(
         CompanionUiActions actions,
         string destination,
@@ -1505,20 +1270,16 @@ public static class WindowsCompanionProductionComposition
     }
 
     /// <summary>
-    /// Builds the toast click handler: a body click opens the matching page,
-    /// and a reminder's Done/Snooze buttons complete or snooze the reminder
+    /// Builds the toast click handler: a note toast click opens Love Notes
     /// (see <see cref="NotificationInvocationRouter"/>). A malformed or
-    /// unknown activation is ignored rather than throwing.
+    /// unknown activation -- including a retired reminder toast -- is ignored
+    /// rather than throwing.
     /// </summary>
     internal static NotificationInvocationRouter CreateNotificationInvocationRouter(
         CompanionUiActions actions,
-        AppNotificationService notifications,
-        Func<ReminderToastActions?> reminderActions,
         IAppHostErrorReporter? errorReporter) =>
         new(
             (destination, token) => DispatchSettingsDestinationAsync(actions, destination, token),
-            reminderActions,
-            notifications.DismissReminderAsync,
             errorReporter);
 
     private static void HandleNotificationInvoked(
@@ -1529,7 +1290,7 @@ public static class WindowsCompanionProductionComposition
         // parser that split on '&' while the Windows App SDK writes ';' -- so every click
         // resolved to null. invokedArgs.Arguments is the SDK's own parsed map, which needs
         // no separator convention at all. The router never throws; it reports its own
-        // failures (notification-invoked / reminder-toast-action).
+        // failures (notification-invoked).
         _ = router.HandleAsync(arguments, CancellationToken.None);
     }
 
@@ -1684,17 +1445,7 @@ public static class WindowsCompanionProductionComposition
         new()
         {
             ReducedMotionEnabled = preferences.ReducedMotion,
-            OutfitKey = RuntimeOutfitKey(preferences),
         };
-
-    private static string? RuntimeOutfitKey(Preferences preferences) =>
-        preferences.AutomaticSeasonalMode ? null : preferences.OutfitKey ?? "base";
-
-    private static SeasonalDates SeasonalDatesFor(Preferences preferences) =>
-        new(preferences.Anniversary, preferences.Birthday);
-
-    private static DateOnly LocalDateNow() =>
-        DateOnly.FromDateTime(DateTime.Now);
 
     private sealed class DelegatingPresentationEnvironmentSink(
         Action<bool> setSessionLocked,

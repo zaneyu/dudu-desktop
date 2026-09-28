@@ -1,4 +1,3 @@
-using Dudu.App.System;
 using Dudu.App.ViewModels;
 using Dudu.Core.Models;
 using Dudu.Core.Pet;
@@ -12,7 +11,6 @@ public sealed class OverlayCommandRouter
     private readonly Func<string, CancellationToken, Task>? _navigateSettings;
     private readonly Func<TimeSpan, CancellationToken, Task> _delayAsync;
     private CancellationTokenSource? _breathingCancellation;
-    private bool _closePanelAfterBreathingCancellation;
     private bool _isBreathing;
     private string _breathingInstruction = "breathe in for 4, out for 6";
     private ComfortPanelState _comfortPanel = ComfortPanelState.Closed;
@@ -32,39 +30,60 @@ public sealed class OverlayCommandRouter
         _delayAsync = delayAsync ?? Task.Delay;
     }
 
+    /// <summary>The cute buttons Home shows, in order.</summary>
     public static IReadOnlyList<OverlayAction> PrimaryActions { get; } =
     [
         OverlayAction.Pet,
         OverlayAction.DrinkWater,
-        OverlayAction.StartFocus,
-        OverlayAction.Tasks,
-        OverlayAction.LoveNote,
-        OverlayAction.ComfortMe,
         OverlayAction.EatTogether,
+        OverlayAction.TinyHug,
+        OverlayAction.BreatheWithMe,
     ];
 
     /// <summary>How long an eat-together meal lasts unless ended early.</summary>
     public static readonly TimeSpan EatingDuration = TimeSpan.FromMinutes(20);
 
-    public static IReadOnlyList<ComfortAction> ComfortActions => ActionBubbleLayout.ComfortActions;
-
+    /// <summary>Label + UI Automation id + settings destination of every
+    /// Home button; each id must appear in HomePage.xaml.</summary>
     public static IReadOnlyList<OverlayActionAccessibility> AccessiblePrimaryActions { get; } =
         PrimaryActions
             .Select(action => new OverlayActionAccessibility(
                 action,
-                ActionBubbleLayout.Label(action),
-                ActionBubbleLayout.AutomationId(action),
+                Label(action),
+                AutomationId(action),
                 EquivalentSettingsDestination(action)))
             .ToArray();
 
-    public static IReadOnlyList<ComfortActionAccessibility> AccessibleComfortActions { get; } =
-        ComfortActions
-            .Select(action => new ComfortActionAccessibility(
-                action,
-                ActionBubbleLayout.ComfortLabel(action),
-                ActionBubbleLayout.ComfortAutomationId(action),
-                EquivalentSettingsDestination(action)))
-            .ToArray();
+    /// <summary>Short status label for an action ("tiny hug ready le").</summary>
+    public static string Label(OverlayAction action) => action switch
+    {
+        OverlayAction.Pet => "pet",
+        OverlayAction.DrinkWater => "drink water",
+        OverlayAction.EatTogether => "eat together",
+        OverlayAction.TinyHug => "tiny hug",
+        OverlayAction.BreatheWithMe => "breathe with me",
+        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "oh no unknown overlay action"),
+    };
+
+    /// <summary>Stable UI Automation identifier of the Home button for an
+    /// action. Tiny hug and breathe keep the ids they had as comfort-panel
+    /// buttons, so UI tests and assistive-tech users find them unchanged.</summary>
+    public static string AutomationId(OverlayAction action) => action switch
+    {
+        OverlayAction.Pet => "OverlayActionPet",
+        OverlayAction.DrinkWater => "OverlayActionDrinkWater",
+        OverlayAction.EatTogether => "OverlayActionEatTogether",
+        OverlayAction.TinyHug => "OverlayComfortActionTinyHug",
+        OverlayAction.BreatheWithMe => "OverlayComfortActionBreatheWithMe",
+        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "alala unknown overlay action"),
+    };
+
+    public static string ComfortLabel(ComfortAction action) => action switch
+    {
+        ComfortAction.BreatheWithMe => "breathe with me",
+        ComfortAction.Close => "stop",
+        _ => throw new ArgumentOutOfRangeException(nameof(action), action, "wait unknown comfort action"),
+    };
 
     public bool IsReducedMotion => _context.CurrentPreferences.ReducedMotion;
     public AppTheme Theme => _context.CurrentPreferences.Theme;
@@ -78,7 +97,7 @@ public sealed class OverlayCommandRouter
     public string LabelFor(OverlayAction action) =>
         action == OverlayAction.EatTogether && IsEating
             ? "done eating"
-            : ActionBubbleLayout.Label(action);
+            : Label(action);
 
     public event EventHandler? ComfortPanelChanged;
 
@@ -88,11 +107,9 @@ public sealed class OverlayCommandRouter
         {
             OverlayAction.Pet => ExecutePetAsync(cancellationToken),
             OverlayAction.DrinkWater => ExecuteDrinkWaterAsync(cancellationToken),
-            OverlayAction.StartFocus => ExecuteStartFocusAsync(cancellationToken),
-            OverlayAction.Tasks => NavigateAsync("tasks", cancellationToken),
-            OverlayAction.LoveNote => NavigateAsync("notes", cancellationToken),
-            OverlayAction.ComfortMe => ExecuteComfortAsync(cancellationToken),
             OverlayAction.EatTogether => ToggleEatTogetherAsync(cancellationToken),
+            OverlayAction.TinyHug => PresentTinyHugAsync(cancellationToken),
+            OverlayAction.BreatheWithMe => BreatheWithMeAsync(cancellationToken),
             _ => throw new ArgumentOutOfRangeException(nameof(action), action, "alala unknown overlay action"),
         };
 
@@ -101,16 +118,14 @@ public sealed class OverlayCommandRouter
         CancellationToken cancellationToken = default) => action switch
         {
             ComfortAction.BreatheWithMe => BreatheWithMeAsync(cancellationToken),
-            ComfortAction.TinyHug => PresentTinyHugAsync(cancellationToken),
-            ComfortAction.ReadALoveNote => NavigateAsync("notes", cancellationToken),
-            ComfortAction.TakeAFiveMinuteBreak => TakeFiveMinuteBreakAsync(cancellationToken),
             ComfortAction.Close => CloseComfortAsync(cancellationToken),
             _ => throw new ArgumentOutOfRangeException(nameof(action), action, "wait unknown comfort action"),
         };
 
-    /// <summary>Runs the same operation exposed by the pointer-only overlay
-    /// from an ordinary keyboard/UIA Settings control. The destination is a
-    /// real navigation callback, not just descriptive text.</summary>
+    /// <summary>Runs an action from an ordinary keyboard/UIA control (the
+    /// Home buttons), then navigates to its settings destination. The
+    /// destination is a real navigation callback, not just descriptive
+    /// text.</summary>
     public async Task ExecuteAccessibleAsync(
         OverlayAction action,
         CancellationToken cancellationToken = default)
@@ -123,20 +138,14 @@ public sealed class OverlayCommandRouter
             case OverlayAction.DrinkWater:
                 await ExecuteDrinkWaterAsync(cancellationToken);
                 break;
-            case OverlayAction.StartFocus:
-                await ExecuteStartFocusAsync(cancellationToken);
-                return;
-            case OverlayAction.Tasks:
-                await NavigateAsync("tasks", cancellationToken);
-                return;
-            case OverlayAction.LoveNote:
-                await NavigateAsync("notes", cancellationToken);
-                return;
-            case OverlayAction.ComfortMe:
-                await ExecuteComfortAsync(cancellationToken);
-                break;
             case OverlayAction.EatTogether:
                 await ToggleEatTogetherAsync(cancellationToken);
+                break;
+            case OverlayAction.TinyHug:
+                await PresentTinyHugAsync(cancellationToken);
+                break;
+            case OverlayAction.BreatheWithMe:
+                await BreatheWithMeAsync(cancellationToken);
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(action), action, "hmm unknown overlay action");
@@ -145,36 +154,18 @@ public sealed class OverlayCommandRouter
         await NavigateAsync(EquivalentSettingsDestination(action), cancellationToken);
     }
 
-    /// <summary>Keyboard/UIA execution path for every comfort-panel choice.</summary>
-    public async Task ExecuteComfortAccessibleAsync(
-        ComfortAction action,
-        CancellationToken cancellationToken = default)
-    {
-        if (action == ComfortAction.ReadALoveNote)
-        {
-            await NavigateAsync("notes", cancellationToken);
-            return;
-        }
-
-        await ExecuteComfortAsync(action, cancellationToken);
-        await NavigateAsync(EquivalentSettingsDestination(action), cancellationToken);
-    }
-
     public static string EquivalentSettingsDestination(OverlayAction action) => action switch
     {
         OverlayAction.Pet => "home",
-        OverlayAction.DrinkWater => "reminders",
-        OverlayAction.StartFocus or OverlayAction.Tasks => "tasks",
-        OverlayAction.LoveNote => "notes",
-        OverlayAction.ComfortMe or OverlayAction.EatTogether => "home",
+        OverlayAction.DrinkWater => "home",
+        OverlayAction.EatTogether => "home",
+        OverlayAction.TinyHug or OverlayAction.BreatheWithMe => "home",
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "oh no unknown overlay action"),
     };
 
     public static string EquivalentSettingsDestination(ComfortAction action) => action switch
     {
-        ComfortAction.BreatheWithMe or ComfortAction.TinyHug
-            or ComfortAction.TakeAFiveMinuteBreak or ComfortAction.Close => "home",
-        ComfortAction.ReadALoveNote => "notes",
+        ComfortAction.BreatheWithMe or ComfortAction.Close => "home",
         _ => throw new ArgumentOutOfRangeException(nameof(action), action, "alala unknown comfort action"),
     };
 
@@ -292,20 +283,6 @@ public sealed class OverlayCommandRouter
         }
     }
 
-    private async Task ExecuteStartFocusAsync(CancellationToken cancellationToken)
-    {
-        var vm = new TasksFocusViewModel(_context);
-        await vm.StartFocusOrThrowAsync(cancellationToken);
-        await NavigateAsync("tasks", cancellationToken);
-    }
-
-    private Task ExecuteComfortAsync(CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        OpenComfortPanel();
-        return Task.CompletedTask;
-    }
-
     private Task NavigateAsync(string destination, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -323,35 +300,6 @@ public sealed class OverlayCommandRouter
             new PetEvent.ComfortRequested(),
             "comfort",
             cancellationToken);
-
-    private async Task TakeFiveMinuteBreakAsync(CancellationToken cancellationToken)
-    {
-        // Present the hug first: applying the pause hides the overlay
-        // (indirectly, via the lifecycle coordinator's pause gate), so
-        // doing that before the hug animation played it into a window that
-        // was about to disappear underneath it.
-        //
-        // Finding 5: the pause must not depend on the hug succeeding -- a
-        // faulting hug animation must not mean no break at all. Swallow and
-        // trace it the same way SetComfortPanel's listener failures are
-        // handled just below, then apply the pause regardless.
-        try
-        {
-            await PresentTinyHugAsync(cancellationToken);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception exception)
-        {
-            global::System.Diagnostics.Trace.TraceError("Dudu tiny-hug presentation failed: {0}", exception);
-        }
-
-        await _context.ApplyPauseAsync(
-            PausePolicy.ForFiveMinutes(_context.Clock.UtcNow.ToUniversalTime()),
-            cancellationToken);
-    }
 
     private async Task CloseComfortAsync(CancellationToken cancellationToken)
     {
@@ -375,7 +323,6 @@ public sealed class OverlayCommandRouter
         {
             _breathingCancellation?.Cancel();
             _breathingCancellation = linked;
-            _closePanelAfterBreathingCancellation = false;
             _isBreathing = true;
         }
         try
@@ -390,32 +337,32 @@ public sealed class OverlayCommandRouter
         }
         finally
         {
-            bool closePanel;
+            // Only the run that still owns the breathing state may reset it. A run
+            // superseded by a restart must not clear IsBreathing or overwrite the
+            // newer run's panel, and CancelBreathing already set both itself.
+            bool owner;
             lock (_gate)
             {
-                _isBreathing = false;
-                closePanel = _closePanelAfterBreathingCancellation;
-                if (ReferenceEquals(_breathingCancellation, linked))
+                owner = ReferenceEquals(_breathingCancellation, linked);
+                if (owner)
                 {
+                    _isBreathing = false;
                     _breathingCancellation = null;
-                    _closePanelAfterBreathingCancellation = false;
                 }
             }
-            SetComfortPanel(closePanel
-                ? ComfortPanelState.Closed
-                : linked.IsCancellationRequested
+            if (owner)
+            {
+                SetComfortPanel(linked.IsCancellationRequested
                     ? new ComfortPanelState(true, false, BreathVisualPhase.Idle, "breathing exercise cancelled")
                     : new ComfortPanelState(true, false, BreathVisualPhase.Complete, "good job lihai breathe done"));
+            }
         }
     }
-
-    public void OpenComfortPanel() => SetComfortPanel(new ComfortPanelState(true, false, BreathVisualPhase.Idle, "choose a gentle next step"));
 
     public void CancelBreathing(bool closePanel = false)
     {
         lock (_gate)
         {
-            _closePanelAfterBreathingCancellation = closePanel;
             _breathingCancellation?.Cancel();
             _breathingCancellation = null;
             _isBreathing = false;
@@ -453,8 +400,8 @@ public sealed class OverlayCommandRouter
 
 public enum BreathVisualPhase { Idle, Inhale, Exhale, Static, Complete }
 
-/// <summary>Application contract for slice 3's comfort surface. It contains no
-/// mood deduction or recording; all transitions are user initiated.</summary>
+/// <summary>State of the "breathe with me" exercise shown on Home. It contains
+/// no mood deduction or recording; all transitions are user initiated.</summary>
 public sealed record ComfortPanelState(bool IsOpen, bool IsBreathing, BreathVisualPhase Phase, string Instruction)
 {
     public static ComfortPanelState Closed { get; } = new(false, false, BreathVisualPhase.Idle, string.Empty);
@@ -462,12 +409,6 @@ public sealed record ComfortPanelState(bool IsOpen, bool IsBreathing, BreathVisu
 
 public sealed record OverlayActionAccessibility(
     OverlayAction Action,
-    string Label,
-    string AutomationId,
-    string SettingsDestination);
-
-public sealed record ComfortActionAccessibility(
-    ComfortAction Action,
     string Label,
     string AutomationId,
     string SettingsDestination);

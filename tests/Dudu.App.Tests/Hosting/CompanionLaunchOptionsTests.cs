@@ -43,9 +43,7 @@ public sealed class CompanionLaunchOptionsTests
         var options = CompanionLaunchOptions.Parse("--background");
         var preferences = new Preferences(
             AppTheme.System,
-            new QuietHours(true, new TimeOnly(22), new TimeOnly(7)),
             false,
-            3,
             LaunchAtSignIn: true,
             AlwaysOnTop: false,
             HidePetDuringFullscreen: true,

@@ -118,42 +118,16 @@ public sealed class AnimationEngineTests
     }
 
     [Fact]
-    public async Task Automatic_outfit_refreshes_when_the_local_date_rolls_over()
+    public async Task Playback_always_uses_the_base_outfit_even_when_another_outfit_exists()
     {
-        var localDate = new DateOnly(2026, 11, 30);
-        using var fixture = AnimationFixture.Create(
-            [100],
-            loop: "loop",
-            animationKey: "idle",
-            localDate: localDate,
-            localDateProvider: () => localDate);
-        using var cancellation = new CancellationTokenSource();
-        var basePresented = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var winterPresented = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        fixture.Presenter.OnPresented = count =>
-        {
-            if (count == 1)
-            {
-                basePresented.TrySetResult(true);
-            }
-            else if (fixture.Presenter.Frames[^1].Source.EndsWith("winter.png", StringComparison.Ordinal))
-            {
-                winterPresented.TrySetResult(true);
-            }
-        };
+        // The fixture pack also declares a "winter" outfit with its own idle
+        // pose; outfits are no longer selected, so base idle must play.
+        using var fixture = AnimationFixture.Create([100], loop: "once", animationKey: "idle", packId: "outfits", immediateClock: true);
 
-        var play = fixture.Engine.PlayAsync(
-            TestPresentation("idle"),
-            AnimationOptions.Default,
-            cancellation.Token);
-        await basePresented.Task.WaitAsync(TestContext.Current.CancellationToken);
+        await fixture.Engine.PlayAsync(TestPresentation("idle"), AnimationOptions.ReducedMotion, TestContext.Current.CancellationToken);
 
-        localDate = new DateOnly(2026, 12, 1);
-        fixture.Clock.AdvanceBy(100);
-        await winterPresented.Task.WaitAsync(TestContext.Current.CancellationToken);
-
-        cancellation.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => play);
+        Assert.Equal("outfits/idle.png", fixture.Presenter.Single.Source);
+        Assert.DoesNotContain(fixture.Presenter.Frames, frame => frame.Source.EndsWith("winter.png", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -538,8 +512,6 @@ public sealed class AnimationEngineTests
             string animationKey,
             string packId = "fixture",
             bool immediateClock = false,
-            DateOnly? localDate = null,
-            Func<DateOnly>? localDateProvider = null,
             IReadOnlyList<string>? frameFiles = null)
         {
             var root = Path.Combine(Path.GetTempPath(), "dudu-animation-tests", Guid.NewGuid().ToString("N"));
@@ -626,10 +598,7 @@ public sealed class AnimationEngineTests
                     pack,
                     presenter,
                     clock,
-                    composer,
-                    localDate,
-                    SeasonalDates.Empty,
-                    localDateProvider),
+                    composer),
                 presenter,
                 clock,
                 composer,

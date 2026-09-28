@@ -35,12 +35,9 @@ public sealed class XamlContractTests
         var colors = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Themes", "Colors.xaml"));
         var stubs = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "XamlCompileStubs.cs"));
 
-        Assert.Contains("SmallChange=\"0.1\"", onboarding);
-        // Slider.StepFrequency is a real WinUI 3 property and defaults to 1: left
-        // unset, the pet-size slider (0.5 to 2) snapped to 50%/150%/200% only, so the
-        // recommended 100% could not be picked. The old DoesNotContain here pinned
-        // that bug in place.
-        Assert.Contains("StepFrequency=\"0.05\"", onboarding);
+        // The pet-size slider left onboarding with the placement step; Settings
+        // keeps its own (see the Settings slider-step test).
+        Assert.DoesNotContain("<Slider", onboarding);
         Assert.Contains("<Setter Property=\"Foreground\" Value=\"{ThemeResource PrimaryButtonForegroundBrush}\" />", controls);
         Assert.Contains("SystemColorHighlightTextColor", colors);
         Assert.Contains("private StackPanel StartupRecoveryPanel", stubs);
@@ -61,35 +58,26 @@ public sealed class XamlContractTests
         var pagesDirectory = Path.Combine(root, "src", "Dudu.App", "Pages");
         var pageNames = new[]
         {
-            "HomePage", "RemindersPage", "TasksFocusPage", "LoveNotesPage",
-            "AppearancePage", "ConnectionPage", "PrivacyDataPage",
+            "HomePage", "LoveNotesPage", "SettingsPage",
         };
         var pageFiles = pageNames
             .Select(page => Path.Combine(pagesDirectory, $"{page}.xaml"))
             .ToArray();
 
-        Assert.Equal(7, pageFiles.Length);
+        Assert.Equal(3, pageFiles.Length);
         var allPages = string.Join("\n", pageFiles.Select(File.ReadAllText));
         var stubs = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "XamlCompileStubs.cs"));
         var pageContracts = new Dictionary<string, string>
         {
             ["HomePage"] = "HomeViewModel",
-            ["RemindersPage"] = "RemindersViewModel",
-            ["TasksFocusPage"] = "TasksFocusViewModel",
             ["LoveNotesPage"] = "LoveNotesViewModel",
-            ["AppearancePage"] = "AppearanceViewModel",
-            ["ConnectionPage"] = "ConnectionViewModel",
-            ["PrivacyDataPage"] = "PrivacyDataViewModel",
+            ["SettingsPage"] = "SettingsViewModel",
         };
         var expectedNamedElements = new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
-            ["HomePage"] = ["HomeNextReminder", "HomeActiveFocus", "HomePetState", "HomePetAnimation", "HomeActionStatus", "HomeNextCountdown", "CountdownTargetBox", "CountdownTargetValidation", "HomeSaveCountdownButton", "HomeCheckInSummary", "HomeCheckInHistory", "StartupToggle", "StartupRecoveryPanel", "StartupRecoveryMessage", "RetryStartupButton"],
-            ["RemindersPage"] = ["ReminderList", "ScheduleBox", "LocalTimeBox", "RemindersLocalTimeValidation", "SundayBox", "MondayBox", "TuesdayBox", "WednesdayBox", "ThursdayBox", "FridayBox", "SaturdayBox", "IntervalBox", "QuietHoursBox", "SaveReminderButton"],
-            ["TasksFocusPage"] = ["TaskDueBox", "TaskDueValidation", "SaveTaskButton", "FocusCurrent"],
-            ["LoveNotesPage"] = ["LoveNotesDailyLimit", "LoveNotesPendingCount"],
-            ["AppearancePage"] = ["ThemeBox"],
-            ["ConnectionPage"] = ["ConnectionAvailability", "ConnectionPairingCode", "ConnectionCodeExpiry", "ConnectionSessionCount"],
-            ["PrivacyDataPage"] = [],
+            ["HomePage"] = ["HomeDuduImage", "HomeActionStatus"],
+            ["LoveNotesPage"] = ["LoveNotesPendingCount"],
+            ["SettingsPage"] = ["ThemeBox", "StartupToggle", "StartupRecoveryPanel", "StartupRecoveryMessage", "RetryStartupButton", "ConnectionAvailability", "ConnectionPairingCode", "ConnectionCodeExpiry", "ConnectionSessionCount"],
         };
         var viewModelSources = pageContracts.ToDictionary(
             pair => pair.Key,
@@ -134,36 +122,44 @@ public sealed class XamlContractTests
 
         foreach (var automationId in new[]
         {
-            "OverlayActionPet", "RemindersSave", "TasksSave", "FocusStart", "LoveNotesSave",
-            "AppearanceSave", "ConnectionCreateCode", "PrivacyBackup",
-            "AppearanceOutfit", "AppearanceSeasonalMode", "AppearanceSaveSeasonal",
+            "OverlayActionPet", "LoveNotesOpenedList",
+            "AppearanceSave", "ConnectionCreateCode",
         })
         {
             Assert.Contains($"AutomationProperties.AutomationId=\"{automationId}\"", allPages);
         }
 
-        Assert.Contains("SelectedItem=\"{x:Bind ViewModel.SelectedOutfit, Mode=TwoWay}\"", allPages);
-        Assert.Contains("Date=\"{x:Bind ViewModel.AnniversaryDate, Mode=TwoWay}\"", allPages);
-        Assert.Contains("Date=\"{x:Bind ViewModel.BirthdayDate, Mode=TwoWay}\"", allPages);
-        Assert.Contains("ViewModel.OutfitAvailabilityMessage", allPages);
-        Assert.Contains("ItemsSource=\"{x:Bind ViewModel.RecentCheckIns, Mode=OneWay}\"", File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml")));
+        // Outfits and seasonal dates are gone: animation always uses the base outfit.
+        foreach (var removed in new[]
+        {
+            "AppearanceOutfit", "AppearanceSeasonalMode", "AppearanceSeasonalAvailability",
+            "AppearanceAnniversary", "AppearanceBirthday", "AppearanceSaveSeasonal",
+            "ViewModel.SelectedOutfit", "ViewModel.AnniversaryDate", "ViewModel.BirthdayDate",
+            "ViewModel.OutfitAvailabilityMessage", "ViewModel.ApplyOutfitCommand", "CalendarDatePicker",
+        })
+        {
+            Assert.DoesNotContain(removed, allPages, StringComparison.Ordinal);
+        }
         var loveNotes = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "LoveNotesPage.xaml"));
         Assert.Contains("SelectedItem=\"{x:Bind ViewModel.SelectedRemoteEnvelope, Mode=TwoWay}\"", loveNotes);
         Assert.Contains("AutomationProperties.AutomationId=\"LoveNotesRevealSelected\"", loveNotes);
         Assert.DoesNotContain("RemoteNoteList_SelectionChanged", loveNotes);
-        var privacy = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "PrivacyDataPage.xaml"));
-        Assert.Contains("AutomationProperties.AutomationId=\"PrivacyConfirmationMessage\"", privacy);
-        Assert.Contains("AutomationProperties.AutomationId=\"PrivacyConfirm\"", privacy);
-        // LOW: the Connection page's own destructive-confirmation flow (F3/H3's forget-pairing
-        // path among them) deserves the same automation coverage Privacy's already has.
-        var connection = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "ConnectionPage.xaml"));
+        // Revealing a partner note keeps it in the opened list; the local note jar (editor,
+        // "let dudu choose", daily limit, a separate "save opened note" step) is gone.
+        Assert.Contains("SelectedItem=\"{x:Bind ViewModel.SelectedOpenedNote, Mode=TwoWay}\"", loveNotes);
+        Assert.Contains("AutomationProperties.AutomationId=\"LoveNotesOpened\"", loveNotes);
+        foreach (var removed in new[] { "LoveNotesDraft", "LoveNotesSave", "LoveNotesNew", "LoveNotesChoose", "LoveNotesSaveOpened", "LoveNotesLocalList", "LoveNotesDailyLimit", "jar" })
+        {
+            Assert.DoesNotContain(removed, loveNotes, StringComparison.Ordinal);
+        }
+        // LOW: the partner connection section's destructive-confirmation flow (F3/H3's
+        // forget-pairing path among them) keeps its automation coverage on the Settings page.
+        var connection = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "SettingsPage.xaml"));
         Assert.Contains("AutomationProperties.AutomationId=\"ConnectionForgetPairing\"", connection);
         Assert.Contains("AutomationProperties.AutomationId=\"ConnectionConfirm\"", connection);
         Assert.Contains("AutomationProperties.AutomationId=\"ConnectionCancel\"", connection);
-        // Seasonal outfits (anniversary/birthday/winter) aren't shipped yet, so the
-        // copy must say so honestly instead of claiming automatic mode does something
-        // it can't currently do.
-        Assert.Contains("aren't included in this version yet", allPages);
+        Assert.DoesNotContain("seasonal", allPages, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("outfit", allPages, StringComparison.OrdinalIgnoreCase);
         var automationIds = Regex.Matches(
                 allPages,
                 "AutomationProperties\\.AutomationId=\\\"([^\\\"]+)\\\"")
@@ -199,29 +195,20 @@ public sealed class XamlContractTests
         var pages = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["HomePage.xaml"] = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml")),
-            ["RemindersPage.xaml"] = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "RemindersPage.xaml")),
-            ["TasksFocusPage.xaml"] = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "TasksFocusPage.xaml")),
             ["LoveNotesPage.xaml"] = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "LoveNotesPage.xaml")),
-            ["AppearancePage.xaml"] = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "AppearancePage.xaml")),
-            ["ConnectionPage.xaml"] = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "ConnectionPage.xaml")),
-            ["PrivacyDataPage.xaml"] = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "PrivacyDataPage.xaml")),
+            ["SettingsPage.xaml"] = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "SettingsPage.xaml")),
         };
         var expectedBindings = new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
-            ["HomePage.xaml"] = ["ViewModel.PauseDescription", "ViewModel.PetCommand", "ViewModel.PauseForOneHourCommand", "ViewModel.ResumeCommand", "ViewModel.CountdownTitle", "ViewModel.Countdowns", "ViewModel.CreateCountdownCommand", "ViewModel.SelectedCountdown", "ViewModel.DeleteCountdownCommand", "ViewModel.CheckInNote", "ViewModel.RecordCheckInCommand", "ViewModel.StatusMessage", "ViewModel.ErrorMessage"],
-            ["RemindersPage.xaml"] = ["ViewModel.Reminders", "ViewModel.SaveCommand", "ViewModel.CompleteCommand", "ViewModel.SnoozeCommand", "ViewModel.SaveReminderPreferencesCommand"],
-            ["TasksFocusPage.xaml"] = ["ViewModel.ActiveTasks", "ViewModel.CompletedTasks", "ViewModel.FocusHistory", "ViewModel.SaveTaskCommand", "ViewModel.StartFocusCommand", "ViewModel.PauseFocusCommand", "ViewModel.ResumeFocusCommand", "ViewModel.ExtendFocusCommand", "ViewModel.EndFocusCommand"],
-            ["LoveNotesPage.xaml"] = ["ViewModel.LocalNotes", "ViewModel.PendingRemoteNotes", "ViewModel.SaveLocalNoteCommand", "ViewModel.DeleteLocalNoteCommand", "ViewModel.ShowLocalNoteCommand", "ViewModel.SaveOpenedNoteCommand"],
-            ["AppearancePage.xaml"] = ["ViewModel.SaveCommand", "ViewModel.SavePlacementCommand", "ViewModel.SaveShortcutCommand"],
-            ["ConnectionPage.xaml"] = ["ViewModel.CreateCodeCommand", "ViewModel.RequestRevokeSessionsCommand", "ViewModel.RequestDeleteRemoteDeviceCommand", "ViewModel.RequestForgetPairingCommand", "ViewModel.ConfirmCommand", "ViewModel.CancelConfirmationCommand"],
-            ["PrivacyDataPage.xaml"] = ["ViewModel.BackupCommand", "ViewModel.RequestRestoreCommand", "ViewModel.RequestDeleteLocalDataCommand", "ViewModel.RequestDeleteRemoteDataCommand", "ViewModel.ConfirmCommand", "ViewModel.CancelConfirmationCommand"],
+            ["HomePage.xaml"] = ["ViewModel.GreetingText", "ViewModel.PartnerTimeText", "ViewModel.PartnerClockSpokenText", "ViewModel.PetCommand", "ViewModel.StatusMessage", "ViewModel.ErrorMessage"],
+            ["LoveNotesPage.xaml"] = ["ViewModel.PendingRemoteNotes", "ViewModel.RevealRemoteNoteCommand", "ViewModel.OpenedNotes", "ViewModel.SelectedOpenedNote", "ViewModel.SelectedOpenedNoteText", "ViewModel.RequestDeleteOpenedNoteCommand", "ViewModel.DeleteOpenedNoteCommand", "ViewModel.CancelDeleteOpenedNoteCommand"],
+            ["SettingsPage.xaml"] = ["ViewModel.SaveCommand", "ViewModel.SavePlacementCommand", "ViewModel.Connection.CreateCodeCommand", "ViewModel.Connection.RequestRevokeSessionsCommand", "ViewModel.Connection.RequestDeleteRemoteDeviceCommand", "ViewModel.Connection.RequestForgetPairingCommand", "ViewModel.Connection.ConfirmCommand", "ViewModel.Connection.CancelConfirmationCommand", "ViewModel.RequestDeleteMyDataCommand", "ViewModel.ConfirmDeleteMyDataCommand", "ViewModel.CancelDeleteMyDataCommand", "ViewModel.WipeThisPcOnlyCommand", "ViewModel.IsDeleteConfirmVisible", "ViewModel.IsWipeThisPcOnlyVisible"],
         };
         var expectedLabels = new[]
         {
-            "home", "reminders", "tasks and focus", "love notes", "appearance", "connection", "privacy and data",
-            "dudu status", "your reminders", "active tasks", "task details", "focus", "local note jar", "incoming notes",
-            "look and motion", "pet options", "shortcut", "pairing status", "paired sessions", "stored on this pc", "your data",
-            "weekdays", "completed tasks", "focus history", "dudu actions", "comfort actions",
+            "home", "love notes", "settings",
+            "time in the UK", "time with dudu", "incoming notes", "opened notes",
+            "look and motion", "when windows starts", "partner connection", "pairing status", "paired sessions", "your data",
         };
 
         foreach (var (name, page) in pages)
@@ -265,21 +252,107 @@ public sealed class XamlContractTests
     }
 
     [Fact]
-    public void Every_painted_overlay_action_has_a_keyboard_accessible_settings_counterpart()
+    public void Settings_shell_navigates_to_exactly_home_love_notes_and_settings()
     {
+        var root = FindRepositoryRoot();
+        var shell = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.App", "Windows", "SettingsWindow.xaml"));
+        var code = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.App", "Windows", "SettingsWindow.xaml.cs"));
+        var stubs = File.ReadAllText(Path.Combine(
+            root, "src", "Dudu.App", "XamlCompileStubs.cs"));
+
+        var items = Regex.Matches(
+                shell,
+                "<NavigationViewItem Content=\"([^\"]+)\" Tag=\"([^\"]+)\" AutomationProperties\\.AutomationId=\"([^\"]+)\">")
+            .Select(match => (match.Groups[1].Value, match.Groups[2].Value, match.Groups[3].Value))
+            .ToArray();
+        Assert.Equal(
+            [("home", "home", "NavHome"), ("love notes", "notes", "NavLoveNotes"), ("settings", "settings", "NavSettings")],
+            items);
+        // Every item keeps an icon: LeftCompact shows only icons until the pane opens.
+        Assert.Equal(items.Length, Regex.Matches(shell, "<NavigationViewItem\\.Icon>").Count);
+
+        foreach (var (content, tag, automationId) in items)
+        {
+            Assert.Contains($"(\"{content}\", \"{tag}\", \"{automationId}\"),", stubs);
+            Assert.Contains($"\"{tag}\" => _", code);
+        }
+
+        foreach (var removed in new[] { "reminders", "tasks", "appearance", "connection", "privacy" })
+        {
+            Assert.DoesNotContain($"Tag=\"{removed}\"", shell);
+            Assert.DoesNotContain($"\"{removed}\" => _", code);
+        }
+
+        foreach (var removedPage in new[] { "RemindersPage", "TasksFocusPage", "AppearancePage", "ConnectionPage", "PrivacyDataPage" })
+        {
+            Assert.False(File.Exists(Path.Combine(root, "src", "Dudu.App", "Pages", $"{removedPage}.xaml")));
+            Assert.DoesNotContain(removedPage, code);
+            Assert.DoesNotContain($"partial class {removedPage}", stubs);
+        }
+    }
+
+    [Fact]
+    public void Every_cute_overlay_action_has_a_keyboard_accessible_home_counterpart()
+    {
+        // Home is the keyboard/UIA surface for every cute action: pet, drink,
+        // eat together, tiny hug and breathe with me.
         var root = FindRepositoryRoot();
         var home = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml"));
 
+        Assert.Equal(5, Dudu.App.Overlay.OverlayCommandRouter.AccessiblePrimaryActions.Count);
         foreach (var action in Dudu.App.Overlay.OverlayCommandRouter.AccessiblePrimaryActions)
         {
             Assert.Contains($"AutomationProperties.AutomationId=\"{action.AutomationId}\"", home);
             Assert.False(string.IsNullOrWhiteSpace(action.SettingsDestination));
         }
 
-        foreach (var action in Dudu.App.Overlay.OverlayCommandRouter.AccessibleComfortActions)
+        // Tiny hug and breathe run through the overlay-action handler; the
+        // comfort-panel handler (whose enum no longer has TinyHug) is gone.
+        Assert.Contains("Tag=\"TinyHug\" Click=\"OverlayAction_Click\"", home);
+        Assert.Contains("Tag=\"BreatheWithMe\" Click=\"OverlayAction_Click\"", home);
+        Assert.DoesNotContain("ComfortAction_Click", home);
+    }
+
+    [Fact]
+    public void Home_shows_the_breathing_panel_with_a_stop_button()
+    {
+        var root = FindRepositoryRoot();
+        var home = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml"));
+        var code = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml.cs"));
+
+        Assert.Contains("Visibility=\"{x:Bind Breathing.IsVisible, Mode=OneWay}\"", home);
+        Assert.Contains("Text=\"{x:Bind Breathing.PhaseText, Mode=OneWay}\"", home);
+        Assert.Contains("Text=\"{x:Bind Breathing.Instruction, Mode=OneWay}\"", home);
+        Assert.Contains("Click=\"BreathingStop_Click\"", home);
+        Assert.Contains("AutomationProperties.AutomationId=\"HomeBreathingStop\"", home);
+        Assert.Contains("public BreathingPanelPresenter Breathing { get; }", code);
+        Assert.Contains("private async void BreathingStop_Click(", code);
+        // Stopping is the normal early end, not an error.
+        Assert.Contains("catch (OperationCanceledException) when (action == OverlayAction.BreatheWithMe)", code);
+        // Leaving Home stops only a running exercise.
+        Assert.Contains("Breathing.StopIfBreathingAsync()", code);
+        // The presenter exists before InitializeComponent, which x:Bind reads.
+        Assert.True(
+            code.IndexOf("Breathing = new BreathingPanelPresenter(", StringComparison.Ordinal)
+                < code.IndexOf("InitializeComponent();", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Home_is_cute_only()
+    {
+        var root = FindRepositoryRoot();
+        var home = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml"));
+        var code = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml.cs"));
+
+        Assert.Contains("x:Name=\"HomeDuduImage\"", home);
+        Assert.Contains("AutomationProperties.AutomationId=\"HomeGreeting\"", home);
+        Assert.Contains("AutomationProperties.AutomationId=\"HomePartnerClock\"", home);
+        foreach (var banned in new[] { "Reminder", "Focus", "Countdown", "CheckIn", "Mood", "Pause", "Resume", "LoveNote", "ComfortMe", "FiveMinuteBreak", "ComfortActionClose", "Startup" })
         {
-            Assert.Contains($"AutomationProperties.AutomationId=\"{action.AutomationId}\"", home);
-            Assert.False(string.IsNullOrWhiteSpace(action.SettingsDestination));
+            Assert.DoesNotContain(banned, home, StringComparison.Ordinal);
+            Assert.DoesNotContain(banned, code, StringComparison.Ordinal);
         }
     }
 
@@ -334,24 +407,27 @@ public sealed class XamlContractTests
         // InitializeComponent(), before Page_Loaded ever runs and before
         // _suppressStartupToggle exists, so setting IsChecked there fired the
         // Checked/Unchecked handler unsuppressed and performed a real OS
-        // startup-registration write on every Home page load. The checkbox state must
+        // startup-registration write on every page load. The checkbox (moved from Home to
+        // Settings) state must
         // instead come only from RefreshStartupRecovery(), which sets it under the
         // suppression flag, and that must run before (not after) the view-model refresh
         // so the checkbox reflects the real state immediately.
         var root = FindRepositoryRoot();
+        var settingsXaml = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "SettingsPage.xaml"));
+        var checkboxMatch = Regex.Match(settingsXaml, "<CheckBox x:Name=\"StartupToggle\"[^>]*/>");
+        Assert.True(checkboxMatch.Success, "StartupToggle CheckBox not found in SettingsPage.xaml.");
         var homeXaml = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml"));
-        var checkboxMatch = Regex.Match(homeXaml, "<CheckBox x:Name=\"StartupToggle\"[^>]*/>");
-        Assert.True(checkboxMatch.Success, "StartupToggle CheckBox not found in HomePage.xaml.");
+        Assert.DoesNotContain("StartupToggle", homeXaml, StringComparison.Ordinal);
         Assert.DoesNotContain("IsChecked", checkboxMatch.Value, StringComparison.Ordinal);
 
         // Finding 9 (test bug): normalized before the embedded-newline
         // search below, for the same CRLF-checkout reason as appCode above.
-        var homeCode = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml.cs")).Replace("\r\n", "\n");
-        var loadedStart = homeCode.IndexOf("private async void Page_Loaded(", StringComparison.Ordinal);
-        var loadedEnd = homeCode.IndexOf("\n    }", loadedStart, StringComparison.Ordinal);
+        var settingsCode = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "SettingsPage.xaml.cs")).Replace("\r\n", "\n");
+        var loadedStart = settingsCode.IndexOf("private async void Page_Loaded(", StringComparison.Ordinal);
+        var loadedEnd = settingsCode.IndexOf("\n    }", loadedStart, StringComparison.Ordinal);
         Assert.True(loadedStart >= 0);
         Assert.True(loadedEnd > loadedStart);
-        var loadedBody = homeCode[loadedStart..loadedEnd];
+        var loadedBody = settingsCode[loadedStart..loadedEnd];
 
         var refreshRecoveryIndex = loadedBody.IndexOf("RefreshStartupRecovery();", StringComparison.Ordinal);
         var refreshAsyncIndex = loadedBody.IndexOf("await ViewModel.RefreshAsync();", StringComparison.Ordinal);
@@ -374,12 +450,12 @@ public sealed class XamlContractTests
         var root = FindRepositoryRoot();
         // Finding 9 (test bug): normalized before the embedded-newline
         // search below, for the same CRLF-checkout reason as appCode above.
-        var homeCode = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml.cs")).Replace("\r\n", "\n");
-        var methodStart = homeCode.IndexOf("private void RefreshStartupRecovery()", StringComparison.Ordinal);
-        Assert.True(methodStart >= 0, "HomePage.xaml.cs no longer declares RefreshStartupRecovery().");
-        var methodEnd = homeCode.IndexOf("\n    }", methodStart, StringComparison.Ordinal);
+        var settingsCode = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "SettingsPage.xaml.cs")).Replace("\r\n", "\n");
+        var methodStart = settingsCode.IndexOf("private void RefreshStartupRecovery()", StringComparison.Ordinal);
+        Assert.True(methodStart >= 0, "SettingsPage.xaml.cs no longer declares RefreshStartupRecovery().");
+        var methodEnd = settingsCode.IndexOf("\n    }", methodStart, StringComparison.Ordinal);
         Assert.True(methodEnd > methodStart);
-        var methodBody = homeCode[methodStart..methodEnd];
+        var methodBody = settingsCode[methodStart..methodEnd];
 
         Assert.Contains("try", methodBody, StringComparison.Ordinal);
         Assert.Contains("catch (Exception exception)", methodBody, StringComparison.Ordinal);
@@ -387,37 +463,19 @@ public sealed class XamlContractTests
     }
 
     [Fact]
-    public void Tasks_and_countdowns_offer_a_new_action_and_mirror_the_selection()
-    {
-        // Once an item was selected there was no way to start a fresh one
-        // (typing a new title overwrote it), and the countdown list kept its
-        // highlight after the view model cleared the selection.
-        var root = FindRepositoryRoot();
-        var home = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "HomePage.xaml"));
-        var tasks = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "TasksFocusPage.xaml"));
-
-        Assert.Contains("Command=\"{x:Bind ViewModel.NewCountdownCommand}\"", home);
-        Assert.Contains("AutomationProperties.AutomationId=\"HomeNewCountdown\"", home);
-        Assert.Contains("SelectedItem=\"{x:Bind ViewModel.SelectedCountdown, Mode=OneWay}\"", home);
-        Assert.Contains("Command=\"{x:Bind ViewModel.NewTaskCommand}\"", tasks);
-        Assert.Contains("AutomationProperties.AutomationId=\"TasksNew\"", tasks);
-        Assert.Contains("SelectedItem=\"{x:Bind ViewModel.SelectedTask, Mode=OneWay}\"", tasks);
-    }
-
-    [Fact]
     public void Appearance_layering_toggles_sit_with_the_button_that_saves_them()
     {
         // "keep dudu above other windows" and "hide dudu during fullscreen work"
-        // are saved by "save appearance", but sat under "save seasonal look",
-        // which does not save them, so changes made there were lost.
+        // are saved by "save appearance", so they must sit above that button
+        // (they once sat under a separate "save seasonal look" that did not save
+        // them, and changes made there were lost).
         var root = FindRepositoryRoot();
-        var appearance = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "AppearancePage.xaml"));
+        var appearance = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "SettingsPage.xaml"));
         var save = appearance.IndexOf("AutomationProperties.AutomationId=\"AppearanceSave\"", StringComparison.Ordinal);
-        var seasonal = appearance.IndexOf("AutomationProperties.AutomationId=\"AppearanceSaveSeasonal\"", StringComparison.Ordinal);
         var alwaysOnTop = appearance.IndexOf("AutomationProperties.AutomationId=\"AppearanceAlwaysOnTop\"", StringComparison.Ordinal);
         var hideFullscreen = appearance.IndexOf("AutomationProperties.AutomationId=\"AppearanceHideFullscreen\"", StringComparison.Ordinal);
 
-        Assert.True(save > 0 && seasonal > save);
+        Assert.True(save > 0);
         Assert.InRange(alwaysOnTop, 0, save);
         Assert.InRange(hideFullscreen, 0, save);
         // The hotkey only ever shows Dudu and opens Home; it never hides her.
@@ -472,19 +530,6 @@ public sealed class XamlContractTests
         var a = Luminance(first);
         var b = Luminance(second);
         return (Math.Max(a, b) + 0.05) / (Math.Min(a, b) + 0.05);
-    }
-
-    [Fact]
-    public void Appearance_shows_the_shortcut_fallback_next_to_the_shortcut_box()
-    {
-        var root = FindRepositoryRoot();
-        var appearance = File.ReadAllText(Path.Combine(root, "src", "Dudu.App", "Pages", "AppearancePage.xaml"));
-        var box = appearance.IndexOf("AutomationProperties.AutomationId=\"AppearanceShortcut\"", StringComparison.Ordinal);
-        var status = appearance.IndexOf("AutomationProperties.AutomationId=\"AppearanceShortcutStatus\"", StringComparison.Ordinal);
-        var save = appearance.IndexOf("AutomationProperties.AutomationId=\"AppearanceSaveShortcut\"", StringComparison.Ordinal);
-
-        Assert.True(box > 0 && status > box && save > status);
-        Assert.Contains("Text=\"{x:Bind ViewModel.ShortcutStatus, Mode=OneWay}\"", appearance, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryRoot()

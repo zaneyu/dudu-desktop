@@ -10,7 +10,7 @@ using Xunit;
 namespace Dudu.App.Tests.Presentation;
 
 /// <summary>
-/// P2-B: an item held by quiet hours/fullscreen/lock/pause used to live only
+/// P2-B: an item held by fullscreen/lock/pause/a busy pet used to live only
 /// in <see cref="PresentationPolicy"/>'s in-memory queue, so quitting or
 /// crashing while it was held lost it silently. <see cref="PresentationCoordinator"/>
 /// now mirrors that queue into an <see cref="IHeldPresentationRepository"/> --
@@ -20,12 +20,15 @@ namespace Dudu.App.Tests.Presentation;
 /// </summary>
 public sealed class PresentationHeldQueuePersistenceTests
 {
+    private const string NoteOne = "11111111-1111-4111-8111-111111111111";
+    private const string NoteTwo = "22222222-2222-4222-8222-222222222222";
+
     [Fact]
     public async Task A_suppressed_item_is_persisted_and_its_row_removed_once_released()
     {
         var repository = new RecordingHeldPresentationRepository();
         var pet = PetStateMachine.CreateIdle();
-        var quiet = true;
+        var paused = true;
         var played = 0;
         var coordinator = new PresentationCoordinator(
             new PresentationPolicy(TimeSpan.Zero),
@@ -33,26 +36,22 @@ public sealed class PresentationHeldQueuePersistenceTests
             pet,
             (_, _, _) => { played++; return Task.CompletedTask; },
             () => AnimationOptions.Default,
-            isQuietHours: () => quiet,
-            pauseState: () => PauseState.None,
+            pauseState: () => paused ? new PauseState(PauseMode.Indefinite, null) : PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
 
         await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch", body: "text", animationKey: "wave"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
 
         var saved = Assert.Single(repository.Rows.Values);
-        Assert.Equal("Reminder:reminder-1", saved.Key);
-        Assert.Equal("Reminder", saved.Kind);
-        Assert.Equal("reminder-1", saved.Id);
-        Assert.Equal("Stretch", saved.Title);
-        Assert.Equal("text", saved.Body);
-        Assert.Equal("wave", saved.AnimationKey);
+        Assert.Equal($"RemoteNote:{NoteOne}", saved.Key);
+        Assert.Equal("RemoteNote", saved.Kind);
+        Assert.Equal(NoteOne, saved.Id);
         Assert.Equal(0, played);
 
-        quiet = false;
+        paused = false;
         await coordinator.TickAsync(CancellationToken.None);
 
         Assert.Equal(1, played);
@@ -72,8 +71,7 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            isQuietHours: () => true,
-            pauseState: () => PauseState.None,
+            pauseState: () => new PauseState(PauseMode.Indefinite, null),
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
         var messageId = Guid.NewGuid().ToString("D");
@@ -91,42 +89,12 @@ public sealed class PresentationHeldQueuePersistenceTests
     }
 
     [Fact]
-    public async Task An_item_purged_as_expired_while_held_has_its_row_removed()
-    {
-        var repository = new RecordingHeldPresentationRepository();
-        var now = DateTimeOffset.Parse("2026-09-19T08:00:00Z");
-        var coordinator = new PresentationCoordinator(
-            new PresentationPolicy(TimeSpan.Zero),
-            new RecordingNotificationService(),
-            PetStateMachine.CreateIdle(),
-            (_, _, _) => Task.CompletedTask,
-            () => AnimationOptions.Default,
-            isQuietHours: () => true,
-            pauseState: () => PauseState.None,
-            petGate: new SemaphoreSlim(1, 1),
-            utcNow: () => now,
-            heldPresentations: repository);
-
-        await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch", expiresUtc: now.AddMinutes(1)),
-            bypassSuppression: false,
-            CancellationToken.None);
-        Assert.Single(repository.Rows);
-
-        now = now.AddMinutes(2);
-        await coordinator.TickAsync(CancellationToken.None);
-
-        Assert.Empty(repository.Rows);
-    }
-
-    [Fact]
     public async Task A_coordinator_started_user_hidden_holds_an_item_until_shown_then_presents_it_once()
     {
         // Finding B: production must start this gateway user-hidden until
-        // the lifecycle coordinator pushes the first real value -- the
-        // startup reminder tick still advances the reminder engine before
-        // the events sink / startup visibility gate have run, so without
-        // this, a due reminder could publish while the coordinator still
+        // the lifecycle coordinator pushes the first real value -- a note
+        // can arrive before the events sink / startup visibility gate have
+        // run, so without this, it could publish while the coordinator still
         // believed the unset default ("visible") was real, animating it
         // into a window that is not shown yet and deleting its row on that
         // "successful" presentation.
@@ -139,40 +107,39 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => { played++; return Task.CompletedTask; },
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository,
             initialUserHidden: true);
 
         await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
 
-        // Held purely because the coordinator started user-hidden -- quiet
-        // hours/fullscreen/lock/pause are all clear. A hold caused only by
+        // Held purely because the coordinator started user-hidden --
+        // fullscreen/lock/pause/busy are all clear. A hold caused only by
         // user-hidden still toasts immediately (see PublishAsync's toastNow)
         // and persists the row already marked toasted.
         Assert.Equal(0, played);
-        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.Equal(1, notifications.RemoteNoteCalls);
         Assert.True(Assert.Single(repository.Rows.Values).Toasted);
 
         coordinator.SetUserVisible(true);
         await coordinator.TickAsync(CancellationToken.None);
 
         Assert.Equal(1, played);
-        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.Equal(1, notifications.RemoteNoteCalls);
         Assert.Empty(repository.Rows);
     }
 
     [Fact]
     public async Task A_later_occurrence_of_an_already_queued_item_still_toasts_once_hiding_dudu_is_the_only_hold_reason()
     {
-        // Finding 12: while an earlier occurrence of a recurring reminder is
-        // held only by quiet hours, a later occurrence's PublishAsync call
+        // Finding 12: while an earlier copy of the same item is
+        // held only by a pause, a later occurrence's PublishAsync call
         // hits the already-queued early return and (before this fix) got no
-        // toast at all -- for as long as the hold lasted. Once quiet hours
+        // toast at all -- for as long as the hold lasted. Once the pause
         // ends but she has since hidden Dudu from the tray -- so hiding Dudu
         // becomes the sole reason anything is still held -- that later
         // occurrence must still toast, exactly like the toastNow path for a
@@ -180,41 +147,40 @@ public sealed class PresentationHeldQueuePersistenceTests
         var repository = new RecordingHeldPresentationRepository();
         var notifications = new CountingNotificationService();
         var played = 0;
-        var quiet = true;
+        var paused = true;
         var coordinator = new PresentationCoordinator(
             new PresentationPolicy(TimeSpan.Zero),
             notifications,
             PetStateMachine.CreateIdle(),
             (_, _, _) => { played++; return Task.CompletedTask; },
             () => AnimationOptions.Default,
-            isQuietHours: () => quiet,
-            pauseState: () => PauseState.None,
+            pauseState: () => paused ? new PauseState(PauseMode.Indefinite, null) : PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
 
-        // Held purely by quiet hours -- not by hiding Dudu -- so the first
+        // Held purely by a pause -- not by hiding Dudu -- so the first
         // hold does not toast yet.
         await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
-        Assert.Equal(0, notifications.ReminderCalls);
+        Assert.Equal(0, notifications.RemoteNoteCalls);
         Assert.Single(repository.Rows);
 
-        // Quiet hours ends, but she hides Dudu right after -- the item is
+        // The pause ends, but she hides Dudu right after -- the item is
         // still sitting in the queue (nothing has ticked/released it), and
         // hiding Dudu is now the only reason it remains held.
-        quiet = false;
+        paused = false;
         coordinator.SetUserVisible(false);
 
-        // A later occurrence of the same reminder (same Kind:Id key)
+        // A later copy of the same item (same Kind:Id key)
         // publishes while the earlier one is still queued.
         await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
 
-        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.Equal(1, notifications.RemoteNoteCalls);
         Assert.Equal(0, played);
         // Still only one held row -- the later occurrence does not queue a
         // second entry, it only toasts.
@@ -227,7 +193,7 @@ public sealed class PresentationHeldQueuePersistenceTests
         // No second toast on the eventual release -- it is still the same
         // held row, already marked toasted by the later-occurrence toast
         // above.
-        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.Equal(1, notifications.RemoteNoteCalls);
         Assert.Empty(repository.Rows);
     }
 
@@ -243,37 +209,36 @@ public sealed class PresentationHeldQueuePersistenceTests
         // toasted flag right after showing the toast.
         var repository = new RecordingHeldPresentationRepository();
         var notifications = new CountingNotificationService();
-        var quiet = true;
+        var paused = true;
         var coordinator = new PresentationCoordinator(
             new PresentationPolicy(TimeSpan.Zero),
             notifications,
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            isQuietHours: () => quiet,
-            pauseState: () => PauseState.None,
+            pauseState: () => paused ? new PauseState(PauseMode.Indefinite, null) : PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
 
-        // Held purely by quiet hours, same setup as the sibling test.
+        // Held purely by a pause, same setup as the sibling test.
         await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
         Assert.False(repository.Rows.Values.Single().Toasted);
 
-        quiet = false;
+        paused = false;
         coordinator.SetUserVisible(false);
 
         // The later-occurrence toast fires (hiding Dudu is now the sole
         // hold reason) -- the persisted row's Toasted flag must flip to
         // true right along with it, not just the in-memory marker.
         await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
 
-        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.Equal(1, notifications.RemoteNoteCalls);
         var row = Assert.Single(repository.Rows.Values);
         Assert.True(row.Toasted, "The already-queued toast must be persisted, not just marked in memory.");
 
@@ -286,7 +251,6 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => { restartedPlayed++; return Task.CompletedTask; },
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository,
@@ -296,7 +260,7 @@ public sealed class PresentationHeldQueuePersistenceTests
         restarted.SetUserVisible(true);
         await restarted.TickAsync(CancellationToken.None);
 
-        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.Equal(1, notifications.RemoteNoteCalls);
         // The reloaded row was actually released and presented (not just
         // skipped as "already toasted" and left dangling): the pet
         // animation ran once, and its row is gone from the repository.
@@ -315,37 +279,36 @@ public sealed class PresentationHeldQueuePersistenceTests
         // held item was finally released.
         var repository = new RecordingHeldPresentationRepository();
         var notifications = new ThrowOnFirstCallNotificationService();
-        var quiet = true;
+        var paused = true;
         var coordinator = new PresentationCoordinator(
             new PresentationPolicy(TimeSpan.Zero),
             notifications,
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            isQuietHours: () => quiet,
-            pauseState: () => PauseState.None,
+            pauseState: () => paused ? new PauseState(PauseMode.Indefinite, null) : PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
 
-        // Held purely by quiet hours, same setup as the sibling tests.
+        // Held purely by a pause, same setup as the sibling tests.
         await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
         Assert.False(repository.Rows.Values.Single().Toasted);
 
-        quiet = false;
+        paused = false;
         coordinator.SetUserVisible(false);
 
         // The later-occurrence toast fires, but the notification service
         // throws -- the persisted row must stay untoasted, not be marked
         // toasted despite the failure.
         await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
 
-        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.Equal(1, notifications.RemoteNoteCalls);
         Assert.False(
             repository.Rows.Values.Single().Toasted,
             "A failed toast must not be persisted as toasted.");
@@ -357,7 +320,7 @@ public sealed class PresentationHeldQueuePersistenceTests
         coordinator.SetUserVisible(true);
         await coordinator.TickAsync(CancellationToken.None);
 
-        Assert.Equal(2, notifications.ReminderCalls);
+        Assert.Equal(2, notifications.RemoteNoteCalls);
         Assert.Empty(repository.Rows);
     }
 
@@ -366,7 +329,7 @@ public sealed class PresentationHeldQueuePersistenceTests
     {
         var repository = new RecordingHeldPresentationRepository();
         var attempt = 0;
-        var quiet = true;
+        var paused = true;
         var coordinator = new PresentationCoordinator(
             new PresentationPolicy(TimeSpan.Zero),
             new RecordingNotificationService(),
@@ -379,21 +342,20 @@ public sealed class PresentationHeldQueuePersistenceTests
                     : Task.CompletedTask;
             },
             () => AnimationOptions.Default,
-            isQuietHours: () => quiet,
-            pauseState: () => PauseState.None,
+            pauseState: () => paused ? new PauseState(PauseMode.Indefinite, null) : PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
 
         await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
         Assert.Single(repository.Rows);
 
         // Released, but playback fails: the row must still exist afterward,
         // not be lost, so a restart before the next successful retry does
-        // not silently drop the reminder.
-        quiet = false;
+        // not silently drop the item.
+        paused = false;
         await coordinator.TickAsync(CancellationToken.None);
         Assert.Single(repository.Rows);
 
@@ -418,17 +380,16 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.FromException(new InvalidOperationException("playback failed")),
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
 
         await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
 
-        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.Equal(1, notifications.RemoteNoteCalls);
         Assert.True(Assert.Single(repository.Rows.Values).Toasted);
 
         // Every later attempt keeps failing the animation but must not
@@ -437,7 +398,7 @@ public sealed class PresentationHeldQueuePersistenceTests
         await coordinator.TickAsync(CancellationToken.None);
         await coordinator.TickAsync(CancellationToken.None);
 
-        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.Equal(1, notifications.RemoteNoteCalls);
         Assert.True(Assert.Single(repository.Rows.Values).Toasted);
     }
 
@@ -452,69 +413,36 @@ public sealed class PresentationHeldQueuePersistenceTests
         // second time.
         var repository = new RecordingHeldPresentationRepository();
         var notifications = new CountingNotificationService();
-        var quiet = true;
+        var paused = true;
         var coordinator = new PresentationCoordinator(
             new PresentationPolicy(TimeSpan.Zero),
             notifications,
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.FromException(new InvalidOperationException("playback failed")),
             () => AnimationOptions.Default,
-            isQuietHours: () => quiet,
-            pauseState: () => PauseState.None,
+            pauseState: () => paused ? new PauseState(PauseMode.Indefinite, null) : PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
 
         await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
 
-        // Held by quiet hours (not user-hidden), so PublishAsync's own
+        // Held by a pause (not user-hidden), so PublishAsync's own
         // toastNow shortcut never fires -- the row persists untoasted.
-        Assert.Equal(0, notifications.ReminderCalls);
+        Assert.Equal(0, notifications.RemoteNoteCalls);
         Assert.False(Assert.Single(repository.Rows.Values).Toasted);
 
-        // Quiet hours end: TickAsync releases it, the toast fires for the
+        // The pause ends: TickAsync releases it, the toast fires for the
         // first time inside PresentAsync, but the animation keeps failing
         // so the item is requeued via TickAsync's decline path -- which
         // does not re-persist the row wholesale.
-        quiet = false;
+        paused = false;
         await coordinator.TickAsync(CancellationToken.None);
 
-        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.Equal(1, notifications.RemoteNoteCalls);
         Assert.True(Assert.Single(repository.Rows.Values).Toasted);
-    }
-
-    [Fact]
-    public async Task A_failed_release_of_a_previously_held_local_note_does_not_persist_a_toasted_flag()
-    {
-        // Finding D: ShowNotificationAsync shows no real toast for LocalNote
-        // (it falls through to Task.CompletedTask), so persisting the
-        // toasted flag for it would be recording something that never
-        // actually happened.
-        var repository = new RecordingHeldPresentationRepository();
-        var quiet = true;
-        var coordinator = new PresentationCoordinator(
-            new PresentationPolicy(TimeSpan.Zero),
-            new CountingNotificationService(),
-            PetStateMachine.CreateIdle(),
-            (_, _, _) => Task.FromException(new InvalidOperationException("playback failed")),
-            () => AnimationOptions.Default,
-            isQuietHours: () => quiet,
-            pauseState: () => PauseState.None,
-            petGate: new SemaphoreSlim(1, 1),
-            heldPresentations: repository);
-
-        await coordinator.PublishAsync(
-            DurableNotification.LocalNote(new LocalLoveNote("note-1", "Hi"), "wave"),
-            bypassSuppression: false,
-            CancellationToken.None);
-        Assert.False(Assert.Single(repository.Rows.Values).Toasted);
-
-        quiet = false;
-        await coordinator.TickAsync(CancellationToken.None);
-
-        Assert.False(Assert.Single(repository.Rows.Values).Toasted);
     }
 
     [Fact]
@@ -524,51 +452,12 @@ public sealed class PresentationHeldQueuePersistenceTests
         // previous process (nothing published it this run).
         var repository = new RecordingHeldPresentationRepository();
         repository.Seed(new HeldPresentation(
-            "Reminder:reminder-1",
-            "Reminder",
-            "reminder-1",
-            "Stretch",
+            $"RemoteNote:{NoteOne}",
+            "RemoteNote",
+            NoteOne,
             null,
             null,
             null,
-            DateTimeOffset.Parse("2026-09-19T08:00:00Z"),
-            Toasted: false));
-        var policy = new PresentationPolicy(TimeSpan.Zero);
-        var played = 0;
-        var coordinator = new PresentationCoordinator(
-            policy,
-            new RecordingNotificationService(),
-            PetStateMachine.CreateIdle(),
-            (_, _, _) => { played++; return Task.CompletedTask; },
-            () => AnimationOptions.Default,
-            isQuietHours: () => false,
-            pauseState: () => PauseState.None,
-            petGate: new SemaphoreSlim(1, 1),
-            utcNow: () => DateTimeOffset.Parse("2026-09-19T08:05:00Z"),
-            heldPresentations: repository);
-
-        await coordinator.StartAsync(CancellationToken.None);
-        Assert.Equal(1, policy.QueuedCount);
-
-        await coordinator.TickAsync(CancellationToken.None);
-        Assert.Equal(1, played);
-        Assert.Empty(repository.Rows);
-    }
-
-    [Fact]
-    public async Task StartAsync_reloads_a_persisted_local_note_held_item_into_the_queue()
-    {
-        // Same restart scenario as the reminder case above, but for a
-        // LocalNote row -- ToDurableNotification's LocalNote branch requires
-        // both Body and AnimationKey, unlike RemoteNote's id-only row.
-        var repository = new RecordingHeldPresentationRepository();
-        repository.Seed(new HeldPresentation(
-            "LocalNote:note-1",
-            "LocalNote",
-            "note-1",
-            "A little note for you",
-            "You are doing great.",
-            "peek",
             null,
             DateTimeOffset.Parse("2026-09-19T08:00:00Z"),
             Toasted: false));
@@ -580,7 +469,6 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => { played++; return Task.CompletedTask; },
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             utcNow: () => DateTimeOffset.Parse("2026-09-19T08:05:00Z"),
@@ -599,10 +487,10 @@ public sealed class PresentationHeldQueuePersistenceTests
     {
         var repository = new RecordingHeldPresentationRepository();
         repository.Seed(new HeldPresentation(
-            "Reminder:bedtime",
-            "Reminder",
-            "bedtime",
-            "Goodnight",
+            $"RemoteNote:{NoteOne}",
+            "RemoteNote",
+            NoteOne,
+            null,
             null,
             null,
             DateTimeOffset.Parse("2026-09-19T00:00:00Z"),
@@ -615,7 +503,6 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             // Past the row's ExpiresUtc.
@@ -648,28 +535,101 @@ public sealed class PresentationHeldQueuePersistenceTests
             DateTimeOffset.Parse("2026-09-19T08:00:00Z"),
             Toasted: false));
         var policy = new PresentationPolicy(TimeSpan.Zero);
+        var reporter = new RecordingErrorReporter();
         var coordinator = new PresentationCoordinator(
             policy,
             new RecordingNotificationService(),
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
-            heldPresentations: repository);
+            errorReporter: reporter,
+            heldPresentations: repository,
+            // Pin the clock: with the real clock the 2026-09-19 row ages out
+            // (MaxHeldAge) before its kind is ever looked at.
+            utcNow: () => DateTimeOffset.Parse("2026-09-19T08:05:00Z"));
 
         await coordinator.StartAsync(CancellationToken.None);
 
         Assert.Equal(0, policy.QueuedCount);
         Assert.Empty(repository.Rows);
+        // Genuinely unknown (not a known retired kind): still reported.
+        Assert.Contains(reporter.Reports, report => report.Operation == "presentation-held-load");
+    }
+
+    [Theory]
+    [InlineData("Reminder")]
+    [InlineData("LocalNote")]
+    public async Task Legacy_held_kinds_are_deleted_silently_and_remote_notes_still_load(string legacyKind)
+    {
+        // Upgrade safety: an install that ran an older build can still have
+        // held rows for retired features (reminders, the local note jar).
+        // They must be deleted on load without surfacing and without a
+        // presentation-held-load diagnostic, while a held partner note next
+        // to them still loads and is delivered later.
+        var queuedUtc = DateTimeOffset.Parse("2026-09-19T08:00:00Z");
+        var repository = new RecordingHeldPresentationRepository();
+        repository.Seed(new HeldPresentation(
+            $"{legacyKind}:legacy-1",
+            legacyKind,
+            "legacy-1",
+            "Stretch",
+            "stand up and roll your shoulders",
+            "note-arrival",
+            null,
+            queuedUtc,
+            Toasted: true));
+        repository.Seed(new HeldPresentation(
+            $"RemoteNote:{NoteOne}",
+            "RemoteNote",
+            NoteOne,
+            null,
+            null,
+            null,
+            null,
+            queuedUtc,
+            Toasted: false));
+        var policy = new PresentationPolicy(TimeSpan.Zero);
+        var reporter = new RecordingErrorReporter();
+        var played = 0;
+        var paused = new PauseState(PauseMode.Indefinite, null);
+        var coordinator = new PresentationCoordinator(
+            policy,
+            new RecordingNotificationService(),
+            PetStateMachine.CreateIdle(),
+            (_, _, _) => { played++; return Task.CompletedTask; },
+            () => AnimationOptions.Default,
+            pauseState: () => paused,
+            petGate: new SemaphoreSlim(1, 1),
+            utcNow: () => queuedUtc.AddMinutes(5),
+            errorReporter: reporter,
+            heldPresentations: repository);
+
+        await coordinator.StartAsync(TestContext.Current.CancellationToken);
+
+        Assert.DoesNotContain(repository.Rows.Values, row => row.Kind == legacyKind);
+        Assert.Single(repository.Rows.Values, row => row.Kind == "RemoteNote");
+        Assert.Equal(1, policy.QueuedCount);
+        Assert.Empty(reporter.Reports);
+
+        // Paused: nothing plays. Once the pause ends, only the partner note
+        // is delivered -- the legacy item never surfaces.
+        await coordinator.TickAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(0, played);
+
+        paused = PauseState.None;
+        await coordinator.TickAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(1, played);
+        Assert.Empty(repository.Rows);
+        Assert.Empty(reporter.Reports);
     }
 
     [Fact]
     public async Task A_toast_shown_while_held_is_not_shown_again_after_a_restart_reload()
     {
         // H2: _toastedWhileHeldIds used to live only in memory, so a
-        // reminder toasted once while Dudu was hidden in the tray would
+        // note toasted once while Dudu was hidden in the tray would
         // toast a second time once a restart reloaded the same row from
         // disk. The persisted `toasted` column must survive that restart
         // and suppress the duplicate.
@@ -681,7 +641,6 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
@@ -691,11 +650,11 @@ public sealed class PresentationHeldQueuePersistenceTests
         firstRun.SetUserVisible(false);
 
         await firstRun.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
 
-        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.Equal(1, notifications.RemoteNoteCalls);
         var saved = Assert.Single(repository.Rows.Values);
         Assert.True(saved.Toasted);
 
@@ -707,7 +666,6 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
@@ -716,7 +674,7 @@ public sealed class PresentationHeldQueuePersistenceTests
 
         await secondRun.TickAsync(CancellationToken.None);
 
-        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.Equal(1, notifications.RemoteNoteCalls);
         Assert.Empty(repository.Rows);
     }
 
@@ -730,26 +688,25 @@ public sealed class PresentationHeldQueuePersistenceTests
         // TickAsync from working, only fail to survive a restart.
         var repository = new ThrowingHeldPresentationRepository();
         var played = 0;
-        var quiet = true;
+        var paused = true;
         var coordinator = new PresentationCoordinator(
             new PresentationPolicy(TimeSpan.Zero),
             new RecordingNotificationService(),
             PetStateMachine.CreateIdle(),
             (_, _, _) => { played++; return Task.CompletedTask; },
             () => AnimationOptions.Default,
-            isQuietHours: () => quiet,
-            pauseState: () => PauseState.None,
+            pauseState: () => paused ? new PauseState(PauseMode.Indefinite, null) : PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
 
         await coordinator.StartAsync(CancellationToken.None);
 
         await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
 
-        quiet = false;
+        paused = false;
         await coordinator.TickAsync(CancellationToken.None);
 
         Assert.Equal(1, played);
@@ -772,7 +729,7 @@ public sealed class PresentationHeldQueuePersistenceTests
         var repository = new BlockingSaveHeldPresentationRepository(saveStarted, releaseSave.Task);
         var playbackStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releasePlayback = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var quiet = true;
+        var paused = true;
         var playbackAttempt = 0;
         var coordinator = new PresentationCoordinator(
             new PresentationPolicy(TimeSpan.Zero),
@@ -789,11 +746,10 @@ public sealed class PresentationHeldQueuePersistenceTests
                 }
             },
             () => AnimationOptions.Default,
-            isQuietHours: () => quiet,
-            pauseState: () => PauseState.None,
+            pauseState: () => paused ? new PauseState(PauseMode.Indefinite, null) : PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
-        var item = DurableNotification.Reminder("reminder-1", "Stretch");
+        var item = DurableNotification.RemoteNote(NoteOne);
 
         // PublishAsync enqueues item and starts persisting it; block mid-save.
         var publish = coordinator.PublishAsync(item, bypassSuppression: false, CancellationToken.None);
@@ -801,7 +757,7 @@ public sealed class PresentationHeldQueuePersistenceTests
 
         // A concurrent tick dequeues the same item for presentation while the
         // save above is still in flight.
-        quiet = false;
+        paused = false;
         var tick = coordinator.TickAsync(CancellationToken.None);
         await playbackStarted.Task;
 
@@ -820,7 +776,7 @@ public sealed class PresentationHeldQueuePersistenceTests
         Assert.Single(repository.Rows);
 
         // A later, successful tick clears it.
-        quiet = false;
+        paused = false;
         await coordinator.TickAsync(CancellationToken.None);
         Assert.Empty(repository.Rows);
     }
@@ -828,7 +784,7 @@ public sealed class PresentationHeldQueuePersistenceTests
     [Fact]
     public async Task DiscardHeldAsync_removes_a_queued_items_marker_row_and_queue_entry()
     {
-        // Finding 13: completing a reminder from the Reminders page advances
+        // Finding 13: revealing a note from the Love Notes page consumes
         // it directly, never going through PresentAsync -- so a copy that
         // was separately queued/held (e.g. it became due while she had Dudu
         // hidden) must be discarded explicitly, or it resurfaces on a later
@@ -843,7 +799,6 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => { played++; return Task.CompletedTask; },
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
@@ -854,14 +809,14 @@ public sealed class PresentationHeldQueuePersistenceTests
         coordinator.SetUserVisible(false);
 
         await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
-        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.Equal(1, notifications.RemoteNoteCalls);
         Assert.Single(repository.Rows);
         Assert.Equal(1, policy.QueuedCount);
 
-        await coordinator.DiscardHeldAsync(PresentationItemKind.Reminder, "reminder-1", CancellationToken.None);
+        await coordinator.DiscardHeldAsync(PresentationItemKind.RemoteNote, NoteOne, CancellationToken.None);
 
         Assert.Equal(0, policy.QueuedCount);
         Assert.Empty(repository.Rows);
@@ -870,17 +825,18 @@ public sealed class PresentationHeldQueuePersistenceTests
         coordinator.SetUserVisible(true);
         await coordinator.TickAsync(CancellationToken.None);
         Assert.Equal(0, played);
-        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.Equal(1, notifications.RemoteNoteCalls);
     }
 
     [Fact]
-    public async Task DiscardHeldByKindAsync_removes_every_queued_item_of_that_kind_but_leaves_others()
+    public async Task DiscardHeldByKindAsync_removes_every_queued_item_of_that_kind()
     {
         // Finding 6(b): forgetting a broken pairing deletes every unopened
         // remote note locally in one pass (RemoteSyncService.ForgetPairingLocallyAsync
         // -> IRemoteEnvelopeRepository.DeleteAllAsync), so any RemoteNote
-        // still queued or held for later ambient presentation must go with
-        // them -- but a held Reminder must be left completely alone.
+        // still queued or held for later presentation must go with them.
+        // (RemoteNote is the only durable kind left since the local note
+        // jar was removed, so there is no other kind to leave alone.)
         var repository = new RecordingHeldPresentationRepository();
         var notifications = new CountingNotificationService();
         var policy = new PresentationPolicy(TimeSpan.Zero);
@@ -890,7 +846,6 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
@@ -908,18 +863,13 @@ public sealed class PresentationHeldQueuePersistenceTests
             DurableNotification.RemoteNote(Guid.NewGuid().ToString("D")),
             bypassSuppression: false,
             CancellationToken.None);
-        await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
-            bypassSuppression: false,
-            CancellationToken.None);
-        Assert.Equal(3, policy.QueuedCount);
-        Assert.Equal(3, repository.Rows.Count);
+        Assert.Equal(2, policy.QueuedCount);
+        Assert.Equal(2, repository.Rows.Count);
 
         await coordinator.DiscardHeldByKindAsync(PresentationItemKind.RemoteNote, CancellationToken.None);
 
-        Assert.Equal(1, policy.QueuedCount);
-        Assert.Single(repository.Rows);
-        Assert.Equal("Reminder:reminder-1", repository.Rows.Single().Key);
+        Assert.Equal(0, policy.QueuedCount);
+        Assert.Empty(repository.Rows);
 
         // Both queued-while-hidden publishes above already toasted
         // immediately (PublishAsync's toastNow, same as the sibling test):
@@ -944,7 +894,7 @@ public sealed class PresentationHeldQueuePersistenceTests
         // failure could still requeue and re-persist it.
         var repository = new RecordingHeldPresentationRepository();
         var policy = new PresentationPolicy(TimeSpan.Zero);
-        var quiet = true;
+        var paused = true;
         var playStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releasePlay = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var messageId = Guid.NewGuid().ToString("D");
@@ -959,8 +909,7 @@ public sealed class PresentationHeldQueuePersistenceTests
                 throw new InvalidOperationException("playback failed");
             },
             () => AnimationOptions.Default,
-            isQuietHours: () => quiet,
-            pauseState: () => PauseState.None,
+            pauseState: () => paused ? new PauseState(PauseMode.Indefinite, null) : PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
 
@@ -970,7 +919,7 @@ public sealed class PresentationHeldQueuePersistenceTests
             CancellationToken.None);
         Assert.Single(repository.Rows);
 
-        quiet = false;
+        paused = false;
         var tick = coordinator.TickAsync(CancellationToken.None);
         await playStarted.Task;
 
@@ -994,7 +943,6 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
@@ -1021,14 +969,13 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
 
-        await coordinator.DiscardHeldAsync(PresentationItemKind.Reminder, null!, CancellationToken.None);
-        await coordinator.DiscardHeldAsync(PresentationItemKind.Reminder, "", CancellationToken.None);
-        await coordinator.DiscardHeldAsync(PresentationItemKind.Reminder, "   ", CancellationToken.None);
+        await coordinator.DiscardHeldAsync(PresentationItemKind.RemoteNote, null!, CancellationToken.None);
+        await coordinator.DiscardHeldAsync(PresentationItemKind.RemoteNote, "", CancellationToken.None);
+        await coordinator.DiscardHeldAsync(PresentationItemKind.RemoteNote, "   ", CancellationToken.None);
 
         Assert.Empty(repository.Rows);
     }
@@ -1042,7 +989,7 @@ public sealed class PresentationHeldQueuePersistenceTests
         // returns), so the old "still relevant" guard -- which counted ANY
         // _presentingIds membership, even the caller's own -- could never
         // actually fire for this path. If a concurrent DiscardHeldAsync
-        // (e.g. she completed the reminder from the Reminders page while
+        // (e.g. she revealed the note from the Love Notes page while
         // this retry was mid-persist) took the item out of the queue for
         // good during that window, the guard still saw it as "relevant" and
         // kept the stale row, which SaveAsync's own delayed write then
@@ -1057,21 +1004,20 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.FromException(new InvalidOperationException("playback failed")),
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
-        var item = DurableNotification.Reminder("reminder-1", "Stretch");
+        var item = DurableNotification.RemoteNote(NoteOne);
 
         // The immediate present attempt fails, so PublishAsync requeues and
         // persists the item; block mid-save.
         var publish = coordinator.PublishAsync(item, bypassSuppression: false, CancellationToken.None);
         await saveStarted.Task;
 
-        // While that save is still in flight, the reminder is separately
-        // completed from the Reminders page (never goes through
+        // While that save is still in flight, the note is separately
+        // revealed from the Love Notes page (never goes through
         // PresentAsync at all), discarding this same held item for good.
-        await coordinator.DiscardHeldAsync(PresentationItemKind.Reminder, "reminder-1", CancellationToken.None);
+        await coordinator.DiscardHeldAsync(PresentationItemKind.RemoteNote, NoteOne, CancellationToken.None);
 
         // Let the blocked save land -- it writes unconditionally, so the row
         // reappears regardless of the discard above; only the post-save
@@ -1086,8 +1032,8 @@ public sealed class PresentationHeldQueuePersistenceTests
     public async Task A_discard_during_an_in_flight_immediate_presentation_drops_the_item_for_good_if_it_then_fails()
     {
         // Finding E: DiscardHeldAsync used to ignore _presentingIds
-        // entirely, so discarding an item (e.g. completing the reminder
-        // from the Reminders page) while PublishAsync's own immediate-
+        // entirely, so discarding an item (e.g. revealing the note
+        // from the Love Notes page) while PublishAsync's own immediate-
         // present attempt for that same item was still in flight did not
         // stop a subsequent failure from requeuing and re-persisting it --
         // resurrecting something already handled.
@@ -1106,20 +1052,19 @@ public sealed class PresentationHeldQueuePersistenceTests
                 throw new InvalidOperationException("playback failed");
             },
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
 
         var publish = coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
         await playStarted.Task;
 
-        // Completed from the Reminders page while the immediate attempt
+        // Revealed from the Love Notes page while the immediate attempt
         // above is still in flight.
-        await coordinator.DiscardHeldAsync(PresentationItemKind.Reminder, "reminder-1", CancellationToken.None);
+        await coordinator.DiscardHeldAsync(PresentationItemKind.RemoteNote, NoteOne, CancellationToken.None);
 
         releasePlay.SetResult();
         await publish;
@@ -1141,7 +1086,7 @@ public sealed class PresentationHeldQueuePersistenceTests
         // PublishAsync's immediate-present failure path.
         var repository = new RecordingHeldPresentationRepository();
         var policy = new PresentationPolicy(TimeSpan.Zero);
-        var quiet = true;
+        var paused = true;
         var playStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releasePlay = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var coordinator = new PresentationCoordinator(
@@ -1155,22 +1100,21 @@ public sealed class PresentationHeldQueuePersistenceTests
                 throw new InvalidOperationException("playback failed");
             },
             () => AnimationOptions.Default,
-            isQuietHours: () => quiet,
-            pauseState: () => PauseState.None,
+            pauseState: () => paused ? new PauseState(PauseMode.Indefinite, null) : PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
 
         await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
         Assert.Single(repository.Rows);
 
-        quiet = false;
+        paused = false;
         var tick = coordinator.TickAsync(CancellationToken.None);
         await playStarted.Task;
 
-        await coordinator.DiscardHeldAsync(PresentationItemKind.Reminder, "reminder-1", CancellationToken.None);
+        await coordinator.DiscardHeldAsync(PresentationItemKind.RemoteNote, NoteOne, CancellationToken.None);
 
         releasePlay.SetResult();
         await tick;
@@ -1186,11 +1130,10 @@ public sealed class PresentationHeldQueuePersistenceTests
     [Fact]
     public void Held_presentation_key_format_matches_the_literal_strings_the_cascading_deletes_rely_on()
     {
-        // M3's cascading deletes in LocalNoteRepository/ReminderRepository/
-        // RemoteEnvelopeRepository match a held row's key by literal string
-        // ('LocalNote:' || $id, etc.) since Infrastructure cannot reference
-        // this App-layer enum. This is the tripwire: if PresentationItemKind
-        // were ever renamed, those SQL literals would silently stop matching
+        // M3's cascading delete in RemoteEnvelopeRepository matches a held
+        // row's key by literal string ('RemoteNote:' || $id) since
+        // Infrastructure cannot reference this App-layer enum. This is the
+        // tripwire: if PresentationItemKind were ever renamed, that SQL literal would silently stop matching
         // and M3's fix would quietly regress with no compile error.
         // Finding 8 (test bug): RemoteNote's factory requires a protocol-safe
         // "D"-format GUID and throws on anything else (see
@@ -1198,10 +1141,6 @@ public sealed class PresentationHeldQueuePersistenceTests
         Assert.Equal(
             $"RemoteNote:{Guid.Empty:D}",
             DurableNotification.RemoteNote(Guid.Empty.ToString("D")).Key);
-        Assert.Equal("Reminder:reminder-1", DurableNotification.Reminder("reminder-1", "Stretch").Key);
-        Assert.Equal(
-            "LocalNote:note-1",
-            DurableNotification.LocalNote(new LocalLoveNote("note-1", "Hi"), "wave").Key);
     }
 
     [Fact]
@@ -1228,15 +1167,14 @@ public sealed class PresentationHeldQueuePersistenceTests
                 await playbackGate.Task;
             },
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             heldPresentations: repository);
-        var item = DurableNotification.Reminder("reminder-1", "Stretch");
+        var item = DurableNotification.RemoteNote(NoteOne);
         policy.Enqueue(item);
         await repository.SaveAsync(
             new HeldPresentation(
-                item.Key, "Reminder", "reminder-1", "Stretch", null, null, null,
+                item.Key, "RemoteNote", NoteOne, null, null, null, null,
                 DateTimeOffset.Parse("2026-09-19T08:00:00Z"), Toasted: false),
             CancellationToken.None);
 
@@ -1280,9 +1218,9 @@ public sealed class PresentationHeldQueuePersistenceTests
         // consume) and left its row on disk to fail the same way forever.
         var queuedUtc = DateTimeOffset.Parse("2026-09-19T08:00:00Z");
         var first = new HeldPresentation(
-            "Reminder:reminder-1#a", "Reminder", "reminder-1", "Stretch", null, null, null,
+            $"RemoteNote:{NoteOne}#a", "RemoteNote", NoteOne, null, null, null, null,
             queuedUtc, Toasted: false);
-        var duplicate = first with { Key = "Reminder:reminder-1#b", Toasted = true };
+        var duplicate = first with { Key = $"RemoteNote:{NoteOne}#b", Toasted = true };
         var repository = new RecordingHeldPresentationRepository();
         repository.Seed(first);
         repository.Seed(duplicate);
@@ -1295,7 +1233,6 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => { played++; return Task.CompletedTask; },
             () => AnimationOptions.Default,
-            isQuietHours: () => false,
             pauseState: () => PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             utcNow: () => queuedUtc.AddMinutes(5),
@@ -1313,7 +1250,7 @@ public sealed class PresentationHeldQueuePersistenceTests
         // If the refused row's Toasted=true marker had leaked into
         // _toastedWhileHeldIds, this toast would have been silently
         // swallowed regardless of which row actually survived.
-        Assert.Equal(1, notifications.ReminderCalls);
+        Assert.Equal(1, notifications.RemoteNoteCalls);
         Assert.Equal(1, played);
     }
 
@@ -1334,18 +1271,17 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            isQuietHours: () => true,
-            pauseState: () => PauseState.None,
+            pauseState: () => new PauseState(PauseMode.Indefinite, null),
             petGate: new SemaphoreSlim(1, 1),
             errorReporter: reporter,
             heldPresentations: repository);
 
         await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
         await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-2", "Drink water"),
+            DurableNotification.RemoteNote(NoteTwo),
             bypassSuppression: false,
             CancellationToken.None);
 
@@ -1358,16 +1294,16 @@ public sealed class PresentationHeldQueuePersistenceTests
     public async Task StartAsync_drops_and_deletes_an_eight_day_old_held_row_but_keeps_a_six_day_old_one()
     {
         // Finding 20 (part 1): MaxHeldAge (7 days) is the only bound on "the
-        // same reminder shown forever" (e.g. from a toast that keeps failing
+        // same item shown forever" (e.g. from a toast that keeps failing
         // and requeuing) -- nothing previously exercised the actual
         // comparison at either side of the boundary.
         var now = DateTimeOffset.Parse("2026-09-19T08:00:00Z");
         var repository = new RecordingHeldPresentationRepository();
         repository.Seed(new HeldPresentation(
-            "Reminder:old", "Reminder", "old", "Stale", null, null, null,
+            $"RemoteNote:{NoteOne}", "RemoteNote", NoteOne, null, null, null, null,
             now - TimeSpan.FromDays(8), Toasted: false));
         repository.Seed(new HeldPresentation(
-            "Reminder:fresh", "Reminder", "fresh", "Recent", null, null, null,
+            $"RemoteNote:{NoteTwo}", "RemoteNote", NoteTwo, null, null, null, null,
             now - TimeSpan.FromDays(6), Toasted: false));
         var policy = new PresentationPolicy(TimeSpan.Zero);
         var coordinator = new PresentationCoordinator(
@@ -1376,8 +1312,7 @@ public sealed class PresentationHeldQueuePersistenceTests
             PetStateMachine.CreateIdle(),
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            isQuietHours: () => true,
-            pauseState: () => PauseState.None,
+            pauseState: () => new PauseState(PauseMode.Indefinite, null),
             petGate: new SemaphoreSlim(1, 1),
             utcNow: () => now,
             heldPresentations: repository);
@@ -1386,7 +1321,7 @@ public sealed class PresentationHeldQueuePersistenceTests
 
         Assert.Equal(1, policy.QueuedCount);
         var remaining = Assert.Single(repository.Rows.Values);
-        Assert.Equal("Reminder:fresh", remaining.Key);
+        Assert.Equal($"RemoteNote:{NoteTwo}", remaining.Key);
     }
 
     [Fact]
@@ -1399,7 +1334,7 @@ public sealed class PresentationHeldQueuePersistenceTests
         var originalQueuedUtc = DateTimeOffset.Parse("2026-09-19T08:00:00Z");
         var repository = new RecordingHeldPresentationRepository();
         var attempt = 0;
-        var quiet = true;
+        var paused = true;
         var now = originalQueuedUtc;
         var coordinator = new PresentationCoordinator(
             new PresentationPolicy(TimeSpan.Zero),
@@ -1413,21 +1348,20 @@ public sealed class PresentationHeldQueuePersistenceTests
                     : Task.CompletedTask;
             },
             () => AnimationOptions.Default,
-            isQuietHours: () => quiet,
-            pauseState: () => PauseState.None,
+            pauseState: () => paused ? new PauseState(PauseMode.Indefinite, null) : PauseState.None,
             petGate: new SemaphoreSlim(1, 1),
             utcNow: () => now,
             heldPresentations: repository);
 
         await coordinator.PublishAsync(
-            DurableNotification.Reminder("reminder-1", "Stretch"),
+            DurableNotification.RemoteNote(NoteOne),
             bypassSuppression: false,
             CancellationToken.None);
         Assert.Equal(originalQueuedUtc, Assert.Single(repository.Rows.Values).QueuedUtc);
 
         // Time passes, then a released retry fails.
         now = originalQueuedUtc.AddHours(3);
-        quiet = false;
+        paused = false;
         await coordinator.TickAsync(CancellationToken.None);
 
         var afterFailedRetry = Assert.Single(repository.Rows.Values);
@@ -1436,23 +1370,13 @@ public sealed class PresentationHeldQueuePersistenceTests
 
     private sealed class RecordingNotificationService : INotificationService
     {
-        public Task ShowReminderAsync(string reminderId, string title, CancellationToken cancellationToken) =>
-            Task.CompletedTask;
-
         public Task ShowRemoteNoteArrivalAsync(Guid messageId, CancellationToken cancellationToken) =>
             Task.CompletedTask;
     }
 
     private sealed class CountingNotificationService : INotificationService
     {
-        public int ReminderCalls { get; private set; }
         public int RemoteNoteCalls { get; private set; }
-
-        public Task ShowReminderAsync(string reminderId, string title, CancellationToken cancellationToken)
-        {
-            ReminderCalls++;
-            return Task.CompletedTask;
-        }
 
         public Task ShowRemoteNoteArrivalAsync(Guid messageId, CancellationToken cancellationToken)
         {
@@ -1463,21 +1387,18 @@ public sealed class PresentationHeldQueuePersistenceTests
 
     private sealed class ThrowOnFirstCallNotificationService : INotificationService
     {
-        public int ReminderCalls { get; private set; }
+        public int RemoteNoteCalls { get; private set; }
 
-        public Task ShowReminderAsync(string reminderId, string title, CancellationToken cancellationToken)
+        public Task ShowRemoteNoteArrivalAsync(Guid messageId, CancellationToken cancellationToken)
         {
-            ReminderCalls++;
-            if (ReminderCalls == 1)
+            RemoteNoteCalls++;
+            if (RemoteNoteCalls == 1)
             {
                 throw new InvalidOperationException("simulated toast failure");
             }
 
             return Task.CompletedTask;
         }
-
-        public Task ShowRemoteNoteArrivalAsync(Guid messageId, CancellationToken cancellationToken) =>
-            Task.CompletedTask;
     }
 
     // Finding 17: this fake's Dictionary is mutated from concurrent tasks in

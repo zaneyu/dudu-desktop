@@ -41,21 +41,18 @@ public sealed class PackagedStartupRegistrationTests
     }
 
     [Theory]
-    [InlineData("action=open-note;messageId=11111111-1111-4111-8111-111111111111", NotificationActivationAction.OpenNote, "11111111-1111-4111-8111-111111111111", null)]
-    [InlineData("action=reminder-done;reminderId=reminder-1", NotificationActivationAction.ReminderDone, null, "reminder-1")]
-    [InlineData("action=reminder-snooze;reminderId=reminder-2", NotificationActivationAction.ReminderSnooze, null, "reminder-2")]
+    [InlineData("action=open-note;messageId=11111111-1111-4111-8111-111111111111", NotificationActivationAction.OpenNote, "11111111-1111-4111-8111-111111111111")]
+    [InlineData("action=open-note&messageId=22222222-2222-4222-8222-222222222222", NotificationActivationAction.OpenNote, "22222222-2222-4222-8222-222222222222")]
     public void Notification_activation_arguments_remain_package_identity_independent(
         string arguments,
         NotificationActivationAction expectedAction,
-        string? expectedMessageId,
-        string? expectedReminderId)
+        string expectedMessageId)
     {
         var activation = NotificationActivation.TryParse(arguments);
 
         Assert.NotNull(activation);
         Assert.Equal(expectedAction, activation!.Action);
         Assert.Equal(expectedMessageId, activation.MessageId);
-        Assert.Equal(expectedReminderId, activation.ReminderId);
     }
 
     [Theory]

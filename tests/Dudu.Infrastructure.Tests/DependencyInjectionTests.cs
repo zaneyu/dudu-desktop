@@ -11,24 +11,67 @@ namespace Dudu.Infrastructure.Tests;
 
 public sealed class DependencyInjectionTests
 {
+    [Theory]
+    [InlineData("Dudu.Core.Reminders.ReminderEngine")]
+    [InlineData("Dudu.Core.Reminders.ReminderScheduler")]
+    [InlineData("Dudu.Core.Reminders.LocalReminderDefaults")]
+    [InlineData("Dudu.Core.Abstractions.IReminderRepository")]
+    [InlineData("Dudu.Core.Models.Reminder")]
+    public void Removed_reminder_types_no_longer_exist(string typeName)
+    {
+        Assert.Null(typeof(Preferences).Assembly.GetType(typeName));
+    }
+
+    [Fact]
+    public void Removed_reminder_repository_no_longer_exists()
+    {
+        Assert.Null(typeof(Database).Assembly.GetType("Dudu.Infrastructure.Data.Repositories.ReminderRepository"));
+    }
+
+    [Theory]
+    [InlineData("Dudu.Infrastructure.Data.Repositories.TaskRepository")]
+    [InlineData("Dudu.Infrastructure.Data.Repositories.FocusSessionRepository")]
+    public void Removed_task_and_focus_repositories_no_longer_exist(string typeName)
+    {
+        Assert.Null(typeof(Database).Assembly.GetType(typeName));
+    }
+
+    [Theory]
+    [InlineData("Dudu.Core.Countdowns.CountdownService")]
+    [InlineData("Dudu.Core.CheckIns.CheckInService")]
+    [InlineData("Dudu.Core.Reminders.ReminderEngine")]
+    [InlineData("Dudu.Core.Focus.FocusService")]
+    [InlineData("Dudu.Core.Tasks.TaskService")]
+    [InlineData("Dudu.Core.Notes.LocalNoteSelector")]
+    [InlineData("Dudu.Core.Models.Countdown")]
+    [InlineData("Dudu.Core.Models.MoodCheckIn")]
+    [InlineData("Dudu.Core.Abstractions.ICountdownRepository")]
+    [InlineData("Dudu.Core.Abstractions.ICheckInRepository")]
+    public void Removed_feature_types_no_longer_exist(string typeName)
+    {
+        Assert.Null(typeof(Dudu.Core.Models.Preferences).Assembly.GetType(typeName));
+    }
+
+    [Theory]
+    [InlineData("Dudu.Infrastructure.Data.Repositories.CountdownRepository")]
+    [InlineData("Dudu.Infrastructure.Data.Repositories.CheckInRepository")]
+    public void Removed_countdown_and_check_in_repositories_no_longer_exist(string typeName)
+    {
+        Assert.Null(typeof(Database).Assembly.GetType(typeName));
+    }
+
     [Fact]
     public async Task Infrastructure_registration_resolves_every_repository_once()
     {
         using var fixture = ServiceFixture.Build();
         using var provider = fixture.Provider;
 
-        Assert.IsType<ReminderRepository>(provider.GetRequiredService<IReminderRepository>());
-        Assert.IsType<ReminderRepository>(provider.GetRequiredService<IReminderWriter>());
-        Assert.IsType<CheckInRepository>(provider.GetRequiredService<ICheckInRepository>());
-        Assert.IsType<CountdownRepository>(provider.GetRequiredService<ICountdownRepository>());
-        Assert.IsType<FocusSessionRepository>(provider.GetRequiredService<IFocusSessionRepository>());
         Assert.IsType<HeldPresentationRepository>(provider.GetRequiredService<IHeldPresentationRepository>());
         Assert.IsType<LocalNoteRepository>(provider.GetRequiredService<ILocalNoteRepository>());
         Assert.IsType<PetPlacementRepository>(provider.GetRequiredService<IPetPlacementRepository>());
         Assert.IsType<PreferencesRepository>(provider.GetRequiredService<IPreferencesRepository>());
         Assert.IsType<ProfileRepository>(provider.GetRequiredService<IProfileRepository>());
         Assert.IsType<RemoteEnvelopeRepository>(provider.GetRequiredService<IRemoteEnvelopeRepository>());
-        Assert.IsType<TaskRepository>(provider.GetRequiredService<ITaskRepository>());
         Assert.IsType<CompanionFeatureTransactionService>(
             provider.GetRequiredService<ICompanionFeatureTransactions>());
         Assert.Same(
@@ -39,14 +82,11 @@ public sealed class DependencyInjectionTests
             provider.GetRequiredService<LocalDataMaintenanceService>());
 
         Assert.Same(
-            provider.GetRequiredService<IFocusSessionRepository>(),
-            provider.GetRequiredService<IFocusSessionRepository>());
+            provider.GetRequiredService<ILocalNoteRepository>(),
+            provider.GetRequiredService<ILocalNoteRepository>());
         Assert.Same(
-            provider.GetRequiredService<FocusSessionRepository>(),
-            provider.GetRequiredService<IFocusSessionRepository>());
-        Assert.Same(
-            provider.GetRequiredService<IReminderRepository>(),
-            provider.GetRequiredService<IReminderWriter>());
+            provider.GetRequiredService<LocalNoteRepository>(),
+            provider.GetRequiredService<ILocalNoteRepository>());
         Assert.Same(
             provider.GetRequiredService<Database>(),
             provider.GetRequiredService<Database>());

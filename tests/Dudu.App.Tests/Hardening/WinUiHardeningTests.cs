@@ -50,10 +50,10 @@ public sealed class WinUiHardeningTests
         var seen = new List<TrayCommand>();
         using var service = new TrayIconService(native, seen.Add);
         service.Attach(42);
-        // Index 7 == Exit (Commands.Count == 7); index 8 is out of range.
-        Assert.True(service.HandleWindowMessage(0x0111, 7, 0));
+        // Index 4 == Exit (Commands.Count == 4); index 5 is out of range.
+        Assert.True(service.HandleWindowMessage(0x0111, 4, 0));
         Assert.Equal([TrayCommand.Exit], seen);
-        Assert.False(service.HandleWindowMessage(0x0111, 8, 0));
+        Assert.False(service.HandleWindowMessage(0x0111, 5, 0));
     }
 
     [Fact]
@@ -88,10 +88,12 @@ public sealed class WinUiHardeningTests
     [Fact]
     public void Notification_activation_constrains_ids()
     {
-        Assert.NotNull(NotificationActivation.TryParse("action=reminder-done&reminderId=default-hydration"));
-        Assert.Null(NotificationActivation.TryParse("action=reminder-done&reminderId=../evil"));
-        Assert.Null(NotificationActivation.TryParse("action=reminder-done&reminderId=" + new string('a', 200)));
-        Assert.Null(NotificationActivation.TryParse("action=reminder-done&reminderId=a/b"));
+        Assert.NotNull(NotificationActivation.TryParse("action=open-note&messageId=11111111-1111-4111-8111-111111111111"));
+        Assert.Null(NotificationActivation.TryParse("action=open-note&messageId=../evil"));
+        Assert.Null(NotificationActivation.TryParse("action=open-note&messageId=" + new string('a', 200)));
+        Assert.Null(NotificationActivation.TryParse("action=open-note&messageId=a/b"));
+        // A retired reminder toast never parses, even with a well-formed id.
+        Assert.Null(NotificationActivation.TryParse("action=reminder-done&reminderId=default-hydration"));
     }
 
     [Fact]
@@ -107,15 +109,14 @@ public sealed class WinUiHardeningTests
             pet,
             (_, _, _) => Task.CompletedTask,
             () => AnimationOptions.Default,
-            () => false,
             () => PauseState.None,
             gate,
             isFullscreenNow: () => throw new InvalidOperationException("sampler down"));
-        var item = DurableNotification.LocalNote(
-            new LocalLoveNote("id1", "hello", true), "idle");
+        var item = DurableNotification.RemoteNote("11111111-1111-4111-8111-111111111111");
         // Fail-closed: no throw, item queued rather than presented.
         await coordinator.PublishAsync(item, bypassSuppression: false, TestContext.Current.CancellationToken);
         Assert.Equal(0, notifications.Shown);
+        Assert.Equal(1, policy.QueuedCount);
     }
 
     [Fact]
@@ -136,8 +137,8 @@ public sealed class WinUiHardeningTests
             "/opt/Dudu.exe", "/tmp/startup-" + Guid.NewGuid().ToString("N"), new FailingWriter());
         var repository = new StubPrefsRepository();
         var preferences = new Preferences(
-            AppTheme.System, new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-            false, 3, false, false, true, TimeSpan.FromMinutes(15));
+            AppTheme.System,
+            false, false, false, true, TimeSpan.FromMinutes(15));
         var settings = new StartupSettingsService(
             startup, new PreferenceMutationCoordinator(preferences, repository));
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -156,8 +157,8 @@ public sealed class WinUiHardeningTests
             "/opt/Dudu.exe", "/tmp/startup-" + Guid.NewGuid().ToString("N"), new FailingWriter());
         var repository = new StubPrefsRepository();
         var preferences = new Preferences(
-            AppTheme.System, new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-            false, 3, false, false, true, TimeSpan.FromMinutes(15));
+            AppTheme.System,
+            false, false, false, true, TimeSpan.FromMinutes(15));
         var settings = new StartupSettingsService(
             startup, new PreferenceMutationCoordinator(preferences, repository));
 
@@ -182,8 +183,8 @@ public sealed class WinUiHardeningTests
             null, "/tmp/startup-" + Guid.NewGuid().ToString("N"), new StubWriter(), packagedTask);
         var repository = new StubPrefsRepository();
         var preferences = new Preferences(
-            AppTheme.System, new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-            false, 3, false, false, true, TimeSpan.FromMinutes(15));
+            AppTheme.System,
+            false, false, false, true, TimeSpan.FromMinutes(15));
         var settings = new StartupSettingsService(
             startup, new PreferenceMutationCoordinator(preferences, repository));
 
@@ -208,8 +209,8 @@ public sealed class WinUiHardeningTests
             null, "/tmp/startup-" + Guid.NewGuid().ToString("N"), new StubWriter(), packagedTask);
         var repository = new StubPrefsRepository();
         var preferences = new Preferences(
-            AppTheme.System, new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-            false, 3, false, false, true, TimeSpan.FromMinutes(15));
+            AppTheme.System,
+            false, false, false, true, TimeSpan.FromMinutes(15));
         var settings = new StartupSettingsService(
             startup, new PreferenceMutationCoordinator(preferences, repository));
 
@@ -241,8 +242,6 @@ public sealed class WinUiHardeningTests
     {
         public int Shown { get; private set; }
         public bool NotificationsAvailable => true;
-        public Task ShowReminderAsync(string id, string title, CancellationToken ct)
-        { Shown++; return Task.CompletedTask; }
         public Task ShowRemoteNoteArrivalAsync(Guid id, CancellationToken ct)
         { Shown++; return Task.CompletedTask; }
     }

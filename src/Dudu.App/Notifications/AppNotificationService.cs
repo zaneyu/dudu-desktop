@@ -1,7 +1,5 @@
 using System.Diagnostics;
 using System.IO;
-using System.Security.Cryptography;
-using System.Text;
 using Dudu.App.Hosting;
 using Dudu.Core.Abstractions;
 using Dudu.Infrastructure.Data;
@@ -29,16 +27,7 @@ public interface IRegistrableNotificationService
 /// </summary>
 public sealed class AppNotificationService : INotificationService, IRegistrableNotificationService, IDisposable
 {
-    public const string ReminderGroup = "reminders";
-
-    /// <summary>A reminder toast left unanswered is stale after this long;
-    /// the next occurrence raises a fresh one.</summary>
-    public static readonly TimeSpan ReminderToastLifetime = TimeSpan.FromHours(4);
-
-    private const int MaxTagLength = 64;
-
     private readonly INotificationSink _sink;
-    private readonly Func<DateTimeOffset> _utcNow;
     private readonly IAppHostErrorReporter? _errorReporter;
     private readonly SemaphoreSlim _registrationGate = new(1, 1);
     private volatile bool _notificationsAvailable = true;
@@ -46,11 +35,9 @@ public sealed class AppNotificationService : INotificationService, IRegistrableN
 
     public AppNotificationService(
         INotificationSink sink,
-        Func<DateTimeOffset>? utcNow = null,
         IAppHostErrorReporter? errorReporter = null)
     {
         _sink = sink ?? throw new ArgumentNullException(nameof(sink));
-        _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
         _errorReporter = errorReporter;
     }
 
@@ -142,64 +129,6 @@ public sealed class AppNotificationService : INotificationService, IRegistrableN
                 cancellationToken),
             _ => Task.CompletedTask,
         };
-
-    public Task ShowReminderAsync(
-        string reminderId,
-        string title,
-        CancellationToken cancellationToken)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(reminderId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(title);
-
-        var id = NotificationArguments.Pair("reminderId", reminderId);
-        var request = new NotificationRequest(
-            title,
-            null,
-            // Without body arguments a click on the toast itself (rather than
-            // Done/Snooze) activated nothing; it now opens the Reminders page.
-            "action=open-reminder&" + id,
-            new[]
-            {
-                new NotificationButton("Done", "action=reminder-done&" + id),
-                new NotificationButton("Snooze", "action=reminder-snooze&" + id),
-            },
-            Tag: ReminderTag(reminderId),
-            Group: ReminderGroup,
-            ExpirationTime: _utcNow() + ReminderToastLifetime);
-        return ShowIfAvailableAsync(request, cancellationToken);
-    }
-
-    /// <summary>Removes a reminder's toast once the user acknowledged it (in
-    /// the app or from the toast) so a stale Done/Snooze copy does not linger
-    /// in Action Center. Best-effort: a failure never fails the acknowledgement.</summary>
-    public async Task DismissReminderAsync(string reminderId, CancellationToken cancellationToken)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(reminderId);
-        if (!_notificationsAvailable)
-        {
-            return;
-        }
-
-        try
-        {
-            await _sink.RemoveAsync(ReminderTag(reminderId), ReminderGroup, cancellationToken);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception exception)
-        {
-            ReportFailure("toast-notify", exception);
-        }
-    }
-
-    /// <summary>Toast tags are limited to 64 characters; longer ids map to a
-    /// stable digest so show and remove always agree.</summary>
-    internal static string ReminderTag(string reminderId) =>
-        reminderId.Length <= MaxTagLength
-            ? reminderId
-            : Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(reminderId)));
 
     public Task ShowRemoteNoteArrivalAsync(
         Guid messageId,

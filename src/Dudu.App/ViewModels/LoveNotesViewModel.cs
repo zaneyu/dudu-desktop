@@ -7,50 +7,43 @@ namespace Dudu.App.ViewModels;
 
 public sealed class LoveNotesViewModel : FeatureViewModelBase
 {
+    private const string RevealedMessage = "otayyy opened, it stays in your opened notes";
+
     private readonly CompanionFeatureContext _context;
-    private LocalLoveNote? _selectedNote;
+    private LocalLoveNote? _selectedOpenedNote;
     private LocalLoveNote? _pendingDeleteNote;
     private RemoteEnvelope? _selectedRemoteEnvelope;
-    private RemoteEnvelope? _openedRemoteEnvelope;
-    private string? _openedRemoteNoteText;
-    private string? _chosenLocalNoteText;
-    private string _draftText = string.Empty;
-    private bool _draftEnabled = true;
 
     public LoveNotesViewModel(CompanionFeatureContext context)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
         RefreshCommand = new AsyncRelayCommand((CancellationToken ct) => RefreshAsync(ct));
-        SaveLocalNoteCommand = new AsyncRelayCommand((CancellationToken ct) => SaveLocalNoteAsync(ct));
-        NewNoteCommand = new RelayCommand(NewNote);
-        DeleteLocalNoteCommand = new AsyncRelayCommand<LocalLoveNote?>((item, ct) => DeleteLocalNoteAsync(item, ct));
-        RequestDeleteLocalNoteCommand = new RelayCommand<LocalLoveNote>(RequestDeleteLocalNote);
-        CancelDeleteLocalNoteCommand = new RelayCommand(() => PendingDeleteNote = null);
         RevealRemoteNoteCommand = new AsyncRelayCommand<RemoteEnvelope>((item, ct) => RevealRemoteNoteAsync(item, ct));
-        SaveOpenedNoteCommand = new AsyncRelayCommand<object?>((item, ct) => SaveOpenedNoteAsync(item, ct));
-        ShowLocalNoteCommand = new AsyncRelayCommand((CancellationToken ct) => ShowLocalNoteAsync(ct));
-        LocalNotes.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoLocalNotes));
+        DeleteOpenedNoteCommand = new AsyncRelayCommand<LocalLoveNote?>((item, ct) => DeleteOpenedNoteAsync(item, ct));
+        RequestDeleteOpenedNoteCommand = new RelayCommand<LocalLoveNote>(RequestDeleteOpenedNote);
+        CancelDeleteOpenedNoteCommand = new RelayCommand(() => PendingDeleteNote = null);
+        OpenedNotes.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoOpenedNotes));
     }
 
     public IAsyncRelayCommand RefreshCommand { get; }
-    public IAsyncRelayCommand SaveLocalNoteCommand { get; }
-    public IRelayCommand NewNoteCommand { get; }
-    public IAsyncRelayCommand<LocalLoveNote?> DeleteLocalNoteCommand { get; }
-    public IRelayCommand<LocalLoveNote> RequestDeleteLocalNoteCommand { get; }
-    public IRelayCommand CancelDeleteLocalNoteCommand { get; }
     public IAsyncRelayCommand<RemoteEnvelope> RevealRemoteNoteCommand { get; }
-    public IAsyncRelayCommand<object?> SaveOpenedNoteCommand { get; }
-    public IAsyncRelayCommand ShowLocalNoteCommand { get; }
+    public IAsyncRelayCommand<LocalLoveNote?> DeleteOpenedNoteCommand { get; }
+    public IRelayCommand<LocalLoveNote> RequestDeleteOpenedNoteCommand { get; }
+    public IRelayCommand CancelDeleteOpenedNoteCommand { get; }
 
-    public ObservableCollection<LocalLoveNote> LocalNotes { get; } = [];
     public ObservableCollection<RemoteEnvelope> PendingRemoteNotes { get; } = [];
 
-    public LocalLoveNote? SelectedNote
+    /// <summary>Partner notes she already revealed, newest first. Revealing a note
+    /// keeps it here (stored on this pc) until she deletes it.</summary>
+    public ObservableCollection<LocalLoveNote> OpenedNotes { get; } = [];
+
+    public LocalLoveNote? SelectedOpenedNote
     {
-        get => _selectedNote;
+        get => _selectedOpenedNote;
         set
         {
-            if (!SetProperty(ref _selectedNote, value)) return;
+            if (!SetProperty(ref _selectedOpenedNote, value)) return;
+            OnPropertyChanged(nameof(SelectedOpenedNoteText));
             // The pending confirmation names a specific note; once the user looks at
             // something else, confirming should not delete the note they left behind.
             if (PendingDeleteNote is not null && PendingDeleteNote.Id != value?.Id)
@@ -59,6 +52,11 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
             }
         }
     }
+
+    /// <summary>The opened note being read: the one just revealed, or the one picked
+    /// from the opened list.</summary>
+    public string? SelectedOpenedNoteText => SelectedOpenedNote?.Text;
+
     public LocalLoveNote? PendingDeleteNote
     {
         get => _pendingDeleteNote;
@@ -86,64 +84,32 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
             }
         }
     }
-    public RemoteEnvelope? OpenedRemoteEnvelope
-    {
-        get => _openedRemoteEnvelope;
-        private set
-        {
-            if (SetProperty(ref _openedRemoteEnvelope, value)) OnPropertyChanged(nameof(CanSaveOpenedNote));
-        }
-    }
 
-    /// <summary>"save opened note" only applies to a revealed incoming note --
-    /// not to nothing. A "let dudu choose" pick is shown separately
-    /// (<see cref="ChosenLocalNoteText"/>) and never touches it.</summary>
-    public bool CanSaveOpenedNote => OpenedRemoteEnvelope is not null;
-
-    /// <summary>Drives the jar's empty-state copy.</summary>
-    public bool HasNoLocalNotes => LocalNotes.Count == 0;
-    public string? OpenedRemoteNoteText { get => _openedRemoteNoteText; private set => SetProperty(ref _openedRemoteNoteText, value); }
-
-    /// <summary>The local note "let dudu choose" picked. Shown in the note jar
-    /// section, separate from the incoming "opened note" box, so a pick never
-    /// replaces an encrypted note she opened but has not saved yet.</summary>
-    public string? ChosenLocalNoteText
-    {
-        get => _chosenLocalNoteText;
-        private set
-        {
-            if (SetProperty(ref _chosenLocalNoteText, value)) OnPropertyChanged(nameof(HasChosenLocalNote));
-        }
-    }
-
-    public bool HasChosenLocalNote => !string.IsNullOrWhiteSpace(ChosenLocalNoteText);
-    public string DraftText { get => _draftText; set => SetProperty(ref _draftText, value); }
-    public bool DraftEnabled { get => _draftEnabled; set => SetProperty(ref _draftEnabled, value); }
-    public int DailyLocalNoteLimit => _context.CurrentPreferences.LocalNoteDailyLimit;
-    public string DailyLocalNoteLimitText => $"up to {DailyLocalNoteLimit} local notes a day";
+    /// <summary>Drives the opened list's empty-state copy.</summary>
+    public bool HasNoOpenedNotes => OpenedNotes.Count == 0;
     public int UnopenedRemoteNoteCount => PendingRemoteNotes.Count;
     public string UnopenedRemoteNoteCountText => UnopenedRemoteNoteCount == 1
         ? "1 unopened encrypted note"
         : $"{UnopenedRemoteNoteCount} unopened encrypted notes";
-    public bool HasOpenedRemoteNote => !string.IsNullOrWhiteSpace(OpenedRemoteNoteText);
     public bool CanRevealRemoteNote => SelectedRemoteEnvelope is not null;
 
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
     {
         await RunRefreshAsync(async ct =>
         {
-            var notes = await _context.LocalNotes.ListAsync(ct);
+            var opened = await _context.LocalNotes.ListRemoteAsync(ct);
             var envelopes = await _context.RemoteEnvelopes.ListPendingAsync(ct);
             await MutateAsync(() =>
             {
-                // Capture before clearing: the list's TwoWay SelectedItem binding
-                // writes null back into SelectedRemoteEnvelope as soon as the
-                // rows it points at are removed.
+                // Capture before clearing: the lists' TwoWay SelectedItem bindings
+                // write null back into the selections as soon as the rows they
+                // point at are removed.
                 var selectedMessageId = SelectedRemoteEnvelope?.MessageId;
-                LocalNotes.Clear();
-                foreach (var note in notes) LocalNotes.Add(note);
+                var selectedOpenedId = SelectedOpenedNote?.Id;
                 PendingRemoteNotes.Clear();
                 foreach (var envelope in envelopes) PendingRemoteNotes.Add(envelope);
+                OpenedNotes.Clear();
+                foreach (var note in opened) OpenedNotes.Add(note);
                 // RemoteEnvelope carries byte[] fields, so a reloaded row never
                 // equals the old instance: re-point the selection at the fresh
                 // row (by message id) so the list highlight and the reveal
@@ -151,28 +117,13 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
                 SelectedRemoteEnvelope = selectedMessageId is null
                     ? null
                     : PendingRemoteNotes.FirstOrDefault(item => item.MessageId == selectedMessageId);
-
-                // A note that was opened here but then saved or removed elsewhere
-                // (the pet, another window) is no longer pending: drop the stale
-                // opened copy instead of letting "save" fail on it.
-                if (OpenedRemoteEnvelope is { } opened)
-                {
-                    var fresh = PendingRemoteNotes.FirstOrDefault(item => item.MessageId == opened.MessageId);
-                    if (fresh is null)
-                    {
-                        OpenedRemoteEnvelope = null;
-                        OpenedRemoteNoteText = null;
-                        OnPropertyChanged(nameof(HasOpenedRemoteNote));
-                    }
-                    else
-                    {
-                        OpenedRemoteEnvelope = fresh;
-                    }
-                }
+                // Same for the opened note being read; one deleted elsewhere
+                // (delete my data, another window) simply drops out.
+                SelectedOpenedNote = selectedOpenedId is null
+                    ? null
+                    : OpenedNotes.FirstOrDefault(item => item.Id == selectedOpenedId);
                 OnPropertyChanged(nameof(UnopenedRemoteNoteCount));
                 OnPropertyChanged(nameof(UnopenedRemoteNoteCountText));
-                OnPropertyChanged(nameof(DailyLocalNoteLimit));
-                OnPropertyChanged(nameof(DailyLocalNoteLimitText));
                 // The shell caches pages/view models across visits: a stale pending
                 // confirmation from a previous visit must not resurface on this one.
                 PendingDeleteNote = null;
@@ -180,61 +131,44 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
         }, cancellationToken);
     }
 
-    public Task SaveLocalNoteAsync(CancellationToken cancellationToken = default) =>
-        RunAsync(async () =>
-        {
-            var text = DraftText.Trim();
-            if (text.Length == 0) throw new ArgumentException("aiyo add a note first", nameof(DraftText));
-            var note = SelectedNote is null
-                ? new LocalLoveNote(Guid.NewGuid().ToString("N"), text, DraftEnabled)
-                : SelectedNote with { Text = text, Enabled = DraftEnabled };
-            await _context.LocalNotes.SaveToJarAsync(note, cancellationToken);
-            await MutateAsync(() => Replace(note), cancellationToken);
-            NewNote();
-        }, "oki saved to the note jar");
-
-    /// <summary>Clears the editor for a fresh note. Runs after every save so typing
-    /// fresh text afterward creates a new note instead of silently overwriting the
-    /// one just saved.</summary>
-    public void NewNote()
-    {
-        SelectedNote = null;
-        DraftText = string.Empty;
-        DraftEnabled = true;
-    }
-
-    public Task DeleteLocalNoteAsync(LocalLoveNote? note, CancellationToken cancellationToken = default)
-    {
-        return RunAsync(async () =>
-        {
-            ArgumentNullException.ThrowIfNull(note);
-            await _context.LocalNotes.DeleteAsync(note.Id, cancellationToken);
-            // A deleted note may still be sitting queued or held for later
-            // ambient presentation: without this, the pet could still show
-            // it once even though it no longer exists in the jar.
-            await _context.DiscardHeldLocalNoteAsync(note.Id, cancellationToken);
-            await MutateAsync(() =>
-            {
-                // LocalLoveNote is a record: Remove(note) would use value equality across
-                // every field, so a note edited since it was loaded (or a stale UI copy)
-                // would silently fail to remove. Match by Id like Home and Tasks do.
-                var existing = LocalNotes.FirstOrDefault(item => item.Id == note.Id);
-                if (existing is not null) LocalNotes.Remove(existing);
-                if (SelectedNote?.Id == note.Id) SelectedNote = null;
-                if (PendingDeleteNote?.Id == note.Id) PendingDeleteNote = null;
-            }, cancellationToken);
-        }, "okkk note deleted le");
-    }
-
+    /// <summary>Opening a partner note reads it and keeps it: the decrypted note is
+    /// saved as <c>remote-&lt;messageId&gt;</c> and its envelope consumed in one unit of
+    /// work, any held copy is discarded, the pet's unread indicator is dismissed, and
+    /// then the sender's reaction plays. If the save fails nothing changes: the note
+    /// stays unopened and can be revealed again.</summary>
     public Task RevealRemoteNoteAsync(RemoteEnvelope? envelope, CancellationToken cancellationToken = default)
     {
         return RunAsync(async () =>
         {
             ArgumentNullException.ThrowIfNull(envelope);
             var revealed = await _context.RevealRemoteNoteAsync(envelope, cancellationToken);
-            OpenedRemoteEnvelope = envelope;
-            OpenedRemoteNoteText = revealed.Text;
-            OnPropertyChanged(nameof(HasOpenedRemoteNote));
+            var note = new LocalLoveNote($"remote-{envelope.MessageId}", revealed.Text);
+            await _context.FeatureTransactions.SaveRemoteNoteAndConsumeEnvelopeAsync(
+                note,
+                envelope.MessageId,
+                _context.Clock.UtcNow.ToUniversalTime(),
+                cancellationToken);
+            // The save committed: show it right away, so a follow-up below that
+            // fails cannot leave the note listed as unopened.
+            await MutateAsync(() =>
+            {
+                // By message id: after a refresh the list holds new instances
+                // (byte[] fields make record equality reference-based), and
+                // Remove(envelope) silently left the opened note listed.
+                var pending = PendingRemoteNotes.FirstOrDefault(item => item.MessageId == envelope.MessageId);
+                if (pending is not null) PendingRemoteNotes.Remove(pending);
+                if (SelectedRemoteEnvelope?.MessageId == envelope.MessageId) SelectedRemoteEnvelope = null;
+                var existing = OpenedNotes.FirstOrDefault(item => item.Id == note.Id);
+                if (existing is not null) OpenedNotes[OpenedNotes.IndexOf(existing)] = note;
+                else OpenedNotes.Insert(0, note);
+                SelectedOpenedNote = note;
+                OnPropertyChanged(nameof(UnopenedRemoteNoteCount));
+                OnPropertyChanged(nameof(UnopenedRemoteNoteCountText));
+            }, cancellationToken);
+
+            // The remote note is now consumed into the opened list: a queued or
+            // held copy of the same message id must not still surface later.
+            await _context.DiscardHeldRemoteNoteAsync(envelope.MessageId, cancellationToken);
 
             // Opening a note means it is read: dismiss the pet's unread indicator for this
             // message id on every reveal, independent of the reaction map below. Without this,
@@ -243,14 +177,14 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
             // left "A note arrived" showing for a note the user already opened.
             await _context.PresentPetAsync(new PetEvent.Dismissed(envelope.MessageId), cancellationToken);
             await PresentReactionAsync(revealed.Reaction, envelope.MessageId, cancellationToken);
-        });
+        }, RevealedMessage);
     }
 
     // Maps a revealed note's reaction to a one-shot pet presentation, per the ruling: wave ->
     // greeting, heart -> note-arrival, hug -> comfort-hug, celebrate -> celebrate, none -> no
     // one-shot. "heart" replays the note-arrival event the envelope already raised on arrival;
-    // the one-shot's completion dismisses it by message id, which is a harmless no-op if the
-    // user's later save/dismiss flow (SaveOpenedNoteAsync) repeats it for the same id.
+    // the one-shot's completion dismisses it by message id, which is a harmless no-op after
+    // the explicit dismiss the reveal just sent for the same id.
     private Task PresentReactionAsync(string reaction, string messageId, CancellationToken cancellationToken) =>
         reaction switch
         {
@@ -265,54 +199,27 @@ public sealed class LoveNotesViewModel : FeatureViewModelBase
             _ => Task.CompletedTask,
         };
 
-    public Task SaveOpenedNoteAsync(object? _, CancellationToken cancellationToken = default) =>
-        RunAsync(async () =>
+    /// <summary>Deletes an opened note from this pc for good. Its held copy was
+    /// already discarded when it was revealed.</summary>
+    public Task DeleteOpenedNoteAsync(LocalLoveNote? note, CancellationToken cancellationToken = default)
+    {
+        return RunAsync(async () =>
         {
-            var envelope = OpenedRemoteEnvelope ?? throw new InvalidOperationException("oh no open the note first");
-            var text = OpenedRemoteNoteText ?? throw new InvalidOperationException("oh no open the note first");
-            var note = new LocalLoveNote($"remote-{envelope.MessageId}", text);
-            await _context.FeatureTransactions.SaveRemoteNoteAndConsumeEnvelopeAsync(
-                note,
-                envelope.MessageId,
-                _context.Clock.UtcNow.ToUniversalTime(),
-                cancellationToken);
-            // The remote note is now consumed into the jar: a queued or held
-            // copy of the same message id must not still surface later.
-            await _context.DiscardHeldRemoteNoteAsync(envelope.MessageId, cancellationToken);
+            ArgumentNullException.ThrowIfNull(note);
+            await _context.LocalNotes.DeleteAsync(note.Id, cancellationToken);
             await MutateAsync(() =>
             {
-                Replace(note);
-                // By message id: after a refresh the list holds new instances
-                // (byte[] fields make record equality reference-based), and
-                // Remove(envelope) silently left the saved note listed.
-                var pending = PendingRemoteNotes.FirstOrDefault(item => item.MessageId == envelope.MessageId);
-                if (pending is not null) PendingRemoteNotes.Remove(pending);
-                if (SelectedRemoteEnvelope?.MessageId == envelope.MessageId) SelectedRemoteEnvelope = null;
+                // LocalLoveNote is a record: Remove(note) would use value equality across
+                // every field, so a stale UI copy would silently fail to remove. Match by Id.
+                var existing = OpenedNotes.FirstOrDefault(item => item.Id == note.Id);
+                if (existing is not null) OpenedNotes.Remove(existing);
+                if (SelectedOpenedNote?.Id == note.Id) SelectedOpenedNote = null;
+                if (PendingDeleteNote?.Id == note.Id) PendingDeleteNote = null;
             }, cancellationToken);
-            OpenedRemoteEnvelope = null;
-            OpenedRemoteNoteText = null;
-            OnPropertyChanged(nameof(HasOpenedRemoteNote));
-            OnPropertyChanged(nameof(UnopenedRemoteNoteCount));
-            OnPropertyChanged(nameof(UnopenedRemoteNoteCountText));
-            await _context.PresentPetAsync(new PetEvent.Dismissed(envelope.MessageId), cancellationToken);
-        }, "otayyy saved to the note jar");
-
-    public Task ShowLocalNoteAsync(CancellationToken cancellationToken = default) =>
-        RunAsync(async () =>
-        {
-            var note = await _context.NoteSelector.SelectAsync(true, cancellationToken)
-                ?? throw new InvalidOperationException("add a note to the jar or turn one on first");
-            ChosenLocalNoteText = note.Text;
-        });
-
-    private void Replace(LocalLoveNote note)
-    {
-        var existing = LocalNotes.FirstOrDefault(item => item.Id == note.Id);
-        if (existing is not null) LocalNotes[LocalNotes.IndexOf(existing)] = note;
-        else LocalNotes.Add(note);
+        }, "okkk note deleted le");
     }
 
-    private void RequestDeleteLocalNote(LocalLoveNote? note)
+    private void RequestDeleteOpenedNote(LocalLoveNote? note)
     {
         if (note is null)
         {

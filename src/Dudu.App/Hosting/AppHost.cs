@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using Dudu.Core.Reminders;
 using Dudu.Infrastructure.Data;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -9,11 +8,6 @@ namespace Dudu.App.Hosting;
 public interface IAppHostDatabase : IAsyncDisposable
 {
     Task InitializeAsync(CancellationToken cancellationToken = default);
-}
-
-public interface IAppHostReminderService
-{
-    Task TickAsync(CancellationToken cancellationToken = default);
 }
 
 public interface IAppHostTimerFactory
@@ -33,9 +27,9 @@ public interface IAppHostErrorReporter
 
 /// <summary>
 /// The presentation gateway's lifecycle hooks as seen by <see cref="AppHost"/>.
-/// Started once the database has initialized, ticked after every successful
-/// reminder tick (reusing the existing 30-second scheduler instead of a new
-/// timer), and disposed during shutdown cleanup. Attaching one is optional:
+/// Started once the database has initialized, ticked by the host's
+/// 30-second presentation scheduler (and the resume catch-up), and disposed
+/// during shutdown cleanup. Attaching one is optional:
 /// an <see cref="AppHost"/> with none attached behaves exactly as before.
 /// </summary>
 public interface IAppHostPresentationGateway : IAsyncDisposable
@@ -47,7 +41,7 @@ public interface IAppHostPresentationGateway : IAsyncDisposable
 
 /// <summary>
 /// The relay sync background loop's lifecycle hooks as seen by <see cref="AppHost"/>.
-/// Started once the reminder scheduler is running, and disposed during shutdown
+/// Started once the presentation scheduler is running, and disposed during shutdown
 /// cleanup. Attaching one is optional: production attaches it only when a relay
 /// base URL is configured; an <see cref="AppHost"/> with none attached behaves
 /// exactly as before.
@@ -59,8 +53,8 @@ public interface IAppHostRemoteSync : IAsyncDisposable
 
 /// <summary>
 /// The pet-visibility reconciliation hook as seen by <see cref="AppHost"/>.
-/// Ticked after every successful reminder tick that also releases held
-/// presentations, and before that release runs, so a pet left invisible by
+/// Ticked at the start of every presentation tick, before the gateway
+/// releases held presentations, so a pet left invisible by
 /// an earlier vetoed show (e.g. a pause ending) gets a chance to come
 /// back before a held item can animate into a window that is still hidden.
 /// Attaching one is optional: an <see cref="AppHost"/> with none attached
@@ -73,12 +67,11 @@ public interface IAppHostVisibilityReconciler
 
 public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
 {
-    private static readonly TimeSpan ReminderTickInterval = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan PresentationTickInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan DefaultStopTimeout = TimeSpan.FromSeconds(5);
 
     private readonly AppPaths _paths;
     private readonly IAppHostDatabase _database;
-    private readonly IAppHostReminderService _reminderService;
     private readonly IAppHostTimerFactory _timerFactory;
     private readonly IAppHostErrorReporter _errorReporter;
     private readonly TimeSpan _stopTimeout;
@@ -86,7 +79,7 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
     private IAppHostRemoteSync? _remoteSync;
     private IAppHostVisibilityReconciler? _visibilityReconciler;
     private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
-    private readonly SemaphoreSlim _reminderTickGate = new(1, 1);
+    private readonly SemaphoreSlim _presentationTickGate = new(1, 1);
     private readonly CancellationTokenSource _hostStopSource = new();
     private readonly object _operationSync = new();
     private TaskCompletionSource<bool> _operationsDrained = CompletedSource();
@@ -110,35 +103,28 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
             new DatabaseHostService(
                 services?.GetService<Database>()
                     ?? throw new InvalidOperationException("Database is not registered.")),
-            new ReminderHostService(
-                services.GetService<ReminderEngine>()
-                    ?? throw new InvalidOperationException("ReminderEngine is not registered.")),
             errorReporter: ResolveErrorReporter(services))
     {
     }
 
     public AppHost(
         AppPaths paths,
-        Database database,
-        ReminderEngine reminderEngine)
+        Database database)
         : this(
             paths,
-            new DatabaseHostService(database),
-            new ReminderHostService(reminderEngine))
+            new DatabaseHostService(database))
     {
     }
 
     public AppHost(
         AppPaths paths,
         IAppHostDatabase database,
-        IAppHostReminderService reminderService,
         IAppHostTimerFactory? timerFactory = null,
         IAppHostErrorReporter? errorReporter = null,
         TimeSpan? stopTimeout = null)
     {
         _paths = paths ?? throw new ArgumentNullException(nameof(paths));
         _database = database ?? throw new ArgumentNullException(nameof(database));
-        _reminderService = reminderService ?? throw new ArgumentNullException(nameof(reminderService));
         _timerFactory = timerFactory ?? new PeriodicAppHostTimerFactory();
         _errorReporter = errorReporter ?? new DiagnosticAppHostErrorReporter();
         _stopTimeout = stopTimeout ?? DefaultStopTimeout;
@@ -180,7 +166,7 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
 
     /// <summary>
     /// Attaches the relay sync service this host will start (after the
-    /// reminder scheduler) and dispose during shutdown cleanup. Optional:
+    /// presentation scheduler) and dispose during shutdown cleanup. Optional:
     /// production attaches it only when a relay base URL is configured.
     /// Must be called before <see cref="StartAsync"/>.
     /// </summary>
@@ -267,27 +253,24 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
             {
                 CreateDirectories();
                 await _database.InitializeAsync(operation.CancellationToken);
-                await StartPresentationGatewayAsync(operation.CancellationToken);
-                // Skip both the reconcile and the presentation-release half
-                // of this startup tick: StartPresentationGatewayAsync just
-                // reloaded held rows into the gateway's in-memory queue, but
-                // the events sink that pushes SetFullscreen/SetSessionLocked
-                // and the startup visibility gate that pushes
-                // SetUserVisible both run later, in
-                // WindowsCompanionBootstrap, only after this host's
-                // StartAsync returns. Reconciling or releasing here would
-                // see every one of those flags at its unset default (not
-                // fullscreen, not locked, visible) regardless of reality --
-                // reconcile would show the overlay and push a real
+                // Startup only starts the gateway (which reloads held rows
+                // into its in-memory queue). It deliberately neither
+                // reconciles visibility nor ticks the gateway: the events
+                // sink that pushes SetFullscreen/SetSessionLocked and the
+                // startup visibility gate that pushes SetUserVisible both
+                // run later, in WindowsCompanionBootstrap, only after this
+                // host's StartAsync returns. Reconciling or releasing here
+                // would see every one of those flags at its unset default
+                // (not fullscreen, not locked, visible) regardless of
+                // reality -- reconcile would show the overlay and push a real
                 // SetUserVisible(true) before any of that state is known,
                 // defeating the presentation gateway's initialUserHidden
                 // start, and releasing would animate a held item into a
                 // window that may not even be shown yet and then delete its
-                // row on success. The reminder engine itself still ticks as
-                // before; only the reconcile and the release are deferred
-                // to the first regularly scheduled 30 s tick, by which
-                // point the events sink and visibility gate have both run.
-                await RunReminderTickAsync(operation.CancellationToken, releasePresentations: false);
+                // row on success. The first regularly scheduled 30 s tick
+                // does both, by which point the events sink and visibility
+                // gate have run.
+                await StartPresentationGatewayAsync(operation.CancellationToken);
 
                 if (!await TryAcquireLifecycleGateAsync(_stopTimeout, operation.CancellationToken))
                 {
@@ -303,7 +286,7 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
                     }
 
                     Volatile.Write(ref _started, 1);
-                    _schedulerTask = RunReminderSchedulerAsync(_hostStopSource.Token);
+                    _schedulerTask = RunPresentationSchedulerAsync(_hostStopSource.Token);
                     await StartRemoteSyncAsync(_hostStopSource.Token);
                 }
                 finally
@@ -392,20 +375,20 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
 
         await using (operation)
         {
-            await RunReminderTickAsync(operation.CancellationToken);
+            await RunPresentationTickAsync(operation.CancellationToken);
         }
     }
 
-    private async Task RunReminderSchedulerAsync(CancellationToken cancellationToken)
+    private async Task RunPresentationSchedulerAsync(CancellationToken cancellationToken)
     {
-        await using var timer = _timerFactory.Create(ReminderTickInterval);
+        await using var timer = _timerFactory.Create(PresentationTickInterval);
         try
         {
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
                 try
                 {
-                    await RunReminderTickAsync(cancellationToken);
+                    await RunPresentationTickAsync(cancellationToken);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
@@ -413,7 +396,7 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
                 }
                 catch (Exception exception)
                 {
-                    ReportError("reminder-scheduler", exception);
+                    ReportError("presentation-scheduler", exception);
                 }
             }
         }
@@ -422,49 +405,28 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
         }
         catch (Exception exception)
         {
-            ReportError("reminder-scheduler", exception);
+            ReportError("presentation-scheduler", exception);
         }
     }
 
-    /// <param name="releasePresentations">
-    /// Whether to also reconcile visibility and drain the presentation
-    /// gateway's queue after the reminder engine advances. False only for
-    /// the one startup tick in <see cref="RunStartAsync"/>, before the
-    /// events sink and startup visibility gate have pushed real
-    /// fullscreen/lock/visibility state -- reconciling that early would
-    /// show the overlay and push a real value before that state is known,
-    /// defeating the presentation gateway's <c>initialUserHidden</c> start.
-    /// </param>
-    private async Task RunReminderTickAsync(
-        CancellationToken cancellationToken,
-        bool releasePresentations = true)
+    /// <summary>
+    /// One presentation heartbeat: reconcile pet visibility first (so a pet
+    /// left hidden by an earlier vetoed show, e.g. a pause that has since
+    /// ended, gets a chance to come back before anything animates), then
+    /// tick the presentation gateway (ambient, tantrum, held-note release).
+    /// Serialized so a resume catch-up and a timer tick never overlap.
+    /// </summary>
+    private async Task RunPresentationTickAsync(CancellationToken cancellationToken)
     {
-        await _reminderTickGate.WaitAsync(cancellationToken);
+        await _presentationTickGate.WaitAsync(cancellationToken);
         try
         {
-            if (releasePresentations)
-            {
-                // Finding A(3): reconcile runs at the START of the tick, not
-                // just before the release below. The reminder engine's own
-                // TickAsync can itself publish through the presentation
-                // gateway (a newly-due reminder), so reconciling only right
-                // before the release left that publish evaluated against a
-                // pet the sink may still believe is hidden from an earlier
-                // vetoed show that has since cleared. Give the pet a chance
-                // to come back on screen (e.g. a pause that vetoed an
-                // earlier explicit show has now ended) before the reminder
-                // engine -- and therefore any release -- runs at all.
-                await ReconcileVisibilityAsync(cancellationToken);
-            }
-            await _reminderService.TickAsync(cancellationToken);
-            if (releasePresentations)
-            {
-                await TickPresentationGatewayAsync(cancellationToken);
-            }
+            await ReconcileVisibilityAsync(cancellationToken);
+            await TickPresentationGatewayAsync(cancellationToken);
         }
         finally
         {
-            _reminderTickGate.Release();
+            _presentationTickGate.Release();
         }
     }
 
@@ -697,7 +659,7 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
             }
             catch (Exception exception)
             {
-                ReportError("reminder-scheduler-shutdown", exception);
+                ReportError("presentation-scheduler-shutdown", exception);
             }
         }
 
@@ -838,15 +800,6 @@ public sealed class AppHost : IAsyncDisposable, IAppHostLifecycle
             _database.InitializeAsync(cancellationToken);
 
         public ValueTask DisposeAsync() => _database.DisposeAsync();
-    }
-
-    private sealed class ReminderHostService(ReminderEngine reminderEngine) : IAppHostReminderService
-    {
-        private readonly ReminderEngine _reminderEngine = reminderEngine
-            ?? throw new ArgumentNullException(nameof(reminderEngine));
-
-        public Task TickAsync(CancellationToken cancellationToken = default) =>
-            _reminderEngine.TickAsync(cancellationToken);
     }
 
     private sealed class PeriodicAppHostTimerFactory : IAppHostTimerFactory

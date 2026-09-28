@@ -6,7 +6,6 @@ using Dudu.App.Notifications;
 using Dudu.App.System;
 using Dudu.Core.Abstractions;
 using Dudu.Core.Models;
-using Dudu.Core.Notes;
 using Dudu.Core.Pet;
 using Microsoft.Data.Sqlite;
 
@@ -43,12 +42,12 @@ public interface IUnsolicitedPresentationGateway
 }
 
 /// <summary>
-/// The one presentation gateway. Every unsolicited event (a remote note
-/// arriving, a reminder becoming due, or an automatically selected local
-/// note) passes through
-/// <see cref="PublishAsync"/>; <see cref="TickAsync"/> drains at most one
-/// queued item per call, driven by the existing 30-second reminder
-/// scheduler via <see cref="AppHost"/> — there is no new timer. Explicit
+/// The one presentation gateway. Every durable unsolicited event (a remote
+/// note arriving) passes through <see cref="PublishAsync"/>;
+/// <see cref="TickAsync"/> drains at most one queued item per call, driven
+/// by <see cref="AppHost"/>'s 30-second presentation scheduler — there is no
+/// new timer — and, when nothing is queued, may play one best-effort ambient
+/// moment or tantrum directly (never durable, never queued). Explicit
 /// user actions never go through this type; they stay on
 /// <see cref="PetPresentationCoordinator"/>.
 /// </summary>
@@ -63,12 +62,20 @@ public sealed class PresentationCoordinator :
     private readonly Func<PetPresentation, AnimationOptions, CancellationToken, Task> _playAsync;
     private readonly Func<AudioCueEvent, CancellationToken, Task>? _playAudioAsync;
     private readonly Func<AnimationOptions> _options;
-    private readonly Func<bool> _isQuietHours;
     private readonly Func<PauseState> _pauseState;
     private readonly SemaphoreSlim _petGate;
     private readonly AmbientScheduler? _ambientScheduler;
-    private readonly LocalNoteSelector? _localNoteSelector;
     private readonly IReadOnlyList<string>? _availableStickerKeys;
+    private readonly TimeZoneInfo _localTimeZone;
+
+    /// <summary>At most this many unsolicited ambient moments play per local
+    /// calendar day (the cadence the old local-note daily limit used to
+    /// impose), on top of <see cref="AmbientScheduler"/>'s own interval. Only
+    /// moments that actually played count; the tally is in memory, so it
+    /// resets on a day change or a restart.</summary>
+    internal const int MaxUnsolicitedAmbientPerDay = 3;
+    private DateOnly? _ambientDay;
+    private int _ambientShownToday;
     private readonly object _gate = new();
     private readonly HashSet<string> _presentingIds = new(StringComparer.Ordinal);
     private readonly HashSet<string> _toastedWhileHeldIds = new(StringComparer.Ordinal);
@@ -90,8 +97,8 @@ public sealed class PresentationCoordinator :
     /// and <see cref="TickAsync"/>'s decline path consult this so a
     /// presentation that then FAILS drops the item and deletes its row
     /// instead of requeuing and re-persisting something already discarded
-    /// (e.g. a deleted note's text, or a reminder completed from the
-    /// Reminders page). Cleared once that presentation ends, win or lose, so
+    /// (e.g. a deleted note's text, or a partner note already revealed on
+    /// the Love Notes page). Cleared once that presentation ends, win or lose, so
     /// a later item that happens to reuse the same key is unaffected.</summary>
     private readonly HashSet<string> _discardedWhilePresentingIds = new(StringComparer.Ordinal);
 
@@ -100,7 +107,7 @@ public sealed class PresentationCoordinator :
     /// name and (for a <see cref="SqliteException"/>) its error code, have
     /// already had a failure reported this process, so
     /// <see cref="ReportHeldFailureOnce"/> reports each distinct failure at
-    /// most once instead of on every reminder tick. Keying on kind alone
+    /// most once instead of on every presentation tick. Keying on kind alone
     /// would let one already-reported failure mode (e.g. a transient
     /// SQLITE_BUSY) permanently swallow a later, unrelated one (e.g. a
     /// corrupt database) under the same kind.</summary>
@@ -135,11 +142,9 @@ public sealed class PresentationCoordinator :
         PetStateMachine pet,
         Func<PetPresentation, AnimationOptions, CancellationToken, Task> playAsync,
         Func<AnimationOptions> options,
-        Func<bool> isQuietHours,
         Func<PauseState> pauseState,
         SemaphoreSlim petGate,
         AmbientScheduler? ambientScheduler = null,
-        LocalNoteSelector? localNoteSelector = null,
         Func<bool>? isFullscreenNow = null,
         Func<DateTimeOffset>? utcNow = null,
         IAppHostErrorReporter? errorReporter = null,
@@ -147,7 +152,8 @@ public sealed class PresentationCoordinator :
         IReadOnlyList<string>? availableStickerKeys = null,
         IHeldPresentationRepository? heldPresentations = null,
         bool initialUserHidden = false,
-        AffectionTracker? affection = null)
+        AffectionTracker? affection = null,
+        TimeZoneInfo? localTimeZone = null)
     {
         _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
         _policy = policy ?? throw new ArgumentNullException(nameof(policy));
@@ -156,12 +162,11 @@ public sealed class PresentationCoordinator :
         _playAsync = playAsync ?? throw new ArgumentNullException(nameof(playAsync));
         _playAudioAsync = playAudioAsync;
         _options = options ?? throw new ArgumentNullException(nameof(options));
-        _isQuietHours = isQuietHours ?? throw new ArgumentNullException(nameof(isQuietHours));
         _pauseState = pauseState ?? throw new ArgumentNullException(nameof(pauseState));
         _petGate = petGate ?? throw new ArgumentNullException(nameof(petGate));
         _ambientScheduler = ambientScheduler;
-        _localNoteSelector = localNoteSelector;
         _availableStickerKeys = availableStickerKeys;
+        _localTimeZone = localTimeZone ?? TimeZoneInfo.Local;
         _isFullscreenNow = isFullscreenNow ?? (() => { lock (_gate) return _fullscreen; });
         _errorReporter = errorReporter;
         _heldPresentations = heldPresentations;
@@ -172,23 +177,16 @@ public sealed class PresentationCoordinator :
         // _presentationEnvironment?.SetUserVisible(_userVisible)), but in
         // production that seed is a no-op: the coordinator is constructed
         // before this gateway exists, so the delegating sink's closure over
-        // the (still-null) gateway variable silently drops it. The startup
-        // reminder tick's direct call into the reminder engine (which still
-        // runs even though its own reconcile and release are deferred, see
-        // AppHost.RunReminderTickAsync) can publish a due reminder before
-        // reconcile has run even once -- with the default "visible", that
+        // the (still-null) gateway variable silently drops it. A publish
+        // (e.g. a remote note arriving) can reach this gateway before
+        // AppHost's first presentation tick has reconciled visibility even
+        // once -- with the default "visible", that
         // publish would be evaluated against a pet this gateway wrongly
         // believes is on screen, animating it into a window that is not
         // shown yet and deleting its row on that "successful" presentation.
         // Tests and the Windows harness, which never push a value at all,
         // keep their prior behavior (default false) unless they opt in.
         _userHidden = initialUserHidden;
-        if ((_ambientScheduler is null) != (_localNoteSelector is null))
-        {
-            throw new ArgumentException(
-                "The ambient scheduler and local-note selector must be supplied together.",
-                nameof(ambientScheduler));
-        }
     }
 
     public void SetSessionLocked(bool locked)
@@ -234,9 +232,9 @@ public sealed class PresentationCoordinator :
     /// Discards a pending unsolicited item -- from the in-memory queue, its
     /// toasted-while-held marker, and its persisted row -- without ever
     /// presenting it. Used when the event it represents is separately
-    /// resolved before this gateway released it: completing a reminder from
-    /// the Reminders page does not go through <see cref="PresentAsync"/> at
-    /// all (it advances the reminder directly), so a copy that was queued or
+    /// resolved before this gateway released it: revealing a partner note on
+    /// the Love Notes page does not go through <see cref="PresentAsync"/> at
+    /// all (it consumes the envelope directly), so a copy that was queued or
     /// held for later would otherwise still surface here on a later tick or
     /// the next app launch even though it was already handled. A no-op (but
     /// still safe, since Remove/RemoveHeldAsync are themselves no-ops for a
@@ -277,15 +275,15 @@ public sealed class PresentationCoordinator :
                 // presentation then FAILS, the ordinary retry path would
                 // otherwise requeue and re-persist the very item being
                 // discarded here -- resurrecting deleted note text or a
-                // reminder already completed elsewhere. RequeueHeldAsync and
+                // note already revealed elsewhere. RequeueHeldAsync and
                 // TickAsync's decline path both consult this instead.
                 //
                 // Finding 9: leave _toastedWhileHeldIds alone while that
                 // presentation is still in flight -- PresentAsync's own
                 // `alreadyToasted` read races this discard, and clearing the
                 // marker here unconditionally let it see alreadyToasted =
-                // false and show a Windows toast for a reminder she just
-                // completed elsewhere. PresentAsync now also consults
+                // false and show a Windows toast for a note she just
+                // revealed elsewhere. PresentAsync now also consults
                 // _discardedWhilePresentingIds directly to skip that toast.
                 _discardedWhilePresentingIds.Add(key);
             }
@@ -386,7 +384,7 @@ public sealed class PresentationCoordinator :
     /// <summary>
     /// Repopulates PresentationPolicy's in-memory queue from
     /// <see cref="IHeldPresentationRepository"/> so an item held back by
-    /// quiet hours/fullscreen/lock/pause at the moment the app last quit or
+    /// fullscreen/lock/pause/a busy pet at the moment the app last quit or
     /// crashed is not lost. No-op when no repository was supplied. A row that
     /// has already expired, or is older than <see cref="MaxHeldAge"/>, is
     /// dropped (deleted, not enqueued) rather than surfaced on this launch;
@@ -396,6 +394,16 @@ public sealed class PresentationCoordinator :
     /// toasted-while-held marker so its Windows toast is not shown a second
     /// time once released.
     /// </summary>
+    /// <summary>Held-row kinds written by older builds for retired
+    /// features. <see cref="LoadHeldItemsAsync"/> deletes these without a
+    /// <c>presentation-held-load</c> report; a genuinely unknown kind is
+    /// still deleted and reported.</summary>
+    private static readonly HashSet<string> RetiredHeldKinds = new(StringComparer.Ordinal)
+    {
+        "Reminder",
+        "LocalNote",
+    };
+
     private async Task LoadHeldItemsAsync(CancellationToken cancellationToken)
     {
         if (_heldPresentations is null)
@@ -430,6 +438,16 @@ public sealed class PresentationCoordinator :
                     continue;
                 }
 
+                if (RetiredHeldKinds.Contains(record.Kind))
+                {
+                    // A row left by an older build for a feature that no
+                    // longer exists (reminders, the local note jar). Not a
+                    // failure: delete it silently so an upgraded install
+                    // neither surfaces it nor reports a diagnostic for it.
+                    await RemoveHeldAsync(record.Key, cancellationToken);
+                    continue;
+                }
+
                 var notification = ToDurableNotification(record);
                 bool enqueued;
                 lock (_gate)
@@ -443,8 +461,7 @@ public sealed class PresentationCoordinator :
 
                 // Enqueue returns false for a duplicate kind+id already sitting
                 // in the in-memory queue (e.g. two persisted rows collided on
-                // the same key) or an Ambient item that should never have been
-                // persisted. Either way this row will never be delivered from
+                // the same key). This row will never be delivered from
                 // here, so leaving it on disk would just reload and fail to
                 // enqueue it again next launch, and marking it toasted would
                 // orphan that marker forever since nothing downstream will ever
@@ -467,15 +484,15 @@ public sealed class PresentationCoordinator :
     }
 
     /// <summary>
-    /// Publishes a newly-arrived durable item. Bypass items (reminders with
-    /// <see cref="QuietHoursBehavior.DeliverImmediately"/>) are presented
-    /// immediately regardless of the environment; everything else is queued
-    /// while quiet hours, focus, fullscreen, a locked session, or a pause is
+    /// Publishes a newly-arrived durable item. Bypass items are presented
+    /// immediately regardless of the environment (except a hidden pet);
+    /// everything else is queued
+    /// while a busy pet (eating or dragged), fullscreen, a locked session, or a pause is
     /// active, and presented immediately otherwise. An item whose kind+id is
     /// already queued or is currently being presented is a duplicate and is
     /// dropped rather than queued or presented a second time — this is what
     /// makes the gateway safe for more than one concurrent unsolicited
-    /// source (e.g. a reminder tick and a remote-note poller) on its own,
+    /// source (e.g. the presentation tick and a remote-note poller) on its own,
     /// without relying on a caller to serialize them.
     /// </summary>
     public async Task PublishAsync(
@@ -490,7 +507,6 @@ public sealed class PresentationCoordinator :
             return;
         }
 
-        bypassSuppression &= !item.IsRoutine;
         var shouldPresentNow = false;
         var toastNow = false;
         var queuedForHold = false;
@@ -502,7 +518,7 @@ public sealed class PresentationCoordinator :
                 return;
             }
 
-            var environment = EnvironmentFor(item, CaptureEnvironment(now));
+            var environment = CaptureEnvironment(now);
             if (_policy.IsQueued(item))
             {
                 // Finding 12: an earlier occurrence of this same recurring
@@ -512,7 +528,7 @@ public sealed class PresentationCoordinator :
                 // 7 days, across restarts) -- only the pet animation needs
                 // to wait for the original held item to release, not the
                 // notification for a new occurrence arriving in the
-                // meantime. Quiet-hours (and every other suppressor)
+                // meantime. Every suppressor's
                 // coalescing multiple occurrences into the single held row
                 // is unchanged: this only fires when hiding Dudu is the
                 // sole reason anything is held, exactly like toastNow below
@@ -525,7 +541,7 @@ public sealed class PresentationCoordinator :
                     // Same marker the sibling toastNow branch below sets:
                     // without it, the single held row's eventual release
                     // would show a second Windows toast for what is really
-                    // just one still-held reminder, since PresentAsync's own
+                    // just one still-held item, since PresentAsync's own
                     // alreadyToasted check would otherwise read false.
                     _toastedWhileHeldIds.Add(item.Key);
                 }
@@ -533,7 +549,7 @@ public sealed class PresentationCoordinator :
             else
             {
                 // Finding 11: bypassSuppression alone used to let a
-                // DeliverImmediately reminder animate straight into a
+                // bypass item animate straight into a
                 // hidden or not-yet-shown overlay (startup with
                 // initialUserHidden, or she hid Dudu from the tray) --
                 // bypass must still respect UserHidden for presenting now.
@@ -580,12 +596,8 @@ public sealed class PresentationCoordinator :
                     // the held row is ever released would reload it as
                     // untoasted and show this same toast a second time.
                     // Persist it the same way PresentAsync's own
-                    // toastShown-and-not-succeeded path does (LocalNote has
-                    // no durable row to mark, and no real toast either).
-                    if (item.Kind != PresentationItemKind.LocalNote)
-                    {
-                        await MarkToastedAsync(item.Key, cancellationToken);
-                    }
+                    // toastShown-and-not-succeeded path does.
+                    await MarkToastedAsync(item.Key, cancellationToken);
                 }
                 else
                 {
@@ -605,7 +617,7 @@ public sealed class PresentationCoordinator :
 
         if (queuedForHold)
         {
-            // Held back by quiet hours/fullscreen/lock/pause: persist it so
+            // Held back by fullscreen/lock/pause/a busy pet: persist it so
             // it survives a quit or crash while still queued. No-op when no
             // IHeldPresentationRepository was supplied.
             await PersistHeldAsync(item, now, cancellationToken);
@@ -651,8 +663,8 @@ public sealed class PresentationCoordinator :
     }
 
     /// <summary>
-    /// Drains at most one queued durable item, called after each successful
-    /// reminder tick by <see cref="AppHost"/> — no new timer is introduced.
+    /// Drains at most one queued durable item, called on each presentation
+    /// tick by <see cref="AppHost"/> — no new timer is introduced.
     /// </summary>
     public async Task TickAsync(CancellationToken cancellationToken = default)
     {
@@ -664,11 +676,10 @@ public sealed class PresentationCoordinator :
         {
             environment = CaptureEnvironment(now);
             var decision = _policy.Decide(
-                environment.NowQuiet,
                 environment.Fullscreen,
                 environment.Paused,
                 environment.SessionLocked,
-                environment.FocusActive,
+                environment.Busy,
                 now,
                 recordRelease: false,
                 userHidden: environment.UserHidden);
@@ -677,10 +688,9 @@ public sealed class PresentationCoordinator :
             // An item purged here was queued while held (and already toasted
             // for that hold) but expired before ever reaching PresentAsync,
             // so nothing downstream will ever clear its toasted-while-held
-            // entry. Left alone it orphans that key — most concretely for a
-            // routine reminder, which recurs daily under the same key, so a
-            // stale entry from yesterday would silently swallow today's
-            // Windows toast.
+            // entry. Left alone it orphans that key, so a stale entry could
+            // silently swallow the Windows toast of a later item recurring
+            // under the same key.
             foreach (var purgedKey in decision.PurgedKeys)
             {
                 _toastedWhileHeldIds.Remove(purgedKey);
@@ -774,42 +784,48 @@ public sealed class PresentationCoordinator :
             return;
         }
 
-        if (_ambientScheduler is null
-            || _localNoteSelector is null
-            || environment.NowQuiet
-            || environment.Fullscreen
-            || environment.Paused
-            || environment.SessionLocked
-            || environment.FocusActive
-            || environment.UserHidden)
+        if (_ambientScheduler is null || IsSuppressed(environment))
         {
             return;
         }
 
+        var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(now, _localTimeZone).DateTime);
+        lock (_gate)
+        {
+            if (_ambientDay != today)
+            {
+                _ambientDay = today;
+                _ambientShownToday = 0;
+            }
+
+            if (_ambientShownToday >= MaxUnsolicitedAmbientPerDay)
+            {
+                return;
+            }
+        }
+
         var ambient = _ambientScheduler.TryGetNextEvent(
             environment.Paused,
-            environment.FocusActive,
+            environment.Busy,
             environment.Fullscreen,
             environment.SessionLocked,
-            environment.NowQuiet,
             _availableStickerKeys);
         if (ambient is not PetEvent.AmbientRequested ambientRequest)
         {
             return;
         }
 
-        var note = await _localNoteSelector.SelectAsync(
-            manualRequest: false,
-            cancellationToken);
-        if (note is not null)
+        if (await PresentAmbientAsync(ambientRequest.AnimationKey, cancellationToken))
         {
-            // Route the selected note through the same gateway so the
-            // existing environment checks, deduplication, playback gate,
-            // and retry queue remain authoritative.
-            await PublishAsync(
-                DurableNotification.LocalNote(note, ambientRequest.AnimationKey),
-                bypassSuppression: false,
-                cancellationToken);
+            lock (_gate)
+            {
+                _ambientShownToday++;
+            }
+
+            // Same bookkeeping the old ambient-note path did through
+            // PresentAsync: a held remote note released next still waits the
+            // minimum silent interval after this moment.
+            _policy.RecordImmediateRelease(now);
         }
     }
 
@@ -873,6 +889,64 @@ public sealed class PresentationCoordinator :
     }
 
     /// <summary>
+    /// Plays one unsolicited ambient moment directly, the same way
+    /// <see cref="PresentTantrumAsync"/> does: best-effort, never queued or
+    /// persisted, under the same pet gate, and only when the pet is idle and
+    /// nothing suppresses it. Its cue (<see cref="AudioCueSelection.ForAmbient"/>)
+    /// starts with the visual. Returns true only when the moment actually
+    /// played, so a declined or failed one does not count toward the daily cap.
+    /// </summary>
+    private async Task<bool> PresentAmbientAsync(string animationKey, CancellationToken cancellationToken)
+    {
+        await _petGate.WaitAsync(cancellationToken);
+        PetPresentation? presentation = null;
+        var played = false;
+        try
+        {
+            if (_pet.Current.State != PetState.Idle || IsSuppressed(CaptureEnvironment(_utcNow())))
+            {
+                return false;
+            }
+
+            presentation = _pet.Handle(new PetEvent.AmbientRequested(animationKey));
+            if (presentation.State != PetState.Ambient)
+            {
+                presentation = null;
+                return false;
+            }
+
+            var playback = ObserveAsync(
+                () => PlayWithTimeoutAsync(presentation, cancellationToken),
+                "presentation-playback");
+            if (_playAudioAsync is not null && !(playback.IsCompletedSuccessfully && !playback.Result))
+            {
+                var cue = AudioCueSelection.ForAmbient(animationKey);
+                _ = ObserveAudioAsync(() => _playAudioAsync(cue, cancellationToken));
+            }
+
+            played = await playback;
+        }
+        finally
+        {
+            if (presentation is not null)
+            {
+                _pet.Handle(new PetEvent.PresentationAcknowledged());
+                _pet.Handle(new PetEvent.AmbientDismissed(animationKey));
+                // A one-shot leaves its last frame on screen; hand the
+                // overlay back to whatever the state machine now says.
+                var restore = _pet.Current;
+                _ = ObserveAsync(
+                    () => _playAsync(restore, _options(), CancellationToken.None),
+                    "presentation-playback");
+            }
+
+            _petGate.Release();
+        }
+
+        return played;
+    }
+
+    /// <summary>
     /// Mutates the pet state machine and plays its animation under the same
     /// gate <see cref="PetPresentationCoordinator"/> uses for explicit
     /// one-shots, so the two never interleave on the shared state machine.
@@ -910,11 +984,6 @@ public sealed class PresentationCoordinator :
                 return true;
             }
 
-            if (item.IsRoutine && IsSuppressed(EnvironmentFor(item, CaptureEnvironment(now))))
-            {
-                return false;
-            }
-
             // A drag or meal may have started while this item waited for the
             // gate: presenting now would show it as the drag/eat loop and
             // then count it delivered. Decline so the caller requeues it.
@@ -927,30 +996,6 @@ public sealed class PresentationCoordinator :
             var petEvent = ToPetEvent(item);
             presentation = _pet.Handle(petEvent);
             latched = true;
-            // Every reminder names itself in the bubble. This used to apply
-            // only to reminders carrying a body or animation (the evening
-            // check-in and bedtime routines), so an ordinary reminder --
-            // "stretch", "call mum" -- played its pose with no title at all
-            // and, whenever the Windows toast was unavailable, she could not
-            // tell which reminder had fired.
-            if (item.Kind == PresentationItemKind.Reminder
-                && presentation.State == PetState.Reminder)
-            {
-                presentation = presentation with
-                {
-                    AnimationKey = item.AnimationKey ?? presentation.AnimationKey,
-                    BubbleTitle = item.Title,
-                    BubbleBody = item.Body ?? presentation.BubbleBody,
-                };
-            }
-            if (item.Kind == PresentationItemKind.LocalNote)
-            {
-                presentation = presentation with
-                {
-                    BubbleTitle = item.Title,
-                    BubbleBody = item.Body,
-                };
-            }
             var playback = ObserveAsync(
                 () => PlayWithTimeoutAsync(presentation, cancellationToken),
                 "presentation-playback");
@@ -965,22 +1010,14 @@ public sealed class PresentationCoordinator :
         }
         finally
         {
-            if (item.Kind == PresentationItemKind.LocalNote)
+            if (latched && succeeded && item.Kind is PresentationItemKind.RemoteNote)
             {
-                _pet.Handle(new PetEvent.PresentationAcknowledged());
-                _pet.Handle(new PetEvent.AmbientDismissed(
-                    item.AnimationKey ?? throw new InvalidOperationException(
-                        "A local note presentation has no animation key.")));
-            }
-            else if (latched && succeeded && item.Kind is PresentationItemKind.Reminder or PresentationItemKind.RemoteNote)
-            {
-                // A reminder/note id otherwise sits in the state machine's
+                // A note id otherwise sits in the state machine's
                 // pending set forever (cleared only by an explicit Settings
                 // dismiss/complete): Select() would keep ranking it above
-                // ambient, welcome-back, and even a completed focus session
-                // for the rest of the session. Acknowledging it here, the
-                // same way a LocalNote is acknowledged above, lets the pet
-                // return to its normal presentation once this specific item
+                // ambient, welcome-back, and a running meal
+                // for the rest of the session. Acknowledging it here lets
+                // the pet return to its normal presentation once this specific item
                 // has actually been shown; the coalesced card just shows one
                 // fewer pending item if others remain. Gated on latched so
                 // the two early-return paths above (item was never handed
@@ -1007,7 +1044,7 @@ public sealed class PresentationCoordinator :
             alreadyToasted = _toastedWhileHeldIds.Contains(item.Key);
             // Finding 9: this exact attempt was discarded (DiscardHeldAsync
             // / DiscardHeldByKindAsync) while it was still in flight -- the
-            // reminder/note was already resolved elsewhere. Showing its
+            // note was already resolved elsewhere. Showing its
             // Windows toast now would surface a notification for something
             // she just completed or deleted.
             discardedWhilePresenting = _discardedWhilePresentingIds.Contains(item.Key);
@@ -1049,25 +1086,19 @@ public sealed class PresentationCoordinator :
                     _toastedWhileHeldIds.Add(item.Key);
                 }
 
-                if (item.Kind != PresentationItemKind.LocalNote)
-                {
-                    // Finding D: the marker above is memory-only. PersistHeldAsync
-                    // already writes toasted=true into a *new* row (via
-                    // RequeueHeldAsync, PublishAsync's own failure path), but
-                    // TickAsync's decline path deliberately does not re-persist
-                    // an already-held item's row (to preserve QueuedUtc) -- so
-                    // without this, that row's toasted column stays false even
-                    // though _toastedWhileHeldIds already remembers it in
-                    // memory. A restart before the retry finally succeeds would
-                    // then reload the row as untoasted and show the Windows
-                    // toast a second time. A no-op when the row does not exist
-                    // yet -- the fresh persist above already writes the correct
-                    // flag. Skipped for LocalNote: ShowNotificationAsync shows
-                    // no real toast for that kind (see the switch below), so
-                    // toastShown is trivially true for it regardless of
-                    // whether anything was actually shown.
-                    await MarkToastedAsync(item.Key, cancellationToken);
-                }
+                // Finding D: the marker above is memory-only. PersistHeldAsync
+                // already writes toasted=true into a *new* row (via
+                // RequeueHeldAsync, PublishAsync's own failure path), but
+                // TickAsync's decline path deliberately does not re-persist
+                // an already-held item's row (to preserve QueuedUtc) -- so
+                // without this, that row's toasted column stays false even
+                // though _toastedWhileHeldIds already remembers it in
+                // memory. A restart before the retry finally succeeds would
+                // then reload the row as untoasted and show the Windows
+                // toast a second time. A no-op when the row does not exist
+                // yet -- the fresh persist above already writes the correct
+                // flag.
+                await MarkToastedAsync(item.Key, cancellationToken);
             }
         }
         else if (succeeded)
@@ -1139,20 +1170,12 @@ public sealed class PresentationCoordinator :
             PresentationItemKind.RemoteNote => _notifications.ShowRemoteNoteArrivalAsync(
                 Guid.ParseExact(item.Id, "D"),
                 cancellationToken),
-            PresentationItemKind.Reminder => _notifications.ShowReminderAsync(
-                item.Id,
-                item.Title ?? string.Empty,
-                cancellationToken),
             _ => Task.CompletedTask,
         };
 
     private static PetEvent ToPetEvent(DurableNotification item) => item.Kind switch
     {
             PresentationItemKind.RemoteNote => new PetEvent.RemoteNoteArrived(item.Id),
-            PresentationItemKind.Reminder => new PetEvent.ReminderDue(item.Id),
-            PresentationItemKind.LocalNote => new PetEvent.AmbientRequested(
-                item.AnimationKey ?? throw new InvalidOperationException(
-                    "A local note presentation has no animation key.")),
             _ => throw new ArgumentOutOfRangeException(nameof(item), item.Kind, "Unsupported presentation item kind."),
     };
 
@@ -1182,18 +1205,18 @@ public sealed class PresentationCoordinator :
             }
 
             var paused = PausePolicy.IsSuppressed(_pauseState(), now, liveFullscreen);
-            // Latched focus or an eat-together meal hold unsolicited items
-            // back even while a drag, pet or welcome-back is what is on
-            // screen right now; a drag holds them too, so a reminder is
-            // never "presented" as the drag loop and then acknowledged.
-            var focusActive = _pet.IsFocusActive || _pet.IsEatingActive || _pet.IsDragging;
-            return new SuppressionSnapshot(_isQuietHours(), liveFullscreen, paused, sessionLocked, focusActive, userHidden);
+            // An eat-together meal holds unsolicited items back even while a
+            // pet or welcome-back is what is on screen right now; a drag
+            // holds them too, so a note is never "presented" as the drag
+            // loop and then acknowledged.
+            var busy = _pet.IsEatingActive || _pet.IsDragging;
+            return new SuppressionSnapshot(liveFullscreen, paused, sessionLocked, busy, userHidden);
         }
         catch (Exception exception)
         {
             // Single fail-closed policy: any environment fault suppresses.
             ReportFailure("presentation-tick", exception);
-            return new SuppressionSnapshot(NowQuiet: true, Fullscreen: true, Paused: true, SessionLocked: true, FocusActive: true, UserHidden: true);
+            return new SuppressionSnapshot(Fullscreen: true, Paused: true, SessionLocked: true, Busy: true, UserHidden: true);
         }
     }
 
@@ -1210,16 +1233,9 @@ public sealed class PresentationCoordinator :
         }
     }
 
-    /// <summary>The environment as it applies to <paramref name="item"/>: an
-    /// item that <see cref="DurableNotification.IgnoresQuietHours"/> (the
-    /// bedtime routine) is not held by quiet hours; every other suppressor
-    /// still applies to it.</summary>
-    private static SuppressionSnapshot EnvironmentFor(DurableNotification item, SuppressionSnapshot snapshot) =>
-        item.IgnoresQuietHours ? snapshot with { NowQuiet = false } : snapshot;
-
     private static bool IsSuppressed(SuppressionSnapshot snapshot) =>
-        snapshot.NowQuiet || snapshot.Fullscreen || snapshot.Paused
-        || snapshot.SessionLocked || snapshot.FocusActive || snapshot.UserHidden;
+        snapshot.Fullscreen || snapshot.Paused
+        || snapshot.SessionLocked || snapshot.Busy || snapshot.UserHidden;
 
     /// <summary>
     /// Same suppression check as <see cref="IsSuppressed"/> but leaving out
@@ -1229,12 +1245,12 @@ public sealed class PresentationCoordinator :
     /// overlay) can still fire immediately instead of waiting on un-hide.
     /// </summary>
     private static bool IsSuppressedExcludingUserHidden(SuppressionSnapshot snapshot) =>
-        snapshot.NowQuiet || snapshot.Fullscreen || snapshot.Paused
-        || snapshot.SessionLocked || snapshot.FocusActive;
+        snapshot.Fullscreen || snapshot.Paused
+        || snapshot.SessionLocked || snapshot.Busy;
 
     private async Task PlayWithTimeoutAsync(PetPresentation presentation, CancellationToken cancellationToken)
     {
-        // Loop animations (idle/focus) never complete on their own; without a
+        // Loop animations (idle/eat) never complete on their own; without a
         // bound the petGate is held forever and later notes never present.
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
@@ -1263,7 +1279,7 @@ public sealed class PresentationCoordinator :
         {
             // Playback/notification failures are reported under the single
             // presentation-tick operation carrying the exception type only —
-            // no note or reminder content is ever logged.
+            // no note content is ever logged.
             ReportFailure("presentation-tick", exception);
             return false;
         }
@@ -1346,7 +1362,7 @@ public sealed class PresentationCoordinator :
         // after this call returns), so it says nothing about whether anyone
         // else still cares. Counting it there made this guard unable to ever
         // fire for that path: a concurrent DiscardHeldAsync (e.g. the
-        // reminder was completed from the Reminders page while this retry
+        // note was revealed from the Love Notes page while this retry
         // was mid-flight) could remove the item from the queue for good, yet
         // the self-reference alone would keep "still relevant" true forever,
         // leaving a stale row to reload and re-present on the next launch.
@@ -1413,8 +1429,8 @@ public sealed class PresentationCoordinator :
     {
         // Finding E: this exact attempt was discarded (DiscardHeldAsync /
         // DiscardHeldByKindAsync) while it was still in flight -- e.g. the
-        // reminder was completed from the Reminders page, or the note was
-        // deleted, while PublishAsync's immediate-present attempt for it was
+        // note was revealed from the Love Notes page, or pairing was
+        // forgotten, while PublishAsync's immediate-present attempt for it was
         // still running. Requeuing and re-persisting it now, the ordinary
         // failure path below, would resurrect something the user already
         // got rid of. Drop it for good instead.
@@ -1428,8 +1444,8 @@ public sealed class PresentationCoordinator :
                 // key to _toastedWhileHeldIds (see the "toastShown &&
                 // !succeeded" branch there) after it lost the race with a
                 // discard that landed mid-presentation. Left behind, that
-                // stale marker orphans the key -- for a recurring reminder,
-                // silently swallowing tomorrow's Windows toast even though
+                // stale marker orphans the key -- for an item recurring under
+                // it, silently swallowing a later Windows toast even though
                 // today's item was dropped for good just above.
                 _toastedWhileHeldIds.Remove(item.Key);
             }
@@ -1483,7 +1499,7 @@ public sealed class PresentationCoordinator :
     /// failure (throttled via <see cref="ReportHeldFailureOnce"/>) and
     /// swallowing it rather than letting it propagate. Kept separate from
     /// <see cref="ObserveAsync"/>'s other callers because this one runs on
-    /// every reminder tick (as often as every 30 seconds): an unthrottled
+    /// every presentation tick (as often as every 30 seconds): an unthrottled
     /// report would drown out anything else in the log/error reporter for as
     /// long as a transient DB problem lasts.</summary>
     private async Task<bool> ObserveHeldAsync(Func<Task> operation, string kind)
@@ -1536,25 +1552,13 @@ public sealed class PresentationCoordinator :
     private static DurableNotification ToDurableNotification(HeldPresentation record) => record.Kind switch
     {
         nameof(PresentationItemKind.RemoteNote) => DurableNotification.RemoteNote(record.Id),
-        nameof(PresentationItemKind.Reminder) => DurableNotification.Reminder(
-            record.Id,
-            record.Title ?? throw new InvalidOperationException("A held reminder has no title."),
-            record.Body,
-            record.AnimationKey,
-            record.ExpiresUtc),
-        nameof(PresentationItemKind.LocalNote) => DurableNotification.LocalNote(
-            new LocalLoveNote(
-                record.Id,
-                record.Body ?? throw new InvalidOperationException("A held local note has no text.")),
-            record.AnimationKey ?? throw new InvalidOperationException("A held local note has no animation key.")),
         _ => throw new InvalidOperationException($"Unrecognized held presentation kind '{record.Kind}'."),
     };
 
     private readonly record struct SuppressionSnapshot(
-        bool NowQuiet,
         bool Fullscreen,
         bool Paused,
         bool SessionLocked,
-        bool FocusActive,
+        bool Busy,
         bool UserHidden = false);
 }

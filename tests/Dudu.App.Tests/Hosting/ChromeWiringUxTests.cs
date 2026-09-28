@@ -42,18 +42,18 @@ public sealed class ChromeWiringUxTests
     }
 
     [Fact]
-    public void Toast_clicks_go_through_the_router_with_real_reminder_actions()
+    public void Toast_clicks_go_through_the_router_and_no_reminder_toast_actions_remain()
     {
         var composition = ReadHosting("WindowsCompanionProductionComposition.cs");
         var invoked = Slice(composition, "private static void HandleNotificationInvoked(", "\n    }\n");
 
         Assert.Contains("router.HandleAsync(arguments", invoked);
         Assert.Contains("HandleNotificationInvoked(notificationRouter, invokedArgs.Arguments)", composition);
-        Assert.Contains("() => reminderToastActions,", composition);
-        Assert.Contains("reminderToastActions = new ReminderToastActions(", composition);
-        Assert.Contains("featureContext.Reminders,", composition);
-        Assert.Contains("featureContext.DismissReminderNotificationAsync,", composition);
-        Assert.Contains("featureContext.DiscardHeldReminderAsync,", composition);
+        Assert.Contains("CreateNotificationInvocationRouter(", composition);
+        Assert.Contains("composedNotificationRouter = notificationRouter;", composition);
+        Assert.DoesNotContain("ReminderToastActions", composition);
+        Assert.DoesNotContain("DismissReminderNotificationAsync", composition);
+        Assert.DoesNotContain("DiscardHeldReminderAsync", composition);
     }
 
     [Fact]
@@ -62,7 +62,6 @@ public sealed class ChromeWiringUxTests
         var agents = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "AGENTS.md"));
 
         Assert.DoesNotContain("`pet-context-menu`", agents);
-        Assert.Contains("`reminder-toast-action`", agents);
         Assert.Contains("`notification-invoked`", agents);
         Assert.Contains("`tray-menu-state`", agents);
         Assert.Contains("`settings-load`", agents);

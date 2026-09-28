@@ -1,6 +1,5 @@
 using System.ComponentModel;
 using Dudu.App.ViewModels;
-using Dudu.Core.Models;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -40,8 +39,7 @@ public sealed partial class LoveNotesPage : Page
 
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs args)
     {
-        if (args.PropertyName is nameof(LoveNotesViewModel.UnopenedRemoteNoteCount)
-            or nameof(LoveNotesViewModel.DailyLocalNoteLimit))
+        if (args.PropertyName is nameof(LoveNotesViewModel.UnopenedRemoteNoteCount))
         {
             RefreshCountText();
         }
@@ -49,13 +47,10 @@ public sealed partial class LoveNotesPage : Page
 
     private void RefreshCountText()
     {
-        var dailyLimit = ViewModel.DailyLocalNoteLimit;
-        SetText(LoveNotesDailyLimit, $"up to {dailyLimit} local note{(dailyLimit == 1 ? string.Empty : "s")} a day");
-
         var unopened = ViewModel.UnopenedRemoteNoteCount;
         SetText(LoveNotesPendingCount, unopened switch
         {
-            0 => "no notes yet ah",
+            0 => "no new notes yet ah",
             1 => "1 unopened remote note",
             _ => $"{unopened} unopened remote notes",
         });
@@ -69,16 +64,4 @@ public sealed partial class LoveNotesPage : Page
         block.Text = text;
         AutomationProperties.SetName(block, text);
     }
-
-    private void LocalNoteList_SelectionChanged(object sender, SelectionChangedEventArgs args)
-    {
-        if (sender is ListView list)
-        {
-            var note = list.SelectedItem as LocalLoveNote;
-            ViewModel.SelectedNote = note;
-            ViewModel.DraftText = note?.Text ?? string.Empty;
-            ViewModel.DraftEnabled = note?.Enabled ?? true;
-        }
-    }
-
 }

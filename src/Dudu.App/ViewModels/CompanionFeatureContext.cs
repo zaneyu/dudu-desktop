@@ -1,18 +1,14 @@
 using Dudu.App.System;
 using Dudu.App.Hosting;
 using Dudu.Core.Abstractions;
-using Dudu.Core.CheckIns;
-using Dudu.Core.Focus;
 using Dudu.Core.Models;
-using Dudu.Core.Notes;
 using Dudu.Core.Pet;
 using Dudu.Core.Time;
-using Dudu.Core.Tasks;
 
 namespace Dudu.App.ViewModels;
 
 /// <summary>
-/// Application-facing dependencies for the seven settings pages and the pet
+/// Application-facing dependencies for the settings pages and the pet
 /// action surface. The context keeps pages independent from the WinUI shell.
 /// </summary>
 public sealed class CompanionFeatureContext
@@ -22,18 +18,8 @@ public sealed class CompanionFeatureContext
         PreferenceMutationCoordinator preferenceMutations,
         IProfileRepository profiles,
         IPetPlacementRepository petPlacements,
-        IReminderRepository reminders,
-        IReminderWriter reminderWriter,
-        ITaskRepository tasks,
-        IFocusSessionRepository focusSessions,
         ILocalNoteRepository localNotes,
         IRemoteEnvelopeRepository remoteEnvelopes,
-        ICountdownRepository countdowns,
-        ICheckInRepository checkIns,
-        CheckInService checkInService,
-        TaskService taskService,
-        FocusService focusService,
-        LocalNoteSelector noteSelector,
         IPairingService pairing,
         ICompanionFeatureTransactions featureTransactions,
         PetStateMachine pet,
@@ -44,36 +30,21 @@ public sealed class CompanionFeatureContext
         Func<PetEvent, CancellationToken, Task>? presentPetAsync = null,
         Func<PetEvent, string, CancellationToken, Task>? presentOneShotPetAsync = null,
         Func<RemoteEnvelope, CancellationToken, Task<RevealedRemoteNote>>? revealRemoteNoteAsync = null,
-        Func<CancellationToken, Task>? backupAsync = null,
-        Func<CancellationToken, Task>? restoreAsync = null,
         Func<CancellationToken, Task>? deleteLocalDataAsync = null,
         Func<CancellationToken, Task>? deleteRemoteDataAsync = null,
-        Func<string?, CancellationToken, Task>? applyOutfitAsync = null,
-        Func<string, CancellationToken, Task>? setGlobalShortcutAsync = null,
-        Func<string, CancellationToken, Task>? dismissReminderNotificationAsync = null,
-        Func<string, CancellationToken, Task>? discardHeldReminderAsync = null,
-        Func<string, CancellationToken, Task>? discardHeldLocalNoteAsync = null,
         Func<string, CancellationToken, Task>? discardHeldRemoteNoteAsync = null,
         Func<CancellationToken, Task>? discardHeldRemoteNotesAsync = null,
         AffectionTracker? affection = null,
-        Func<string?>? getGlobalShortcutStatus = null)
+        Func<CancellationToken, Task>? stopRemoteSyncAsync = null,
+        Func<CancellationToken, Task>? startRemoteSyncAsync = null,
+        bool remoteDeleteAvailable = false)
     {
         Clock = clock ?? throw new ArgumentNullException(nameof(clock));
         PreferenceMutations = preferenceMutations ?? throw new ArgumentNullException(nameof(preferenceMutations));
         Profiles = profiles ?? throw new ArgumentNullException(nameof(profiles));
         PetPlacements = petPlacements ?? throw new ArgumentNullException(nameof(petPlacements));
-        Reminders = reminders ?? throw new ArgumentNullException(nameof(reminders));
-        ReminderWriter = reminderWriter ?? throw new ArgumentNullException(nameof(reminderWriter));
-        Tasks = tasks ?? throw new ArgumentNullException(nameof(tasks));
-        FocusSessions = focusSessions ?? throw new ArgumentNullException(nameof(focusSessions));
         LocalNotes = localNotes ?? throw new ArgumentNullException(nameof(localNotes));
         RemoteEnvelopes = remoteEnvelopes ?? throw new ArgumentNullException(nameof(remoteEnvelopes));
-        Countdowns = countdowns ?? throw new ArgumentNullException(nameof(countdowns));
-        CheckIns = checkIns ?? throw new ArgumentNullException(nameof(checkIns));
-        CheckInService = checkInService ?? throw new ArgumentNullException(nameof(checkInService));
-        TaskService = taskService ?? throw new ArgumentNullException(nameof(taskService));
-        FocusService = focusService ?? throw new ArgumentNullException(nameof(focusService));
-        NoteSelector = noteSelector ?? throw new ArgumentNullException(nameof(noteSelector));
         Pairing = pairing ?? throw new ArgumentNullException(nameof(pairing));
         FeatureTransactions = featureTransactions ?? throw new ArgumentNullException(nameof(featureTransactions));
         Pet = pet ?? throw new ArgumentNullException(nameof(pet));
@@ -96,20 +67,6 @@ public sealed class CompanionFeatureContext
         RevealRemoteNoteAsync = revealRemoteNoteAsync ?? ((_, _) =>
             Task.FromException<RevealedRemoteNote>(new NotSupportedException(
                 "aiyo cant reveal notes relay offline")));
-        BackupAsync = backupAsync ?? ((_) => Task.FromException(
-            new NotSupportedException("oh no backup not ready yet")));
-        RestoreAsync = async token =>
-        {
-            if (restoreAsync is null)
-            {
-                throw new NotSupportedException("cannot restore right now try later");
-            }
-
-            await PreferenceMutations.ExecuteAndReloadAsync(
-                restoreAsync,
-                Preferences.Default,
-                token);
-        };
         DeleteLocalDataAsync = async token =>
         {
             if (deleteLocalDataAsync is null)
@@ -124,37 +81,20 @@ public sealed class CompanionFeatureContext
         };
         DeleteRemoteDataAsync = deleteRemoteDataAsync ?? ((_) => Task.FromException(
             new NotSupportedException("wait cant delete remote data yet")));
-        ApplyOutfitAsync = applyOutfitAsync ?? ((_, _) => Task.FromException(
-            new NotSupportedException("aiyo outfits not ready yet")));
-        SetGlobalShortcutAsync = setGlobalShortcutAsync ?? ((_, _) => Task.FromException(
-            new NotSupportedException("oh no shortcuts not ready yet")));
-        GetGlobalShortcutStatus = getGlobalShortcutStatus ?? (() => null);
-        DismissReminderNotificationAsync = dismissReminderNotificationAsync ?? ((_, _) => Task.CompletedTask);
-        DiscardHeldReminderAsync = discardHeldReminderAsync ?? ((_, _) => Task.CompletedTask);
-        DiscardHeldLocalNoteAsync = discardHeldLocalNoteAsync ?? ((_, _) => Task.CompletedTask);
         DiscardHeldRemoteNoteAsync = discardHeldRemoteNoteAsync ?? ((_, _) => Task.CompletedTask);
         DiscardHeldRemoteNotesAsync = discardHeldRemoteNotesAsync ?? (_ => Task.CompletedTask);
+        StopRemoteSyncAsync = stopRemoteSyncAsync ?? (_ => Task.CompletedTask);
+        StartRemoteSyncAsync = startRemoteSyncAsync ?? (_ => Task.CompletedTask);
+        RemoteDeleteAvailable = remoteDeleteAvailable;
     }
 
     public IClock Clock { get; }
-    [Obsolete("Use CurrentPreferences or UpdatePreferencesAsync so concurrent pages do not overwrite each other.")]
-    public Preferences InitialPreferences => CurrentPreferences;
     public Preferences CurrentPreferences => PreferenceMutations.Current;
     public PreferenceMutationCoordinator PreferenceMutations { get; }
     public IProfileRepository Profiles { get; }
     public IPetPlacementRepository PetPlacements { get; }
-    public IReminderRepository Reminders { get; }
-    public IReminderWriter ReminderWriter { get; }
-    public ITaskRepository Tasks { get; }
-    public IFocusSessionRepository FocusSessions { get; }
     public ILocalNoteRepository LocalNotes { get; }
     public IRemoteEnvelopeRepository RemoteEnvelopes { get; }
-    public ICountdownRepository Countdowns { get; }
-    public ICheckInRepository CheckIns { get; }
-    public CheckInService CheckInService { get; }
-    public TaskService TaskService { get; }
-    public FocusService FocusService { get; }
-    public LocalNoteSelector NoteSelector { get; }
     public IPairingService Pairing { get; }
     public ICompanionFeatureTransactions FeatureTransactions { get; }
     public PetStateMachine Pet { get; }
@@ -171,8 +111,8 @@ public sealed class CompanionFeatureContext
 
     /// <summary>Pets Dudu from any surface: resets the shared tantrum clock
     /// and plays <c>petted</c>, or <c>celebrate</c> on a third pet within a
-    /// minute. An interaction (not an ambient) so it also plays during focus
-    /// or a meal.</summary>
+    /// minute. An interaction (not an ambient) so it also plays during a
+    /// meal.</summary>
     public Task PetAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -183,33 +123,26 @@ public sealed class CompanionFeatureContext
     public Task DrinkAsync(CancellationToken cancellationToken) =>
         PresentOneShotPetAsync(new PetEvent.InteractionRequested("drink"), "drink", cancellationToken);
     public Func<RemoteEnvelope, CancellationToken, Task<RevealedRemoteNote>> RevealRemoteNoteAsync { get; }
-    public Func<CancellationToken, Task> BackupAsync { get; }
-    public Func<CancellationToken, Task> RestoreAsync { get; }
     public Func<CancellationToken, Task> DeleteLocalDataAsync { get; }
     public Func<CancellationToken, Task> DeleteRemoteDataAsync { get; }
-    public Func<string?, CancellationToken, Task> ApplyOutfitAsync { get; }
-    public Func<string, CancellationToken, Task> SetGlobalShortcutAsync { get; }
-    /// <summary>Null while the saved global shortcut is the one registered;
-    /// otherwise why a different one (or none) is in effect.</summary>
-    public Func<string?> GetGlobalShortcutStatus { get; }
-    /// <summary>Best-effort removal of a reminder's toast after the user
-    /// acknowledged it (Done or Snooze).</summary>
-    public Func<string, CancellationToken, Task> DismissReminderNotificationAsync { get; }
 
-    /// <summary>Best-effort removal of a reminder's queued/held presentation
-    /// (in PresentationCoordinator's in-memory queue and its persisted row)
-    /// after the user completed it directly from the Reminders page, so a
-    /// copy that was queued or held back does not surface again later.</summary>
-    public Func<string, CancellationToken, Task> DiscardHeldReminderAsync { get; }
+    /// <summary>True only when a relay is configured (the production composition has a
+    /// remote sync loop). Offline builds and safe mode leave it false, so "delete my data"
+    /// wipes this pc only there, without treating the missing relay as a failure.</summary>
+    public bool RemoteDeleteAvailable { get; }
 
-    /// <summary>Same as <see cref="DiscardHeldReminderAsync"/> but for a
-    /// local note, keyed by note id, after it was deleted from the note
-    /// jar.</summary>
-    public Func<string, CancellationToken, Task> DiscardHeldLocalNoteAsync { get; }
+    /// <summary>Stops the remote sync loop so no poll can re-register a fresh device
+    /// between the remote delete and the local wipe. No-op without a relay.</summary>
+    public Func<CancellationToken, Task> StopRemoteSyncAsync { get; }
 
-    /// <summary>Same as <see cref="DiscardHeldReminderAsync"/> but for a
-    /// single remote note, keyed by message id, after it was consumed
-    /// (saved to the jar) or deleted.</summary>
+    /// <summary>Restarts the remote sync loop after a remote delete that did not
+    /// complete, so nothing was wiped and notes keep arriving. No-op without a relay.</summary>
+    public Func<CancellationToken, Task> StartRemoteSyncAsync { get; }
+    /// <summary>Best-effort removal of a single remote note's queued/held
+    /// presentation (in PresentationCoordinator's in-memory queue and its
+    /// persisted row), keyed by message id, after it was revealed or
+    /// deleted, so a copy that was queued or held back does not surface
+    /// again later.</summary>
     public Func<string, CancellationToken, Task> DiscardHeldRemoteNoteAsync { get; }
 
     /// <summary>Discards every queued/held remote note at once, for the
@@ -225,38 +158,6 @@ public sealed class CompanionFeatureContext
         Func<Preferences, Preferences> update,
         CancellationToken cancellationToken = default) =>
         await PreferenceMutations.UpdateAsync(update, cancellationToken);
-
-    public async Task<Preferences> UpdatePreferencesAndDefaultRemindersAsync(
-        Func<Preferences, Preferences> update,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(update);
-        IReadOnlyList<Reminder> previousDefaults = [];
-        return await PreferenceMutations.UpdateTransactionalAsync(
-            update,
-            async (_, updated, token) =>
-            {
-                previousDefaults = (await Reminders.ListAsync(token))
-                    .Where(reminder => reminder.Id is "default-hydration" or "default-break"
-                        or Dudu.Core.Reminders.LocalReminderDefaults.EveningCheckInId
-                        or Dudu.Core.Reminders.LocalReminderDefaults.BedtimeId)
-                    .ToArray();
-                await FeatureTransactions.SavePreferencesAndDefaultRemindersAsync(
-                    updated,
-                    Clock.UtcNow.ToUniversalTime(),
-                    Clock.LocalTimeZone,
-                    token);
-            },
-            async (previous, _, token) =>
-            {
-                await FeatureTransactions.RestorePreferencesAndDefaultRemindersAsync(
-                    previous,
-                    previousDefaults,
-                    token);
-            },
-            applyRuntime: true,
-            cancellationToken);
-    }
 }
 
 public abstract class FeatureViewModelBase : CommunityToolkit.Mvvm.ComponentModel.ObservableObject
@@ -329,7 +230,7 @@ public abstract class FeatureViewModelBase : CommunityToolkit.Mvvm.ComponentMode
         }
         catch (Exception exception)
         {
-            // A success line left over from an earlier action ("backup created",
+            // A success line left over from an earlier action ("all cleaned up",
             // "code ready") must not stay on screen next to this failure: the page
             // would show a green tick and a red error at once, and the tick would
             // read as if it described the action that just failed.

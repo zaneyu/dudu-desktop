@@ -118,14 +118,18 @@ public sealed class PrivacyBoundaryTests
     }
 
     [Fact]
-    public async Task Worker_outage_does_not_stop_local_reminders()
+    public async Task Worker_outage_does_not_stop_local_presentations()
     {
-        var fixture = AppFixture.WithUnavailableRelayAndDueReminder();
+        using var fixture = AppFixture.WithUnavailableRelay();
 
         await fixture.Host.StartAsync(fixture.CancellationToken);
 
         Assert.True(fixture.Host.IsStarted); // AppHost has no `IsRunning`; see task-21 ruling 1.
-        Assert.Single(fixture.PresentedReminders);
+        Assert.Equal(1, fixture.Presentations.StartCount);
+
+        await fixture.Host.ResumeAsync(fixture.CancellationToken);
+
+        Assert.Equal(1, fixture.Presentations.TickCount);
     }
 
     /// <summary>Drives a real <see cref="RelayClient"/> through registration, a poll failure,
@@ -505,9 +509,9 @@ public sealed class PrivacyBoundaryTests
         public int Next(int exclusiveMax) => 0;
     }
 
-    /// <summary>A minimal <see cref="AppHost"/> rig: a reminder service that records every tick
-    /// it is asked to present, and a remote sync that always throws, simulating a Worker
-    /// outage. No real database, timer, or relay is involved.</summary>
+    /// <summary>A minimal <see cref="AppHost"/> rig: a presentation gateway that records every
+    /// start and tick, and a remote sync that always throws, simulating a Worker outage. No real
+    /// database, timer, or relay is involved.</summary>
     private sealed class AppFixture : IDisposable
     {
         private readonly string _root = Path.Combine(
@@ -516,20 +520,19 @@ public sealed class PrivacyBoundaryTests
         private AppFixture()
         {
             Directory.CreateDirectory(_root);
-            var reminderService = new RecordingReminderService();
-            PresentedReminders = reminderService.Ticks;
+            Presentations = new RecordingPresentationGateway();
             Host = new AppHost(
                 AppPaths.ForRoot(_root),
-                new NoOpDatabase(),
-                reminderService);
+                new NoOpDatabase());
+            Host.AttachPresentationGateway(Presentations);
             Host.AttachRemoteSync(new UnavailableRemoteSync());
         }
 
-        public static AppFixture WithUnavailableRelayAndDueReminder() => new();
+        public static AppFixture WithUnavailableRelay() => new();
 
         public AppHost Host { get; }
 
-        public IReadOnlyList<int> PresentedReminders { get; }
+        public RecordingPresentationGateway Presentations { get; }
 
         public CancellationToken CancellationToken => CancellationToken.None;
 
@@ -552,17 +555,27 @@ public sealed class PrivacyBoundaryTests
             public ValueTask DisposeAsync() => ValueTask.CompletedTask;
         }
 
-        /// <summary>Stands in for a due local reminder being presented: every tick is recorded,
-        /// with no real <c>ReminderEngine</c> involved.</summary>
-        private sealed class RecordingReminderService : IAppHostReminderService
+        /// <summary>Stands in for the local presentation gateway (ambient, held-note release):
+        /// every start and tick is recorded.</summary>
+        public sealed class RecordingPresentationGateway : IAppHostPresentationGateway
         {
-            public List<int> Ticks { get; } = [];
+            public int StartCount { get; private set; }
+
+            public int TickCount { get; private set; }
+
+            public Task StartAsync(CancellationToken cancellationToken = default)
+            {
+                StartCount++;
+                return Task.CompletedTask;
+            }
 
             public Task TickAsync(CancellationToken cancellationToken = default)
             {
-                Ticks.Add(Ticks.Count + 1);
+                TickCount++;
                 return Task.CompletedTask;
             }
+
+            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
         }
 
         private sealed class UnavailableRemoteSync : IAppHostRemoteSync

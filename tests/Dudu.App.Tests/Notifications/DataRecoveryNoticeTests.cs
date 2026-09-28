@@ -67,7 +67,7 @@ public sealed class DataRecoveryNoticeTests
         var root = FindRepositoryDirectory("src", "Dudu.App", "Notifications");
         var contents = File.ReadAllText(Path.Combine(root, "AppNotificationService.cs"));
         var noticeStart = contents.IndexOf("ShowDataRecoveryNoticeAsync", StringComparison.Ordinal);
-        var noticeEnd = contents.IndexOf("public Task ShowReminderAsync", StringComparison.Ordinal);
+        var noticeEnd = contents.IndexOf("public Task ShowRemoteNoteArrivalAsync", StringComparison.Ordinal);
         Assert.True(noticeStart >= 0);
         Assert.True(noticeEnd > noticeStart);
         var noticeSource = contents[noticeStart..noticeEnd];

@@ -1,6 +1,3 @@
-using Dudu.App.Animation;
-using Dudu.Core.Assets;
-
 namespace Dudu.App.Overlay;
 
 /// <summary>Owns native pointer dispatch so Win32 callbacks stay non-blocking
@@ -21,43 +18,17 @@ internal sealed class OverlayActionDispatchQueue : IDisposable
 
     public Task Completion { get { lock (_gate) return _tail; } }
 
-    public void Enqueue(OverlayActionSurfaceController surface, PixelPoint point)
+    /// <summary>A click on Dudu's body: pet it, in click order. The handler
+    /// is the router's pet action; it runs serialized behind any earlier
+    /// click, and a fault is reported, never rethrown into the native
+    /// window procedure.</summary>
+    public void EnqueuePet(Func<CancellationToken, Task> petAsync)
     {
-        ArgumentNullException.ThrowIfNull(surface);
-        EnqueueCore(token => surface.HandlePointerAsync(point, token));
+        ArgumentNullException.ThrowIfNull(petAsync);
+        EnqueueCore(petAsync);
     }
 
-    public void Enqueue(OverlayActionSurfaceController surface, OverlaySurfaceAction action)
-    {
-        ArgumentNullException.ThrowIfNull(surface);
-        ArgumentNullException.ThrowIfNull(action);
-        // Dispatch is strictly serial and a breathing exercise occupies it
-        // for a full minute, so a click queued behind it only ran once the
-        // exercise ended -- "tiny hug" or "take a five-minute break" pressed
-        // mid-breath looked dead and then fired up to a minute later. Any
-        // comfort choice now interrupts the running exercise first (Close
-        // always did); choosing "breathe with me" again restarts it.
-        if (action.ComfortAction == ComfortAction.Close
-            || (action.ComfortAction is not null && surface.IsBreathing))
-        {
-            surface.CancelBreathing();
-        }
-
-        EnqueueCore(token => surface.HandlePresentedActionAsync(action, token));
-    }
-
-    /// <summary>A click on Dudu's body: pet it, in click order.</summary>
-    public void EnqueuePet(OverlayActionSurfaceController surface)
-    {
-        ArgumentNullException.ThrowIfNull(surface);
-        EnqueueCore(async token =>
-        {
-            await surface.PetFromBodyAsync(token).ConfigureAwait(false);
-            return true;
-        });
-    }
-
-    private void EnqueueCore(Func<CancellationToken, Task<bool>> dispatch)
+    private void EnqueueCore(Func<CancellationToken, Task> dispatch)
     {
         lock (_gate)
         {
@@ -72,8 +43,8 @@ internal sealed class OverlayActionDispatchQueue : IDisposable
                 }
                 catch (OperationCanceledException)
                 {
-                    // Closing the comfort surface intentionally cancels an
-                    // in-progress breathing action before its queued Close.
+                    // Disposing the queue (window teardown) cancels queued
+                    // work; that is not a failure.
                 }
                 catch (Exception exception)
                 {

@@ -7,6 +7,26 @@ release cadences.
 
 ## [Unreleased]
 
+### Removed
+
+- Dudu is a cute companion first again. The settings window has three
+  pages (home, love notes, settings) instead of seven. Reminders (custom
+  and helpful defaults, reminder toasts and their Done/Snooze actions),
+  tasks, the focus timer, countdowns, mood check-ins, the local note jar,
+  quiet hours, outfits and seasonal looks, the global hotkey, and the
+  user-facing backup/restore buttons are gone. Automatic database backups
+  and corruption recovery stay. Onboarding is three steps (name, look,
+  pairing); the tray menu is show/hide, pause 1 hour or resume, open dudu,
+  and exit. Clicking an old reminder toast now does nothing. Data those
+  features left behind stays dormant until "delete my data" clears it.
+
+### Changed
+
+- Revealing a partner note keeps it in "opened notes" to re-read or delete.
+  "Breathe with me" runs on Home with a stop button. "Delete my data" asks
+  the partner server to forget this pc first and, if that server cannot be
+  reached, wipes nothing unless she picks "wipe this pc only".
+
 ### Added
 
 - More Dudu motion: twelve new clips built from the private sticker and GIF

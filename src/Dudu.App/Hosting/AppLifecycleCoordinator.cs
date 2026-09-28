@@ -29,7 +29,6 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
     private readonly PetStateMachine _pet;
     private Preferences _preferences;
     private readonly Func<PauseState> _pauseState;
-    private readonly Func<bool> _isQuietHours;
     private readonly Func<bool> _isFullscreen;
     private readonly Func<DateTimeOffset> _clock;
     private readonly Func<CancellationToken, Task>? _openHome;
@@ -54,7 +53,6 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
         PetStateMachine pet,
         Preferences preferences,
         Func<PauseState>? pauseState = null,
-        Func<bool>? isQuietHours = null,
         Func<bool>? isFullscreen = null,
         Func<DateTimeOffset>? clock = null,
         TrayIconService? tray = null,
@@ -70,7 +68,6 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
         _pet = pet ?? throw new ArgumentNullException(nameof(pet));
         _preferences = preferences ?? throw new ArgumentNullException(nameof(preferences));
         _pauseState = pauseState ?? (() => PauseState.None);
-        _isQuietHours = isQuietHours ?? (() => false);
         _isFullscreen = isFullscreen ?? (() => false);
         _clock = clock ?? (() => DateTimeOffset.UtcNow);
         _tray = tray;
@@ -166,9 +163,8 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
         var snapshot = await CaptureAsync(cancellationToken);
         var fullscreen = TryReadFullscreen("hotkey-fullscreen");
         // The hotkey is an explicit user gesture (also used for second
-        // launch/activation, see WindowsCompanionRuntime.ActivateAsync):
-        // quiet hours never veto the overlay's visibility (see TryCanShow),
-        // so this always shows the pet regardless of the hour.
+        // launch/activation, see WindowsCompanionRuntime.ActivateAsync),
+        // gated only by TryCanShow's lock/suspend/fullscreen/pause vetoes.
         //
         // Home opens regardless of the veto: "the tray and global hotkey
         // remain available" while paused, locked or fullscreen-hidden, and
@@ -248,9 +244,8 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
             return;
         }
 
-        // Tray "show dudu" is an explicit user gesture: quiet hours never
-        // veto the overlay's visibility (see TryCanShow), so this always
-        // shows the pet regardless of the hour.
+        // Tray "show dudu" is an explicit user gesture, gated only by
+        // TryCanShow's lock/suspend/fullscreen/pause vetoes.
         await EnsureUserVisibleAsync(cancellationToken);
     }
 
@@ -298,10 +293,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
                 // below already applies that preference correctly, so this is
                 // redundant with it and wrong on top of being redundant.
                 //
-                // Owner decision 3: TryCanShow no longer has a quiet-hours
-                // term at all -- quiet hours gates proactive presentation
-                // (welcome-back, reminder/note animations, audio), never the
-                // overlay window's own visibility. Every show, gesture or
+                // Every show, gesture or
                 // reconcile-driven restore alike, is gated only by lock/
                 // suspend/fullscreen-hidden/pause here.
                 if (_fullscreenHidden
@@ -343,7 +335,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
     /// leaves behind (e.g. a pause active at sign-in). Nothing previously
     /// retried that show once the veto's reason ended, so the pet stayed
     /// invisible for the rest of the session. Ticked from <c>AppHost</c>'s
-    /// existing 30 s reminder tick, before the presentation gateway's own
+    /// existing 30 s presentation tick, before the presentation gateway's own
     /// release -- no new timer. Exception-safe: a failure here must never
     /// interrupt that tick.
     /// </summary>
@@ -709,10 +701,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
         // welcome-back greeting (with audio) plays after she hid the pet
         // before the lock/suspend.
         var show = canShow && !snapshot.FullscreenHidden && snapshot.UserVisible;
-        // Owner decision 3: the overlay itself always restores (show, above,
-        // has no quiet-hours term), but the welcome-back greeting is
-        // proactive presentation and stays gated by quiet hours here.
-        var welcome = show && !fullscreen && !TryIsQuietHours("resume-welcome-quiet-hours");
+        var welcome = show && !fullscreen;
 
         await _gate.WaitAsync(cancellationToken);
         try
@@ -744,13 +733,13 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
 
         // Finding 5: resume the host only after _locked/_suspended are
         // cleared and the overlay is back up. _host.ResumeAsync can run an
-        // immediate catch-up reminder tick (AppHost.RunResumeTickAsync),
+        // immediate catch-up presentation tick (AppHost.RunResumeTickAsync),
         // which reconciles visibility and releases the presentation
         // gateway's queue synchronously. Doing that before the flags above
         // were cleared used to make the catch-up reconcile see stale
         // locked/suspended state, veto, and push the gateway back to
-        // user-hidden -- stranding a reminder that became due exactly at
-        // unlock until the next periodic tick (~30 s later) instead of
+        // user-hidden -- stranding a note held until unlock
+        // until the next periodic tick (~30 s later) instead of
         // surfacing it at unlock.
         await _host.ResumeAsync(cancellationToken);
 
@@ -798,12 +787,7 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
     }
 
     /// <summary>
-    /// Owner decision 3: quiet hours gate proactive PRESENTATION only
-    /// (greetings, reminder/note animations, audio -- see
-    /// <c>ResumeAndMaybeWelcomeAsync</c>'s <c>welcome</c> term and
-    /// <c>PresentationCoordinator.IsSuppressed</c>), never the overlay
-    /// window's own visibility. Quiet hours never hid an already-visible
-    /// pet, so this is the only consistent reading. Lock, suspend,
+    /// Lock, suspend,
     /// fullscreen (when HidePetDuringFullscreen is on), and the pause
     /// policy are the only vetoes here, and gate every caller equally.
     /// </summary>
@@ -832,24 +816,6 @@ public sealed class AppLifecycleCoordinator : IAsyncDisposable, IAppHostVisibili
     private bool TryReadFullscreen(string operation)
     {
         try { return _isFullscreen(); }
-        catch (Exception exception)
-        {
-            ReportFailure(operation, exception);
-            return true;
-        }
-    }
-
-    /// <summary>
-    /// Guards the quiet-hours delegate the same way <see cref="TryReadFullscreen"/>
-    /// guards <c>_isFullscreen</c>. A failure here gates a presentation
-    /// decision (see <c>ResumeAndMaybeWelcomeAsync</c>'s <c>welcome</c>
-    /// term), not the overlay's visibility, so it fails conservatively
-    /// toward "assume quiet hours" -- suppressing a greeting on an error is
-    /// safer than risking one at 3am.
-    /// </summary>
-    private bool TryIsQuietHours(string operation)
-    {
-        try { return _isQuietHours(); }
         catch (Exception exception)
         {
             ReportFailure(operation, exception);

@@ -5,7 +5,6 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Controls.Primitives;
 
 namespace Dudu.App.Pages;
 
@@ -14,14 +13,7 @@ public sealed partial class OnboardingPage : Page
     private readonly OnboardingViewModel _viewModel;
     private readonly Action _completed;
     private readonly Func<bool, CancellationToken, Task>? _setUserVisible;
-    private bool? _placementVisibilityRequested;
-
-    // True while controls are being written from the draft (and during
-    // InitializeComponent, when the XAML's own Slider Minimum/Value assignments
-    // raise ValueChanged). Without it, constructing the page overwrote the loaded
-    // pet scale with the slider's XAML default and pushed a placement preview to
-    // the overlay before the user had even reached the placement step.
-    private bool _suppressControlEvents = true;
+    private bool? _petVisibilityRequested;
 
     // True while a Next/Finish transition is in flight, so a double-click (or
     // Enter held down) cannot run the transition twice or let Back interleave.
@@ -41,7 +33,6 @@ public sealed partial class OnboardingPage : Page
         _setUserVisible = setUserVisible;
         InitializeComponent();
         SyncControlsFromDraft();
-        _suppressControlEvents = false;
         RefreshStep();
         RefreshStartupRecovery();
         // Replace the XAML placeholder names with the (empty or initial) text so no
@@ -59,59 +50,6 @@ public sealed partial class OnboardingPage : Page
         {
             FocusLater(RecipientNameBox);
         }
-    }
-
-    private async void RecommendedDefaultsButton_Click(object sender, RoutedEventArgs args)
-    {
-        try
-        {
-            // Capture what is already typed first: SyncControlsFromDraft below
-            // rewrites every control from the draft, and without this the name the
-            // user had just entered was wiped back to the (empty) draft value.
-            SyncDraftFromControls();
-            await _viewModel.AcceptRecommendedDefaultsAsync();
-            SyncControlsFromDraft();
-            SetMessage(null);
-            SetStatus("recommended defaults set. u can still change them on the next steps");
-        }
-        catch (Exception exception)
-        {
-            SetMessage("aiyo cant set the defaults yet ur choices stay");
-            global::System.Diagnostics.Trace.TraceError("Dudu recommended defaults failed: {0}", exception);
-        }
-    }
-
-    private async void RecommendedPlacementButton_Click(object sender, RoutedEventArgs args)
-    {
-        try
-        {
-            // Same reason as above: keep the step's other unsaved choices.
-            SyncDraftFromControls();
-            await _viewModel.UseRecommendedPlacementAsync();
-            SyncControlsFromDraft();
-            SetMessage(null);
-        }
-        catch (OperationCanceledException)
-        {
-            SetMessage("placement paused ur draft still here");
-        }
-        catch (Exception exception)
-        {
-            SetMessage("aiyo cant preview that yet ur draft stays");
-            global::System.Diagnostics.Trace.TraceInformation(
-                "Dudu recommended placement failed: {0}",
-                exception.Message);
-        }
-    }
-
-    private async void PlacementScaleSlider_ValueChanged(
-        object sender,
-        RangeBaseValueChangedEventArgs args)
-    {
-        UpdatePlacementScaleLabel(args.NewValue);
-        if (_suppressControlEvents) return;
-        _viewModel.PlacementScale = args.NewValue;
-        await PreviewPlacementAsync();
     }
 
     private async void PairingCheckButton_Click(object sender, RoutedEventArgs args)
@@ -289,18 +227,12 @@ public sealed partial class OnboardingPage : Page
     {
         RecipientStep.Visibility = Visibility.Collapsed;
         AppearanceStep.Visibility = Visibility.Collapsed;
-        QuietHoursStep.Visibility = Visibility.Collapsed;
-        RemindersStep.Visibility = Visibility.Collapsed;
-        PlacementStep.Visibility = Visibility.Collapsed;
         PairingStep.Visibility = Visibility.Collapsed;
 
         switch (_viewModel.CurrentStep)
         {
             case OnboardingStep.Recipient: RecipientStep.Visibility = Visibility.Visible; break;
             case OnboardingStep.Appearance: AppearanceStep.Visibility = Visibility.Visible; break;
-            case OnboardingStep.QuietHours: QuietHoursStep.Visibility = Visibility.Visible; break;
-            case OnboardingStep.Reminders: RemindersStep.Visibility = Visibility.Visible; break;
-            case OnboardingStep.Placement: PlacementStep.Visibility = Visibility.Visible; break;
             case OnboardingStep.Pairing: PairingStep.Visibility = Visibility.Visible; break;
         }
 
@@ -314,15 +246,17 @@ public sealed partial class OnboardingPage : Page
             : Visibility.Collapsed;
         RefreshStartupRecovery();
 
-        var shouldShowPlacementPet = _viewModel.CurrentStep is OnboardingStep.Placement or OnboardingStep.Pairing;
-        if (_placementVisibilityRequested != shouldShowPlacementPet)
+        // Dudu says hello on the last step, where she can also drag it to a
+        // spot she likes before finishing (completion saves where it sits).
+        var shouldShowPet = _viewModel.CurrentStep is OnboardingStep.Pairing;
+        if (_petVisibilityRequested != shouldShowPet)
         {
-            _placementVisibilityRequested = shouldShowPlacementPet;
-            _ = SetPlacementVisibilityAsync(shouldShowPlacementPet);
+            _petVisibilityRequested = shouldShowPet;
+            _ = SetPetVisibilityAsync(shouldShowPet);
         }
     }
 
-    private async Task SetPlacementVisibilityAsync(bool visible)
+    private async Task SetPetVisibilityAsync(bool visible)
     {
         if (_setUserVisible is null)
         {
@@ -339,7 +273,7 @@ public sealed partial class OnboardingPage : Page
                 ? "alala dudu not shown yet try again"
                 : null);
             global::System.Diagnostics.Trace.TraceInformation(
-                "Dudu placement visibility change failed: {0}",
+                "Dudu onboarding pet visibility change failed: {0}",
                 exception.Message);
         }
     }
@@ -358,18 +292,6 @@ public sealed partial class OnboardingPage : Page
     {
         _viewModel.RecipientName = RecipientNameBox.Text;
         _viewModel.ReducedMotion = ReducedMotionBox.IsChecked == true;
-        _viewModel.QuietHoursEnabled = QuietHoursBox.IsChecked == true;
-        // Unparseable times are flagged (and block the quiet-hours step) instead
-        // of being silently dropped in favour of the previous value.
-        _viewModel.TrySetQuietHoursText(QuietStartBox.Text, QuietEndBox.Text);
-        _viewModel.HydrationRemindersEnabled = HydrationBox.IsChecked == true;
-        _viewModel.BreakRemindersEnabled = BreakBox.IsChecked == true;
-        // A cleared NumberBox reports NaN; the view model rejects it rather than
-        // letting a cast turn it into a limit of 0.
-        _viewModel.SetLocalNoteDailyLimitInput(NoteLimitBox.Value);
-        _viewModel.PlacementScale = PlacementScaleSlider.Value;
-        _viewModel.HidePetDuringFullscreen = HideFullscreenBox.IsChecked == true;
-        _viewModel.LaunchAtSignIn = LaunchAtSignInBox.IsChecked == true;
         if (ThemeBox.SelectedItem is ComboBoxItem themeItem
             && Enum.TryParse<AppTheme>(themeItem.Tag as string, out var theme))
         {
@@ -379,43 +301,14 @@ public sealed partial class OnboardingPage : Page
 
     private void SyncControlsFromDraft()
     {
-        var previous = _suppressControlEvents;
-        _suppressControlEvents = true;
-        try
+        RecipientNameBox.Text = _viewModel.RecipientName;
+        ReducedMotionBox.IsChecked = _viewModel.ReducedMotion;
+        ThemeBox.SelectedIndex = _viewModel.Theme switch
         {
-            RecipientNameBox.Text = _viewModel.RecipientName;
-            ReducedMotionBox.IsChecked = _viewModel.ReducedMotion;
-            QuietHoursBox.IsChecked = _viewModel.QuietHoursEnabled;
-            QuietStartBox.Text = _viewModel.QuietHoursStart.ToString("HH:mm");
-            QuietEndBox.Text = _viewModel.QuietHoursEnd.ToString("HH:mm");
-            HydrationBox.IsChecked = _viewModel.HydrationRemindersEnabled;
-            BreakBox.IsChecked = _viewModel.BreakRemindersEnabled;
-            NoteLimitBox.Value = _viewModel.LocalNoteDailyLimit;
-            PlacementScaleSlider.Value = _viewModel.PlacementScale;
-            UpdatePlacementScaleLabel(PlacementScaleSlider.Value);
-            HideFullscreenBox.IsChecked = _viewModel.HidePetDuringFullscreen;
-            LaunchAtSignInBox.IsChecked = _viewModel.LaunchAtSignIn;
-            ThemeBox.SelectedIndex = _viewModel.Theme switch
-            {
-                AppTheme.Light => 1,
-                AppTheme.Dark => 2,
-                _ => 0,
-            };
-        }
-        finally
-        {
-            _suppressControlEvents = previous;
-        }
-    }
-
-    private void UpdatePlacementScaleLabel(double scale)
-    {
-        // Runs during InitializeComponent too, before later-declared named
-        // elements exist.
-        if (PlacementScaleLabel is null || !double.IsFinite(scale)) return;
-        var text = $"{Math.Round(scale * 100):0}%";
-        PlacementScaleLabel.Text = text;
-        AutomationProperties.SetName(PlacementScaleLabel, $"pet size {text}");
+            AppTheme.Light => 1,
+            AppTheme.Dark => 2,
+            _ => 0,
+        };
     }
 
     private void SetMessage(string? message)
@@ -460,20 +353,6 @@ public sealed partial class OnboardingPage : Page
         if (queue is null || !queue.TryEnqueue(() => control.Focus(FocusState.Programmatic)))
         {
             control.Focus(FocusState.Programmatic);
-        }
-    }
-
-    private async Task PreviewPlacementAsync()
-    {
-        try
-        {
-            await _viewModel.PreviewPlacementAsync();
-        }
-        catch (Exception exception)
-        {
-            global::System.Diagnostics.Trace.TraceInformation(
-                "Dudu placement preview failed: {0}",
-                exception.Message);
         }
     }
 }

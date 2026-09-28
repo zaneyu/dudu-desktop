@@ -93,14 +93,21 @@ public sealed class DatabaseTests
     }
 
     [Fact]
-    public async Task First_database_contains_the_twelve_private_default_notes_once()
+    public async Task First_database_seeds_no_default_notes_and_leaves_the_seed_watermark_dormant()
     {
+        // The local note jar (and the ambient note selector that read it) is
+        // gone, so initialization no longer plants default notes, and the
+        // seed_state watermark table is left unwritten.
         await using var fixture = await DatabaseFixture.CreateAsync();
         await fixture.Database.InitializeAsync(TestContext.Current.CancellationToken);
+        fixture.Database.InvalidateInitialization();
+        await fixture.Database.InitializeAsync(TestContext.Current.CancellationToken);
 
-        var notes = await new LocalNoteRepository(fixture.Database).ListEnabledAsync(TestContext.Current.CancellationToken);
-        Assert.Equal(12, notes.Count);
-        Assert.Equal(12, notes.Select(note => note.Text).Distinct().Count());
+        Assert.Empty(await new LocalNoteRepository(fixture.Database).ListAsync(TestContext.Current.CancellationToken));
+        await using var connection = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken);
+        await using var seedState = connection.CreateCommand();
+        seedState.CommandText = "SELECT COUNT(*) FROM seed_state;";
+        Assert.Equal(0L, Convert.ToInt64(await seedState.ExecuteScalarAsync(TestContext.Current.CancellationToken)));
     }
 
     [Fact]
@@ -272,23 +279,6 @@ public sealed class DatabaseTests
     }
 
     [Fact]
-    public async Task Local_note_cap_is_atomic_between_two_connections()
-    {
-        await using var fixture = await DatabaseFixture.CreateAsync();
-        var repositoryA = new LocalNoteRepository(fixture.Database);
-        var repositoryB = new LocalNoteRepository(fixture.Database);
-        var date = new DateOnly(2026, 9, 11);
-        var now = DateTimeOffset.Parse("2026-09-11T10:00:00Z");
-
-        var results = await Task.WhenAll(
-            repositoryA.TryRecordShownAsync("default-note-01", now, date, 1, true, TestContext.Current.CancellationToken),
-            repositoryB.TryRecordShownAsync("default-note-02", now.AddSeconds(1), date, 1, true, TestContext.Current.CancellationToken));
-
-        Assert.Single(results, result => result);
-        Assert.Equal(1, await repositoryA.CountUnsolicitedShownAsync(date, TestContext.Current.CancellationToken));
-    }
-
-    [Fact]
     public async Task Local_note_jar_supports_explicit_save_list_and_delete()
     {
         await using var fixture = await DatabaseFixture.CreateAsync();
@@ -299,75 +289,17 @@ public sealed class DatabaseTests
         await repository.SaveToJarAsync(original, cancellationToken);
 
         Assert.Contains(original, await repository.ListAsync(cancellationToken));
-        Assert.DoesNotContain(original, await repository.ListEnabledAsync(cancellationToken));
 
         var updated = original with { Text = "You really can do it.", Enabled = true };
         await repository.SaveToJarAsync(updated, cancellationToken);
-        Assert.Contains(updated, await repository.ListEnabledAsync(cancellationToken));
+        var afterUpdate = await repository.ListAsync(cancellationToken);
+        Assert.Contains(updated, afterUpdate);
+        Assert.DoesNotContain(original, afterUpdate);
 
         await repository.DeleteAsync(updated.Id, cancellationToken);
         Assert.DoesNotContain(
             (await repository.ListAsync(cancellationToken)).Select(note => note.Id),
             id => id == updated.Id);
-    }
-
-    [Fact]
-    public async Task Feature_history_queries_exclude_active_work_and_order_newest_first()
-    {
-        await using var fixture = await DatabaseFixture.CreateAsync();
-        var cancellationToken = TestContext.Current.CancellationToken;
-        var earlier = DateTimeOffset.Parse("2026-09-11T10:00:00Z");
-        var later = earlier.AddMinutes(1);
-
-        var tasks = new TaskRepository(fixture.Database);
-        var completedTask = new TaskItem(Guid.NewGuid(), "Completed", null, null, true, earlier, later, later);
-        var activeTask = new TaskItem(Guid.NewGuid(), "Active", null, null, false, earlier, later, null);
-        await tasks.SaveAsync(completedTask, cancellationToken);
-        await tasks.SaveAsync(activeTask, cancellationToken);
-        Assert.Equal([completedTask], await tasks.ListCompletedAsync(cancellationToken));
-
-        var focus = new FocusSessionRepository(fixture.Database);
-        var completed = new FocusSession(Guid.NewGuid(), null, earlier, earlier.AddMinutes(25), TimeSpan.Zero, FocusStatus.Completed, earlier);
-        var ended = new FocusSession(Guid.NewGuid(), null, earlier, null, TimeSpan.FromMinutes(12), FocusStatus.EndedEarly, later);
-        var running = new FocusSession(Guid.NewGuid(), null, later, later.AddMinutes(25), TimeSpan.Zero, FocusStatus.Running, later);
-        await focus.SaveAsync(completed, cancellationToken);
-        await focus.SaveAsync(ended, cancellationToken);
-        await focus.SaveAsync(running, cancellationToken);
-
-        Assert.Equal([ended, completed], await focus.ListHistoryAsync(cancellationToken));
-    }
-
-    [Fact]
-    public async Task Reminder_list_includes_disabled_reminders_for_settings_editing()
-    {
-        await using var fixture = await DatabaseFixture.CreateAsync();
-        var cancellationToken = TestContext.Current.CancellationToken;
-        var repository = new ReminderRepository(fixture.Database);
-        var first = new Reminder("first", "First", null, true, new RecurrenceRule.Once(), "UTC",
-            QuietHoursBehavior.DeliverImmediately, MissedOccurrencePolicy.LatestOnly,
-            DateTimeOffset.Parse("2026-09-12T09:00:00Z"));
-        var second = first with { Id = "second", Title = "Second", Enabled = false };
-        await repository.SaveAsync(first, cancellationToken);
-        await repository.SaveAsync(second, cancellationToken);
-
-        Assert.Equal([first, second], await repository.ListAsync(cancellationToken));
-    }
-
-    [Fact]
-    public async Task Snoozed_due_reminder_is_not_selected_until_its_persisted_snooze_expires()
-    {
-        await using var fixture = await DatabaseFixture.CreateAsync();
-        var cancellationToken = TestContext.Current.CancellationToken;
-        var repository = new ReminderRepository(fixture.Database);
-        var reminder = new Reminder("snoozed", "Snoozed", null, true, new RecurrenceRule.Once(), "UTC",
-            QuietHoursBehavior.DeliverImmediately, MissedOccurrencePolicy.LatestOnly,
-            DateTimeOffset.Parse("2026-09-12T09:00:00Z"),
-            DateTimeOffset.Parse("2026-09-12T10:15:00Z"));
-        await repository.SaveAsync(reminder, cancellationToken);
-
-        Assert.Empty(await repository.LoadDueAsync(DateTimeOffset.Parse("2026-09-12T10:00:00Z"), cancellationToken));
-        Assert.Equal([reminder.Id], (await repository.LoadDueAsync(
-            DateTimeOffset.Parse("2026-09-12T10:15:00Z"), cancellationToken)).Select(item => item.Id));
     }
 
     [Fact]
@@ -403,30 +335,6 @@ public sealed class DatabaseTests
             cancellationToken);
 
         await notes.DeleteAsync(note.Id, cancellationToken);
-
-        Assert.Empty(await held.ListAsync(cancellationToken));
-    }
-
-    [Fact]
-    public async Task Deleting_a_reminder_removes_its_held_presentation_row()
-    {
-        // M3: same dangling-reference concern as the local-note delete above, keyed
-        // "Reminder:<id>".
-        await using var fixture = await DatabaseFixture.CreateAsync();
-        var cancellationToken = TestContext.Current.CancellationToken;
-        var reminders = new ReminderRepository(fixture.Database);
-        var held = new HeldPresentationRepository(fixture.Database);
-        var reminder = new Reminder("held-reminder", "Stretch", null, true, new RecurrenceRule.Once(), "UTC",
-            QuietHoursBehavior.DeliverImmediately, MissedOccurrencePolicy.LatestOnly,
-            DateTimeOffset.Parse("2026-09-12T09:00:00Z"));
-        await reminders.SaveAsync(reminder, cancellationToken);
-        await held.SaveAsync(
-            new HeldPresentation(
-                "Reminder:held-reminder", "Reminder", "held-reminder", "Stretch", null, null, null,
-                DateTimeOffset.Parse("2026-09-19T08:00:00Z"), Toasted: false),
-            cancellationToken);
-
-        await reminders.DeleteAsync(reminder.Id, cancellationToken);
 
         Assert.Empty(await held.ListAsync(cancellationToken));
     }
@@ -609,58 +517,8 @@ public sealed class DatabaseTests
     {
         await using var fixture = await DatabaseFixture.CreateAsync();
         var cancellationToken = TestContext.Current.CancellationToken;
-        var taskRepository = new TaskRepository(fixture.Database);
-        var task = new TaskItem(
-            Guid.NewGuid(), "task", null,
-            DateTimeOffset.Parse("2026-09-12T09:30:00-07:00"), false,
-            DateTimeOffset.Parse("2026-09-11T10:00:00-07:00"),
-            DateTimeOffset.Parse("2026-09-11T10:01:00-07:00"), null);
-        await taskRepository.SaveAsync(task, cancellationToken);
-        Assert.Equal(task, await taskRepository.GetAsync(task.Id, cancellationToken));
-
-        var focusRepository = new FocusSessionRepository(fixture.Database);
-        var focus = new FocusSession(Guid.NewGuid(), task.Id,
-            DateTimeOffset.Parse("2026-09-11T17:00:00Z"),
-            DateTimeOffset.Parse("2026-09-11T17:25:00Z"), TimeSpan.FromMinutes(3),
-            FocusStatus.Paused, DateTimeOffset.Parse("2026-09-11T17:04:00Z"));
-        await focusRepository.SaveAsync(focus, cancellationToken);
-        Assert.Equal(focus, await focusRepository.GetAsync(focus.Id, cancellationToken));
-
-        var reminderRepository = new ReminderRepository(fixture.Database);
-        var reminder = new Reminder("reminder", "title", null, true,
-            new RecurrenceRule.SelectedWeekdays([DayOfWeek.Monday, DayOfWeek.Friday], new TimeOnly(8, 5)),
-            "UTC", QuietHoursBehavior.WaitUntilQuietHoursEnd, MissedOccurrencePolicy.LatestOnly,
-            DateTimeOffset.Parse("2026-09-11T08:05:00Z"), null,
-            new QuietHours(true, new TimeOnly(22, 0), new TimeOnly(7, 0)));
-        await reminderRepository.SaveAsync(reminder, cancellationToken);
-        var loadedReminder = (await reminderRepository.LoadDueAsync(
-            DateTimeOffset.Parse("2026-09-11T09:00:00Z"), cancellationToken)).Single();
-        Assert.Equal(reminder.Id, loadedReminder.Id);
-        Assert.Equal(reminder.NextDueUtc, loadedReminder.NextDueUtc);
-        var loadedWeekdays = Assert.IsType<RecurrenceRule.SelectedWeekdays>(loadedReminder.Rule);
-        Assert.Equal(((RecurrenceRule.SelectedWeekdays)reminder.Rule).LocalTime, loadedWeekdays.LocalTime);
-        Assert.Equal(((RecurrenceRule.SelectedWeekdays)reminder.Rule).Days, loadedWeekdays.Days);
-        Assert.Equal(reminder.QuietHours, loadedReminder.QuietHours);
-
-        var completedOnce = reminder with { Id = "completed-once", Rule = new RecurrenceRule.Once(), NextDueUtc = null };
-        await reminderRepository.SaveAsync(completedOnce, cancellationToken);
-        Assert.Null((await reminderRepository.ListAsync(cancellationToken))
-            .Single(item => item.Id == completedOnce.Id).NextDueUtc);
-
-        var countdownRepository = new CountdownRepository(fixture.Database);
-        var countdown = new Countdown("countdown", "event",
-            DateTimeOffset.Parse("2026-10-01T10:00:00-07:00"), null, false, TimeZoneInfo.Utc);
-        await countdownRepository.SaveAsync(countdown, cancellationToken);
-        var loadedCountdown = await countdownRepository.GetAsync(countdown.Id, cancellationToken);
-        Assert.Equal(countdown, loadedCountdown);
-
-        var preferences = new Preferences(AppTheme.Dark,
-            new QuietHours(true, new TimeOnly(23, 0), new TimeOnly(6, 0)), true, 3, true, false, true,
-            TimeSpan.FromMinutes(15),
-            OutfitKey: "winter",
-            AutomaticSeasonalMode: false,
-            Anniversary: new MonthDay(9, 11),
-            Birthday: new MonthDay(2, 29));
+        var preferences = new Preferences(AppTheme.Dark, true, true, false, true,
+            TimeSpan.FromMinutes(15));
         var preferencesRepository = new PreferencesRepository(fixture.Database);
         await preferencesRepository.SaveAsync(preferences, cancellationToken);
         Assert.Equal(preferences, await preferencesRepository.GetAsync(cancellationToken));
@@ -674,13 +532,6 @@ public sealed class DatabaseTests
         var placementRepository = new PetPlacementRepository(fixture.Database);
         await placementRepository.SaveAsync(placement, cancellationToken);
         Assert.Equal(placement, await placementRepository.GetAsync(placement.MonitorDeviceName, cancellationToken));
-
-        var checkIn = new MoodCheckIn(Guid.NewGuid(), MoodChoice.Tired, null,
-            DateTimeOffset.Parse("2026-09-11T17:00:00Z"));
-        var checkInRepository = new CheckInRepository(fixture.Database);
-        await checkInRepository.SaveAsync(checkIn, cancellationToken);
-        Assert.Equal(checkIn, Assert.Single(await checkInRepository.ListSinceAsync(
-            DateTimeOffset.Parse("2026-09-11T16:00:00Z"), cancellationToken)));
 
         var envelope = new RemoteEnvelope("message-1", [1, 2, 3], null, [4], [5], null,
             DateTimeOffset.Parse("2026-09-11T17:00:00Z"));
@@ -721,7 +572,7 @@ public sealed class DatabaseTests
         // adds its columns, and an existing install starts not paused.
         await using var fixture = await DatabaseFixture.CreateAsync();
         var cancellationToken = TestContext.Current.CancellationToken;
-        var existing = Preferences.Default with { GlobalShortcut = "Ctrl+Shift+K", SoundVolume = 0.6 };
+        var existing = Preferences.Default with { ReducedMotion = true, SoundVolume = 0.6 };
         await new PreferencesRepository(fixture.Database).SaveAsync(existing, cancellationToken);
         await using (var connection = await fixture.Database.CreateConnectionAsync(cancellationToken))
         {
@@ -793,7 +644,7 @@ public sealed class DatabaseTests
     {
         await using var fixture = await DatabaseFixture.CreateAsync();
         var unitOfWork = new AppUnitOfWork(fixture.Database);
-        var preferences = new Preferences(AppTheme.Dark, new QuietHours(true, new TimeOnly(22), new TimeOnly(7)), false, 3, false, false, true, TimeSpan.FromMinutes(15));
+        var preferences = new Preferences(AppTheme.Dark, false, false, false, true, TimeSpan.FromMinutes(15));
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => unitOfWork.ExecuteAsync(async (context, cancellationToken) =>
         {
@@ -1260,8 +1111,8 @@ public sealed class DatabaseTests
                 Enumerable.Range(0, 6).Select(_ => database.CreateConnectionAsync(TestContext.Current.CancellationToken))
                     .Concat(Enumerable.Range(0, 6).Select(_ => secondDatabase.CreateConnectionAsync(TestContext.Current.CancellationToken))));
             foreach (var connection in connections) await connection.DisposeAsync();
-            var notes = await new LocalNoteRepository(database).ListEnabledAsync(TestContext.Current.CancellationToken);
-            Assert.Equal(12, notes.Count);
+            // The shared initialization completed (migrations ran; nothing is seeded).
+            Assert.Empty(await new LocalNoteRepository(database).ListAsync(TestContext.Current.CancellationToken));
             Assert.Equal(1, database.InitializationRunCount);
             Assert.Equal(1, secondDatabase.InitializationRunCount);
         }
@@ -1343,16 +1194,16 @@ public sealed class DatabaseTests
         // The unreadable file is preserved for forensics -- both as the
         // durable pre-restore-attempt copy (H1) and as the moved-aside
         // original from QuarantineCorruptDatabase (no backup was available to
-        // restore instead) -- and the fresh database is usable (seeded
-        // defaults, no stale profile). Quarantine files live in their own
+        // restore instead) -- and the fresh database is usable (queryable,
+        // empty, no stale profile). Quarantine files live in their own
         // subdirectory so they never pollute the "*.db" glob RotateAsync and
         // RestoreLatestValidAsync use over BackupDirectory itself (M1).
         var quarantineDirectory = Path.Combine(fixture.Options.BackupDirectory, "quarantine");
         Assert.Empty(Directory.GetFiles(fixture.Options.BackupDirectory, "dudu-corrupt-*.db"));
         Assert.Equal(2, Directory.GetFiles(quarantineDirectory, "dudu-corrupt-*.db").Length);
         Assert.Null(await profiles.GetAsync(TestContext.Current.CancellationToken));
-        Assert.Equal(12, (await new LocalNoteRepository(fixture.Database)
-            .ListEnabledAsync(TestContext.Current.CancellationToken)).Count);
+        Assert.Empty(await new LocalNoteRepository(fixture.Database)
+            .ListAsync(TestContext.Current.CancellationToken));
         Assert.Equal(DatabaseRecoveryOutcome.StartedFresh, fixture.Database.LastRecoveryOutcome);
     }
 
@@ -1405,7 +1256,7 @@ public sealed class DatabaseTests
         // calls must keep firing unconditionally, including when the restore is driven by
         // Database.InitializeCoreAsync's own corruption-recovery path -- otherwise the very next
         // InitializeAsync call (e.g. AppHost's own post-startup touch) never re-runs
-        // InitializeCoreInnerAsync on the restored file, so SeedData.SeedAsync and
+        // InitializeCoreInnerAsync on the restored file, so MigrationRunner and
         // ReconcileInterruptedRestoreAsync (which deletes the .corrupt-recovery file set
         // RestoreAsync just kept) never run that session (H2). Instead, LastRecoveryOutcome
         // itself is sticky for this Database instance's lifetime (see
@@ -1485,8 +1336,8 @@ public sealed class DatabaseTests
             var quarantineDirectory = Path.Combine(options.BackupDirectory, "quarantine");
             Assert.Empty(Directory.GetFiles(options.BackupDirectory, "dudu-corrupt-*.db"));
             Assert.Equal(2, Directory.GetFiles(quarantineDirectory, "dudu-corrupt-*.db").Length);
-            Assert.Equal(12, (await new LocalNoteRepository(database)
-                .ListEnabledAsync(TestContext.Current.CancellationToken)).Count);
+            Assert.Empty(await new LocalNoteRepository(database)
+                .ListAsync(TestContext.Current.CancellationToken));
         }
         finally
         {
@@ -1566,64 +1417,6 @@ public sealed class DatabaseTests
         Assert.Equal(
             "2026-09-19T20:00:00-05:00",
             (await repository.GetAsync("upcoming", cancellationToken))?.DeliverAfterUtc);
-    }
-
-    [Fact]
-    public async Task Record_advance_returns_false_on_a_lost_compare_and_set_race()
-    {
-        await using var fixture = await DatabaseFixture.CreateAsync();
-        var cancellationToken = TestContext.Current.CancellationToken;
-        var repository = new ReminderRepository(fixture.Database);
-        var reminder = new Reminder("cas", "CAS", null, true, new RecurrenceRule.Once(), "UTC",
-            QuietHoursBehavior.DeliverImmediately, MissedOccurrencePolicy.LatestOnly,
-            DateTimeOffset.Parse("2026-09-12T09:00:00Z"));
-        await repository.SaveAsync(reminder, cancellationToken);
-
-        // A concurrent edit wins first: the due instant moves under us.
-        await using (var connection = await fixture.Database.CreateConnectionAsync(cancellationToken))
-        await using (var command = connection.CreateCommand())
-        {
-            command.CommandText = "UPDATE reminders SET next_due_utc = $next WHERE id = 'cas';";
-            command.Parameters.AddWithValue("$next", "2026-09-13T09:00:00+00:00");
-            await command.ExecuteNonQueryAsync(cancellationToken);
-        }
-
-        var stale = reminder;
-        var occurrence = new ReminderOccurrence("cas", DateTimeOffset.Parse("2026-09-12T09:00:00Z"));
-        Assert.False(await repository.RecordOccurrencesAndAdvanceAsync(
-            stale, [occurrence], DateTimeOffset.Parse("2026-09-13T09:00:00Z"), cancellationToken));
-    }
-
-    [Fact]
-    public async Task Concurrent_active_starts_yield_exactly_one_session()
-    {
-        await using var fixture = await DatabaseFixture.CreateAsync();
-        var repository = new FocusSessionRepository(fixture.Database);
-        for (var round = 0; round < 20; round++)
-        {
-            using var barrier = new Barrier(8);
-            var attempts = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ =>
-                Task.Run(async () =>
-                {
-                    barrier.SignalAndWait(TimeSpan.FromSeconds(30));
-                    return await repository.TryCreateActiveAsync(
-                        NewRunningSession(), TestContext.Current.CancellationToken);
-                })));
-            Assert.Single(attempts, won => won);
-
-            await using (var connection = await fixture.Database.CreateConnectionAsync(TestContext.Current.CancellationToken))
-            await using (var command = connection.CreateCommand())
-            {
-                command.CommandText = "DELETE FROM focus_sessions;";
-                await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
-            }
-        }
-
-        static FocusSession NewRunningSession()
-        {
-            var now = DateTimeOffset.UtcNow;
-            return new FocusSession(Guid.NewGuid(), null, now, now.AddMinutes(25), TimeSpan.Zero, FocusStatus.Running, now);
-        }
     }
 
     [Fact]

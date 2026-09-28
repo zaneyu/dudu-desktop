@@ -40,13 +40,12 @@ public readonly record struct PetActivityGate(
     bool Fullscreen,
     bool SessionLocked,
     bool Hidden,
-    bool QuietHours,
     bool Busy)
 {
     public static PetActivityGate Open => default;
 
     public bool IsSuppressed =>
-        ReducedMotion || Paused || Fullscreen || SessionLocked || Hidden || QuietHours || Busy;
+        ReducedMotion || Paused || Fullscreen || SessionLocked || Hidden || Busy;
 }
 
 /// <summary>
@@ -56,7 +55,7 @@ public readonly record struct PetActivityGate(
 /// </summary>
 public sealed class PetActivityScheduler
 {
-    /// <summary>Quiet time after startup before the first activity.</summary>
+    /// <summary>Settle time after startup before the first activity.</summary>
     public static readonly TimeSpan FirstActivityDelay = TimeSpan.FromSeconds(45);
 
     /// <summary>Shortest gap between activities, and the settle time after any suppression.</summary>

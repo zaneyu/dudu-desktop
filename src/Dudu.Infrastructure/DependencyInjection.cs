@@ -1,12 +1,7 @@
 using System.Security.Cryptography;
 using Dudu.Core.Abstractions;
-using Dudu.Core.CheckIns;
-using Dudu.Core.Focus;
 using Dudu.Core.Models;
-using Dudu.Core.Notes;
 using Dudu.Core.Pet;
-using Dudu.Core.Reminders;
-using Dudu.Core.Tasks;
 using Dudu.Core.Time;
 using Dudu.Infrastructure.Crypto;
 using Dudu.Infrastructure.Data;
@@ -32,19 +27,12 @@ public static class DependencyInjection
         services.AddSingleton<DatabaseBackupService>();
         services.AddSingleton<LocalDataMaintenanceService>();
 
-        RegisterRepository<CheckInRepository, ICheckInRepository>(services);
-        RegisterRepository<CountdownRepository, ICountdownRepository>(services);
-        RegisterRepository<FocusSessionRepository, IFocusSessionRepository>(services);
         RegisterRepository<HeldPresentationRepository, IHeldPresentationRepository>(services);
         RegisterRepository<LocalNoteRepository, ILocalNoteRepository>(services);
         RegisterRepository<PetPlacementRepository, IPetPlacementRepository>(services);
         RegisterRepository<PreferencesRepository, IPreferencesRepository>(services);
         RegisterRepository<ProfileRepository, IProfileRepository>(services);
         RegisterRepository<RemoteEnvelopeRepository, IRemoteEnvelopeRepository>(services);
-        RegisterRepository<ReminderRepository, IReminderRepository>(services);
-        services.AddSingleton<IReminderWriter>(static provider =>
-            provider.GetRequiredService<ReminderRepository>());
-        RegisterRepository<TaskRepository, ITaskRepository>(services);
 
         services.AddSingleton<AppUnitOfWork>();
         services.AddSingleton<IAppUnitOfWork>(static provider =>
@@ -55,18 +43,7 @@ public static class DependencyInjection
         services.AddSingleton<IClock, SystemClock>();
         services.AddSingleton<IRandomSource, CryptographicRandomSource>();
         services.AddSingleton<Preferences>(static _ => Preferences.Default);
-        services.AddSingleton<IReminderDueSink, NullReminderDueSink>();
 
-        services.AddSingleton<CheckInService>();
-        services.AddSingleton<FocusService>();
-        services.AddSingleton<TaskService>();
-        services.AddSingleton<ReminderEngine>();
-        services.AddSingleton<LocalNoteSelector>(static provider => new LocalNoteSelector(
-            provider.GetRequiredService<ILocalNoteRepository>(),
-            provider.GetRequiredService<IClock>(),
-            provider.GetRequiredService<IRandomSource>(),
-            provider.GetRequiredService<IPreferencesRepository>(),
-            provider.GetRequiredService<Preferences>()));
         services.AddSingleton<AmbientScheduler>();
         services.AddSingleton(static _ => PetStateMachine.CreateIdle());
 
@@ -117,18 +94,6 @@ public static class DependencyInjection
         {
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(exclusiveMax);
             return RandomNumberGenerator.GetInt32(exclusiveMax);
-        }
-    }
-
-    private sealed class NullReminderDueSink : IReminderDueSink
-    {
-        public Task NotifyAsync(
-            ReminderOccurrence occurrence,
-            CancellationToken cancellationToken)
-        {
-            ArgumentNullException.ThrowIfNull(occurrence);
-            cancellationToken.ThrowIfCancellationRequested();
-            return Task.CompletedTask;
         }
     }
 

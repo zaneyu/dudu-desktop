@@ -227,8 +227,7 @@ public sealed class StartupRegistrationServiceTests
         var repository = new FakePreferencesRepository();
         var preferences = new Preferences(
             AppTheme.System,
-            new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
-            false, 3, false, false, true, TimeSpan.FromMinutes(15));
+            false, false, false, true, TimeSpan.FromMinutes(15));
         var settings = CreateSettings(startup, repository, preferences);
 
         await settings.SetLaunchAtSignInAsync(true, TestContext.Current.CancellationToken);
@@ -425,9 +424,7 @@ public sealed class StartupRegistrationServiceTests
 
     private static Preferences CreatePreferences(bool launchAtSignIn) => new(
         AppTheme.System,
-        new QuietHours(false, TimeOnly.MinValue, TimeOnly.MinValue),
         false,
-        3,
         launchAtSignIn,
         false,
         true,

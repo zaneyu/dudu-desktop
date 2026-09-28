@@ -6,8 +6,8 @@ namespace Dudu.App.Presentation;
 
 /// <summary>
 /// Converts a newly-stored remote note's message id into a
-/// <see cref="DurableNotification.RemoteNote"/> routed through the one presentation gateway, the
-/// same shape <see cref="ReminderDueSink"/> uses. Keeps Dudu.Core and Dudu.Infrastructure
+/// <see cref="DurableNotification.RemoteNote"/> routed through the one presentation gateway.
+/// Keeps Dudu.Core and Dudu.Infrastructure
 /// independent of WinUI: the gateway is resolved lazily because it is not composed yet at the
 /// point this sink is registered with dependency injection.
 /// </summary>
@@ -27,7 +27,7 @@ public sealed class RemoteNoteArrivalSink : IRemoteNoteArrivalSink
     /// <summary>
     /// Settable so the production composition can attach the shared AppHost
     /// sink after construction: the sink is registered before the host — and
-    /// therefore its error reporter — exists. Mirrors <see cref="ReminderDueSink.ErrorReporter"/>.
+    /// therefore its error reporter — exists.
     /// </summary>
     public IAppHostErrorReporter? ErrorReporter
     {

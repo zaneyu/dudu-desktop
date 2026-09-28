@@ -153,29 +153,16 @@ public sealed class CompanionCommandRouter
             case TrayCommand.ShowOrHide:
                 await _lifecycle.OnUserShowOrHideAsync(cancellationToken);
                 break;
-            case TrayCommand.PauseOneHour:
-                await SetPauseAsync(PausePolicy.ForOneHour(_clock()), cancellationToken);
-                break;
-            case TrayCommand.PauseUntilTomorrowAtSeven:
+            case TrayCommand.PauseOneHourOrResume:
+                // Paused in any mode -- including a legacy persisted one such
+                // as "until tomorrow at 07:00", "until fullscreen ends" or
+                // "until i resume" from before the menu shrank -- resumes;
+                // otherwise pauses for one hour. The label says which.
+                var now = _clock();
                 await SetPauseAsync(
-                    PausePolicy.UntilTomorrowAtSeven(_clock()),
-                    cancellationToken);
-                break;
-            case TrayCommand.PauseUntilFullscreenEnds:
-                await SetPauseAsync(
-                    new PauseState(PauseMode.UntilFullscreenEnds, null),
-                    cancellationToken);
-                break;
-            case TrayCommand.PauseIndefinitelyOrResume:
-                // "...or resume" must resume *any* active pause. Only an
-                // indefinite pause used to resume here: after "pause for one
-                // hour" the same item turned the timed pause into an
-                // indefinite one instead, so resuming early took two clicks
-                // through an item whose label promised one.
-                await SetPauseAsync(
-                    _pause.GetEffective(_clock()).Mode != PauseMode.None
+                    _pause.GetEffective(now).Mode != PauseMode.None
                         ? PauseState.None
-                        : new PauseState(PauseMode.Indefinite, null),
+                        : PausePolicy.ForOneHour(now),
                     cancellationToken);
                 break;
             case TrayCommand.OpenSettings:

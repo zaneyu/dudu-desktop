@@ -32,7 +32,6 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
     private SKPaint? _paint;
     private byte[]? _reusableBuffer;
     private AssetPack? _pack;
-    private OverlayActionSurfaceController? _actionSurface;
     private OverlaySurfacePalette? _overlayPalette;
     // UK partner-clock pill: the label is refreshed by a timer re-armed at each
     // minute boundary (so static poses repaint too) and the pill bitmap is only
@@ -86,20 +85,6 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
     /// animation frame.  The engine uses it to repaint the existing pet frame
     /// immediately, including reduced-motion instructions and errors.</summary>
     public event EventHandler? RepaintRequested;
-
-    public void SetActionSurface(OverlayActionSurfaceController? actionSurface)
-    {
-        lock (_gate)
-        {
-            ThrowIfDisposed();
-            if (ReferenceEquals(_actionSurface, actionSurface)) return;
-            if (_actionSurface is not null) _actionSurface.Changed -= OnActionSurfaceChanged;
-            _actionSurface = actionSurface;
-            if (_actionSurface is not null) _actionSurface.Changed += OnActionSurfaceChanged;
-        }
-
-        RequestRepaint();
-    }
 
     public void SetOverlayPalette(OverlaySurfacePalette palette)
     {
@@ -189,16 +174,6 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
             // in AnimationEngineTests measured at about 100 bytes per frame.
             _canvas.DrawImage(image, destination, SamplingOptions, _paint);
             var pillRegion = DrawPartnerClockPill(dimensions.Width, dimensions.Height);
-            OverlaySurfaceSnapshot? overlaySnapshot = null;
-            if (_actionSurface is not null)
-            {
-                overlaySnapshot = _actionSurface.CreateRenderSnapshot(
-                    new PixelSize(dimensions.Width, dimensions.Height));
-                OverlaySurfaceRenderer.Draw(
-                    _canvas,
-                    overlaySnapshot,
-                    _overlayPalette);
-            }
 
             var stride = output.RowBytes;
             var byteCount = checked(stride * dimensions.Height);
@@ -216,14 +191,13 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
                     source,
                     semanticDuration,
                     frameDuration,
-                    overlaySnapshot?.Actions.Select(action => action.HitRegion).ToArray(),
-                    overlaySnapshot?.GeometryVersion ?? 0,
-                    overlaySnapshot,
+                    overlayHitRegions: null,
+                    overlayGeometryVersion: 0,
                     this)
                 {
-                    // An open action bubble owns the hit area; otherwise the
-                    // pill must not turn empty space above Dudu into a drag handle.
-                    ClickThroughRegion = overlaySnapshot is null ? pillRegion : null,
+                    // The pill must not turn empty space above Dudu into a
+                    // drag handle: clicks there pass through to the desktop.
+                    ClickThroughRegion = pillRegion,
                 };
             }
             catch
@@ -288,8 +262,6 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
 
             _disposed = true;
             _disposeCount++;
-            if (_actionSurface is not null) _actionSurface.Changed -= OnActionSurfaceChanged;
-            _actionSurface = null;
             _overlayPalette = null;
             _partnerClockTimer?.Dispose();
             _partnerClockTimer = null;
@@ -304,16 +276,6 @@ public sealed class SkiaFrameComposer : IDisposable, IFrameBufferReleaser
     }
 
     void IFrameBufferReleaser.Release(byte[] buffer) => Release(buffer);
-
-    private void OnActionSurfaceChanged(object? sender, EventArgs args)
-    {
-        lock (_gate)
-        {
-            if (_disposed) return;
-        }
-
-        RequestRepaint();
-    }
 
     private PixelRect? DrawPartnerClockPill(int width, int height)
     {

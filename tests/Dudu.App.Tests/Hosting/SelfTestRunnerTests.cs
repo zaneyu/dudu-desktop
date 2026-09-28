@@ -1,4 +1,10 @@
 using Dudu.App.Hosting;
+using Dudu.Core.Abstractions;
+using Dudu.Core.Models;
+using Dudu.Infrastructure;
+using Dudu.Infrastructure.Data;
+using Dudu.Infrastructure.Remote;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Dudu.App.Tests.Hosting;
@@ -77,6 +83,45 @@ public sealed class SelfTestRunnerTests
         finally
         {
             Environment.SetEnvironmentVariable("DUDU_DATA_ROOT", previousDataRoot);
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Core_service_check_passes_on_the_production_shaped_container_and_writes_nothing(bool relayConfigured)
+    {
+        // The reduced cute-companion service graph, built exactly as production
+        // builds it (AddDuduInfrastructure, offline or with a relay configured),
+        // on a database that already has a preferences row like an existing
+        // install. The check must resolve every core service and only read.
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var tempRoot = Path.Combine(Path.GetTempPath(), "dudu-self-test-graph-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempRoot);
+        var services = new ServiceCollection()
+            .AddDuduInfrastructure(
+                new DatabaseOptions(Path.Combine(tempRoot, "dudu.db"), Path.Combine(tempRoot, "backups")),
+                relayConfigured ? new RelayOptions(new Uri("https://relay.invalid/")) : null)
+            .BuildServiceProvider();
+        try
+        {
+            await services.GetRequiredService<Database>().InitializeAsync(cancellationToken);
+            var saved = Preferences.Default with { ReducedMotion = true, SoundVolume = 0.5 };
+            var preferences = services.GetRequiredService<IPreferencesRepository>();
+            await preferences.SaveAsync(saved, cancellationToken);
+
+            await SelfTestRunner.CheckCoreServicesAsync(services, cancellationToken);
+
+            Assert.NotEmpty(SelfTestRunner.CoreServiceTypes);
+            Assert.All(SelfTestRunner.CoreServiceTypes, type => Assert.NotNull(services.GetService(type)));
+            Assert.Contains(typeof(IAppUnitOfWork), SelfTestRunner.CoreServiceTypes);
+            Assert.Contains(typeof(ICompanionFeatureTransactions), SelfTestRunner.CoreServiceTypes);
+            Assert.Equal(saved, await preferences.GetAsync(cancellationToken));
+        }
+        finally
+        {
+            await services.DisposeAsync();
             Directory.Delete(tempRoot, recursive: true);
         }
     }

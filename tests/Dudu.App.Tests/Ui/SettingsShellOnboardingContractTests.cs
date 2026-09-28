@@ -19,7 +19,7 @@ public sealed class SettingsShellOnboardingContractTests
             shell,
             "<NavigationViewItem\\s[^>]*?(/?)>(.*?)(?=<NavigationViewItem\\s|</NavigationView.MenuItems>)",
             RegexOptions.Singleline);
-        Assert.Equal(7, items.Count);
+        Assert.Equal(3, items.Count);
         foreach (Match item in items)
         {
             Assert.True(item.Groups[1].Value.Length == 0, $"Navigation item has no icon: {item.Value}");
@@ -78,29 +78,24 @@ public sealed class SettingsShellOnboardingContractTests
     }
 
     [Fact]
-    public void Home_wraps_text_instead_of_scrolling_sideways_and_shows_local_check_in_times()
+    public void Home_wraps_text_instead_of_scrolling_sideways()
     {
         var home = Read("src", "Dudu.App", "Pages", "HomePage.xaml");
 
         Assert.Contains("<ScrollViewer HorizontalScrollBarVisibility=\"Disabled\"", home);
-        Assert.DoesNotContain("{x:Bind CreatedUtc}", home);
-        Assert.DoesNotContain("{x:Bind Choice}", home);
-        Assert.Contains("viewmodels:HomeViewModel.FormatCheckInTime(CreatedUtc)", home);
-        Assert.Contains("viewmodels:HomeViewModel.FormatCheckInChoice(Choice)", home);
-        Assert.Contains("xmlns:viewmodels=\"using:Dudu.App.ViewModels\"", home);
     }
 
     [Fact]
     public void Home_dynamic_text_exposes_its_value_as_the_accessible_name()
     {
         // A static AutomationProperties.Name overrides a TextBlock's text for UIA, so
-        // Narrator read "check-in summary" instead of "1 optional check-in ...".
+        // Narrator would read a fixed label instead of the greeting or status itself.
         var home = Read("src", "Dudu.App", "Pages", "HomePage.xaml");
         var bound = Regex.Matches(
             home,
             "<TextBlock\\s[^>]*Text=\"\\{x:Bind ViewModel\\.(\\w+), Mode=OneWay\\}\"[^>]*AutomationProperties\\.AutomationId=\"[^\"]+\"[^>]*>");
 
-        Assert.True(bound.Count >= 9, $"expected the Home status texts, found {bound.Count}");
+        Assert.True(bound.Count >= 3, $"expected the Home greeting and status texts, found {bound.Count}");
         foreach (Match tag in bound)
         {
             Assert.Contains(
@@ -110,20 +105,6 @@ public sealed class SettingsShellOnboardingContractTests
 
         var code = Read("src", "Dudu.App", "Pages", "HomePage.xaml.cs");
         Assert.DoesNotContain("HomeActionStatus.Text =", code);
-        Assert.DoesNotContain("CountdownTargetValidation.Text =", code);
-        Assert.DoesNotContain("StartupRecoveryMessage.Text =", code);
-    }
-
-    [Fact]
-    public void Home_countdown_target_box_follows_the_view_model_after_a_save()
-    {
-        var code = Read("src", "Dudu.App", "Pages", "HomePage.xaml.cs");
-
-        Assert.Contains("ViewModel.PropertyChanged += ViewModel_PropertyChanged;", code);
-        var handler = Slice(code, "private void ViewModel_PropertyChanged(", "\n    }");
-        Assert.Contains("nameof(HomeViewModel.CountdownTargetUtc)", handler);
-        Assert.Contains("HomeViewModel.CountdownTargetTextMatches(CountdownTargetBox.Text, ViewModel.CountdownTargetUtc)", handler);
-        Assert.Contains("CountdownTargetBox.Text =", handler);
     }
 
     [Fact]
@@ -146,45 +127,33 @@ public sealed class SettingsShellOnboardingContractTests
     }
 
     [Fact]
-    public void Recommended_buttons_capture_typed_choices_before_rewriting_the_controls()
+    public void Onboarding_has_three_steps_name_look_and_pairing()
     {
-        // The UI journey types a name and then presses "use recommended defaults";
-        // syncing controls from the draft first wiped the typed name.
+        var onboarding = Read("src", "Dudu.App", "Pages", "OnboardingPage.xaml");
         var code = Read("src", "Dudu.App", "Pages", "OnboardingPage.xaml.cs");
 
-        foreach (var (handler, call) in new[]
+        var steps = Regex.Matches(onboarding, "<StackPanel x:Name=\"([A-Za-z]+Step)\"")
+            .Select(match => match.Groups[1].Value)
+            .ToArray();
+        Assert.Equal(["RecipientStep", "AppearanceStep", "PairingStep"], steps);
+        Assert.Contains("AutomationProperties.AutomationId=\"OnboardingRecipientName\"", onboarding);
+        Assert.Contains("AutomationProperties.AutomationId=\"OnboardingTheme\"", onboarding);
+        Assert.Contains("AutomationProperties.AutomationId=\"OnboardingReducedMotion\"", onboarding);
+        Assert.Contains("AutomationProperties.AutomationId=\"OnboardingSkipPairing\"", onboarding);
+
+        // Reminders, the local-note limit, the placement step and the
+        // startup/fullscreen choices left onboarding (the last two are saved
+        // on and live in Settings).
+        foreach (var removed in new[]
         {
-            ("private async void RecommendedDefaultsButton_Click(", "await _viewModel.AcceptRecommendedDefaultsAsync();"),
-            ("private async void RecommendedPlacementButton_Click(", "await _viewModel.UseRecommendedPlacementAsync();"),
+            "RemindersStep", "PlacementStep", "HydrationBox", "BreakBox", "NoteLimitBox",
+            "PlacementScaleSlider", "RecommendedPlacementButton", "RecommendedDefaultsButton",
+            "HideFullscreenBox", "LaunchAtSignInBox",
         })
         {
-            var body = Slice(code, handler, "\n    }");
-            var sync = body.IndexOf("SyncDraftFromControls();", StringComparison.Ordinal);
-            var accept = body.IndexOf(call, StringComparison.Ordinal);
-            Assert.True(sync >= 0 && accept > sync, $"{handler} must sync the draft before {call}");
-            Assert.Contains("catch (Exception exception)", body);
+            Assert.DoesNotContain(removed, onboarding);
+            Assert.DoesNotContain(removed, code);
         }
-    }
-
-    [Fact]
-    public void Onboarding_ignores_slider_events_raised_while_the_page_builds_itself()
-    {
-        var code = Read("src", "Dudu.App", "Pages", "OnboardingPage.xaml.cs");
-        var onboarding = Read("src", "Dudu.App", "Pages", "OnboardingPage.xaml");
-
-        Assert.Contains("private bool _suppressControlEvents = true;", code);
-        var constructor = Slice(code, "public OnboardingPage(", "\n    }");
-        Assert.True(
-            constructor.IndexOf("InitializeComponent();", StringComparison.Ordinal)
-                < constructor.IndexOf("_suppressControlEvents = false;", StringComparison.Ordinal),
-            "Slider events must stay suppressed through InitializeComponent and the first sync.");
-        var handler = Slice(code, "private async void PlacementScaleSlider_ValueChanged(", "\n    }");
-        Assert.Contains("if (_suppressControlEvents) return;", handler);
-        Assert.True(
-            handler.IndexOf("if (_suppressControlEvents) return;", StringComparison.Ordinal)
-                < handler.IndexOf("_viewModel.PlacementScale = args.NewValue;", StringComparison.Ordinal));
-        Assert.Contains("IsThumbToolTipEnabled=\"False\"", onboarding);
-        Assert.Contains("AutomationProperties.AutomationId=\"OnboardingPetScaleValue\"", onboarding);
     }
 
     [Fact]
@@ -214,10 +183,8 @@ public sealed class SettingsShellOnboardingContractTests
     {
         var code = Read("src", "Dudu.App", "Pages", "OnboardingPage.xaml.cs");
 
-        Assert.Contains("_viewModel.TrySetQuietHoursText(QuietStartBox.Text, QuietEndBox.Text);", code);
-        Assert.Contains("_viewModel.SetLocalNoteDailyLimitInput(NoteLimitBox.Value);", code);
-        Assert.DoesNotContain("TimeOnly.TryParse(QuietStartBox.Text", code);
-        Assert.DoesNotContain("(int)Math.Round(NoteLimitBox.Value)", code);
+        Assert.Contains("_viewModel.RecipientName = RecipientNameBox.Text;", code);
+        Assert.DoesNotContain("SetLocalNoteDailyLimitInput", code);
     }
 
     [Theory]

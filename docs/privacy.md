@@ -13,18 +13,13 @@ themselves.
 
 | Entity | Where | Leaves the PC? | Retention | Deletion path | In backups? |
 | --- | --- | --- | --- | --- | --- |
-| Profile (recipient name, onboarding flag) | `profiles` table, `Database` (`dudu.db`) | No | Until deleted | Settings → delete local data (`LocalDataMaintenanceService.DeleteAllUserDataAsync`) | Yes |
-| Preferences (theme, quiet hours, pet behavior) | `preferences` table, `Database` | No | Until deleted | Same as above | Yes |
+| Profile (recipient name, onboarding flag) | `profiles` table, `Database` (`dudu.db`) | No | Until deleted | Settings → delete my data (`LocalDataMaintenanceService.DeleteAllUserDataAsync`; with a relay configured the remote device delete runs first, and if the relay cannot be reached nothing is wiped unless she chooses "wipe this pc only") | Yes |
+| Preferences (theme, reduced motion, sounds, pet size and behavior, tray pause) | `preferences` table, `Database` | No | Until deleted | Same as above | Yes |
 | Pet placement per monitor | `pet_placements` table, `Database` | No | Until deleted | Same as above | Yes |
-| Reminders + occurrence history | `reminders`, `reminder_occurrences` tables, `Database` | No | Until deleted | Same as above | Yes |
-| Tasks | `tasks` table, `Database` | No | Until completed record is pruned or deleted | Same as above | Yes |
-| Focus sessions | `focus_sessions` table, `Database` | No | Until deleted | Same as above | Yes |
-| Local notes (the bundled/custom love-note pool) and their display history | `local_notes`, `local_note_history` tables, `Database` | No | Until deleted | Same as above | Yes |
-| Mood check-ins (choice + optional free-text note) | `mood_check_ins` table, `Database` | No | Until deleted | Same as above | Yes |
-| Countdowns | `countdowns` table, `Database` | No | Until deleted | Same as above | Yes |
-| A received private note, still encrypted | `remote_envelopes` table, `Database` (`ciphertext`, `ephemeral_public_key`, `nonce`, `authentication_tag`, `hkdf_salt` — all opaque ciphertext/key material, never plaintext) | Arrived from the relay, ciphertext only | Kept until the note is **saved to the local jar** (`CompanionFeatureTransactionService.SaveRemoteNoteAndConsumeEnvelopeAsync` → `RemoteEnvelopeRepository.TryConsumeAsync`). Acknowledging the relay does **not** delete it: acknowledgment only tells the relay to drop its copy. A note that is never opened, or opened and not saved, keeps its ciphertext row indefinitely, and there is deliberately **no retention sweep** — silently deleting an unopened note would be data loss | Saving the note to the local jar, or delete-local-data | Yes — any backup snapshot taken while a received note is still unopened or unsaved contains its row. It is ciphertext, never plaintext, but it does persist across backups until the note is saved |
+| Data left by features this build no longer has (reminders + occurrence history, tasks, focus sessions, mood check-ins, countdowns, seeded or hand-written local notes and their display history) | `reminders`, `reminder_occurrences`, `tasks`, `focus_sessions`, `mood_check_ins`, `countdowns`, `local_note_history` tables and non-`remote-` rows of `local_notes`, `Database` | No | Dormant: this build never reads, shows, or writes them, and no migration drops them, so rows from an older install stay until deleted | Settings → delete my data (the wipe still clears every one of these tables) | Yes — while they exist, automatic backups carry them like any other row |
+| A received private note, still encrypted | `remote_envelopes` table, `Database` (`ciphertext`, `ephemeral_public_key`, `nonce`, `authentication_tag`, `hkdf_salt` — all opaque ciphertext/key material, never plaintext) | Arrived from the relay, ciphertext only | Kept until the note is **revealed** on the Love Notes page, which saves it and consumes the envelope in one transaction (`CompanionFeatureTransactionService.SaveRemoteNoteAndConsumeEnvelopeAsync` → `RemoteEnvelopeRepository.TryConsumeAsync`). Acknowledging the relay does **not** delete it: acknowledgment only tells the relay to drop its copy. A note that is never opened keeps its ciphertext row indefinitely, and there is deliberately **no retention sweep** — silently deleting an unopened note would be data loss | Revealing the note, or delete-local-data | Yes — any backup snapshot taken while a received note is still unopened contains its row. It is ciphertext, never plaintext, but it does persist across backups until the note is revealed |
 | Record that a private note was already processed | `processed_remote_messages` table, `Database` (message ID + timestamp only, no content) | No | Until deleted | Delete-local-data | Yes |
-| A private note's decrypted text | Held in memory only (`RemoteSyncService`/`EnvelopeCrypto.Decrypt`) while it is open and unsaved. The Love Notes page has no "close without saving" action for an opened note — its only button is "save opened note to local jar" (`LoveNotesViewModel.SaveOpenedNoteAsync`), which is also how the recipient dismisses it. That action writes the plaintext into `local_notes` (same table and lifecycle as any other local note, see the "Local notes" row above). The plaintext is never persisted only if the app is closed, or a different note/page is navigated to, before that button is pressed | No | Until saved (typically immediate, since saving is the only dismissal), then same as "Local notes" above; otherwise discarded when the process exits or the view model releases it | Same as "Local notes" above once saved | Yes, once saved (same as "Local notes" above); no while still only in memory |
+| A private note's decrypted text | Decrypted in memory (`RemoteSyncService.RevealAsync`/`EnvelopeCrypto.Decrypt`) when the recipient reveals it on the Love Notes page (`LoveNotesViewModel.RevealRemoteNoteAsync`), and **immediately persisted**: revealing writes the plaintext into `local_notes` as `remote-<messageId>` in the same transaction that consumes the envelope, so she can re-read it from the "opened notes" list. There is no separate save step and no way to read a note without keeping it | No | Until she deletes it from "opened notes" (`ILocalNoteRepository.DeleteAsync`) or deletes her data | Delete it from "opened notes", or Settings → delete my data | Yes — every automatic pre-migration backup taken while a revealed note exists contains its plaintext. Deleting it from "opened notes" removes it from the live database only; older backup copies age out through backup pruning, and delete-my-data removes every backup |
 | Asset pack selection | `asset_packs` table, `Database` | No | Until deleted | Delete-local-data | Yes |
 | Desktop's own ECDH private key (`desktop-ecdh-private-v1`) | `Secrets\desktop-ecdh-private-v1.bin`, DPAPI-protected (`CurrentUser` scope) via `DpapiSecretStore` | No — only the matching *public* key is ever sent to the relay | Until rotated or deleted | Delete-local-data deletes every `*.bin` under `Secrets` | No — DPAPI ties the blob to the Windows user profile, so a backup copy would not decrypt under a different profile/machine anyway, and the maintenance sweep deletes it before it could be swept into a future backup |
 | Relay device ID and bearer token (`relay-device-id-v1`, `relay-desktop-token-v1`) | `Secrets\*.bin`, DPAPI-protected | The token is presented to the relay on every authenticated call (that is its purpose); it is never logged (see `PrivacySafeLog`) | Until rotated, revoked, or deleted | Delete-local-data, or `DELETE /v1/devices/current` against the relay | No (same DPAPI reasoning as above) |
@@ -35,10 +30,9 @@ themselves.
 
 ## What is deliberately never written anywhere
 
-- The text of a private note, once decrypted, is held only in memory for as long as it is on
-  screen and unsaved. It is never written to a log. It *is* written to the database (`local_notes`)
-  as soon as the recipient dismisses the opened note, because saving is the only dismissal action
-  the Love Notes page offers — see the "A private note's decrypted text" row above.
+- The text of a private note is never written to a log. It *is* written to the database
+  (`local_notes`) the moment the recipient reveals it, because revealing a note keeps it in her
+  "opened notes" until she deletes it — see the "A private note's decrypted text" row above.
 - Bearer tokens, device IDs used as secrets, pairing codes, and key material are never passed to a
   logger. `src/Dudu.Infrastructure/Logging/PrivacySafeLog.cs` is the single logging surface for
   the relay client and remote-sync path; every message it emits is a fixed, code-controlled string
@@ -72,8 +66,8 @@ themselves.
   (`sender-src/pairing.ts`, `verifyStoredSession`) and drops to an explicit "key changed, pair
   again" warning rather than silently re-encrypting to a new one — which catches a later swap, not
   a relay that was already lying at the moment of first pairing.
-- **A relay outage never blocks local functionality.** Reminders, tasks, focus sessions, and every
-  other local-only entity above are scheduled and presented entirely locally; `AppHost` ticks the
-  local reminder service before it ever attempts to start remote sync, and a remote-sync failure
+- **A relay outage never blocks local functionality.** Every local-only entity above is
+  presented entirely locally; `AppHost` starts the local presentation gateway (and its 30-second
+  presentation tick) before it ever attempts to start remote sync, and a remote-sync failure
   is caught and reported, never allowed to stop the host (see `tests/Dudu.Infrastructure.Tests/Security/PrivacyBoundaryTests.cs`,
-  `Worker_outage_does_not_stop_local_reminders`).
+  `Worker_outage_does_not_stop_local_presentations`).
