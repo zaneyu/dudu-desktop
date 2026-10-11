@@ -242,6 +242,31 @@ public sealed partial class App : Application
         }
 
         _settingsWindow.Activate();
+        BringToFront(_settingsWindow);
+    }
+
+    /// <summary>Activate() alone left the window behind whatever she was using when
+    /// the request came from a second launch: the primary is a background process.
+    /// The second launch now hands its foreground right over (ForegroundHandoff), and
+    /// this uses it. Best effort; without the right Windows just flashes the taskbar
+    /// button, as before.</summary>
+    private static void BringToFront(Window window)
+    {
+        try
+        {
+            if (window.AppWindow is { } appWindow)
+            {
+                _ = Overlay.OverlayWindowHost.TrySetForegroundWindow(
+                    Microsoft.UI.Win32Interop.GetWindowFromWindowId(appWindow.Id));
+            }
+        }
+        catch (Exception exception)
+        {
+            Trace.TraceWarning(
+                "Dudu settings bring-to-front failed: {0} 0x{1:X8}",
+                exception.GetType().Name,
+                exception.HResult);
+        }
     }
 
     private static void RestoreIfMinimized(Window window)

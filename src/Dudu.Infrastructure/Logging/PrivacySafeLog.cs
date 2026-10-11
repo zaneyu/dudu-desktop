@@ -12,7 +12,11 @@ namespace Dudu.Infrastructure.Logging;
 /// </summary>
 public static partial class PrivacySafeLog
 {
-    [LoggerMessage(1001, LogLevel.Information, "Relay poll returned {MessageCount} envelopes")]
+    /// <summary>The routine per-poll heartbeat. Sinks that keep a bounded history (the
+    /// desktop's diagnostics.log) drop it so it cannot crowd out the failures.</summary>
+    public const int PollCompletedEventId = 1001;
+
+    [LoggerMessage(PollCompletedEventId, LogLevel.Information, "Relay poll returned {MessageCount} envelopes")]
     public static partial void PollCompleted(ILogger logger, int messageCount);
 
     [LoggerMessage(1002, LogLevel.Warning, "Relay request failed with {StatusCode} and category {Category}")]

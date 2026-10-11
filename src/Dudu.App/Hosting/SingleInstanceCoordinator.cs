@@ -326,6 +326,9 @@ internal sealed class WindowsActivationTransport : IActivationTransport
         try
         {
             await client.ConnectAsync(timeoutSource.Token);
+            // Before the request, so the primary already holds the foreground
+            // right when it opens Home (see ForegroundHandoff).
+            _ = ForegroundHandoff.TryAllowPipeServer(client);
             await client.WriteAsync(new byte[] { payload }, timeoutSource.Token);
             await client.FlushAsync(timeoutSource.Token);
         }

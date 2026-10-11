@@ -1,4 +1,5 @@
 using Dudu.App.Hosting;
+using Dudu.Infrastructure.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Xunit;
@@ -125,6 +126,63 @@ public sealed class FileDiagnosticLoggerTests
     }
 
     [Fact]
+    public void Composition_gives_optional_typed_loggers_a_file_logger_not_null()
+    {
+        var tempRoot = NewTempRoot("dudu-diag-log-typed-");
+        try
+        {
+            var paths = AppPaths.ForRoot(tempRoot);
+            using var services = new ServiceCollection()
+                .AddFileDiagnosticLogging(paths)
+                .AddSingleton<OptionalLoggerConsumer>()
+                .BuildServiceProvider();
+
+            // Same constructor shape as RelayClient/RemoteSyncService: an optional
+            // ILogger<T> the container used to fill with its default (null).
+            var consumer = services.GetRequiredService<OptionalLoggerConsumer>();
+            Assert.NotNull(consumer.Logger);
+
+            PrivacySafeLog.RelayFailed(consumer.Logger!, 404, "not-found");
+            PrivacySafeLog.SyncStateProbeFailed(consumer.Logger!, 0, "RelayNotFoundException");
+
+            var contents = File.ReadAllText(Path.Combine(paths.Logs, "diagnostics.log"));
+            Assert.Contains("Relay request failed with 404 and category not-found", contents, StringComparison.Ordinal);
+            Assert.Contains("Sync state probe failed", contents, StringComparison.Ordinal);
+            Assert.Contains(nameof(OptionalLoggerConsumer) + ":", contents, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteTempRoot(tempRoot);
+        }
+    }
+
+    [Fact]
+    public void Routine_poll_heartbeats_stay_out_of_the_file_but_failures_do_not()
+    {
+        var tempRoot = NewTempRoot("dudu-diag-log-heartbeat-");
+        try
+        {
+            var paths = AppPaths.ForRoot(tempRoot);
+            ILogger logger = new FileDiagnosticLoggerProvider(paths).CreateLogger("Dudu.Infrastructure.Remote.RelayClient");
+
+            for (var poll = 0; poll < 50; poll++)
+            {
+                PrivacySafeLog.PollCompleted(logger, 0);
+            }
+
+            PrivacySafeLog.RelayFailed(logger, 0, "timeout");
+
+            var contents = File.ReadAllText(Path.Combine(paths.Logs, "diagnostics.log"));
+            Assert.DoesNotContain("Relay poll returned", contents, StringComparison.Ordinal);
+            Assert.Contains("Relay request failed with 0 and category timeout", contents, StringComparison.Ordinal);
+        }
+        finally
+        {
+            DeleteTempRoot(tempRoot);
+        }
+    }
+
+    [Fact]
     public void CreateLogger_rejects_a_blank_category()
     {
         var tempRoot = NewTempRoot("dudu-diag-log-category-");
@@ -138,6 +196,11 @@ public sealed class FileDiagnosticLoggerTests
         {
             DeleteTempRoot(tempRoot);
         }
+    }
+
+    private sealed class OptionalLoggerConsumer(ILogger<OptionalLoggerConsumer>? logger = null)
+    {
+        public ILogger<OptionalLoggerConsumer>? Logger { get; } = logger;
     }
 
     private static string NewTempRoot(string prefix) =>

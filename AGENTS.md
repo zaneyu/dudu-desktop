@@ -604,6 +604,14 @@ authoritative for future changes.
   `1008` `RelayStagingCleanupFailed`, `1009` `RelayStagingPromoted` (replaces
   the old generic 401 `promoted-staged-token` line). Every method carries only
   counts, status codes, fixed tags, exception-type names, or envelope GUIDs.
+  These reach `diagnostics.log` because `AddFileDiagnosticLogging` registers
+  the open generic `ILogger<>`; without it the container passed null to the
+  optional `ILogger<T>` parameters of `RelayClient`/`RemoteSyncService` and
+  every relay line was silently dropped (true of every build before Oct
+  2026). The file sink drops only the per-poll heartbeat
+  (`PrivacySafeLog.PollCompletedEventId`, 1001) so it cannot trim failures
+  out of the 128 KiB file. Lines carry the message text, not the event ID:
+  search for "Relay request failed", "Sync state probe failed", "Sync loop".
 - Chrome/data path: failures route through `IAppHostErrorReporter`
   (`AppHost.ErrorReporter`, shared with `AppLifecycleCoordinator`,
   overlay, tray, event source, presentation and notification sinks)
@@ -678,6 +686,10 @@ Symptom-first lookup (data root overridable via `DUDU_DATA_ROOT`):
   `fullscreen-poll`, `session-lock`, `suspend`, `display-change`.
 - Dudu stops doing ambient moments or releasing held notes: search for
   `presentation-scheduler`, `presentation-gateway-tick`, `presentation-tick`.
+- Clicking Dudu again "does nothing" (a burst of `Dudu.SingleInstance ...
+  forwarded activation` lines): the second launch grants the running copy
+  the foreground (`ForegroundHandoff`) and `App.BringToFront` uses it after
+  `Activate()`; before that, Home opened behind other windows.
 - Notes stop arriving / partner connection section on Settings stale:
   search for `1005`/`1006`/`1007` (probe failures, terminal loop state, retries) and `remote-sync-protocol`
   reports; `1009` confirms a staged-token promotion after an interrupted

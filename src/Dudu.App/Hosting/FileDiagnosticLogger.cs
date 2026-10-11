@@ -1,5 +1,7 @@
 using System.Globalization;
+using Dudu.Infrastructure.Logging;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
 
 namespace Dudu.App.Hosting;
@@ -139,6 +141,13 @@ public sealed class FileDiagnosticLogger : ILogger
             return;
         }
 
+        // The relay polls every few seconds to a minute; one heartbeat line per
+        // poll would trim every older failure out of this capped file.
+        if (eventId.Id == PrivacySafeLog.PollCompletedEventId)
+        {
+            return;
+        }
+
         string message;
         try
         {
@@ -214,6 +223,10 @@ public static class FileDiagnosticLoggingServiceExtensions
         var provider = new FileDiagnosticLoggerProvider(paths);
         services.AddSingleton(provider);
         services.AddSingleton<ILoggerFactory>(new FileDiagnosticLoggerFactory(provider));
+        // RelayClient and RemoteSyncService take an optional ILogger<T>. Without
+        // this open generic the container silently passed null, they fell back
+        // to NullLogger, and every relay/sync line (1002-1009) was discarded.
+        services.TryAdd(ServiceDescriptor.Singleton(typeof(ILogger<>), typeof(Logger<>)));
         return services;
     }
 }
